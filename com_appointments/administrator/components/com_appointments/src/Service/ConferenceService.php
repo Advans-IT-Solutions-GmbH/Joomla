@@ -15,8 +15,10 @@ use Advans\Component\Appointments\Administrator\Helper\Conference\FixedRoomProvi
 use Advans\Component\Appointments\Administrator\Helper\Conference\GenericRoomProvider;
 use Advans\Component\Appointments\Administrator\Helper\Conference\JitsiProvider;
 use Advans\Component\Appointments\Administrator\Helper\Conference\MeetingRequest;
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Log\Log;
 use Joomla\Database\DatabaseInterface;
@@ -42,6 +44,8 @@ final class ConferenceService
         return new self($db, \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments'),
             \Joomla\CMS\Factory::getApplication()->bootComponent('com_appointments')->getConferenceManager());
     }
+
+    private ?BookingData $bookingData = null;
 
     public const OPTION_KEYS = [
         'conference_provider',
@@ -145,9 +149,18 @@ final class ConferenceService
                 $fields['modified_utc'] = gmdate('Y-m-d H:i:s', $timestamp);
             }
 
-            $this->write((int) $current['id'], $fields);
+            $this->write($current, $fields);
             $refreshed = $this->booking((int) $current['id'], false);
             $this->db->transactionCommit();
+
+            if ($succeeded) {
+                try {
+                    // The internet calendar copy carries the new link too; the bridge never throws.
+                    TeamServices::fromApplication()->bookings()->onBookingSaved($refreshed ?? array_replace($current, $fields));
+                } catch (\Throwable $mirror) {
+                    // Without a Joomla runtime (unit tests) there is no calendar to mirror into.
+                }
+            }
 
             return $this->safe($refreshed ?? array_replace($current, $fields))
                 + ['_conference_changed' => $succeeded, '_conference_stale' => false];
@@ -214,7 +227,7 @@ final class ConferenceService
             }
 
             if ($mayClear) {
-                $this->write((int) $current['id'], $this->emptyFields());
+                $this->write($current, $this->emptyFields());
                 $current = $this->booking((int) $current['id'], false) ?? array_replace($current, $this->emptyFields());
             }
 
@@ -439,10 +452,18 @@ final class ConferenceService
 
     private function booking(int $id, bool $lock): ?array
     {
-        return $this->db->setQuery(
+        $row = $this->db->setQuery(
             'SELECT * FROM ' . $this->db->quoteName('#__appointments_bookings')
             . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $id . ($lock ? ' FOR UPDATE' : '')
         )->loadAssoc() ?: null;
+
+        // Personal fields are encrypted at rest; a field that cannot be opened is blank.
+        return $row === null ? null : $this->bookingData()->openLenient($row);
+    }
+
+    private function bookingData(): BookingData
+    {
+        return $this->bookingData ??= BookingData::forToken($this->keyProvider(), (string) $this->params->get(BookingData::MIGRATION_OPTION, ''));
     }
 
     private function event(int $id): ?array
@@ -453,9 +474,12 @@ final class ConferenceService
         )->loadAssoc() ?: null;
     }
 
-    private function write(int $id, array $fields): void
+    /** @param array<string, mixed> $current The locked row, for its id and UID. */
+    private function write(array $current, array $fields): void
     {
-        $update = (object) (['id' => $id] + $fields);
+        // The link is a personal field of the booking: stored encrypted (null stays null).
+        $fields = $this->bookingData()->sealChange($current, $fields);
+        $update = (object) (['id' => (int) $current['id']] + $fields);
 
         if (!$this->db->updateObject('#__appointments_bookings', $update, 'id', true)) {
             throw new \RuntimeException('Conference status could not be saved.');

@@ -28,11 +28,8 @@ try {
         'conference_provider' => 'fixed', 'conference_url' => 'https://example.test/CANARY-LINK',
         'conference_room' => 'CANARY-ROOM', 'conference_state' => 'failed', 'conference_error' => 'CANARY-ERROR',
     ];
-    $set = [];
-    foreach ($private as $key => $value) {
-        $set[] = "`{$key}`='" . $db->real_escape_string($value) . "'";
-    }
-    $db->query("UPDATE {$prefix}appointments_bookings SET " . implode(',', $set) . " WHERE id={$id}");
+    // Stored the way the application stores them: the personal fields sealed.
+    $fixture->update($id, $private);
     $booking = $fixture->row($id);
     $link = $fixture->link($booking, 'erase');
     $client = $created['browser'];

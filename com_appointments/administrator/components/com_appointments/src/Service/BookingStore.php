@@ -15,14 +15,19 @@ use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Helper\ModifiedTime;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Advans\Component\Appointments\Administrator\Helper\Anonymiser;
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\Database\DatabaseInterface;
 use Joomla\CMS\Component\ComponentHelper;
+use Joomla\CMS\Log\Log;
 
 defined('_JEXEC') or die;
 
 final class BookingStore
 {
+    private ?BookingData $data = null;
+
     public function __construct(private DatabaseInterface $db)
     {
     }
@@ -35,6 +40,9 @@ final class BookingStore
         // Create outside the transaction. The first transactional read must be the
         // host lock, so a REPEATABLE READ snapshot cannot precede a competing commit.
         (new HostStore($db))->ensure($host, $now);
+        // Internet calendar busy times: fill their cache now, because inside the
+        // locked transaction they are only read (a cache write there could deadlock).
+        (new AvailabilityService($db))->warmCalendars($publicEvent, $start, $start->modify('+1 second'));
         $db->transactionStart();
 
         try {
@@ -47,7 +55,8 @@ final class BookingStore
                 throw new SlotTakenException();
             }
 
-            $context = (new AvailabilityService($db))->context($event, $start, $start->modify('+1 second'));
+            $this->lockCalendars($eventId);
+            $context = (new AvailabilityService($db))->context($event, $start, $start->modify('+1 second'), 0, true);
 
             if (!(new BookingGuard())->accepts($context['engine'], $start, $now, $context['busy'], $context['caps'])) {
                 throw new SlotTakenException();
@@ -61,17 +70,28 @@ final class BookingStore
                 throw new SlotTakenException();
             }
 
-            $row = (object) array_merge($invitee, [
+            $clear = array_merge($invitee, [
                 'uid' => bin2hex(random_bytes(32)), 'sequence' => 0, 'eventtype_id' => $eventId, 'host_user_id' => $host,
                 'start_utc' => $start->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s'),
                 'end_utc' => $end->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s'),
                 'state' => (int) $event['requires_approval'] === 1 ? 0 : 1,
                 'created_utc' => $time, 'modified_utc' => $time,
             ]);
-            $db->insertObject('#__appointments_bookings', $row, 'id');
+            // Reserve the identity without personal fields; both writes commit together.
+            $skeleton = (object) array_intersect_key($clear, array_flip(['uid', 'sequence', 'eventtype_id', 'host_user_id',
+                'start_utc', 'end_utc', 'state', 'created_utc', 'modified_utc']));
+            if (!$db->insertObject('#__appointments_bookings', $skeleton, 'id')) {
+                throw new \RuntimeException('The booking identity could not be stored.');
+            }
+            $clear['id'] = $skeleton->id;
+            $row = (object) $this->data()->seal($clear);
+            if (!$db->updateObject('#__appointments_bookings', $row, 'id', true)) {
+                throw new \RuntimeException('The encrypted booking could not be stored.');
+            }
             $db->transactionCommit();
+            $this->mirror('saved', $clear);
 
-            return (array) $row;
+            return $clear;
         } catch (\Throwable $e) {
             $db->transactionRollback();
 
@@ -126,7 +146,7 @@ final class BookingStore
             $this->lockHost($host);
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
             $query->select('*')->from($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . $bookingId);
-            $booking = $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc();
+            $booking = $this->open($db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null);
 
             if ($links !== null && (!$booking || !$links->verify($bookingId, 'cancel', $booking['modified_utc'], $signature))) {
                 throw new InvalidBookingLinkException();
@@ -147,8 +167,8 @@ final class BookingStore
             $booking['sequence'] = (int) $booking['sequence'] + 1;
             $booking['modified_utc'] = ModifiedTime::next($booking['modified_utc'], $now);
             $booking['cancel_reason'] = $state === 2 && $reason !== '' ? $reason : null;
-            $row = (object) ['id' => $bookingId, 'state' => $state, 'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'],
-                'cancel_reason' => $booking['cancel_reason']];
+            $row = (object) $this->data()->sealChange($booking, ['id' => $bookingId, 'state' => $state,
+                'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'cancel_reason' => $booking['cancel_reason']]);
             $db->updateObject('#__appointments_bookings', $row, 'id');
             $db->transactionCommit();
 
@@ -158,6 +178,7 @@ final class BookingStore
             throw $e;
         }
 
+        $this->mirror($state === 2 ? 'cancelled' : 'saved', $booking);
         $cleanup = $state === 2 ? $this->conference()->destroy($booking) : $booking;
 
         return $cleanup + ['_changed' => true];
@@ -170,6 +191,7 @@ final class BookingStore
         }
         $db = $this->db;
         $host = $this->bookingHost($bookingId);
+        $this->warmForBooking($bookingId, $start);
         $db->transactionStart();
 
         try {
@@ -186,7 +208,8 @@ final class BookingStore
             if (!$event || (int) $event['host_user_id'] !== $host || (int) $event['published'] !== 1) {
                 throw new SlotTakenException();
             }
-            $context = (new AvailabilityService($db))->context($event, $start, $start->modify('+1 second'), $bookingId);
+            $this->lockCalendars((int) $booking['eventtype_id']);
+            $context = (new AvailabilityService($db))->context($event, $start, $start->modify('+1 second'), $bookingId, true);
             if (!(new BookingGuard())->accepts($context['engine'], $start, $now, $context['busy'], $context['caps'])) {
                 throw new SlotTakenException();
             }
@@ -220,6 +243,8 @@ final class BookingStore
             throw $e;
         }
 
+        // Same UID, new times. A new conference link rewrites the object once more.
+        $this->mirror('saved', $booking);
         $cleared = $this->conference()->destroy($previous);
         if (!empty($cleared['_conference_missing']) || !empty($cleared['_conference_error'])) {
             return $cleared;
@@ -285,7 +310,8 @@ final class BookingStore
                     ->where($db->quoteName('id') . ' = ' . $bookingId))->execute();
             } else {
                 unset($erased['state_active']);
-                $row = (object) $erased;
+                // Every personal field is null now; sealing keeps any other one encrypted.
+                $row = (object) $this->data()->seal($erased);
                 $db->updateObject('#__appointments_bookings', $row, 'id', true);
             }
             $audit = (object) ['booking_id' => $bookingId, 'action' => $delete ? 'delete' : 'anonymise',
@@ -297,6 +323,7 @@ final class BookingStore
             throw $e;
         }
 
+        $this->mirror('erased', ['id' => $bookingId]);
         $cleanup = $this->conference()->destroy($booking);
 
         return ['changed' => true, 'notification' => $notification,
@@ -350,7 +377,8 @@ final class BookingStore
 
                 return ['changed' => false, 'guest' => null];
             }
-            $row = (object) ['id' => $bookingId, 'guest_emails' => PrivacyAddress::withoutGuest($booking['guest_emails'], (string) $address)];
+            $row = (object) $this->data()->sealChange($booking,
+                ['id' => $bookingId, 'guest_emails' => PrivacyAddress::withoutGuest($booking['guest_emails'], (string) $address)]);
             $db->updateObject('#__appointments_bookings', $row, 'id');
             $audit = (object) ['booking_id' => $bookingId, 'action' => 'remove_guest', 'path' => $path, 'actor_user_id' => null,
                 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')];
@@ -360,6 +388,12 @@ final class BookingStore
             $db->transactionRollback();
             throw $e;
         }
+
+        // The calendar copy lists the guests as attendees. It is removed first, also while the
+        // feature is off (a later switch-on must not bring the address back), and written again
+        // without the address when the feature is on.
+        $this->mirror('erased', ['id' => $bookingId]);
+        $this->mirror('saved', ['id' => $bookingId]);
 
         return ['changed' => true, 'guest' => $address];
     }
@@ -378,6 +412,66 @@ final class BookingStore
         return $host;
     }
 
+    /**
+     * Mirror a committed booking change into the internet calendar of its event
+     * type. Never throws: a calendar error must not fail a booking.
+     */
+    private function mirror(string $action, array $booking): void
+    {
+        try {
+            $team = TeamServices::fromApplication();
+
+            // Every action also runs while the feature is off: the bridge then removes the copy
+            // instead of writing it (removal needs no key).
+            $bridge = $team->bookings();
+            match ($action) {
+                'saved' => $bridge->onBookingSaved($booking),
+                'cancelled' => $bridge->onBookingCancelled($booking),
+                'erased' => $bridge->onBookingErased((int) ($booking['id'] ?? 0)),
+            };
+        } catch (\Throwable $e) {
+            // The bridge logs its own failures; this only catches a missing runtime.
+        }
+    }
+
+    /**
+     * Inside the booking transaction, after the host lock and the event type row and
+     * before any plain read: lock the internet calendars of the event type, so bookings
+     * of other hosts that share one are serialised (BookingCalendarBridge::lockForBooking()).
+     * A database error of that lock ends the transaction like one of the host lock.
+     */
+    private function lockCalendars(int $eventId): void
+    {
+        try {
+            $team = TeamServices::fromApplication();
+        } catch (\Throwable $e) {
+            return;
+        }
+
+        if ($team->enabled()) {
+            $team->bookings()->lockForBooking($eventId);
+        }
+    }
+
+    /** Fill the busy cache for a reschedule before the locked transaction reads it. */
+    private function warmForBooking(int $bookingId, \DateTimeImmutable $start): void
+    {
+        try {
+            $db = $this->db;
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select('e.*')->from($db->quoteName('#__appointments_eventtypes', 'e'))
+                ->join('INNER', $db->quoteName('#__appointments_bookings', 'b'), $db->quoteName('b.eventtype_id') . ' = ' . $db->quoteName('e.id'))
+                ->where($db->quoteName('b.id') . ' = ' . $bookingId);
+            $event = $db->setQuery($query)->loadAssoc();
+
+            if ($event) {
+                (new AvailabilityService($db))->warmCalendars($event, $start, $start->modify('+1 second'));
+            }
+        } catch (\Throwable $e) {
+            // Warming is an optimisation only.
+        }
+    }
+
     private function conference(): ConferenceService
     {
         return ConferenceService::forComponent($this->db);
@@ -389,7 +483,35 @@ final class BookingStore
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
         $query->select('*')->from($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . $bookingId);
 
-        return $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null;
+        return $this->open($db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null);
+    }
+
+    private function data(): BookingData
+    {
+        return $this->data ??= BookingData::fromApplication();
+    }
+
+    /**
+     * A booking row with its personal fields in clear. A field that cannot be
+     * decrypted (another site secret, a changed byte) is blank, and only its
+     * column name is logged: a state change, a reschedule or an erasure still
+     * works on such a row, and erasure removes it.
+     */
+    private function open(?array $row): ?array
+    {
+        if ($row === null) {
+            return null;
+        }
+
+        $failed = [];
+        $row = $this->data()->openLenient($row, $failed);
+
+        if ($failed !== []) {
+            Log::add('Appointment booking ' . (int) ($row['id'] ?? 0) . ': fields could not be decrypted (' . implode(', ', $failed) . ').',
+                Log::WARNING, 'com_appointments');
+        }
+
+        return $row;
     }
 
     public function lockedEvent(int $eventId): ?array

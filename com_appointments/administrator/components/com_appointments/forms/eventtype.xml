@@ -34,6 +34,12 @@
         <field name="retention_days" type="number" label="COM_APPOINTMENTS_EVENTTYPE_RETENTION" description="COM_APPOINTMENTS_EVENTTYPE_RETENTION_DESC" min="0" max="65535" />
         <field name="colour" type="color" label="COM_APPOINTMENTS_EVENTTYPE_COLOUR" />
     </fieldset>
+    <fieldset name="calendars" label="COM_APPOINTMENTS_TEAM_E_EVENTTYPE_FIELDSET">
+        <field name="calendar_id" type="teamcalendar" mode="write" label="COM_APPOINTMENTS_TEAM_E_EVENTTYPE_CALENDAR" description="COM_APPOINTMENTS_TEAM_E_EVENTTYPE_CALENDAR_DESC" default="" filter="integer">
+            <option value="">COM_APPOINTMENTS_TEAM_E_EVENTTYPE_NO_CALENDAR</option>
+        </field>
+        <field name="busy_calendars" type="teamcalendar" mode="busy" multiple="true" label="COM_APPOINTMENTS_TEAM_E_EVENTTYPE_BUSY" description="COM_APPOINTMENTS_TEAM_E_EVENTTYPE_BUSY_DESC" filter="intarray" />
+    </fieldset>
     <fieldset name="display" label="COM_APPOINTMENTS_EVENTTYPE_FIELDSET_DISPLAY">
         <field name="info_layout" type="list" label="COM_APPOINTMENTS_EVENTTYPE_INFO_LAYOUT" description="COM_APPOINTMENTS_EVENTTYPE_INFO_LAYOUT_DESC" default="logo" filter="cmd" validate="options">
             <option value="logo">COM_APPOINTMENTS_EVENTTYPE_INFO_LAYOUT_LOGO</option>

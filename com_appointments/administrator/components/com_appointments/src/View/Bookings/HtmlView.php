@@ -22,9 +22,15 @@ class HtmlView extends BaseHtmlView
     protected $state;
     protected $events = [];
 
+    /** Bookings of 1.3 still in clear text after the migration window. */
+    protected $unverified = 0;
+
     public function display($tpl = null)
     {
         $model = $this->getModel();
+        $user = \Joomla\CMS\Factory::getApplication()->getIdentity();
+        // An administrator's visit continues the migration (team-calendars.md, 5.10), never depending on the Scheduler.
+        $this->unverified = \Advans\Component\Appointments\Administrator\Model\DashboardModel::continueMigration();
         $this->items = $model->getItems();
         $this->pagination = $model->getPagination();
         $this->state = $model->getState();
@@ -41,6 +47,14 @@ class HtmlView extends BaseHtmlView
         $toolbar->standardButton('retry')->text(Text::_('COM_APPOINTMENTS_CONFERENCE_RETRY'))->task('bookings.retryConference')->listCheck(true);
         $toolbar->standardButton('export')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CSV'))->task('bookings.exportCsv');
         ToolbarHelper::deleteList(Text::_('COM_APPOINTMENTS_BOOKINGS_ERASE_CONFIRM'), 'bookings.erase', 'COM_APPOINTMENTS_BOOKINGS_ERASE');
+        if ($this->unverified > 0) {
+            \Joomla\CMS\Factory::getApplication()->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_E_BOOKINGS_UNVERIFIED_NOTICE', $this->unverified), 'warning');
+
+            if ($user->authorise('core.admin', 'com_appointments')) {
+                $toolbar->standardButton('encrypt')->icon('icon-lock')->text(Text::_('COM_APPOINTMENTS_TEAM_E_BOOKINGS_ENCRYPT'))->task('bookings.encrypt');
+            }
+        }
+
         $toolbar->linkButton('dashboard')->url('index.php?option=com_appointments')->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'));
 
         return parent::display($tpl);

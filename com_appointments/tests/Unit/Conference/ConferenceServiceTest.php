@@ -6,6 +6,7 @@ use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceMana
 use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceProviderInterface;
 use Advans\Component\Appointments\Administrator\Helper\Conference\MeetingRequest;
 use Advans\Component\Appointments\Administrator\Helper\Conference\MeetingResult;
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Service\ConferenceService;
 use Joomla\Database\DatabaseInterface;
@@ -31,7 +32,7 @@ final class ConferenceServiceTest extends TestCase
     protected function setUp(): void
     {
         $this->row = [
-            'id' => 7, 'eventtype_id' => 3, 'host_user_id' => 8, 'uid' => str_repeat('a', 64),
+            'id' => 7, 'eventtype_id' => 3, 'host_user_id' => 8, 'uid' => str_repeat('a', 64), 'created_utc' => '2026-10-30 09:00:00',
             'start_utc' => '2026-11-10 10:00:00', 'end_utc' => '2026-11-10 10:30:00',
             'state' => 1, 'anonymised_utc' => null, 'sequence' => 2, 'modified_utc' => '2026-11-01 10:00:00',
             'invitee_name' => 'Fixture Invitee', 'invitee_email' => 'invitee@example.test',
@@ -69,7 +70,7 @@ final class ConferenceServiceTest extends TestCase
                 throw new \RuntimeException('SQL password=credential https://example.com/private');
             }
 
-            return str_contains($this->query, 'appointments_eventtypes') ? $this->event : $this->row;
+            return str_contains($this->query, 'appointments_eventtypes') ? $this->event : ($this->row === null ? null : $this->stored($this->row));
         });
         $db->method('updateObject')->willReturnCallback(function ($table, $object, $key, $nulls) {
             if ($this->failWrite) {
@@ -94,6 +95,16 @@ final class ConferenceServiceTest extends TestCase
         });
 
         return $db;
+    }
+
+    /** The row as the database holds it: personal fields encrypted at rest (BookingData). */
+    private function stored(array $row): array
+    {
+        $data = new BookingData(new KeyProvider('unit-site-secret'));
+        $clear = array_filter(array_intersect_key($row, array_flip(BookingData::COLUMNS)),
+            static fn ($value): bool => $value !== null && !BookingData::isSealed($value));
+
+        return array_replace($row, $data->seal(array_intersect_key($row, array_flip(['id', 'eventtype_id', 'host_user_id', 'uid', 'created_utc'])) + $clear));
     }
 
     private function service(array $params = [], ?ConferenceManager $manager = null): ConferenceService

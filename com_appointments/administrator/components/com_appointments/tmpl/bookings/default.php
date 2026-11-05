@@ -78,7 +78,10 @@ $user = Factory::getApplication()->getIdentity();
                     <td><?php echo HTMLHelper::_('grid.id', $i, (int) $item->id); ?></td>
                     <td><?php echo $this->escape($item->eventtype_title); ?></td>
                     <td><a href="<?php echo Route::_('index.php?option=com_appointments&view=booking&id=' . (int) $item->id); ?>"><?php echo $this->escape($item->start_utc); ?></a></td>
-                    <td><?php echo $this->escape((string) $item->invitee_name); ?><br><?php echo $this->escape((string) $item->invitee_email); ?></td>
+                    <td><?php echo $this->escape((string) $item->invitee_name); ?><br><?php echo $this->escape((string) $item->invitee_email); ?>
+                        <?php if (!empty($item->{\Advans\Component\Appointments\Administrator\Helper\BookingData::UNVERIFIED})) : ?>
+                            <br><span class="badge bg-warning text-dark"><?php echo Text::_('COM_APPOINTMENTS_TEAM_E_BOOKING_UNVERIFIED'); ?></span>
+                        <?php endif; ?></td>
                     <td><?php echo Text::_($states[(int) $item->state]); ?>
                         <?php if ($item->conference_state === 'failed') : ?>
                             <p class="text-danger"><?php echo Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'); ?><br><?php echo $this->escape((string) $item->conference_error); ?></p>
