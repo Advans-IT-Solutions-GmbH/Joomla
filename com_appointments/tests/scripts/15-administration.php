@@ -52,9 +52,10 @@ try {
         $templateIds[] = (int) $db->insert_id;
     }
     $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+2 days')->format('Y-m-d');
-    $first = $fixture->booking($eventA, $day . ' 10:00:00', ['name' => '=1+1'])['booking'];
-    $second = $fixture->booking($eventA, $day . ' 11:00:00', ['name' => $tag . '-allowed'])['booking'];
-    $third = $fixture->booking($eventB, $day . ' 12:00:00', ['name' => $tag . '-denied', 'email' => 'other@example.test'])['booking'];
+    // The last names sort opposite to the start times, so a list that still sorts by time fails the checks below.
+    $first = $fixture->booking($eventA, $day . ' 10:00:00', ['first_name' => '=1+1', 'last_name' => 'zzz-' . $tag])['booking'];
+    $second = $fixture->booking($eventA, $day . ' 11:00:00', ['first_name' => $tag . '-allowed', 'last_name' => 'aaa-' . $tag . '-surname'])['booking'];
+    $third = $fixture->booking($eventB, $day . ' 12:00:00', ['first_name' => $tag . '-denied', 'email' => 'other@example.test'])['booking'];
     $id = (int) $first['id'];
     $db->query("UPDATE {$prefix}appointments_bookings SET state=0 WHERE id={$id}");
     $html = $listing($admin, ['filter_state' => '0']);
@@ -63,7 +64,26 @@ try {
     $html = $listing($admin, ['filter_eventtype_id' => $eventA, 'filter_search' => $tag . '-allowed', 'filter_from' => $day, 'filter_to' => $day]);
     $check($admin->status === 200 && str_contains($html, $tag . '-allowed')
         && !str_contains($html, '=1+1') && !str_contains($html, $tag . '-denied'), 'Event, UTC date and contact search filters combine');
+    $check($second['invitee_first_name'] === $tag . '-allowed' && $second['invitee_last_name'] === 'aaa-' . $tag . '-surname'
+        && $second['invitee_name'] === $tag . '-allowed aaa-' . $tag . '-surname', 'First and last name are stored separately and as the full name');
+    $html = $listing($admin, ['filter_search' => $tag . '-surname']);
+    $check($admin->status === 200 && str_contains($html, $tag . '-allowed') && !str_contains($html, '=1+1'),
+        'The contact search finds a booking by its last name');
+    $order = static function (string $html) use ($tag): ?bool {
+        $a = strpos($html, $tag . '-allowed');
+        $b = strpos($html, '=1+1');
+
+        return $a === false || $b === false ? null : $a < $b;
+    };
+    $asc = $order($listing($admin, ['filter_eventtype_id' => $eventA, 'list' => ['fullordering' => 'b.invitee_last_name ASC']]));
+    $desc = $order($listing($admin, ['filter_eventtype_id' => $eventA, 'list' => ['fullordering' => 'b.invitee_last_name DESC']]));
+    $byTime = $order($listing($admin, ['filter_eventtype_id' => $eventA, 'list' => ['fullordering' => 'b.start_utc ASC']]));
+    $check($admin->status === 200 && $asc === true && $desc === false && $byTime === false,
+        'The booking list sorts by last name in both directions, against the order of the start times');
     $csv = $export($admin, ['filter_eventtype_id' => $eventA]);
+    $check(str_contains($csv, 'invitee_name,invitee_first_name,invitee_last_name,invitee_email')
+        && str_contains($csv, $tag . '-surname'), 'CSV exports first and last name next to the full name');
+    $listing($admin, ['list' => ['fullordering' => 'b.start_utc DESC']]);
     $check($admin->status === 200 && str_starts_with($csv, 'id,eventtype_title,')
         && str_contains($csv, "'=1+1") && str_contains($csv, $tag . '-allowed') && !str_contains($csv, $tag . '-denied'),
         'CSV uses the selected scope, neutralises spreadsheet formulas and is not an HTML response');

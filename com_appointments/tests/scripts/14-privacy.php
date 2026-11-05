@@ -22,6 +22,10 @@ try {
     $secondId = (int) $two['booking']['id'];
     $otherId = (int) $other['booking']['id'];
     $db->query("UPDATE {$prefix}appointments_bookings SET custom_fields='{\"12\":\"PRIVATE-ANSWER\"}' WHERE id={$firstId}");
+    // The request address is also a guest of another person's booking, next to an address that
+    // merely contains it as a substring.
+    $db->query("UPDATE {$prefix}appointments_bookings SET guest_emails='notinvitee@example.test\nInvitee@Example.test\nbystander@example.test',"
+        . " custom_fields='{\"12\":\"OTHER-ANSWER\"}' WHERE id={$otherId}");
     require __DIR__ . '/appointments-joomla.php';
     $application->bootComponent('com_privacy');
     $plugin = $application->bootPlugin('appointments', 'privacy');
@@ -33,9 +37,21 @@ try {
     $export = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', ['subject' => $request, 'user' => null]);
     $plugin->onPrivacyExportRequest($export);
     $domains = $export->getArgument('result')[0];
-    $check(count($domains) === 1 && $domains[0]->name === 'appointments_bookings' && count($domains[0]->getItems()) === 2,
+    $check(count($domains) === 2 && $domains[0]->name === 'appointments_bookings' && count($domains[0]->getItems()) === 2,
         'Real privacy event exports all matching guest bookings, without another address or the audit domain');
-    $exported = serialize($domains);
+    $invitations = $domains[1]->getItems();
+    $fields = [];
+    foreach ($invitations[0]->getFields() as $field) {
+        $fields[$field->name] = $field->value;
+    }
+    $guestExport = serialize($domains[1]);
+    $check($domains[1]->name === 'appointments_guest_invitations' && count($invitations) === 1 && $invitations[0]->id === $otherId
+        && $fields['guest_email'] === 'Invitee@Example.test' && $fields['start_utc'] === $other['booking']['start_utc']
+        && $fields['event_title'] !== '', 'The guest domain lists the booking in which the address is a guest, with time and event type');
+    $check(!str_contains($guestExport, 'other@example.test') && !str_contains($guestExport, 'notinvitee') && !str_contains($guestExport, 'bystander')
+        && !str_contains($guestExport, 'OTHER-ANSWER') && !str_contains($guestExport, 'Fixture Invitee'),
+        'The guest domain contains nothing of the booking person or the other guests');
+    $exported = serialize($domains[0]);
     $check(str_contains($exported, 'PRIVATE-ANSWER') && str_contains($exported, 'custom_answer_12')
         && str_contains($exported, $one['booking']['uid']) && !str_contains($exported, 'other@example.test'),
         'Export contains every stored field and readable custom answers, scoped to the request address');
@@ -58,6 +74,13 @@ try {
     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => null]));
     $check($fixture->row($firstId)['invitee_email'] === null && $fixture->row($secondId)['invitee_email'] === null
         && $fixture->row($otherId)['invitee_email'] === 'other@example.test', 'Formal removal applies the common erasure to every matching booking only');
+    $otherRow = $fixture->row($otherId);
+    $check($otherRow['guest_emails'] === "notinvitee@example.test\nbystander@example.test" && $otherRow['anonymised_utc'] === null
+        && $otherRow['invitee_name'] === 'Fixture Invitee' && $otherRow['custom_fields'] !== null,
+        'Formal removal takes the address out of another person\'s guest list by exact line and keeps that booking');
+    $guestAudit = $db->query("SELECT action,path,actor_user_id FROM {$prefix}appointments_audit WHERE booking_id={$otherId}")->fetch_all(MYSQLI_ASSOC);
+    $check($guestAudit === [['action' => 'remove_guest', 'path' => 'privacy_request', 'actor_user_id' => null]],
+        'The guest removal is audited for the other booking without any address');
     $messages = AppointmentsMail::messagesSince($before);
     $check(count($messages) === 2, 'Formal future erasure sends one host-only cancellation per booking');
     foreach ($messages as $mime) {

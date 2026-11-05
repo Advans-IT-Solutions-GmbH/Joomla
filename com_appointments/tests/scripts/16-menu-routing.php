@@ -395,19 +395,27 @@ try {
 
     // A booking through the "All" menu item, then the signed links of its confirmation mail.
     $client = new AppointmentsHttp('http://localhost', 'menu-booking');
+    // Without JavaScript: the day, then the GET form of the time with its "Next" button, then the details.
     $html = $client->request('/index.php/en/' . $tag . '-all?timezone=UTC&month=' . substr($day, 0, 7) . '&day=' . $day);
-    $check($client->status === 200 && str_contains($html, 'name="booking[start]"'), 'Booking form renders on the SEF page of the menu item in "All"');
+    [$timeAction, $timeFields] = $formData($html, '//form[@id="appointment-time-form"]');
+    $timeFields['start'] = $day . ' 10:00:00';
+    $timeAction = (string) strtok(preg_replace('#^https?://[^/]+#', '', $timeAction), '#');
+    $check($timeAction === '/index.php/en/' . $tag . '-all' && ($timeFields['timezone'] ?? '') === 'UTC',
+        'The time form of the SEF page is sent to the menu item in "All" with the displayed zone: ' . $timeAction);
+    $html = $client->request($timeAction . '?' . http_build_query($timeFields));
+    $check($client->status === 200 && str_contains($html, 'name="booking[start]" value="' . $day . ' 10:00:00"'),
+        'The "Next" button of a time opens the details on the SEF page of the menu item in "All"');
     [$action, $fields] = $formData($html, '//form[contains(@class, "com-appointments-booking")]');
     $fields = array_replace($fields, [
         $client->token($html) => 1, 'consent' => 1, 'website' => '',
-        'booking[name]' => 'Fixture Invitee', 'booking[email]' => 'invitee@example.test',
+        'booking[first_name]' => 'Fixture', 'booking[last_name]' => 'Invitee', 'booking[email]' => 'invitee@example.test',
         'booking[timezone]' => 'UTC', 'booking[start]' => $day . ' 10:00:00',
     ]);
     $before = AppointmentsMail::snapshot();
     sleep(2);
     $html = $client->request(preg_replace('#^https?://[^/]+#', '', $action), $fields);
     $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$events['star']['id']} AND state IN (0,1)")->fetch_assoc();
-    $check($client->status === 200 && str_contains($html, 'Appointment received') && $booking !== null,
+    $check($client->status === 200 && preg_match('/Appointment (?:received|confirmed)/', $html) === 1 && $booking !== null,
         'A booking submitted from the SEF page reaches the confirmation page');
     if (!$booking) {
         $dump('booking submission', $client, $html);

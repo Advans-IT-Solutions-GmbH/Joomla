@@ -40,6 +40,8 @@ final class MailHtmlTest extends TestCase
         $room = 'https://example.test/room?jwt=abc';
         $this->assertSame('<p><a href="https://example.test/room?jwt=abc">Join meeting</a>.</p>' . "\n", MailHtml::textToHtml("Join meeting: $room.", [$room => 'Join meeting']));
         $this->assertSame('<p>(<a href="https://example.test/room?jwt=abc">Join meeting</a>)</p>' . "\n", MailHtml::textToHtml("(Join meeting: $room)", [$room => 'Join meeting']));
+        // French puts a space before the colon (COM_APPOINTMENTS_MAIL_LINK_LABEL "%s :"): the label still joins its link.
+        $this->assertSame('<p><a href="https://example.test/room?jwt=abc">Rejoindre</a></p>' . "\n", MailHtml::textToHtml("Rejoindre :\n$room", [$room => 'Rejoindre']));
     }
 
     public function testLabelIsEscaped(): void

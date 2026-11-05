@@ -332,6 +332,8 @@ class StructureTest
 
         $this->testScheduleReferences();
         $this->testScheduleMigration();
+        $this->testDisplayColumns();
+        $this->testNameColumns();
 
         $files = [
             'Administrator provider'  => $this->admin . '/services/provider.php',
@@ -356,11 +358,19 @@ class StructureTest
             'Install SQL'             => $this->admin . '/sql/install.mysql.utf8.sql',
             'Uninstall SQL'           => $this->admin . '/sql/uninstall.mysql.utf8.sql',
             'Schema migration'        => $this->admin . '/sql/updates/mysql/1.0.0.sql',
+            'Display migration'       => $this->admin . '/sql/updates/mysql/1.3.0.sql',
             'Access rules'            => $this->admin . '/access.xml',
             'Administrator LICENSE'   => $this->admin . '/LICENSE.txt',
             'Site provider'           => $this->site . '/services/provider.php',
             'Site event type list'    => $this->site . '/src/View/Eventtypes/HtmlView.php',
             'Site layout'             => $this->site . '/tmpl/eventtypes/default.php',
+            'Booking page layout'     => $this->site . '/tmpl/eventtype/default.php',
+            'Date and time layout'    => $this->site . '/tmpl/eventtype/default_picker.php',
+            'Details layout'          => $this->site . '/tmpl/eventtype/default_details.php',
+            'Logo column layout'      => $this->site . '/tmpl/eventtype/default_info_logo.php',
+            'Person column layout'    => $this->site . '/tmpl/eventtype/default_info_person.php',
+            'Event details layout'    => $this->site . '/tmpl/eventtype/default_info_event.php',
+            'Confirmation layout'     => $this->site . '/tmpl/booking/default.php',
             'Site LICENSE'            => $this->site . '/LICENSE.txt',
         ];
 
@@ -579,6 +589,186 @@ class StructureTest
      * happens to have, so a field added later is covered without anybody
      * remembering this.
      */
+    /**
+     * The information column of the booking page: the installed table carries its six
+     * columns with the documented defaults, and the 1.3.0 migration adds them to a table of
+     * the previous version, where every existing event type gets the company-logo layout
+     * with the title in the card.
+     */
+    private function testDisplayColumns(): void
+    {
+        $expected = [
+            'info_layout' => ['varchar(16)', 'logo'],
+            'info_logo'   => ['varchar(2048)', ''],
+            'info_photo'  => ['varchar(2048)', ''],
+            'info_name'   => ['varchar(255)', ''],
+            'info_role'   => ['varchar(255)', ''],
+            'info_title'  => ['varchar(16)', 'card'],
+        ];
+        $columns = function (string $table): array {
+            $found = [];
+            $result = $this->db->query("SHOW COLUMNS FROM {$table} WHERE Field LIKE 'info\\_%'");
+
+            while ($result && ($row = $result->fetch_assoc())) {
+                $found[$row['Field']] = [strtolower($row['Type']), (string) $row['Default'], $row['Null']];
+            }
+
+            return $found;
+        };
+        $matches = static function (array $found) use ($expected): bool {
+            foreach ($expected as $name => [$type, $default]) {
+                // MariaDB reports a string default with its quotes, MySQL without.
+                if (!isset($found[$name]) || $found[$name][0] !== $type || trim($found[$name][1], "'") !== $default || $found[$name][2] !== 'NO') {
+                    return false;
+                }
+            }
+
+            return count($found) === count($expected);
+        };
+
+        $this->test('Event types carry the information-column settings with their defaults', function () use ($columns, $matches) {
+            return $matches($columns("{$this->dbPrefix}appointments_eventtypes"));
+        });
+
+        $migration = file_get_contents($this->admin . '/sql/updates/mysql/1.3.0.sql');
+        $events = "{$this->dbPrefix}appointments_upgrade_test_eventtypes";
+
+        $this->test('Display migration adds the columns and keeps existing event types on the logo layout', function () use ($migration, $events, $columns, $matches, $expected) {
+            if ($migration === false) {
+                return false;
+            }
+
+            try {
+                $this->db->query("DROP TABLE IF EXISTS {$events}");
+                // CREATE LIKE deliberately does not copy foreign keys.
+                $this->db->query("CREATE TABLE {$events} LIKE {$this->dbPrefix}appointments_eventtypes");
+
+                foreach (array_keys($expected) as $column) {
+                    $this->db->query("ALTER TABLE {$events} DROP COLUMN {$column}");
+                }
+
+                $this->db->query(
+                    "INSERT INTO {$events} (id, alias, schedule_id, feed_token, created_utc, modified_utc)"
+                    . " VALUES (1, 'legacy-display', 1, '" . str_repeat('e', 64) . "', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                );
+                $sql = str_replace('#__appointments_', $this->dbPrefix . 'appointments_upgrade_test_', preg_replace('/^--.*$/m', '', $migration));
+
+                foreach (array_filter(array_map('trim', explode(';', $sql))) as $statement) {
+                    // The same file also migrates other tables; this test covers the event types.
+                    if (str_contains($statement, $events)) {
+                        $this->db->query($statement);
+                    }
+                }
+
+                $row = $this->db->query("SELECT info_layout, info_logo, info_name, info_title FROM {$events} WHERE id = 1")->fetch_assoc();
+
+                return $matches($columns($events)) && $row['info_layout'] === 'logo' && $row['info_logo'] === '' && $row['info_name'] === '' && $row['info_title'] === 'card';
+            } finally {
+                $this->db->query("DROP TABLE IF EXISTS {$events}");
+            }
+        });
+    }
+
+    /**
+     * First and last name: the installed bookings table carries both nullable columns after
+     * invitee_name, and the 1.3.0 migration adds them to a table of the previous version and
+     * derives them from the stored full name without changing it. Anonymised rows stay NULL,
+     * and running the derivation again changes nothing.
+     */
+    private function testNameColumns(): void
+    {
+        $columns = function (string $table): array {
+            $found = [];
+            $result = $this->db->query("SHOW COLUMNS FROM {$table} WHERE Field LIKE 'invitee\\_%name'");
+
+            while ($result && ($row = $result->fetch_assoc())) {
+                // MariaDB may report a NULL default as the text NULL.
+                $found[] = [$row['Field'], strtolower($row['Type']), $row['Null'], strtoupper((string) $row['Default']) === 'NULL' ? null : $row['Default']];
+            }
+
+            return $found;
+        };
+        $expected = [
+            ['invitee_name', 'varchar(255)', 'YES', null],
+            ['invitee_first_name', 'varchar(255)', 'YES', null],
+            ['invitee_last_name', 'varchar(255)', 'YES', null],
+        ];
+
+        $this->test('Bookings carry first and last name after the full name', function () use ($columns, $expected) {
+            return $columns("{$this->dbPrefix}appointments_bookings") === $expected;
+        });
+        $this->test('Bookings carry the nullable proof of consent', function () {
+            $found = [];
+            $result = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}appointments_bookings WHERE Field LIKE 'consent\\_%'");
+            while ($result && ($row = $result->fetch_assoc())) {
+                $found[] = [$row['Field'], strtolower($row['Type']), $row['Null']];
+            }
+
+            return $found === [['consent_utc', 'datetime', 'YES'], ['consent_version', 'char(64)', 'YES']];
+        });
+
+        $migration = file_get_contents($this->admin . '/sql/updates/mysql/1.3.0.sql');
+        $bookings = "{$this->dbPrefix}appointments_upgrade_test_bookings";
+
+        $this->test('Name migration splits existing full names without data loss and keeps anonymised rows empty', function () use ($migration, $bookings, $columns, $expected) {
+            if ($migration === false) {
+                return false;
+            }
+
+            try {
+                $this->db->query("DROP TABLE IF EXISTS {$bookings}");
+                $this->db->query("CREATE TABLE {$bookings} LIKE {$this->dbPrefix}appointments_bookings");
+                $this->db->query("ALTER TABLE {$bookings} DROP COLUMN invitee_first_name");
+                $this->db->query("ALTER TABLE {$bookings} DROP COLUMN invitee_last_name");
+                $this->db->query("ALTER TABLE {$bookings} DROP COLUMN consent_utc");
+                $this->db->query("ALTER TABLE {$bookings} DROP COLUMN consent_version");
+                $names = [1 => 'Anna Muster', 2 => '  Anna Maria  von Muster ', 3 => 'Cher', 4 => null, 5 => 'Zoë Ærø'];
+                foreach ($names as $id => $name) {
+                    $value = $name === null ? 'NULL' : "'" . $this->db->real_escape_string($name) . "'";
+                    $this->db->query("INSERT INTO {$bookings} (id, uid, eventtype_id, start_utc, end_utc, invitee_name, created_utc, modified_utc)"
+                        . " VALUES ({$id}, '" . str_repeat((string) $id, 64) . "', 1, '2026-01-0{$id} 10:00:00', '2026-01-0{$id} 11:00:00', {$value}, '2026-01-01 00:00:00', '2026-01-01 00:00:00')");
+                }
+                $sql = str_replace('#__appointments_', $this->dbPrefix . 'appointments_upgrade_test_', preg_replace('/^--.*$/m', '', $migration));
+                $statements = array_values(array_filter(array_map('trim', explode(';', $sql)), static fn (string $statement): bool => str_contains($statement, $bookings)));
+
+                foreach ($statements as $statement) {
+                    $this->db->query($statement);
+                }
+
+                // The UPDATE again, as after an interrupted update: it must not change anything.
+                foreach ($statements as $statement) {
+                    if (str_starts_with($statement, 'UPDATE')) {
+                        $this->db->query($statement);
+                    }
+                }
+
+                $rows = [];
+                $result = $this->db->query("SELECT id, invitee_name, invitee_first_name, invitee_last_name FROM {$bookings} ORDER BY id");
+                while ($row = $result->fetch_assoc()) {
+                    $rows[(int) $row['id']] = [$row['invitee_name'], $row['invitee_first_name'], $row['invitee_last_name']];
+                }
+
+                $consent = [];
+                $result = $this->db->query("SHOW COLUMNS FROM {$bookings} WHERE Field LIKE 'consent\\_%'");
+                while ($row = $result->fetch_assoc()) {
+                    $consent[] = [$row['Field'], strtolower($row['Type']), $row['Null']];
+                }
+                $unset = (int) $this->db->query("SELECT COUNT(*) AS n FROM {$bookings} WHERE consent_utc IS NOT NULL OR consent_version IS NOT NULL")->fetch_assoc()['n'];
+
+                return $columns($bookings) === $expected && $unset === 0
+                    && $consent === [['consent_utc', 'datetime', 'YES'], ['consent_version', 'char(64)', 'YES']] && $rows === [
+                    1 => ['Anna Muster', 'Anna', 'Muster'],
+                    2 => ['  Anna Maria  von Muster ', 'Anna Maria  von', 'Muster'],
+                    3 => ['Cher', 'Cher', ''],
+                    4 => [null, null, null],
+                    5 => ['Zoë Ærø', 'Zoë', 'Ærø'],
+                ];
+            } finally {
+                $this->db->query("DROP TABLE IF EXISTS {$bookings}");
+            }
+        });
+    }
+
     private function testCalendarFields(): void
     {
         $forms = glob($this->admin . '/forms/*.xml') ?: [];

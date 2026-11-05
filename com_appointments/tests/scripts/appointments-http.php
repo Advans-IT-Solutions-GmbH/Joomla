@@ -125,7 +125,7 @@ final class AppointmentsHttp
     public function bookingForm(int $event, string $start, array $details = []): array
     {
         $html = $this->request('/index.php?option=com_appointments&view=eventtype&id=' . $event
-            . '&timezone=UTC&month=' . substr($start, 0, 7) . '&day=' . substr($start, 0, 10));
+            . '&timezone=UTC&start=' . urlencode($start));
 
         if ($this->status !== 200 || !str_contains($html, 'name="booking[start]"')) {
             throw new RuntimeException('The public booking form did not render: HTTP ' . $this->status . '.');
@@ -145,8 +145,9 @@ final class AppointmentsHttp
             [
                 $this->token($html) => 1, 'rendered_at' => $hidden['rendered_at'] ?? '',
                 'form_signature' => $hidden['form_signature'] ?? '', 'website' => '', 'consent' => 1,
+        'consent_version' => $hidden['consent_version'] ?? '',
                 'booking' => array_replace([
-                    'name' => 'Fixture Invitee', 'email' => 'invitee@example.test', 'timezone' => 'UTC', 'start' => $start,
+                    'first_name' => 'Fixture', 'last_name' => 'Invitee', 'email' => 'invitee@example.test', 'timezone' => 'UTC', 'start' => $start,
                 ], $details),
             ],
         ];

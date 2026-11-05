@@ -29,7 +29,7 @@ $compare = static function (int $eventId, string $day, string $name) use ($fixtu
     @$document->loadHTML($html);
     $xpath = new DOMXPath($document);
     $actual = [];
-    foreach ($xpath->query('//input[@name="booking[start]"]') as $input) {
+    foreach ($xpath->query('//input[@type="radio"][@name="start"]') as $input) {
         $actual[] = $input->getAttribute('value');
     }
     $check($client->status === 200 && $actual === $expected, 'Real no-JavaScript slot page matches the pure engine in ' . $name);
@@ -45,11 +45,11 @@ $fragment = static function (int $eventId, string $day, string $name, array $exp
     @$document->loadHTML('<?xml encoding="utf-8"?>' . $html);
     $xpath = new DOMXPath($document);
     $actual = [];
-    foreach ($xpath->query('//input[@name="booking[start]"]') as $input) {
+    foreach ($xpath->query('//input[@type="radio"][@name="start"]') as $input) {
         $actual[] = $input->getAttribute('value');
     }
     $picker = $xpath->query('//*[@id="appointment-picker"][@data-appointments-picker]')->item(0);
-    $zone = $xpath->query('//input[@type="hidden"][@name="booking[timezone]"]')->item(0);
+    $zone = $xpath->query('//input[@type="hidden"][@name="timezone"]')->item(0);
     $check($client->status === 200 && $actual === $expected && $picker instanceof DOMElement
         && $picker->getAttribute('data-zone') === $name && $picker->getAttribute('data-has-slots') === ($expected === [] ? '0' : '1')
         && $zone instanceof DOMElement && $zone->getAttribute('value') === $name,

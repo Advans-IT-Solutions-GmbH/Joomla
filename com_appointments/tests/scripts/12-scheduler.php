@@ -43,6 +43,18 @@ try {
     $plugin = $db->query("SELECT enabled FROM {$prefix}extensions WHERE type='plugin' AND folder='task' AND element='appointments'")->fetch_assoc();
     $check($plugin && (int) $plugin['enabled'] === 1, 'Bundled Scheduler plugin is installed and enabled');
     $check(is_file('/var/www/html/plugins/task/appointments/LICENSE.txt'), 'Bundled Scheduler license is installed');
+    // The installation creates both routine tasks; the created ones really run.
+    $setParams([]);
+    foreach (['reminders', 'retention'] as $routine) {
+        $installed = $db->query("SELECT id,times_executed FROM {$prefix}scheduler_tasks WHERE type='plg_task_appointments.{$routine}' AND state=1 ORDER BY id LIMIT 1")->fetch_assoc();
+        $check($installed !== null, 'Installation created the enabled ' . $routine . ' task');
+        if ($installed) {
+            exec('cd /var/www/html && HTTP_HOST=localhost php cli/joomla.php scheduler:run --id=' . (int) $installed['id'] . ' 2>&1', $output, $exit);
+            $row = $db->query("SELECT times_executed,last_exit_code FROM {$prefix}scheduler_tasks WHERE id=" . (int) $installed['id'])->fetch_assoc();
+            $check($exit === 0 && (int) $row['times_executed'] === (int) $installed['times_executed'] + 1 && (int) $row['last_exit_code'] === 0,
+                'The ' . $routine . ' task created by the installation runs through the real Scheduler CLI');
+        }
+    }
     $event = $fixture->event();
     $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+2 days')->format('Y-m-d');
     $created = $fixture->booking($event, $day . ' 10:00:00', ['guests' => 'guest@example.test']);
