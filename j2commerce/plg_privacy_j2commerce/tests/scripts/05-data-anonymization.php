@@ -33,6 +33,16 @@ if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class))
         public ?RecordingMailerFactory $mailerFactory = null;
         public string $mailState = 'sent';
         public bool $realMail = false;
+        public bool $failMailLanguage = false;
+
+        protected function pluginLanguage(string $tag): \Joomla\CMS\Language\Language
+        {
+            if ($this->failMailLanguage) {
+                throw new \RuntimeException('Injected notification language failure');
+            }
+
+            return parent::pluginLanguage($tag);
+        }
 
         protected function lifetimeOrderIds(array $orderIds): array
         {
@@ -1063,6 +1073,15 @@ class DataAnonymizationTest
 
         $this->test('real mail path: invalid request address is reported as invalid, no mailer created',
             $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, 'not-an-address', 'de-DE') === 'invalid' && $factory->last === null);
+
+        $plugin->failMailLanguage = true;
+        try {
+            $this->test('A customer language-loading failure is reported as failed without sending mail',
+                $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE') === 'failed'
+                && $factory->last === null);
+        } finally {
+            $plugin->failMailLanguage = false;
+        }
 
         $state  = $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
         $mailer = $factory->last;

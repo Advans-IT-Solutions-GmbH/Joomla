@@ -1439,9 +1439,6 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ? $this->resolveMailLanguage($account['language'])
             : $this->customerLanguage(0, $emails);
         $retained      = $check['orders'];
-        $summary       = $this->formatRetainedOrders(
-            $retained, $check['lifetime_expired'] ?? [], $this->pluginLanguage($this->adminNotificationLanguage())
-        );
 
         // Log the deletion request: the entry names the request and the counts; its text comes
         // from the language key in the language of the person reading the User Actions Log.
@@ -1451,10 +1448,20 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             'lifetime'  => (string) \count($check['lifetime_expired'] ?? []),
         ]);
 
-        if ($user) {
-            $this->sendAdminNotification('data_deletion', $user, $summary, $username);
-        } else {
-            $this->sendAdminNotification('guest_data_deletion', new User(), $summary, $customerEmail);
+        if ($this->params->get('admin_notifications', 0)) {
+            try {
+                $summary = $this->formatRetainedOrders(
+                    $retained, $check['lifetime_expired'] ?? [], $this->pluginLanguage($this->adminNotificationLanguage())
+                );
+
+                if ($user) {
+                    $this->sendAdminNotification('data_deletion', $user, $summary, $username);
+                } else {
+                    $this->sendAdminNotification('guest_data_deletion', new User(), $summary, $customerEmail);
+                }
+            } catch (\Throwable $e) {
+                Log::add('Privacy admin notification failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            }
         }
 
         // Addresses, carts and expired orders in every J2Commerce data set (a migration keeps the
@@ -1760,9 +1767,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return 'invalid';
         }
 
-        $language = $this->pluginLanguage($languageTag);
-
         try {
+            $language = $this->pluginLanguage($languageTag);
             $mailer = $this->createMailer();
             $mailer->addRecipient($customerEmail);
             $mailer->setSubject(sprintf($language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_SUBJECT'), (string) $app->get('sitename')));
@@ -2884,10 +2890,17 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 return ['success' => false, 'message' => Text::_('PLG_PRIVACY_J2COMMERCE_ADDRESS_NOT_FOUND')];
             }
 
-            $user = $this->getApplication()->getIdentity();
             $this->logActivity('address_deleted', $userId, '', ['addressid' => (string) $addressId]);
-            $language = $this->pluginLanguage($this->adminNotificationLanguage());
-            $this->sendAdminNotification('address_deleted', $user, sprintf($language->_('PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_ADDRESS_ID'), $addressId));
+
+            if ($this->params->get('admin_notifications', 0)) {
+                try {
+                    $language = $this->pluginLanguage($this->adminNotificationLanguage());
+                    $user = $this->getApplication()->getIdentity();
+                    $this->sendAdminNotification('address_deleted', $user, sprintf($language->_('PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_ADDRESS_ID'), $addressId));
+                } catch (\Throwable $e) {
+                    Log::add('Privacy admin notification failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+                }
+            }
 
             return ['success' => true];
         } catch (\Exception $e) {

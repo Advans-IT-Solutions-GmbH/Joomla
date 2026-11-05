@@ -269,6 +269,9 @@ all three languages (subject, text and generated HTML), actual booking MIME for 
 and guest account/site preferences, and device notice MIME with published and shipped-default
 templates. Privacy tests every customer-body variant and administrator action in all three
 languages, account/address preference lookup and preservation before account pseudonymisation.
+Injected mail-language failures must not stop cleanup, change a successful address deletion into
+a failure, or escape the customer-notice failure result. Disabled administrator notices must not
+load their translations.
 AJAX Forms covers its account-template and fallback language paths. Compare account preference
 against a different request/site language; guests must use the site default, never another
 recipient's language. A translation being shipped is not evidence that a real mail was delivered.

@@ -823,6 +823,9 @@ The administrator message and the customer e-mail list the lifetime-license orde
   the default **site** language (including guests without an account), never an order or request
   language. The customer's preference is captured before other privacy plugins pseudonymise the
   account. Unsupported preferences use the site default; an unsupported site language uses en-GB.
+  Notification language-loading failures are logged without interrupting cleanup or reporting a
+  completed address deletion as failed. Disabled administrator notifications do not load mail
+  translations; failed customer notifications keep the existing warning/manual-follow-up path.
   All subjects, eight customer-body variants, three administrator actions and order-detail labels
   ship in **de-DE, en-GB and fr-FR**, even on a German-only site. These are plain-text mails, not
   separate HTML templates. The bundled system plugin only changes confirmation URLs in Joomla's
