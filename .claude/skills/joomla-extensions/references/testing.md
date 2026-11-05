@@ -273,8 +273,12 @@ AJAX Forms covers its account-template and fallback language paths. Compare acco
 against a different request/site language; guests must use the site default, never another
 recipient's language. A translation being shipped is not evidence that a real mail was delivered.
 
-The existing installer-messages CI lanes install and update in all three languages. Backend Views
-now reinstalls with each language directory present, logs in with that language and checks the
+The existing installer-messages CI lanes install and update in all three languages. The de-DE
+upgrade also seeds legacy de-CH directories and INI fixtures in the site/administrator language
+trees and an existing plugin-local language tree. It checks the real upgrade and German output
+with those directories present, then removes only its own fixtures. It does not claim that an
+update removes historical de-CH translations from an installed site. Backend Views
+reinstalls with each language directory present, logs in with that language and checks the
 HTML language, raw keys and a translated string different from the English fallback. The fixture
 uses minimal language metadata, not a full translated Joomla core pack. It tests the component's
 own translations; it does not claim that every Joomla core page is translated.
