@@ -272,6 +272,9 @@ English stays published, then check actual de-DE/fr-FR subjects and bodies again
 Privacy tests every customer-body variant and administrator action in all three
 languages, account/address preference lookup, guest/unsupported-account fallback for each
 configured site locale, and preservation before account pseudonymisation.
+Recipient lookup regressions include Unicode case-table differences, surrounding whitespace/control
+characters and sharp-s versus `ss` isolation. SQL only preselects candidates; trimmed Unicode
+lowercase equality in PHP decides the account, without full case folding.
 Injected mail-language failures must not stop cleanup, change a successful address deletion into
 a failure, or escape the customer-notice failure result. Disabled administrator notices must not
 load their translations.

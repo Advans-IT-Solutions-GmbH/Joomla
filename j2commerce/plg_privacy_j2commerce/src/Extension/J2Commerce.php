@@ -1533,7 +1533,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             if ($userId > 0) {
                 $query->where($db->quoteName('id') . ' = ' . (int) $userId);
             } elseif ($emails !== []) {
-                $query->where('LOWER(TRIM(' . $db->quoteName('email') . ')) IN (' . implode(',', $db->quote($emails)) . ')');
+                $query->where(ConsentRepository::addressPrefilter($db, $db->quoteName('email'), $emails));
             } else {
                 return $this->resolveMailLanguage('');
             }

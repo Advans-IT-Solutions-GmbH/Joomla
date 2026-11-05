@@ -1037,7 +1037,21 @@ class DataIsolationTest
                     $langPlugin->call('customerLanguage', $mailUser) === $tag
                     && $langPlugin->call('customerLanguage', 0, [strtoupper($mailAccount->email)]) === $tag);
             }
-            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET params = '
+            foreach (["\u{1E9E}", "\u{1C90}", ''] as $letter) {
+                $stored = "\t privacy-mail-" . $suffix . $letter . "@example.test \r\n";
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = '
+                    . $this->db->quote($stored) . ', params = ' . $this->db->quote(json_encode(['language' => 'fr-FR']))
+                    . ' WHERE id = ' . $mailUser)->execute();
+                $this->test('Recipient preference lookup preserves Unicode case and trim equivalence: ' . bin2hex($letter),
+                    $langPlugin->call('customerLanguage', 0, [mb_strtolower(trim($stored), 'UTF-8')]) === 'fr-FR');
+                if ($letter === "\u{1E9E}") {
+                    $distinct = str_replace("\u{00DF}", 'ss', mb_strtolower(trim($stored), 'UTF-8'));
+                    $this->test('Recipient preference lookup never equates sharp S with ss',
+                        $langPlugin->call('customerLanguage', 0, [$distinct]) === $langPlugin->call('resolveMailLanguage', ''));
+                }
+            }
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = '
+                . $this->db->quote($mailAccount->email) . ', params = '
                 . $this->db->quote(json_encode(['language' => 'it-IT'])) . ' WHERE id = ' . $mailUser)->execute();
             // This CLI suite has no application to populate Joomla's component cache.
             $components = new \ReflectionProperty(\Joomla\CMS\Component\ComponentHelper::class, 'components');
