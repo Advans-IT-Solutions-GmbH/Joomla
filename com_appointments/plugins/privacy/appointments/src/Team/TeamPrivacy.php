@@ -294,7 +294,9 @@ final class TeamPrivacy
                     preg_match_all('/[^\s:;,<>"()\[\]]*(?:@|%40)[^\s:;,<>"()\[\]]*/iu', $candidate, $found);
 
                     foreach ($found[0] as $span) {
-                        $mentioned = $mentioned || self::address($span) === $email;
+                        foreach (preg_split('/\\\\[nN]/', $span) ?: [$span] as $part) {
+                            $mentioned = $mentioned || self::address($part) === $email;
+                        }
                     }
                 }
 
@@ -316,11 +318,10 @@ final class TeamPrivacy
      */
     private static function address(string $value): string
     {
-        $value = str_replace(['\\,', '\\;', '\\\\'], [',', ';', '\\'], (string) preg_replace('/\\\\[nN]/', ' ', $value));
+        $value = str_replace(['\\,', '\\;', '\\\\'], [',', ';', '\\'], $value);
         $value = trim(rawurldecode((string) preg_replace('/^\s*mailto:/i', '', trim($value))));
-        $space = strrpos($value, ' ');
 
-        return mb_strtolower($space === false ? $value : substr($value, $space + 1), 'UTF-8');
+        return mb_strtolower($value, 'UTF-8');
     }
 
     /**

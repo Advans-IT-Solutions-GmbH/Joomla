@@ -76,6 +76,12 @@ final class AuditPrivacyRedactTest extends TestCase
         self::assertSame('SUMMARY:With [redacted] and [redacted]', TeamPrivacy::redact("SUMMARY:With jo'an@example.test and jo{an}@example.test", 'an@example.test'));
         self::assertSame('SUMMARY:Ask [redacted] and [redacted] and an@example.test',
             TeamPrivacy::redact('SUMMARY:Ask joan%40example%2Etest and jo/an@example.test and an@example.test', 'an@example.test'));
+        self::assertSame('SUMMARY:[redacted]',
+            TeamPrivacy::redact('SUMMARY:victim@example.test%20an@example.test', 'an@example.test'));
+        self::assertSame('DTSTART;TZID=[redacted]:x',
+            TeamPrivacy::redact('DTSTART;TZID=victim@example.test%20an@example.test:x', 'an@example.test'));
+        self::assertSame('', TeamPrivacy::redact(
+            "BEGIN:VEVENT\r\nSUMMARY:victim@example.test%20an@example.test\r\nEND:VEVENT", 'an@example.test'));
         self::assertStringNotContainsString('boss', $out);
     }
 
