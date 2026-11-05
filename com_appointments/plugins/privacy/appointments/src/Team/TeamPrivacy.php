@@ -159,10 +159,9 @@ final class TeamPrivacy
         $email = mb_strtolower(trim($email), 'UTF-8');
         $unfolded = preg_replace('/\r?\n[ \t]/', '', $ics) ?? '';
         $lines = [];
-
         $stack = [];
 
-        foreach (preg_split('/\r?\n/', $unfolded) ?: [] as $line) {
+        foreach (self::ownEvents(preg_split('/\r?\n/', $unfolded) ?: [], $email) as $line) {
             // Only the calendar, its events and their time zones: an alarm
             // (VALARM, with its own SUMMARY and DESCRIPTION) or any other
             // component is left out as a whole, with everything inside it.
@@ -249,6 +248,60 @@ final class TeamPrivacy
     private static function titles(array $titles): string
     {
         return implode(', ', array_map(static fn (string $title): string => htmlspecialchars($title, ENT_QUOTES, 'UTF-8'), $titles));
+    }
+
+    /**
+     * Only the VEVENTs that mention the requester's address (in any property
+     * or parameter): an object can hold a series and exceptions with other
+     * people, and those events stay out as a whole. Lines outside events
+     * (the calendar, time zones) pass.
+     *
+     * @param   string[]  $lines  Unfolded lines.
+     *
+     * @return  string[]
+     */
+    private static function ownEvents(array $lines, string $email): array
+    {
+        $kept = [];
+        $block = null;
+        $depth = 0;
+
+        foreach ($lines as $line) {
+            if ($block === null) {
+                if (preg_match('/^BEGIN:VEVENT\s*$/i', $line) === 1) {
+                    $block = [$line];
+                    $depth = 1;
+                } else {
+                    $kept[] = $line;
+                }
+
+                continue;
+            }
+
+            $block[] = $line;
+
+            if (preg_match('/^BEGIN:/i', $line) === 1) {
+                $depth++;
+            } elseif (preg_match('/^END:/i', $line) === 1 && --$depth === 0) {
+                $mentioned = false;
+
+                foreach ($block as $candidate) {
+                    preg_match_all('/[^\s:;,<>"()\[\]]*(?:@|%40)[^\s:;,<>"()\[\]]*/iu', $candidate, $found);
+
+                    foreach ($found[0] as $span) {
+                        $mentioned = $mentioned || self::address($span) === $email;
+                    }
+                }
+
+                if ($mentioned) {
+                    array_push($kept, ...$block);
+                }
+
+                $block = null;
+            }
+        }
+
+        return $kept;
     }
 
     /**
@@ -478,6 +531,9 @@ final class TeamPrivacy
 
                     continue;
                 }
+
+                // The budget holds what was really fetched, not the earlier count.
+                $used += \count($objects) - $count;
 
                 foreach ($objects as $index => $object) {
                     if (microtime(true) > $deadline) {

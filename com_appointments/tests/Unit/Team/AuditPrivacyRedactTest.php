@@ -108,15 +108,26 @@ final class AuditPrivacyRedactTest extends TestCase
 
     public function testAlarmsAndOtherComponentsAreLeftOutWhole(): void
     {
-        $out = TeamPrivacy::redact("BEGIN:VEVENT\r\nSUMMARY:Meeting\r\nBEGIN:VALARM\r\nACTION:EMAIL\r\nSUMMARY:Remind Joan about her salary\r\n"
+        $out = TeamPrivacy::redact("BEGIN:VEVENT\r\nSUMMARY:Meeting\r\nATTENDEE:mailto:an@example.test\r\nBEGIN:VALARM\r\nACTION:EMAIL\r\nSUMMARY:Remind Joan about her salary\r\n"
             . "DESCRIPTION:private\r\nEND:VALARM\r\nLOCATION:Room 2\r\nEND:VEVENT\r\nBEGIN:VTODO\r\nSUMMARY:Secret task\r\nEND:VTODO", 'an@example.test');
 
-        self::assertSame("BEGIN:VEVENT\r\nSUMMARY:Meeting\r\nLOCATION:Room 2\r\nEND:VEVENT", $out);
+        self::assertSame("BEGIN:VEVENT\r\nSUMMARY:Meeting\r\nATTENDEE:mailto:an@example.test\r\nLOCATION:Room 2\r\nEND:VEVENT", $out);
+    }
+
+    public function testOnlyTheEventsThatMentionTheRequesterAreExported(): void
+    {
+        $out = TeamPrivacy::redact("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Series\r\nATTENDEE:mailto:an@example.test\r\nEND:VEVENT\r\n"
+            . "BEGIN:VEVENT\r\nRECURRENCE-ID:20261111T090000Z\r\nSUMMARY:Exception with Joan only\r\nATTENDEE:mailto:joan@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR", 'an@example.test');
+
+        self::assertStringContainsString('SUMMARY:Series', $out);
+        self::assertStringNotContainsString('Exception', $out);
+        self::assertStringNotContainsString('RECURRENCE-ID', $out);
+        self::assertSame(1, substr_count($out, 'BEGIN:VEVENT'));
     }
 
     public function testFoldedLinesAreUnfoldedFirst(): void
     {
-        $out = TeamPrivacy::redact("BEGIN:VEVENT\r\nATTENDEE;CN=\"Long\r\n Name\":mailto:x@example.test\r\nDESCRIPTION:a\r\n b\r\nEND:VEVENT", 'an@example.test', 'other');
+        $out = TeamPrivacy::redact("BEGIN:VEVENT\r\nATTENDEE;CN=\"Long\r\n Name\":mailto:x@example.test\r\nDESCRIPTION:a\r\n b an@example.test\r\nEND:VEVENT", 'an@example.test', 'other');
 
         self::assertSame("BEGIN:VEVENT\r\nATTENDEE:other\r\nEND:VEVENT", $out);
     }

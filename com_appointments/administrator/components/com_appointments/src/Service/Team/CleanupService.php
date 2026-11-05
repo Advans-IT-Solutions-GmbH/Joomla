@@ -258,6 +258,19 @@ final class CleanupService implements CleanupServiceInterface
             $failure ??= $e;
         }
 
+        // Fail closed: without the raised epochs the deleted rows could be
+        // played back and would verify again. The rows therefore stay (revoked
+        // or suspended as far as that worked) until a repeated deletion
+        // succeeds, and the caller learns about it.
+        if ($failure !== null) {
+            $this->services->audit()->log(AuditEvent::USER_CLEANUP_STARTED, [
+                'subject_user_id' => $userId,
+                'details'         => ['reason' => 'account_deleted', 'complete' => false],
+            ]);
+
+            throw $failure;
+        }
+
         $db->transactionStart(true);
 
         try {

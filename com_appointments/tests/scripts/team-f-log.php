@@ -670,7 +670,10 @@ sleep(3);
             }
         });
 
-        $suite->test('Privacy removal deletes devices, keys, grants and activation links of a staff member', static function () use ($run, $db, $p, $tag) {
+        $teardownStub = $suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\DeviceService::class)
+            || $suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\GrantService::class);
+        $suite->test($teardownStub ? 'Privacy removal keeps the rows while their revocation cannot be recorded (fail closed)'
+            : 'Privacy removal deletes devices, keys, grants and activation links of a staff member', static function () use ($run, $db, $p, $tag, $teardownStub) {
             $db->query("INSERT INTO {$p}users (name, username, email, password, block, registerDate, params) VALUES ('F gone', '{$tag}gone', '{$tag}gone@example.test', '', 0, UTC_TIMESTAMP(), '{}')");
             $userId = (int) $db->insert_id;
             $db->query("INSERT INTO {$p}appointments_calendars (uri, title, owner_user_id, row_mac, created_utc, modified_utc) VALUES ('" . md5($tag . 'r') . "', 'F removal', 0, REPEAT(CHAR(0), 32), UTC_TIMESTAMP(), UTC_TIMESTAMP())");
@@ -697,7 +700,9 @@ sleep(3);
                 $rotation = (int) $db->query("SELECT rotation_due FROM {$p}appointments_calendars WHERE id={$calendar}")->fetch_row()[0];
                 $logged = (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_teamlog WHERE event='privacy.delete' AND subject_user_id={$userId}")->fetch_row()[0];
 
-                return $left === 0 && $rotation === 1 && $logged === 1;
+                // With the device and grant services still stubs, the epochs cannot be raised,
+                // so nothing may be deleted except the activation links.
+                return $teardownStub ? $left === 3 && $logged === 1 : $left === 0 && $rotation === 1 && $logged === 1;
             } finally {
                 foreach (['appointments_devices', 'appointments_calendar_grants', 'appointments_calendar_key_wraps', 'appointments_invitations'] as $table) {
                     $db->query("DELETE FROM {$p}{$table} WHERE user_id={$userId}");
