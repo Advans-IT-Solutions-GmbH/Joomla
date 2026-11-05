@@ -413,7 +413,12 @@ play back an older, validly signed grant, calendar, device or invitation row.
   sign-in without second factor and without lock-out); the README advises to keep it off (Joomla's
   default). Joomla core's own sign-in forms (site and administrator, including the AJAX submission of
   the login module) post `username` and `password` at the top level and therefore go through
-  `guardLogin()`; every other path is a stated residual risk.
+  `guardLogin()`, whatever option and task they name. Core has no AJAX or com_ajax sign-in. Not covered,
+  stated plainly: the API application with Basic authentication (system check warns), passkeys and
+  remember-me cookies (no password to guess), password reset and user name reminder (no sign-in;
+  Joomla's own limits). Guessing the second factor after a correct password is limited by Joomla itself
+  (com_users `mfatrycount`/`mfatrytime`, default 10 tries per hour); the system check warns when that
+  limit is switched off or above 10.
   Administrators get a mail when an account with a calendar right is locked (`accountLocked()`) and
   can lift a lock in the devices view (`login.unlocked`). If the lock-out check itself fails: the website
   sign-in fails **open** (a database error must not lock everybody out, administrators included), with a
