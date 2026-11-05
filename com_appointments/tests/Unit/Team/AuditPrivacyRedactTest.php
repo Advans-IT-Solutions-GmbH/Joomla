@@ -123,6 +123,12 @@ final class AuditPrivacyRedactTest extends TestCase
         self::assertStringNotContainsString('Exception', $out);
         self::assertStringNotContainsString('RECURRENCE-ID', $out);
         self::assertSame(1, substr_count($out, 'BEGIN:VEVENT'));
+
+        // An escaped line break before the address in the text still counts as a mention.
+        $escaped = TeamPrivacy::redact("BEGIN:VEVENT\r\nSUMMARY:Call\r\nDESCRIPTION:Contact\\nan@example.test\r\nEND:VEVENT", 'an@example.test');
+        self::assertStringContainsString('SUMMARY:Call', $escaped);
+        self::assertSame("BEGIN:VEVENT\r\nSUMMARY:[redacted]\\nan@example.test\r\nEND:VEVENT",
+            TeamPrivacy::redact("BEGIN:VEVENT\r\nSUMMARY:victim@example.test\\nan@example.test\r\nEND:VEVENT", 'an@example.test'), 'No address rides along');
     }
 
     public function testFoldedLinesAreUnfoldedFirst(): void

@@ -211,8 +211,13 @@ final class TeamPrivacy
             // Every complete span around an «@» (also percent-encoded), up to the
             // next separator, is one mailbox: decoded and compared as a whole,
             // so neither encoding nor a matching suffix lets another one through.
+            // An escaped line break inside a span separates two texts, so each
+            // part is judged on its own and no address rides along with the
+            // requester's.
             $redact = static fn (string $text): string => preg_replace_callback('/[^\s:;,<>"()\[\]]*(?:@|%40)[^\s:;,<>"()\[\]]*/iu',
-                static fn (array $match): string => self::address($match[0]) === $email ? $match[0] : '[redacted]', $text) ?? '';
+                static fn (array $match): string => implode('', array_map(
+                    static fn (string $part): string => preg_match('/@|%40/i', $part) === 1 && self::address($part) !== $email ? '[redacted]' : $part,
+                    preg_split('/(\\\\[nN])/', $match[0], -1, PREG_SPLIT_DELIM_CAPTURE) ?: [])), $text) ?? '';
             $kept = '';
 
             foreach ($params as [, $param, $paramValue]) {
@@ -305,11 +310,17 @@ final class TeamPrivacy
     }
 
     /**
-     * An address as compared: mailto: removed, percent-decoded, trimmed, lower case.
+     * An address as compared: iCalendar TEXT escapes decoded (an escaped line
+     * break before it ends the text before it), mailto: removed,
+     * percent-decoded, trimmed, lower case.
      */
     private static function address(string $value): string
     {
-        return mb_strtolower(trim(rawurldecode((string) preg_replace('/^\s*mailto:/i', '', $value))), 'UTF-8');
+        $value = str_replace(['\\,', '\\;', '\\\\'], [',', ';', '\\'], (string) preg_replace('/\\\\[nN]/', ' ', $value));
+        $value = trim(rawurldecode((string) preg_replace('/^\s*mailto:/i', '', trim($value))));
+        $space = strrpos($value, ' ');
+
+        return mb_strtolower($space === false ? $value : substr($value, $space + 1), 'UTF-8');
     }
 
     /**
