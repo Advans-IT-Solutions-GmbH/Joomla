@@ -350,6 +350,12 @@ class CalendarsController extends BaseController
             throw new \RuntimeException(Text::sprintf('JLIB_APPLICATION_ERROR_UNHELD_ID', $id), 403);
         }
 
+        // The permission is checked again at save time: an edit id held from
+        // before a permission change must not keep the right to save.
+        if (!$this->app->getIdentity()->authorise($id > 0 ? 'core.edit' : 'core.create', 'com_appointments')) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
         if ($id === 0) {
             $allowed[] = 'owner_user_id';
         }
@@ -437,6 +443,11 @@ class CalendarsController extends BaseController
 
         if ($id <= 0 || !$this->checkEditId(self::CONTEXT, $id)) {
             throw new \RuntimeException(Text::sprintf('JLIB_APPLICATION_ERROR_UNHELD_ID', $id), 403);
+        }
+
+        // Checked on every task, not only when the edit id was taken.
+        if (!$this->app->getIdentity()->authorise('core.edit', 'com_appointments')) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
         }
 
         return $id;
