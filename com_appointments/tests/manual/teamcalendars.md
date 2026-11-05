@@ -97,6 +97,10 @@ factor before the recovery key and the grants are set up, so its session holds i
 | `NOGRANT` | Internet calendars internal | none |
 | `EXT` | Internet calendars external | write on `CAL-X` |
 
+`OWNER` also needs the Joomla backend permissions to manage and create event types
+(`core.manage` and `core.create` on `com_appointments`) and `core.edit` on `E-CAL`. Do not give
+these permissions to `ADMIN` merely because it is a Super User.
+
 ### 2.3 Calendars and booking
 
 | Identifier | Settings | Content before the run |
@@ -106,7 +110,10 @@ factor before the recovery key and the grants are set up, so its session holds i
 | `CAL-X` | allows externals | `EV-6` single event |
 | `CAL-F` | no grant for anybody but `OWNER` | `EV-7` single event |
 
-- Event type `E-CAL`: target calendar `CAL-T`, host `OWNER`, otherwise as `E-A` of the main plan.
+- While signed in as `OWNER`, create `E-CAL` with target calendar `CAL-T` and host `OWNER`, otherwise
+  as `E-A` of the main plan. Verify that `OWNER` has effective write access to `CAL-T` both as the
+  event-type editor and as its host before saving; the Super User `ADMIN` has no calendar grant and
+  must not be used to bind it.
 - Recovery key created and stored offline for the duration of the run.
 - Option «Days per clean-up phase» at its default, unless a case says otherwise.
 
