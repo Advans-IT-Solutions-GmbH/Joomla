@@ -114,6 +114,25 @@ function upgrade_insert(mysqli $db, string $table, array $values): int
     return (int) $db->insert_id;
 }
 
+function upgrade_personal_matches(mixed $actual, mixed $expected, string $column): bool
+{
+    if ($actual === null || $expected === null) {
+        return $actual === $expected;
+    }
+
+    if ($column !== 'custom_fields') {
+        return $actual === $expected;
+    }
+
+    try {
+        // The 1.3.0 JSON column may normalize whitespace and object-key order.
+        return json_decode((string) $actual, true, 512, JSON_THROW_ON_ERROR)
+            == json_decode((string) $expected, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException) {
+        return false;
+    }
+}
+
 function upgrade_runtime_version(): string
 {
     $source = (string) @file_get_contents(JOOMLA_ROOT . '/libraries/src/Version.php');
@@ -425,9 +444,9 @@ function upgrade_verify(): void
             }
 
             $personalPreserved = $personalPreserved
-                && $row[$column] === $value
+                && upgrade_personal_matches($row[$column] ?? null, $value, $column)
                 && !\Advans\Component\Appointments\Administrator\Helper\BookingData::isSealed($row[$column])
-                && ($opened[$column] ?? null) === $value;
+                && upgrade_personal_matches($opened[$column] ?? null, $value, $column);
         }
         upgrade_check("$kind previous booking remains plaintext and readable during the migration window", $personalPreserved);
     }
@@ -459,7 +478,9 @@ function upgrade_verify(): void
 
         $readable = $opened !== null && !empty($opened[\Advans\Component\Appointments\Administrator\Helper\BookingData::UNVERIFIED]);
         foreach ($expected['personal'] as $column => $value) {
-            $readable = $readable && ($row[$column] ?? null) === $value && ($opened[$column] ?? null) === $value;
+            $readable = $readable
+                && upgrade_personal_matches($row[$column] ?? null, $value, $column)
+                && upgrade_personal_matches($opened[$column] ?? null, $value, $column);
         }
         upgrade_check("$kind previous booking remains readable but unverified after the migration window", $readable);
     }
