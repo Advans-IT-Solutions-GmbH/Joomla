@@ -559,7 +559,7 @@ A removal request is not refused by this plugin for retention reasons (see [Data
 - **Flexible Retention Frameworks:** Configurable retention periods (1-30 years) supporting multiple jurisdictions
 - **Multi-Jurisdictional Support:** Configurable legal basis documentation for international operations
 - **Automated Compliance Processing:** Scheduled task execution for expired data handling
-- **Internationalization:** Multi-language interface support (German de-DE, English en-GB, French fr-FR; de-CH is shipped identical to de-DE)
+- **Internationalization:** Multi-language interface support (Swiss High German de-DE, English en-GB, French fr-FR)
 - **Platform Integration:** Optional Joomla core user data inclusion in privacy exports
 
 ### Limitations
@@ -1138,6 +1138,11 @@ These options are evaluated by the deployed MyProfile overrides; see [Profile Pr
 
 ## Multi-Language Support
 
+All extensions and bundled plugins in this repository support exactly **de-DE, en-GB and fr-FR**,
+with complete key and placeholder parity. **de-DE uses Swiss High German** (`ss`, never `ß`,
+Swiss terminology and `z.B.`). No `de-CH` folders or build-generated copies are shipped.
+The shared language lint and package checks enforce this rule, including for future extensions.
+
 ### Supported Languages
 
 - • **German** - `de-DE`
@@ -1146,26 +1151,9 @@ These options are evaluated by the deployed MyProfile overrides; see [Profile Pr
 
 ### Adding New Languages
 
-**Step 1: Create language folder**
-```bash
-mkdir -p language/it-CH
-```
-
-**Step 2: Copy files**
-```bash
-cp language/en-GB/plg_privacy_j2commerce.ini language/it-CH/
-cp language/en-GB/plg_privacy_j2commerce.sys.ini language/it-CH/
-cp language/en-GB/index.html language/it-CH/
-```
-
-**Step 3: Translate**
-Open `language/it-CH/plg_privacy_j2commerce.ini` and translate all strings.
-
-**Step 4: Reinstall plugin**
-```bash
-./build.sh
-# Install ZIP in Joomla
-```
+The supported language set is repository-wide. A new locale requires a maintainer decision
+and updates to every extension and bundled plugin, the shared lint, manifests and package checks.
+See [the language conventions](../../.claude/skills/joomla-extensions/references/conventions.md#language-files).
 
 ---
 
