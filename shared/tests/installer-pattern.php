@@ -6,7 +6,7 @@
 namespace Joomla\CMS {
     final class Version
     {
-        public const MAJOR_VERSION = 6;
+        public const MAJOR_VERSION = 5;
     }
 }
 
@@ -21,7 +21,7 @@ namespace {
     define('JPATH_ROOT', $work . '/site');
     define('JPATH_SITE', JPATH_ROOT);
     define('JPATH_ADMINISTRATOR', JPATH_ROOT . '/administrator');
-    define('JPATH_PLUGINS', JPATH_ROOT . '/plugins');
+    define('JPATH_PLUGINS', str_replace('/', DIRECTORY_SEPARATOR, JPATH_ROOT . '/plugins'));
 
     require_once $root . '/shared/installer/SystemCheck.php';
     require_once $root . '/shared/installer/State.php';
@@ -103,6 +103,11 @@ namespace {
                 }
 
                 $assert(isset($files[str_replace('\\', '/', $installed . '/advansinstaller/SystemCheck.php')]), 'Shared check not installed for ' . (string) $manifest->name);
+
+                if (strtolower((string) $manifest->name) === 'plg_j2commerce_productcompare') {
+                    $mirror = str_replace('\\', '/', JPATH_PLUGINS . '/j2store/productcompare');
+                    $assert(isset($files[$mirror . '/advansinstaller/SystemCheck.php']), 'Joomla 5 mirror is missing from the guarded destinations.');
+                }
 
                 if ($definition['type'] === 'package') {
                     $manifestTarget = str_replace('\\', '/', dirname($installed) . '/' . basename($manifestFile));

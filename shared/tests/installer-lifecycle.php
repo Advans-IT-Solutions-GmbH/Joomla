@@ -17,11 +17,11 @@ namespace Joomla\CMS\Installer {
 namespace Joomla\CMS {
     final class Version
     {
-        public const MAJOR_VERSION = 6;
+        public const MAJOR_VERSION = 5;
 
         public function getShortVersion(): string
         {
-            return '6.0.0';
+            return '5.4.0';
         }
     }
 
@@ -93,7 +93,7 @@ namespace {
     define('JPATH_ROOT', $work . '/site');
     define('JPATH_SITE', JPATH_ROOT);
     define('JPATH_ADMINISTRATOR', JPATH_ROOT . '/administrator');
-    define('JPATH_PLUGINS', JPATH_ROOT . '/plugins');
+    define('JPATH_PLUGINS', str_replace('/', DIRECTORY_SEPARATOR, JPATH_ROOT . '/plugins'));
     $support = dirname(__DIR__) . '/installer';
     require_once $support . '/load.php';
 
@@ -219,6 +219,23 @@ namespace {
         $mixedShops = \Advans\Installer\SystemCheck::results('plg_osmap_j2commerce');
         $shopRows = array_values(array_filter($mixedShops['passed'], static fn(array $row): bool => $row[0] === \Joomla\CMS\Language\Text::_('ADVANS_CHECK_SHOP')));
         $assert(count($shopRows) === 1 && $shopRows[0][1] === 'com_j2commerce, com_j2store', 'Mixed-shop check hid an enabled shop or implied a shared routing priority.');
+        $productSource = $work . '/product-source';
+        $canonical = JPATH_PLUGINS . '/j2commerce/productcompare';
+        $mirror = JPATH_PLUGINS . '/j2store/productcompare';
+        foreach ([$productSource, $canonical, $mirror] as $directory) {
+            mkdir($directory, 0700, true);
+        }
+        file_put_contents($productSource . '/payload.php', '<?php echo "incoming";');
+        file_put_contents($canonical . '/custom.php', '<?php echo "canonical custom";');
+        file_put_contents($mirror . '/custom.php', '<?php echo "mirror custom";');
+        $productXml = '<extension type="plugin" group="j2commerce"><name>plg_j2commerce_productcompare</name><files><filename plugin="productcompare">payload.php</filename></files></extension>';
+        file_put_contents($productSource . '/productcompare.xml', $productXml);
+        $productFiles = \Advans\Installer\Destinations::files(simplexml_load_string($productXml), $productSource, $productSource . '/productcompare.xml');
+        require dirname(__DIR__, 2) . '/j2commerce/plg_j2commerce_productcompare/script.php';
+        $copyMirror = new \ReflectionMethod(\PlgJ2commerceProductcompareInstallerScript::class, 'copyMirrorFiles');
+        $copyMirror->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $productFiles, $mirror);
+        $assert(file_get_contents($mirror . '/payload.php') === '<?php echo "incoming";', 'Incoming mirrored payload was not copied.');
+        $assert(file_get_contents($mirror . '/custom.php') === '<?php echo "mirror custom";', 'An unlisted canonical file overwrote a mirror customization.');
         echo "PASS common lifecycle: abort, verified backup, explicit approval, retry, translated reports and refreshed state\n";
     } finally {
         $remove($work);
