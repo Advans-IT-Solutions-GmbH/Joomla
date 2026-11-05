@@ -720,23 +720,33 @@ return static function (TeamSuite $suite): void {
             return $refusedDevice && $refusedAdd && $services->devices()->authenticate($tag . 'member', $created) !== null;
         });
 
-        $suite->test($flow[7], static function () use ($browser, $page, $suite, $p, $member) {
+        $suite->test($flow[7], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page) {
+            // A session of its own: the key and factor probes above may have closed the first one's keys.
+            $browser = new TeamDBrowser($suite->base);
+            $signIn($browser, $tag . 'member', $password, $secret);
             $form = TeamDBrowser::form($page($browser), 'devices.create');
-            // Over HTTPS the key cookie carries the __Host- prefix.
-            $browser->dropCookie('appointments_keys_site');
-            $browser->dropCookie('__Host-appointments_keys_site');
 
             if ($form === null) {
+                echo '    keyless add: page answered ' . $browser->status . " without the «Add device» form\n";
+
                 return false;
             }
 
+            // Over HTTPS the key cookie carries the __Host- prefix.
+            $browser->dropCookie('appointments_keys_site');
+            $browser->dropCookie('__Host-appointments_keys_site');
+            $before = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}");
             $html = $browser->request($form['action'], $form['fields'] + ['name' => 'Locked phone', 'client' => 'davx5', 'rule' => 1], 0);
+            $noForm = !str_contains($html, 'devices.create');
+            $noPassword = !preg_match('/id="appointments-app-password"/', $html);
+            $unchanged = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $before;
 
-            // Only devices that still work count: the replay probes above are revoked.
-            return $browser->status === 423
-                && !str_contains($html, 'devices.create')
-                && !preg_match('/id="appointments-app-password"/', $html)
-                && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member} AND state <> 0") === 1;
+            if ($browser->status !== 423 || !($noForm && $noPassword && $unchanged)) {
+                echo '    keyless add: answered ' . $browser->status . ($browser->header('Location') === '' ? ' without' : ' with') . ' Location, no form '
+                    . (int) $noForm . ', no password ' . (int) $noPassword . ', unchanged ' . (int) $unchanged . "\n";
+            }
+
+            return $browser->status === 423 && $noForm && $noPassword && $unchanged;
         });
         $suite->test($flow[8], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page) {
             $browser = new TeamDBrowser($suite->base);
@@ -813,12 +823,17 @@ return static function (TeamSuite $suite): void {
             }
         }
 
-        // The mail is built on the command line, whose site address is the container's own
-        // host; the browser sends path and query of the HTTPS link to the suite's address.
-        $linkPath = $link === '' ? '' : (string) parse_url($link, PHP_URL_PATH) . '?' . (string) parse_url($link, PHP_URL_QUERY);
+        // The mail is built on the command line, whose site address and URL style differ from the
+        // suite's address: the mail must carry an HTTPS link with the token, and the browser opens
+        // the activation page with that token at the suite's address.
+        $linkPath = $link !== '' && preg_match('/token=([A-Za-z0-9_-]{43})/', $link, $t) === 1
+            ? '/index.php?option=com_appointments&view=activation&token=' . $t[1]
+            : '';
 
         if ($linkPath === '') {
             echo '    activation: no HTTPS activation link in ' . \count(AppointmentsMail::messagesSince($mailsBefore)) . " new mail(s)\n";
+        } else {
+            echo '    activation: mail link ' . (preg_replace(['/token=[^&\s]*/', '#^https://[^/]*#'], ['token=[masked]', 'https://[host]'], $link) ?? '') . "\n";
         }
 
         $activation = new TeamDBrowser($suite->base);
@@ -832,8 +847,16 @@ return static function (TeamSuite $suite): void {
             $activation->request($linkPath, null, 0);
             $location = $activation->header('Location');
 
-            if ($activation->status < 300 || $activation->status >= 400 || $location === '' || str_contains($location, 'token=')) {
-                echo '    activation: link answered ' . $activation->status . ($location === '' ? ' without' : ' with') . " Location\n";
+            // A canonical-address redirect (e.g. strict SEF routing) keeps the query; a browser follows it.
+            for ($hop = 0; $hop < 3 && \in_array($activation->status, [301, 302, 307, 308], true) && str_contains($location, 'token='); $hop++) {
+                $activation->request($location, null, 0);
+                $location = $activation->header('Location');
+            }
+
+            if ($activation->status !== 303 || $location === '' || str_contains($location, 'token=')) {
+                // Never the token itself: only where the answer points to.
+                echo '    activation: exchange answered ' . $activation->status . ' to '
+                    . (preg_replace('/token=[^&\s]*/', 'token=[masked]', $location) ?: 'no Location') . "\n";
 
                 return false;
             }
