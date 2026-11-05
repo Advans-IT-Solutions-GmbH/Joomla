@@ -385,9 +385,11 @@ function teardown(): void
     $prefix = prefix();
     $errors = [];
 
-    foreach ($state['calendars'] as $calendar) {
+    foreach ($state['calendars'] as $key => $calendar) {
         try {
             $team->calendars()->delete($state['admin'], (int) $calendar['id']);
+            unset($state['calendars'][$key]);
+            saveState($state);
         } catch (\Throwable $e) {
             $errors[] = 'Calendar delete: ' . $e->getMessage();
         }
@@ -403,22 +405,30 @@ function teardown(): void
         db()->query("DELETE FROM {$prefix}appointments_schedules WHERE id={$schedule}");
     }
 
-    foreach ($state['users'] as $user) {
+    foreach ($state['users'] as $name => $user) {
         $id = (int) $user['id'];
 
         try {
             $team->cleanup()->onUserDeleted($id);
         } catch (\Throwable $e) {
             $errors[] = 'User clean-up: ' . $e->getMessage();
+
+            continue;
         }
 
         db()->query("DELETE FROM {$prefix}user_mfa WHERE user_id={$id}");
         db()->query("DELETE FROM {$prefix}user_usergroup_map WHERE user_id={$id}");
         db()->query("DELETE FROM {$prefix}users WHERE id={$id}");
+        unset($state['users'][$name]);
+        saveState($state);
     }
 
     if (!empty($state['recovery_created'])) {
         db()->query("DELETE FROM {$prefix}appointments_keyring WHERE purpose='recovery'");
+    }
+
+    if ($errors !== []) {
+        fail(implode("\n", $errors));
     }
 
     $params = componentParams();
@@ -426,10 +436,6 @@ function teardown(): void
     setComponentParams($params);
     setDavBaseUrl('');
     setPlugins(0);
-    if ($errors !== []) {
-        fail(implode("\n", $errors));
-    }
-
     unlink(STATE_FILE);
 
     out(['teardown' => 'done']);
