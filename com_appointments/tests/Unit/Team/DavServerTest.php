@@ -466,6 +466,9 @@ final class DavServerTest extends TestCase
         self::assertStringContainsString('valid-sync-token', self::body($expired));
 
         self::assertSame(403, $this->sync($this->teamUri, 'urn:other:1')->getStatus());
+        // Never issued (ahead of the calendar, as after a restore, or malformed): refused, so the client resynchronises in full.
+        self::assertSame(403, $this->sync($this->teamUri, 'http://sabre.io/ns/sync/99')->getStatus());
+        self::assertSame(403, $this->sync($this->teamUri, 'http://sabre.io/ns/sync/abc')->getStatus());
     }
 
     public function testAListingWhoseTokenCannotBeReadIsNotDelivered(): void

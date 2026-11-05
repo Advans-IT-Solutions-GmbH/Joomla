@@ -45,6 +45,9 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
     private const COLOUR = self::NS_APPLE . 'calendar-color';
     private const ORDER = self::NS_APPLE . 'calendar-order';
 
+    /** Up to this many addresses, a metadata request reads the objects directly. */
+    private const DIRECT_READS = 50;
+
     /**
      * @var  array<int, array<string, array<string, mixed>>>  Decrypted rows of this request, per calendar and URI.
      */
@@ -248,10 +251,15 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
         }
 
         if (!$this->context->wantsCalendarData()) {
-            // ETags only (sync-collection, multiget without calendar-data): no payload, no key.
+            // ETags only (sync-collection, multiget without calendar-data): no key. A few
+            // addresses are read directly (payload unread), many through the listing, so
+            // an incremental sync never reads the whole calendar for a handful of changes.
             $wanted = array_flip($uris);
+            $objects = \count($uris) <= self::DIRECT_READS
+                ? $this->store(fn () => $this->context->services->objects->many($calendar->id, $uris))
+                : $this->store(fn () => $this->context->services->objects->listing($calendar->id));
 
-            foreach ($this->store(fn () => $this->context->services->objects->listing($calendar->id)) as $object) {
+            foreach ($objects as $object) {
                 if (isset($wanted[$object->uri])) {
                     $rows[] = $this->row($calendar, $object, false);
                 }
@@ -328,6 +336,12 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             }
 
             $token = $calendar->isFreeBusy() ? substr($token, 2) : $token;
+
+            // A token this server never issued (malformed, or ahead of the calendar, as after a
+            // restore) is refused: a full set as "added" would never report deletions.
+            if (preg_match('/^\d{1,19}$/', $token) !== 1 || (int) $token > $this->store(fn () => $this->context->services->objects->syncToken($calendar->id))) {
+                throw new InvalidSyncToken('Invalid or unknown sync token.');
+            }
         }
 
         try {
