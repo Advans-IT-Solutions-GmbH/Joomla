@@ -251,26 +251,49 @@ return static function (TeamSuite $suite): void {
 
     $superUser = (int) ($row("SELECT user_id FROM {$p}user_usergroup_map WHERE group_id = 8 ORDER BY user_id LIMIT 1")['user_id'] ?? 0);
 
-    $suite->test('B: discarding a key needs core.admin and is refused for a key row that still verifies', static function () use ($keys, $member, $owner, $refusal, $superUser) {
+    $suite->test('B: discarding a key without core.admin is refused', static function () use ($keys, $member, $owner, $refusal, $superUser) {
         return $superUser > 0
-            && $refusal(static fn () => $keys->discardUserKey($owner, $member)) === 403
-            && $refusal(static fn () => $keys->discardUserKey($superUser, $member)) === 409
-            && $keys->hasUserKey($member);
+            && $refusal(static fn () => $keys->discardUserKey($owner, $member)) === 403;
     });
 
     if ($suite->isStub(GrantService::class)) {
         $suite->pending('B: discarding a damaged key row replaces it by a reset row of the next version, deletes the wraps and raises the device epoch', 'C');
     } else {
-        $suite->test('B: discarding a damaged key row replaces it by a reset row of the next version, deletes the wraps and raises the device epoch', static function () use ($db, $keys, $member, $memberPassword, $p, $superUser) {
+        $suite->test('B: discarding a damaged key row requires the authenticated core.admin actor', static function () use ($db, $keys, $member, $memberPassword, $p, $refusal, $superUser) {
+            $application = \Joomla\CMS\Factory::getApplication();
+            $originalIdentity = $application->getIdentity();
+            $userFactory = \Joomla\CMS\Factory::getContainer()->get(\Joomla\CMS\User\UserFactoryInterface::class);
+            $guest = $originalIdentity !== null && $originalIdentity->guest ? $originalIdentity : $userFactory->loadUserById(0);
+            $admin = $userFactory->loadUserById($superUser);
+            $flip = "UPDATE {$p}appointments_user_keys SET public_key = CONCAT(LEFT(public_key, 31), CHAR(ASCII(RIGHT(public_key, 1)) ^ 1)) WHERE user_id = {$member}";
             $before = $db->query("SELECT key_version, device_epoch FROM {$p}appointments_user_keys WHERE user_id = {$member}")->fetch_row();
-            $db->query("UPDATE {$p}appointments_user_keys SET public_key = CONCAT(LEFT(public_key, 31), CHAR(ASCII(RIGHT(public_key, 1)) ^ 1)) WHERE user_id = {$member}");
-            $keys->discardUserKey($superUser, $member);
-            $status = $keys->userKeyStatus($member);
-            $replaced = $status['status'] === 'reset' && $status['version'] > (int) $before[0] && $status['device_epoch'] > (int) $before[1]
-                && (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendar_key_wraps WHERE user_id = {$member}")->fetch_row()[0] === 0;
-            $again = $keys->createUserKey($member, $memberPassword);
 
-            return $replaced && $again->userKeyVersion() > $status['version'] && $keys->userKeyStatus($member)['device_epoch'] === $status['device_epoch'];
+            try {
+                $application->setIdentity($guest);
+                $db->query($flip);
+                $guestRefused = $refusal(static fn () => $keys->discardUserKey($superUser, $member)) === 403;
+                $application->setIdentity($userFactory->loadUserById($owner));
+                $impersonationRefused = $refusal(static fn () => $keys->discardUserKey($superUser, $member)) === 403;
+                $stillDamaged = $keys->userKeyStatus($member)['status'] === 'tampered';
+                $db->query($flip);
+                $application->setIdentity($admin);
+                $adminRefusedForValidRow = $refusal(static fn () => $keys->discardUserKey($superUser, $member)) === 409;
+
+                $db->query($flip);
+                $keys->discardUserKey($superUser, $member);
+                $status = $keys->userKeyStatus($member);
+                $replaced = $status['status'] === 'reset' && $status['version'] > (int) $before[0] && $status['device_epoch'] > (int) $before[1]
+                    && (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendar_key_wraps WHERE user_id = {$member}")->fetch_row()[0] === 0;
+                $again = $keys->createUserKey($member, $memberPassword);
+
+                return $guestRefused && $impersonationRefused && $stillDamaged && $adminRefusedForValidRow && $replaced
+                    && $again->userKeyVersion() > $status['version'] && $keys->userKeyStatus($member)['device_epoch'] === $status['device_epoch'];
+            } finally {
+                if ($keys->userKeyStatus($member)['status'] === 'tampered') {
+                    $db->query($flip);
+                }
+                $application->setIdentity($originalIdentity ?? $guest);
+            }
         });
     }
 
@@ -349,6 +372,33 @@ return static function (TeamSuite $suite): void {
                 && $memberRing !== null && $memberRing->current()->version() === 2
                 && $recovered !== null && $recovered->current()->version() === 2;
         });
+
+        $suite->test('B: rotation after a revoked holder opened the old key never returns the new key to that requester', static function () use ($keys, $member, $memberPassword, $owner, $grant, $refusal, &$ownerKeys, &$st) {
+            $staleRing = $keys->openKeyring($st['calendar'], $ownerKeys);
+
+            if ($staleRing === null) {
+                return false;
+            }
+
+            $grant($owner, 4, TeamStates::GRANT_SUSPENDED);
+            $application = \Joomla\CMS\Factory::getApplication();
+            $originalIdentity = $application->getIdentity();
+            $userFactory = \Joomla\CMS\Factory::getContainer()->get(\Joomla\CMS\User\UserFactoryInterface::class);
+            $ownerIdentity = $userFactory->loadUserById($owner);
+
+            try {
+                $application->setIdentity($ownerIdentity);
+                $rejected = $refusal(static fn () => $keys->rotateCalendarKey($staleRing)) === 409;
+            } finally {
+                $application->setIdentity($originalIdentity ?? $userFactory->loadUserById(0));
+            }
+
+            $memberKeys = $keys->unlockWithPassword($member, $memberPassword);
+            $memberRing = $memberKeys === null ? null : $keys->openKeyring($st['calendar'], $memberKeys);
+
+            return $rejected && $memberRing !== null && $memberRing->current()->version() === 3
+                && $keys->openKeyring($st['calendar'], $ownerKeys) === null;
+        });
     }
 
     // ------------------------------------------------------------------
@@ -404,6 +454,8 @@ return static function (TeamSuite $suite): void {
             'code' => teamBTotp($totpKey, time()), $http->token($captive) => 1,
         ]);
         $passed = teamBSession($db, $p, $member);
+        $escrow = $passed?->get('com_appointments.team_keys.site');
+        $escrow = \is_object($escrow) ? (array) $escrow : $escrow;
         $escrowCookie = str_contains((string) @file_get_contents(teamBCookieJar($http)), 'appointments_keys_');
 
         echo '  Joomla session after password: mfa_checked=' . var_export($pending?->get('com_users.mfa_checked'), true)
@@ -413,31 +465,37 @@ return static function (TeamSuite $suite): void {
 
         return $pending !== null && (int) $pending->get('com_users.mfa_checked', 0) === 0
             && $passed !== null && (int) $passed->get('com_users.mfa_checked', 0) === 1
+            && \is_array($escrow) && (int) ($escrow['mb'] ?? -1) === 0
             // Without HTTPS the key session keeps nothing: no escrow, no cookie.
             && ($https || ($pending->get('com_appointments.team_keys.site') === null && !$escrowCookie));
     });
 
-    $suite->test('B: the factor proof needs a counting method used after the sign-in and no backup or e-mail code used since', static function () use ($db, $p, $member, $services) {
+    $suite->test('B: session MFA proof rejects backup and e-mail factors, including same-second use', static function () use ($db, $p, $member, $services) {
         // Joomla ignores MFA records with empty options, so the codes are real.
         $db->query("INSERT INTO {$p}user_mfa (user_id, title, method, `default`, options, created_on) VALUES ({$member}, 'B codes', 'backupcodes', 0, '[\"40517342\",\"83610277\"]', UTC_TIMESTAMP())");
+        $db->query("INSERT INTO {$p}user_mfa (user_id, title, method, `default`, options, created_on) VALUES ({$member}, 'B email', 'email', 0, '{}', UTC_TIMESTAMP())");
         $session = new \Advans\Component\Appointments\Administrator\Service\Team\KeySession($services);
         $snapshot = new \ReflectionMethod($session, 'factorSnapshot');
-        $counting = new \ReflectionMethod($session, 'countingSnapshot');
-        $usedSince = new \ReflectionMethod($session, 'countingFactorUsedSince');
+        $usedSince = new \ReflectionMethod($session, 'nonCountingFactorUsedSince');
         $atSignIn = $snapshot->invoke($session, $member);
-        $countingAtSignIn = $counting->invoke($session, $member);
-        // Before any counting factor was used after the sign-in, nothing is proven.
-        $notYet = !$usedSince->invoke($session, $member, $countingAtSignIn, time() - 5);
-        // This session passed with TOTP: the counting record is stamped.
-        $db->query("UPDATE {$p}user_mfa SET last_used = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 1 SECOND) WHERE user_id = {$member} AND method = 'totp'");
+        $signedInAt = time();
+        $notYet = !$usedSince->invoke($session, $member, $signedInAt);
+        // A TOTP update in any session cannot by itself prove this session's factor.
+        $db->query("UPDATE {$p}user_mfa SET last_used = UTC_TIMESTAMP() WHERE user_id = {$member} AND method = 'totp'");
         $withTotp = $snapshot->invoke($session, $member);
-        $totpProven = $usedSince->invoke($session, $member, $countingAtSignIn, time() - 5);
-        // A backup code instead: the backup code record is stamped.
-        $db->query("UPDATE {$p}user_mfa SET last_used = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 2 SECOND) WHERE user_id = {$member} AND method = 'backupcodes'");
-        $withBackup = $snapshot->invoke($session, $member);
-        $db->query("DELETE FROM {$p}user_mfa WHERE user_id = {$member} AND method = 'backupcodes'");
+        $totpNotCountedAsExcluded = !$usedSince->invoke($session, $member, $signedInAt);
+        // A backup or e-mail code used in the sign-in second still fails closed.
+        $stamp = gmdate('Y-m-d H:i:s', $signedInAt);
+        $db->query("UPDATE {$p}user_mfa SET last_used = '{$stamp}' WHERE user_id = {$member} AND method = 'backupcodes'");
+        $backupSnapshot = $snapshot->invoke($session, $member);
+        $backupRejected = $usedSince->invoke($session, $member, $signedInAt);
+        $db->query("UPDATE {$p}user_mfa SET last_used = NULL WHERE user_id = {$member} AND method = 'backupcodes'");
+        $db->query("UPDATE {$p}user_mfa SET last_used = '{$stamp}' WHERE user_id = {$member} AND method = 'email'");
+        $emailRejected = $usedSince->invoke($session, $member, $signedInAt);
+        $db->query("DELETE FROM {$p}user_mfa WHERE user_id = {$member} AND method IN ('backupcodes', 'email')");
 
-        return $notYet && $totpProven && hash_equals($atSignIn, $withTotp) && !hash_equals($atSignIn, $withBackup);
+        return $notYet && $totpNotCountedAsExcluded && hash_equals($atSignIn, $withTotp)
+            && !hash_equals($atSignIn, $backupSnapshot) && $backupRejected && $emailRejected;
     });
 
     if (!str_starts_with($suite->base, 'https://')) {

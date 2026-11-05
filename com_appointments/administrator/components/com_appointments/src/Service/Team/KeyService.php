@@ -434,10 +434,14 @@ final class KeyService implements KeyServiceInterface
     public function discardUserKey(int $actorUserId, int $userId): void
     {
         $actor = $actorUserId > 0 ? Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById($actorUserId) : null;
-        $identity = Factory::getApplication()->getIdentity();
+        $application = Factory::getApplication();
+        $identity = $application->getIdentity();
+        $isCli = $application->isClient('cli');
+        $authenticatedActor = $identity !== null && !$identity->guest && (int) $identity->id === $actorUserId;
 
         if ($actor === null || $actor->guest || !$actor->authorise('core.admin', 'com_appointments')
-            || ($identity !== null && !$identity->guest && (int) $identity->id !== $actorUserId)) {
+            || (!$isCli && !$authenticatedActor)
+            || ($isCli && $identity !== null && !$identity->guest && !$authenticatedActor)) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NOT_ALLOWED', 403);
         }
 
@@ -802,7 +806,15 @@ final class KeyService implements KeyServiceInterface
      */
     public function rotateCalendarKey(CalendarKeyring $keyring): CalendarKeyring
     {
-        $rotated = $this->rotate($keyring, null);
+        $application = Factory::getApplication();
+        $identity = $application->getIdentity();
+        $requesterUserId = $identity !== null && !$identity->guest ? (int) $identity->id : null;
+
+        if ($requesterUserId === null && !$application->isClient('cli')) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_NOT_ALLOWED', 403);
+        }
+
+        $rotated = $this->rotate($keyring, $requesterUserId);
 
         if ($rotated === null) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_B_ERROR_KEY_CHANGED', 409);
