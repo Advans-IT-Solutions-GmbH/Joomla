@@ -28,39 +28,11 @@ final class TimingIndexTest extends TestCase
         self::sabre();
     }
 
-    /**
-     * The bundled, prefixed sabre/vobject once work package A ships it; until then
-     * the Composer dev copy, aliased to the prefixed names the code uses.
-     */
+    /** The bundled, namespace-prefixed sabre/vobject (lib/), as on a site. */
     public static function sabre(): void
     {
-        if (VendorAutoloader::register()) {
-            return;
-        }
-
-        static $registered = false;
-
-        if ($registered) {
-            return;
-        }
-
-        $registered = true;
-        spl_autoload_register(static function (string $class): void {
-            if (!str_starts_with($class, VendorAutoloader::PREFIX)) {
-                return;
-            }
-
-            $original = substr($class, strlen(VendorAutoloader::PREFIX));
-
-            if (class_exists($original) || interface_exists($original) || trait_exists($original)) {
-                class_alias($original, $class);
-            }
-        });
-
-        // `instanceof` and `catch` never autoload: alias the classes they name up front.
-        foreach (['Component', 'Property', 'Component\\VCalendar', 'Component\\VEvent', 'Recur\\NoInstancesException',
-            'Recur\\MaxInstancesExceededException'] as $name) {
-            class_exists(VendorAutoloader::PREFIX . 'Sabre\\VObject\\' . $name);
+        if (!VendorAutoloader::register()) {
+            throw new \RuntimeException('The bundled calendar library is missing.');
         }
     }
 
