@@ -25,6 +25,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
     protected $minimumJoomla = '5.4';
     protected $minimumPhp = '8.1';
 
+    private bool $hasExistingAppointmentsTables = false;
+
     /**
      * The plugins this package bundles: group => [element, enabled on first install].
      * The team calendar plugins (CalDAV endpoint, key handling at sign-in) stay
@@ -35,6 +37,44 @@ class Com_appointmentsInstallerScript extends InstallerScript
         'privacy' => ['appointments', true],
         'system'  => ['appointmentsdav', false],
         'user'    => ['appointments', false],
+    ];
+
+    private const APPOINTMENT_TABLES = [
+        'eventtype_calendars',
+        'auth_failures',
+        'teamlog_head',
+        'teamlog',
+        'invitations',
+        'device_calendars',
+        'devices',
+        'calendar_busy',
+        'calendar_changes',
+        'calendar_objects',
+        'calendar_key_wraps',
+        'calendar_grants',
+        'calendar_keys',
+        'calendars',
+        'user_keys',
+        'keyring',
+        'ratelimit',
+        'audit',
+        'templates',
+        'fields',
+        'bookings',
+        'blocked',
+        'eventtypes',
+        'hosts',
+        'schedule_rules',
+        'schedules',
+    ];
+
+    private const SCHEDULER_TASK_TYPES = [
+        'plg_task_appointments.reminders',
+        'plg_task_appointments.retention',
+        'plg_task_appointments.teamcleanup',
+        'plg_task_appointments.teamlog',
+        'plg_task_appointments.teaminvitations',
+        'plg_task_appointments.teamretention',
     ];
 
     /**
@@ -69,6 +109,13 @@ class Com_appointmentsInstallerScript extends InstallerScript
         if ($type === 'install' || $type === 'discover_install') {
             $db         = Factory::getContainer()->get(DatabaseInterface::class);
             $serverType = method_exists($db, 'getServerType') ? $db->getServerType() : 'mysql';
+            $prefix = $db->getPrefix() . 'appointments_';
+            foreach ($db->getTableList() as $table) {
+                if (str_starts_with($table, $prefix)) {
+                    $this->hasExistingAppointmentsTables = true;
+                    break;
+                }
+            }
 
             if ($serverType !== 'mysql') {
                 Factory::getApplication()->enqueueMessage(
@@ -113,7 +160,12 @@ class Com_appointmentsInstallerScript extends InstallerScript
         // A fresh installation has fresh tables, so an epoch anchor left behind by
         // an earlier installation would close the new calendars and users.
         if ($type === 'install') {
-            $this->removeEpochAnchor();
+            if ($this->hasExistingAppointmentsTables) {
+                $this->restoreRetainedEpochAnchor();
+            } else {
+                $this->removeEpochAnchor();
+                $this->removeRetainedEpochAnchor();
+            }
         }
 
         $this->ensureUpdateSite();
@@ -160,9 +212,17 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
     public function uninstall($parent)
     {
-        $this->removeEpochAnchor();
-
         $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $params = $this->componentParams($db, 'com_appointments') ?? [];
+        $deleteData = ($params['uninstall_data_action'] ?? '') === 'delete';
+
+        if ($deleteData) {
+            $this->removeEpochAnchor();
+            $this->removeRetainedEpochAnchor();
+        } else {
+            $this->preserveEpochAnchor();
+        }
+
         foreach (self::BUNDLED_PLUGINS as $group => [$element]) {
             $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
                 ->from($db->quoteName('#__extensions'))
@@ -190,8 +250,17 @@ class Com_appointmentsInstallerScript extends InstallerScript
             }
         }
         $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__scheduler_tasks'))
-            ->where($db->quoteName('type') . ' IN (' . $db->quote('plg_task_appointments.reminders')
-                . ',' . $db->quote('plg_task_appointments.retention') . ')'))->execute();
+            ->whereIn($db->quoteName('type'), self::SCHEDULER_TASK_TYPES, ParameterType::STRING))->execute();
+
+        if ($deleteData) {
+            foreach (self::APPOINTMENT_TABLES as $table) {
+                $db->setQuery('DROP TABLE IF EXISTS ' . $db->quoteName('#__appointments_' . $table))->execute();
+            }
+        } else {
+            $app = Factory::getApplication();
+            $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
+            $app->enqueueMessage(Text::_('COM_APPOINTMENTS_UNINSTALL_DATA_RETAINED'), 'warning');
+        }
 
         return true;
     }
@@ -206,6 +275,70 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
         foreach (glob($folder . '/epochs.php*') ?: [] as $file) {
             if (is_file($file) && !@unlink($file)) {
+                Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_ANCHOR_NOT_REMOVED'), 'warning');
+            }
+        }
+    }
+
+    private function retainedEpochAnchorPath(): string
+    {
+        return JPATH_ADMINISTRATOR . '/components/com_appointments-data/epochs.php';
+    }
+
+    private function preserveEpochAnchor(): void
+    {
+        $source = JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php';
+
+        if (!is_file($source)) {
+            return;
+        }
+
+        $destination = $this->retainedEpochAnchorPath();
+
+        if (is_file($destination)) {
+            throw new \RuntimeException('A retained Appointments epoch anchor already exists.');
+        }
+
+        if (!Folder::create(dirname($destination)) || !File::copy($source, $destination)) {
+            throw new \RuntimeException('The Appointments epoch anchor could not be preserved.');
+        }
+
+        if (!File::delete($source)) {
+            File::delete($destination);
+            throw new \RuntimeException('The Appointments epoch anchor could not be moved.');
+        }
+    }
+
+    private function restoreRetainedEpochAnchor(): void
+    {
+        $source = $this->retainedEpochAnchorPath();
+
+        if (!is_file($source)) {
+            return;
+        }
+
+        $destination = JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php';
+
+        if (is_file($destination)) {
+            throw new \RuntimeException('Both installed and retained Appointments epoch anchors exist.');
+        }
+
+        if (!Folder::create(dirname($destination)) || !File::copy($source, $destination)) {
+            throw new \RuntimeException('The retained Appointments epoch anchor could not be restored.');
+        }
+
+        if (!File::delete($source)) {
+            File::delete($destination);
+            throw new \RuntimeException('The retained Appointments epoch anchor could not be moved back.');
+        }
+    }
+
+    private function removeRetainedEpochAnchor(): void
+    {
+        $path = $this->retainedEpochAnchorPath();
+
+        foreach (glob($path . '*') ?: [] as $file) {
+            if (is_file($file) && !File::delete($file)) {
                 Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_ANCHOR_NOT_REMOVED'), 'warning');
             }
         }

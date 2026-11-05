@@ -1171,8 +1171,47 @@ different capabilities and have their own rotation/configuration paths.
 
 ## Uninstall
 
-Uninstall through **System → Manage → Extensions**. This removes the component files and drops
-every table it created, including all stored bookings. Export what you still need first.
+Before uninstalling, open **Components → Appointments → Options → Before uninstalling** and
+explicitly choose whether to keep or delete the component's data. If no choice has been made, the
+uninstaller keeps every `#__appointments_*` table and reports this in the administrator message.
+Because Joomla's uninstaller is not interactive, this choice must be saved before opening
+**System → Manage → Extensions**. To delete data after an uninstall that kept it, reinstall the
+component, choose **Delete all Appointments data**, and uninstall again.
+
+#### Export and restore backup
+
+Export individual bookings as ICS from the booking list and bookings as CSV from the bookings
+view. Internet calendars can be synchronised or exported to ICS by a CalDAV client before removal.
+These readable exports do not contain the component configuration, calendar permissions, device
+credentials, key wraps, or audit history and are not a system backup.
+
+For a complete recovery backup, capture the complete Joomla database and all Joomla files at the
+same point in time. Include `configuration.php` and preserve its original `$secret` exactly; the
+encrypted data cannot be recovered with a newly generated site secret. Keep the Internet calendar
+recovery key (shown only once) offline with the separately protected recovery material; it is not
+stored in Joomla. Restrict access to the backup because it contains personal data and secrets.
+
+Verify the backup before deleting component data:
+
+1. Restore the database and all files to an isolated test installation, never over the live site.
+   Keep the original `$secret`, and point the restored `configuration.php` only at the isolated
+   database and test URL.
+2. Disable outbound mail and Scheduler execution in the test installation until the restore has
+   been checked, so restored tasks cannot contact invitees or alter retained data unexpectedly.
+3. Sign in with an authorised calendar user and verify existing encrypted bookings and calendars
+   are readable. Use the offline recovery key where needed.
+4. Verify that a booking can be exported as ICS and bookings as CSV, and check that the Scheduler
+   tasks and calendar access work. Do not copy real data or credentials into a public report.
+5. If any check fails, treat the backup as unverified and do not delete the live component data.
+
+Only after a successful restore and any needed readable exports should you select **Delete all
+Appointments data** and uninstall.
+
+The uninstaller always removes the bundled plugins, their Scheduler tasks and the component files.
+It does not remove the Joomla user groups, access level, or MFA group settings created for Internet
+calendars; review these separately if they are no longer used. When data is kept, the replay-
+protection epoch anchor is kept outside the component directory and restored on reinstallation;
+when data is deleted, that anchor is deleted too.
 
 ## Development
 

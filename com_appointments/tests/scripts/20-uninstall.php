@@ -42,6 +42,15 @@ class UninstallTest
         'appointments_eventtype_calendars',
     ];
 
+    private const TASK_TYPES = [
+        'plg_task_appointments.reminders',
+        'plg_task_appointments.retention',
+        'plg_task_appointments.teamcleanup',
+        'plg_task_appointments.teamlog',
+        'plg_task_appointments.teaminvitations',
+        'plg_task_appointments.teamretention',
+    ];
+
     public function __construct()
     {
         require '/var/www/html/configuration.php';
@@ -54,46 +63,126 @@ class UninstallTest
     {
         echo "=== Uninstall Tests ===\n\n";
 
-        $result = $this->db->query("SELECT extension_id FROM {$this->dbPrefix}extensions WHERE element = 'com_appointments' AND type = 'component'");
-        $row = $result ? $result->fetch_assoc() : null;
-        $extensionId = $row ? (int) $row['extension_id'] : 0;
+        $extensionId = $this->extensionId();
 
         $this->test('Extension ID found before uninstall', function () use ($extensionId) {
             return $extensionId > 0;
         });
-        foreach (['reminders', 'retention'] as $routine) {
-            $time = gmdate('Y-m-d H:i:s');
-            $this->db->query("INSERT INTO {$this->dbPrefix}scheduler_tasks (title,type,execution_rules,cron_rules,state,params,created,created_by) VALUES ('Appointments removal test','plg_task_appointments.{$routine}','{\"rule-type\":\"manual\"}','{\"type\":\"manual\",\"exp\":\"\"}',1,'{}','{$time}',0)");
+
+        $this->setUninstallChoice(null);
+        $now = gmdate('Y-m-d H:i:s');
+        $marker = 'uninstall-retained-' . bin2hex(random_bytes(6));
+        $this->db->query(
+            "INSERT INTO {$this->dbPrefix}appointments_schedules (title, timezone, owner_user_id, created_utc, modified_utc)"
+            . " VALUES ('{$marker}', 'UTC', 0, '{$now}', '{$now}')"
+        );
+        $anchorPath = '/var/www/html/administrator/components/com_appointments/data/epochs.php';
+        $anchorContent = is_file($anchorPath) ? file_get_contents($anchorPath) : null;
+        if ($anchorContent === null) {
+            if (!is_dir(dirname($anchorPath)) && !mkdir(dirname($anchorPath), 0755, true)) {
+                throw new \RuntimeException('Could not create the epoch anchor test directory.');
+            }
+            $anchorContent = "Appointments uninstall test anchor\n";
+            if (file_put_contents($anchorPath, $anchorContent) !== strlen($anchorContent)) {
+                throw new \RuntimeException('Could not create the epoch anchor test fixture.');
+            }
         }
+        $this->insertSchedulerTasks();
 
         $output = [];
         $exitCode = 0;
         exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $extensionId --no-interaction 2>&1", $output, $exitCode);
-
         $this->test('Uninstall command executed', function () use ($exitCode) {
             return $exitCode === 0;
         });
 
-        $this->test('Component removed from #__extensions', function () {
-            $result = $this->db->query("SELECT COUNT(*) as cnt FROM {$this->dbPrefix}extensions WHERE element = 'com_appointments'");
+        $this->test('Component registration is removed before the preservation reinstall', function () {
+            return $this->extensionId() === 0;
+        });
+
+        $this->test('No uninstall choice keeps every Appointments table and its data', function () use ($marker) {
+            foreach (self::TABLES as $table) {
+                $result = $this->db->query("SHOW TABLES LIKE '{$this->dbPrefix}{$table}'");
+                if (!$result || $result->num_rows !== 1) {
+                    return false;
+                }
+            }
+            $result = $this->db->query(
+                "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}appointments_schedules WHERE title = '{$marker}'"
+            );
             $row = $result ? $result->fetch_assoc() : null;
+
+            return $row && (int) $row['cnt'] === 1;
+        });
+
+        $this->test('All six Appointments Scheduler task types are removed', function () {
+            $types = "'" . implode("','", self::TASK_TYPES) . "'";
+            $result = $this->db->query(
+                "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}scheduler_tasks WHERE type IN ({$types})"
+            );
+            $row = $result ? $result->fetch_assoc() : null;
+
             return $row && (int) $row['cnt'] === 0;
         });
 
-        $this->test('Administrator files removed', function () {
-            return !is_dir('/var/www/html/administrator/components/com_appointments');
+        $retainedAnchor = '/var/www/html/administrator/components/com_appointments-data/epochs.php';
+        $this->test('Epoch anchor is preserved outside the component directory', function () use ($retainedAnchor, $anchorContent) {
+            return is_file($retainedAnchor) && file_get_contents($retainedAnchor) === $anchorContent;
         });
 
-        $this->test('Site files removed', function () {
-            return !is_dir('/var/www/html/components/com_appointments');
+        $output = [];
+        $exitCode = 0;
+        exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/tmp/extension.zip --no-interaction 2>&1', $output, $exitCode);
+        $this->test('Component can be reinstalled with retained data', function () use ($exitCode, $anchorPath, $anchorContent) {
+            return $exitCode === 0 && $this->extensionId() > 0
+                && is_file($anchorPath) && file_get_contents($anchorPath) === $anchorContent;
         });
-        $this->test('Bundled Scheduler plugin and configured routines removed', function () {
-            $result = $this->db->query("SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}extensions WHERE element='appointments' AND type='plugin' AND folder='task'");
-            $plugins = $result ? $result->fetch_assoc() : null;
-            $result = $this->db->query("SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}scheduler_tasks WHERE type IN ('plg_task_appointments.reminders','plg_task_appointments.retention')");
-            $tasks = $result ? $result->fetch_assoc() : null;
-            return $plugins && $tasks && (int) $plugins['cnt'] === 0 && (int) $tasks['cnt'] === 0
-                && !is_dir('/var/www/html/plugins/task/appointments');
+
+        $deleteExtensionId = $this->extensionId();
+        $this->setUninstallChoice('delete');
+        $this->insertSchedulerTasks();
+        $output = [];
+        $exitCode = 0;
+        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $deleteExtensionId --no-interaction 2>&1", $output, $exitCode);
+        $this->test('Uninstall command with explicit delete choice executed', function () use ($exitCode) {
+            return $exitCode === 0;
+        });
+
+        $this->test('Explicit delete choice removes all Appointments tables', function () {
+            foreach (self::TABLES as $table) {
+                $result = $this->db->query("SHOW TABLES LIKE '{$this->dbPrefix}{$table}'");
+                if (!$result || $result->num_rows !== 0) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+
+        $this->test('Explicit delete choice removes the retained epoch anchor and all task types', function () use ($retainedAnchor) {
+            $types = "'" . implode("','", self::TASK_TYPES) . "'";
+            $result = $this->db->query(
+                "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}scheduler_tasks WHERE type IN ({$types})"
+            );
+            $row = $result ? $result->fetch_assoc() : null;
+
+            return $row && (int) $row['cnt'] === 0 && !is_file($retainedAnchor);
+        });
+
+        $this->test('Component registration is removed', function () {
+            return $this->extensionId() === 0;
+        });
+        $this->test('Administrator and site component files are removed', function () {
+            return !is_dir('/var/www/html/administrator/components/com_appointments')
+                && !is_dir('/var/www/html/components/com_appointments');
+        });
+        $this->test('Bundled task plugin files and registration are removed', function () {
+            $result = $this->db->query(
+                "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}extensions WHERE element='appointments' AND type='plugin' AND folder='task'"
+            );
+            $row = $result ? $result->fetch_assoc() : null;
+
+            return $row && (int) $row['cnt'] === 0 && !is_dir('/var/www/html/plugins/task/appointments');
         });
         $this->test('Bundled privacy plugin and installed languages removed', function () {
             $result = $this->db->query("SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}extensions WHERE element='appointments' AND type='plugin' AND folder='privacy'");
@@ -132,24 +221,10 @@ class UninstallTest
 
             return true;
         });
-        $this->test('Appointment tables dropped by the uninstall SQL', function () {
-            // Every table created by the install schema must be gone, not just
-            // one: a partial drop would leave personal data of invitees behind.
-            foreach (self::TABLES as $table) {
-                $result = $this->db->query("SHOW TABLES LIKE '{$this->dbPrefix}{$table}'");
-
-                if (!$result || $result->num_rows !== 0) {
-                    return false;
-                }
-            }
-
-            return true;
-        });
-
-        $this->test('No update site is still linked to the removed extension', function () use ($extensionId) {
+        $this->test('No update site is still linked to the removed extension', function () use ($deleteExtensionId) {
             $result = $this->db->query(
                 "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}update_sites_extensions"
-                . " WHERE extension_id = {$extensionId}"
+                . " WHERE extension_id = {$deleteExtensionId}"
             );
             $row = $result ? $result->fetch_assoc() : null;
 
@@ -169,6 +244,52 @@ class UninstallTest
         echo "\n=== Uninstall Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
+    }
+
+    private function extensionId(): int
+    {
+        $result = $this->db->query(
+            "SELECT extension_id FROM {$this->dbPrefix}extensions WHERE element = 'com_appointments' AND type = 'component'"
+        );
+        $row = $result ? $result->fetch_assoc() : null;
+
+        return $row ? (int) $row['extension_id'] : 0;
+    }
+
+    private function setUninstallChoice(?string $choice): void
+    {
+        $result = $this->db->query(
+            "SELECT params FROM {$this->dbPrefix}extensions WHERE element = 'com_appointments' AND type = 'component'"
+        );
+        $row = $result ? $result->fetch_assoc() : null;
+        $params = $row ? json_decode((string) $row['params'], true) : [];
+        $params = is_array($params) ? $params : [];
+
+        if ($choice === null) {
+            unset($params['uninstall_data_action']);
+        } else {
+            $params['uninstall_data_action'] = $choice;
+        }
+
+        $encoded = $this->db->real_escape_string(json_encode($params, JSON_THROW_ON_ERROR));
+        $this->db->query(
+            "UPDATE {$this->dbPrefix}extensions SET params = '{$encoded}' WHERE element = 'com_appointments' AND type = 'component'"
+        );
+    }
+
+    private function insertSchedulerTasks(): void
+    {
+        $time = gmdate('Y-m-d H:i:s');
+
+        foreach (self::TASK_TYPES as $type) {
+            $escapedType = $this->db->real_escape_string($type);
+            $this->db->query(
+                "INSERT INTO {$this->dbPrefix}scheduler_tasks"
+                . " (title,type,execution_rules,cron_rules,state,params,created,created_by)"
+                . " VALUES ('Appointments removal test','{$escapedType}','{\"rule-type\":\"manual\"}',"
+                . "'{\"type\":\"manual\",\"exp\":\"\"}',1,'{}','{$time}',0)"
+            );
+        }
     }
 
     private function test(string $name, callable $fn): void
