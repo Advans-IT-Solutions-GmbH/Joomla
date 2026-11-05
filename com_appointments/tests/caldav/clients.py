@@ -479,13 +479,18 @@ def phase_roles() -> None:
           put(busy_href, "busy", ics("ci-busy-change", "CI", day(2, 10))).status_code == 403)
 
 
-def vdirsyncer_config() -> pathlib.Path:
-    VDIR.mkdir(parents=True, exist_ok=True)
-    (VDIR / "calendars").mkdir(exist_ok=True)
-    config = VDIR / "config"
-    vdir = user("vdir")
+def vdirsyncer_directory(who: str = "vdir") -> pathlib.Path:
+    return VDIR if who == "vdir" else VDIR.with_name(VDIR.name + "-" + who)
+
+
+def vdirsyncer_config(who: str = "vdir") -> pathlib.Path:
+    directory = vdirsyncer_directory(who)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "calendars").mkdir(exist_ok=True)
+    config = directory / "config"
+    vdir = user(who)
     config.write_text(f"""[general]
-status_path = "{VDIR}/status/"
+status_path = "{directory}/status/"
 
 [pair internet]
 a = "internet_local"
@@ -495,7 +500,7 @@ conflict_resolution = "b wins"
 
 [storage internet_local]
 type = "filesystem"
-path = "{VDIR}/calendars/"
+path = "{directory}/calendars/"
 fileext = ".ics"
 
 [storage internet_remote]
@@ -508,16 +513,16 @@ verify = "{CA}"
     return config
 
 
-def vdirsyncer(*args: str) -> subprocess.CompletedProcess:
-    result = subprocess.run(["vdirsyncer", "-c", str(vdirsyncer_config()), *args], input="y\n" * 20,
+def vdirsyncer(*args: str, who: str = "vdir") -> subprocess.CompletedProcess:
+    result = subprocess.run(["vdirsyncer", "-c", str(vdirsyncer_config(who)), *args], input="y\n" * 20,
                             capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
         print("  vdirsyncer:", (result.stderr or result.stdout).strip().replace("\n", "\n  "))
     return result
 
 
-def local_items() -> list[pathlib.Path]:
-    folder = VDIR / "calendars" / STATE["calendars"]["T"]["uri"]
+def local_items(who: str = "vdir") -> list[pathlib.Path]:
+    folder = vdirsyncer_directory(who) / "calendars" / STATE["calendars"]["T"]["uri"]
     return sorted(folder.glob("*.ics")) if folder.exists() else []
 
 
@@ -632,9 +637,16 @@ def phase_revoked() -> None:
     check("The other calendar of WRITER is unaffected",
           propfind(calendar("writer", "T"), "writer", "0", "<d:displayname/>").status_code == 207)
     # Baseline for the clean-up phases, taken before run-clients.sh starts the clean-up.
+    for who in ("cleanup-sync", "cleanup-list", "cleanup-timeout"):
+        known = objects(calendar(who, "T"), who)
+        check(f"Clean-up baseline: {who} synchronised CAL-T", len(known) >= 3, str(len(known)))
+    discover = vdirsyncer("discover", who="cleanup-guard")
+    initial = vdirsyncer("sync", who="cleanup-guard")
+    check("The independent vdirsyncer deletion-guard profile has a non-empty local copy",
+          discover.returncode == 0 and initial.returncode == 0 and len(local_items("cleanup-guard")) >= 3)
     save({"owner_baseline": objects(calendar("owner", "T"), "owner"),
-          "cleanup_known": list(objects(calendar("vdir", "T"), "vdir")),
-          "cleanup_token": collection_props(calendar("vdir", "T"), "vdir")["token"]})
+          "cleanup_known": list(objects(calendar("cleanup-sync", "T"), "cleanup-sync")),
+          "cleanup_token": collection_props(calendar("cleanup-sync", "T"), "cleanup-sync")["token"]})
 
 
 def unchanged_for_owner(phase: str) -> None:
@@ -646,24 +658,33 @@ def unchanged_for_owner(phase: str) -> None:
 
 
 def phase_cleanup_empty() -> None:
-    path = calendar("vdir", "T")
+    # A collection listing acknowledges delivery and immediately hides that device's
+    # calendar. Each destructive probe therefore needs its own device.
+    who = "cleanup-sync"
+    path = calendar(who, "T")
     before = saved()
-    status, token, changed, deleted, _ = sync_collection(path, "vdir", before["cleanup_token"])
+    props = collection_props(path, who)
+    check("Clean-up, empty: the CTag changed", props["ctag"] is not None and props["ctag"].endswith("-c"), str(props["ctag"]))
+    check("Clean-up, empty: CTag equals the published sync token", props["ctag"] == props["token"])
+    write = put(path + "ci-cleanup.ics", who, ics("ci-cleanup-" + uuid.uuid4().hex, "CI", day(2, 10)))
+    check("Clean-up, empty: writes are refused with 403", write.status_code == 403, str(write.status_code))
+    status, token, changed, deleted, _ = sync_collection(path, who, before["cleanup_token"])
     check("Clean-up, empty: sync-collection reports every known object deleted",
           status == 207 and not changed and bool(before["cleanup_known"])
-          and set(before["cleanup_known"]) <= deleted and token is not None,
+          and set(before["cleanup_known"]) <= deleted and token is not None and token == props["token"],
           f"{status}, {len(changed)} changed, {len(deleted)} deleted")
-    check("Clean-up, empty: the calendar is served without objects", objects(path, "vdir") == {})
-    props = collection_props(path, "vdir")
-    check("Clean-up, empty: the CTag changed", props["ctag"] is not None and props["ctag"].endswith("-c"), str(props["ctag"]))
-    write = put(path + "ci-cleanup.ics", "vdir", ics("ci-cleanup-" + uuid.uuid4().hex, "CI", day(2, 10)))
-    check("Clean-up, empty: writes are refused with 403", write.status_code == 403, str(write.status_code))
+    check("Clean-up, empty: the calendar is served without objects",
+          objects(calendar("cleanup-list", "T"), "cleanup-list") == {})
 
     count_before = len(local_items())
     check("The clean-up starts with a non-empty local copy", count_before >= 3, str(count_before))
-    guard = vdirsyncer("sync")
+    guard_before = len(local_items("cleanup-guard"))
+    guard = vdirsyncer("sync", who="cleanup-guard")
     check("vdirsyncer refuses to apply a completely emptied calendar without --force-delete",
-          guard.returncode != 0 and len(local_items()) == count_before, f"{guard.returncode} {len(local_items())}")
+          guard.returncode != 0 and guard_before >= 3 and len(local_items("cleanup-guard")) == guard_before,
+          f"{guard.returncode} {len(local_items('cleanup-guard'))}")
+    check("vdirsyncer reports its deletion guard rather than an unrelated failure",
+          "was completely emptied" in guard.stderr and "--force-delete" in guard.stderr, guard.stderr)
     forced = vdirsyncer("sync", "--force-delete")
     check("vdirsyncer applies the empty calendar", forced.returncode == 0)
     check("The clean-up deleted vdirsyncer's local copy", local_items() == [], str(len(local_items())))
@@ -672,14 +693,19 @@ def phase_cleanup_empty() -> None:
 
 
 def phase_cleanup_hidden() -> None:
-    listed = calendars_in_home("vdir")
-    check("Clean-up, hidden: the calendar home lists no calendar", listed == set(), f"{sorted(listed)}")
+    for who in ("cleanup-sync", "cleanup-list", "vdir"):
+        gone = propfind(calendar(who, "T"), who, "0", "<d:displayname/>")
+        check(f"Clean-up, hidden: {who}'s delivered collection answers 404",
+              gone.status_code == 404, str(gone.status_code))
+        listed = calendars_in_home(who)
+        check(f"Clean-up, hidden: {who}'s calendar home lists no calendar", listed == set(), f"{sorted(listed)}")
     unchanged_for_owner("hidden")
 
 
 def phase_cleanup_revoked() -> None:
-    response = propfind(home("vdir"), "vdir", "0", "<d:displayname/>")
-    check("Clean-up done: the device is refused with 401", response.status_code == 401, str(response.status_code))
+    for who in ("cleanup-sync", "cleanup-list", "vdir"):
+        response = propfind(home(who), who, "0", "<d:displayname/>")
+        check(f"Clean-up done: {who}'s device is refused with 401", response.status_code == 401, str(response.status_code))
     sync = vdirsyncer("sync")
     check("vdirsyncer fails to sign in after the clean-up", sync.returncode != 0)
     unchanged_for_owner("revoked")
