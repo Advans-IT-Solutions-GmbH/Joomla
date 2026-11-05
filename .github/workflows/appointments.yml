@@ -2,6 +2,11 @@ name: Build & Test - Appointments
 
 on:
   workflow_dispatch:
+    inputs:
+      integrated:
+        description: 'Require every team-calendar work package (no PENDING results)'
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -242,7 +247,7 @@ jobs:
           echo "Container ready"
           # HTTPS from the test image (caldav/tls/setup-tls.sh), verified against the
           # test CA: the internet calendar suites address the site over TLS.
-          docker exec com_appointments_test curl -sS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
+          docker exec com_appointments_test curl -fsS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
       - name: Show container logs
         if: always()
         run: |
@@ -350,7 +355,7 @@ jobs:
           echo "Container ready"
           # HTTPS from the test image (caldav/tls/setup-tls.sh), verified against the
           # test CA: the internet calendar suites address the site over TLS.
-          docker exec com_appointments_j6_test curl -sS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
+          docker exec com_appointments_j6_test curl -fsS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
       - name: Show container logs
         if: always()
         run: |
@@ -425,7 +430,7 @@ jobs:
           echo "Container ready"
           # HTTPS from the test image (caldav/tls/setup-tls.sh), verified against the
           # test CA: the internet calendar suites address the site over TLS.
-          docker exec com_appointments_mariadb_test curl -sS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
+          docker exec com_appointments_mariadb_test curl -fsS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
       - name: Show database and container versions
         if: always()
         run: |
@@ -457,11 +462,15 @@ jobs:
   # internet calendars of the Joomla 6 lane, over HTTPS with the certificate
   # verified against the test CA: discovery, sync tokens, roles, a booking, a
   # revoked grant and the clean-up that deletes the client's local copy. Phases
-  # whose work package still ships its stub are reported as PENDING.
+  # whose work package still ships its stub are reported as PENDING on the
+  # partial integration base only; main and integrated dispatches reject them.
   caldav-clients:
     name: CalDAV clients (J6)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: build
+    env:
+      TEAM_NO_PENDING: ${{ (github.base_ref == 'main' || github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.integrated)) && '1' || '0' }}
     permissions:
       contents: read
     steps:
@@ -486,16 +495,40 @@ jobs:
             sleep 20
           done
           timeout 300 bash -c 'until docker exec com_appointments_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
-          docker exec com_appointments_j6_test curl -sS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
-      - name: Run CalDAV clients
+          docker exec com_appointments_j6_test curl -fsS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
+          docker exec com_appointments_j6_test php -r 'foreach (["curl", "mysqli", "zip"] as $extension) { if (!extension_loaded($extension)) { fwrite(STDERR, "Missing PHP extension: $extension\n"); exit(1); } }'
+      # The shared runner does not forward TEAM_NO_PENDING. Pass it explicitly
+      # inside the container rather than setting an ineffective host-only flag.
+      - name: Require complete team-calendar integration
+        if: env.TEAM_NO_PENDING == '1'
+        shell: bash
         run: |
           cd com_appointments/tests
-          bash caldav/run-clients.sh com_appointments_j6_test
+          mkdir -p test-results
+          docker exec com_appointments_j6_test mkdir -p /var/www/html/tests/scripts
+          docker cp scripts/. com_appointments_j6_test:/var/www/html/tests/scripts/
+          docker exec -e TEAM_NO_PENDING=1 -e TEST_STRICT_SKIP=1 com_appointments_j6_test \
+            php /var/www/html/tests/scripts/21-teamcalendars.php 2>&1 | tee test-results/teamcalendars-strict.txt
+      - name: Run CalDAV clients
+        shell: bash
+        run: |
+          cd com_appointments/tests
+          mkdir -p test-results
+          echo "TEAM_NO_PENDING=$TEAM_NO_PENDING (0 permits explicit PENDING dependencies, not full support)" >> "$GITHUB_STEP_SUMMARY"
+          bash caldav/run-clients.sh com_appointments_j6_test 2>&1 | tee test-results/caldav-clients-ci.txt
+      - name: Capture environment diagnostics
+        if: always()
+        run: |
+          cd com_appointments/tests
+          mkdir -p test-results
+          docker compose -f docker-compose.joomla6.yml ps -a > test-results/caldav-compose-status.txt 2>&1 || true
+          docker compose -f docker-compose.joomla6.yml logs --no-color > test-results/caldav-compose-logs.txt 2>&1 || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: j6-caldav-clients-logs
           path: com_appointments/tests/test-results/*.txt
+          if-no-files-found: error
           retention-days: 3
       - name: Cleanup
         if: always()

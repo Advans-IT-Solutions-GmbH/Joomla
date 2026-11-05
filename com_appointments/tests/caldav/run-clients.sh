@@ -14,7 +14,7 @@
 # same rule as TeamSuite::pending(): never a pass, and a failure with
 # TEAM_NO_PENDING=1.
 #
-set -u
+set -uo pipefail
 
 CONTAINER="${1:-com_appointments_j6_test}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,6 +28,7 @@ exec > >(tee "$RESULTS/caldav-clients.txt") 2>&1
 
 failed=0
 pending=0
+WORK=""
 
 echo "=== CalDAV client tests ==="
 
@@ -47,8 +48,8 @@ stubbed() {
     local missing=() service
     for service in "$@"; do
         if [ "$service" = "lib" ]; then
-            [ -d "$LIB" ] || missing+=("A")
-        elif grep -q COM_APPOINTMENTS_TEAM_NOT_READY "$SERVICES/${service%%:*}.php"; then
+            [ -f "$LIB/sabre/dav/lib/DAV/Server.php" ] || missing+=("A")
+        elif [ ! -f "$SERVICES/${service%%:*}.php" ] || grep -q COM_APPOINTMENTS_TEAM_NOT_READY "$SERVICES/${service%%:*}.php"; then
             missing+=("${service##*:}")
         fi
     done
@@ -57,6 +58,10 @@ stubbed() {
 }
 
 summary() {
+    if [ -n "${WORK:-}" ]; then
+        teardown
+        trap - EXIT
+    fi
     echo ""
     echo "=== CalDAV client test summary ==="
     echo "Failed: ${failed}, Pending: ${pending}"
@@ -92,8 +97,15 @@ if ! docker ps --format '{{.Names}}' | grep -qxF "$CONTAINER"; then
     summary
 fi
 
-WORK="$(mktemp -d)"
-NETWORK="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{end}}' "$CONTAINER")"
+WORK="$(mktemp -d)" || { failed=$((failed + 1)); summary; }
+NETWORK="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{"\n"}}{{end}}' "$CONTAINER" | head -n 1)"
+if [ -z "$NETWORK" ]; then
+    echo "✗ Joomla container has no accessible compose network"
+    failed=$((failed + 1))
+    rm -rf "$WORK"
+    unset WORK
+    summary
+fi
 
 fixture() {
     # As the web server's user: files the services create (the signed epoch anchor of
@@ -102,8 +114,12 @@ fixture() {
 }
 
 teardown() {
-    fixture teardown >/dev/null || echo "  (fixture teardown failed)"
+    if ! fixture teardown >/dev/null; then
+        echo "✗ Fixture teardown failed"
+        failed=$((failed + 1))
+    fi
     rm -rf "$WORK"
+    unset WORK
 }
 trap teardown EXIT
 
@@ -128,10 +144,16 @@ step() {
     return 0
 }
 
-docker exec "$CONTAINER" mkdir -p /var/www/html/tests/scripts /var/www/html/tests/caldav
-docker cp "$TESTS/scripts/." "$CONTAINER:/var/www/html/tests/scripts/" >/dev/null
-docker cp "$HERE/fixture.php" "$CONTAINER:/var/www/html/tests/caldav/fixture.php" >/dev/null
-docker cp "$CONTAINER:/etc/ssl/appointments-test/ca.pem" "$WORK/ca.pem" >/dev/null
+if ! {
+    docker exec "$CONTAINER" mkdir -p /var/www/html/tests/scripts /var/www/html/tests/caldav &&
+    docker cp "$TESTS/scripts/." "$CONTAINER:/var/www/html/tests/scripts/" >/dev/null &&
+    docker cp "$HERE/fixture.php" "$CONTAINER:/var/www/html/tests/caldav/fixture.php" >/dev/null &&
+    docker cp "$CONTAINER:/etc/ssl/appointments-test/ca.pem" "$WORK/ca.pem" >/dev/null
+}; then
+    echo "✗ Preparing the fixture and trusted test CA failed"
+    failed=$((failed + 1))
+    summary
+fi
 
 step setup state.json || summary
 
@@ -146,6 +168,9 @@ else
     step cancel && client booking-cancelled
 fi
 
+step mfa-disable && client mfa-denied
+step mfa-enable && client mfa-restored
+
 step revoke && client revoked
 
 # Clean-up: empty, then hidden, then revoked. Each phase is delivered by the
@@ -153,5 +178,6 @@ step revoke && client revoked
 step cleanup-start && client cleanup-empty
 step cleanup-advance && client cleanup-hidden
 step cleanup-advance && client cleanup-revoked
+client lockout
 
 summary

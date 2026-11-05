@@ -8,6 +8,8 @@
  *   php fixture.php setup            switch the feature on, create users, calendars, grants, devices
  *   php fixture.php book             a guest books the event type whose target is CAL-T
  *   php fixture.php cancel           the guest cancels that booking through the signed link
+ *   php fixture.php mfa-disable      WRITER removes its second factor
+ *   php fixture.php mfa-enable       WRITER sets up a second factor again
  *   php fixture.php revoke           OWNER revokes WRITER's grant on CAL-R
  *   php fixture.php cleanup-start    VDIR removes its device: the clean-up starts
  *   php fixture.php cleanup-advance  the Scheduler advances every delivered clean-up phase
@@ -24,6 +26,7 @@ require_once __DIR__ . '/../scripts/appointments-fixtures.php';
 
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\KeyContext;
+use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Component\ComponentHelper;
 
@@ -258,10 +261,12 @@ function book(): void
     $fixture = new AppointmentsFixture('caldav');
     $event = $fixture->event();
     $calendar = (int) $state['calendars']['T']['id'];
-    db()->query("UPDATE " . prefix() . "appointments_eventtypes SET calendar_id={$calendar} WHERE id={$event}");
+    $host = (int) $state['users']['owner']['id'];
+    db()->query("UPDATE " . prefix() . "appointments_eventtypes SET calendar_id={$calendar},host_user_id={$host} WHERE id={$event}");
+    $state['event'] = $event;
+    saveState($state);
     $start = gmdate('Y-m-d', strtotime('+3 days')) . ' 10:00:00';
     $booking = $fixture->booking($event, $start, ['first_name' => 'CI', 'last_name' => 'Guest', 'email' => 'ci-guest@example.invalid'])['booking'];
-    $state['event'] = $event;
     $state['booking'] = (int) $booking['id'];
     saveState($state);
 
@@ -277,7 +282,29 @@ function cancel(): void
     $fixture->apply($client, $fixture->link($booking, 'cancel'));
     $row = $fixture->row((int) $state['booking']);
 
-    out(['booking_id' => (int) $state['booking'], 'state' => (int) ($row['state'] ?? -1)]);
+    if (!$row || (int) $row['state'] !== 2) {
+        fail('The signed cancellation did not cancel the fixture booking.');
+    }
+
+    out(['booking_id' => (int) $state['booking'], 'state' => (int) $row['state']]);
+}
+
+function mfaDisable(): void
+{
+    $state = state();
+    $id = (int) $state['users']['writer']['id'];
+    db()->query("DELETE FROM " . prefix() . "user_mfa WHERE user_id={$id}");
+    out(['mfa' => 'disabled']);
+}
+
+function mfaEnable(): void
+{
+    $state = state();
+    $id = (int) $state['users']['writer']['id'];
+    $now = gmdate('Y-m-d H:i:s');
+    db()->query("INSERT INTO " . prefix() . "user_mfa (user_id,title,method,`default`,options,created_on,last_used)"
+        . " VALUES ({$id},'CI authenticator','totp',1,'{}','{$now}',NULL)");
+    out(['mfa' => 'enabled']);
 }
 
 function revoke(): void
@@ -294,13 +321,27 @@ function cleanupStart(): void
     $state = state();
     services()->cleanup()->startForDevice($state['devices']['vdir'], 'user_removed', $state['users']['vdir']['id']);
 
+    if (deviceState($state['devices']['vdir']) !== TeamStates::DEVICE_CLEANUP_EMPTY) {
+        fail('Removing the device did not start the empty clean-up phase.');
+    }
+
     out(['device' => 'vdir', 'state' => deviceState($state['devices']['vdir'])]);
 }
 
 function cleanupAdvance(): void
 {
     $state = state();
+    $before = deviceState($state['devices']['vdir']);
     $advanced = services()->cleanup()->advance(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+    $expected = match ($before) {
+        TeamStates::DEVICE_CLEANUP_EMPTY => TeamStates::DEVICE_CLEANUP_HIDDEN,
+        TeamStates::DEVICE_CLEANUP_HIDDEN => TeamStates::DEVICE_REVOKED,
+        default => fail('The device is not in a delivered clean-up phase.'),
+    };
+
+    if ($advanced < 1 || deviceState($state['devices']['vdir']) !== $expected) {
+        fail('The Scheduler did not advance the delivered clean-up phase.');
+    }
 
     out(['advanced' => $advanced, 'state' => deviceState($state['devices']['vdir'])]);
 }
@@ -323,12 +364,13 @@ function teardown(): void
     $state = state();
     $team = services();
     $prefix = prefix();
+    $errors = [];
 
     foreach ($state['calendars'] as $calendar) {
         try {
             $team->calendars()->delete($state['admin'], (int) $calendar['id']);
         } catch (\Throwable $e) {
-            fwrite(STDERR, 'Calendar delete: ' . $e->getMessage() . "\n");
+            $errors[] = 'Calendar delete: ' . $e->getMessage();
         }
     }
 
@@ -348,7 +390,7 @@ function teardown(): void
         try {
             $team->cleanup()->onUserDeleted($id);
         } catch (\Throwable $e) {
-            fwrite(STDERR, 'User clean-up: ' . $e->getMessage() . "\n");
+            $errors[] = 'User clean-up: ' . $e->getMessage();
         }
 
         db()->query("DELETE FROM {$prefix}user_mfa WHERE user_id={$id}");
@@ -365,6 +407,10 @@ function teardown(): void
     setComponentParams($params);
     setDavBaseUrl('');
     setPlugins(0);
+    if ($errors !== []) {
+        fail(implode("\n", $errors));
+    }
+
     unlink(STATE_FILE);
 
     out(['teardown' => 'done']);
@@ -374,6 +420,8 @@ $commands = [
     'setup'           => 'setup',
     'book'            => 'book',
     'cancel'          => 'cancel',
+    'mfa-disable'     => 'mfaDisable',
+    'mfa-enable'      => 'mfaEnable',
     'revoke'          => 'revoke',
     'cleanup-start'   => 'cleanupStart',
     'cleanup-advance' => 'cleanupAdvance',

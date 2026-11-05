@@ -28,9 +28,11 @@ import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from urllib.parse import unquote, urlparse
+from xml.sax.saxutils import escape
 
 import caldav
 import niquests
+from icalendar import Calendar as ICalendar
 
 WORK = pathlib.Path("/work")
 CA = str(WORK / "ca.pem")
@@ -155,7 +157,7 @@ def objects(path: str, who: str) -> dict[str, str]:
 
 def sync_collection(path: str, who: str, token: str) -> tuple[int, str | None, dict[str, str], set[str], bytes]:
     body = ('<?xml version="1.0" encoding="utf-8"?><d:sync-collection xmlns:d="DAV:">'
-            f"<d:sync-token>{token}</d:sync-token><d:sync-level>1</d:sync-level>"
+            f"<d:sync-token>{escape(token)}</d:sync-token><d:sync-level>1</d:sync-level>"
             "<d:prop><d:getetag/></d:prop></d:sync-collection>")
     response = http("REPORT", path, who, headers={"Content-Type": "application/xml; charset=utf-8"}, body=body)
     if response.status_code != 207:
@@ -176,6 +178,13 @@ def sync_collection(path: str, who: str, token: str) -> tuple[int, str | None, d
 
 def get(path: str, who: str) -> niquests.Response:
     return http("GET", path, who)
+
+
+def event_text(path: str, who: str) -> str:
+    response = get(path, who)
+    if response.status_code != 200:
+        raise AssertionError(f"GET {path}: expected 200, got {response.status_code}")
+    return response.text
 
 
 def put(path: str, who: str, ics: str, extra: dict | None = None) -> niquests.Response:
@@ -217,7 +226,7 @@ def uids_of(path: str, who: str) -> dict[str, str]:
     """UID -> href of every object, read with GET."""
     found = {}
     for href in objects(path, who):
-        text = get(href, who).text
+        text = event_text(href, who)
         for line in text.splitlines():
             if line.startswith("UID:"):
                 found[line[4:].strip()] = href
@@ -267,10 +276,23 @@ def phase_discovery() -> None:
 
     joomla = http("PROPFIND", DAV, "writer", password=user("writer")["password"], headers={"Depth": "0"})
     wrong = http("PROPFIND", DAV, "writer", password="A" * 32, headers={"Depth": "0"})
+    anonymous = http("PROPFIND", DAV, headers={"Depth": "0"})
+    mismatch = http("PROPFIND", DAV, "writer", password=user("reader")["app_password"], headers={"Depth": "0"})
+    check("Anonymous CalDAV requests require authentication", anonymous.status_code == 401, str(anonymous.status_code))
     check("The Joomla password never signs in to CalDAV (401)", joomla.status_code == 401, str(joomla.status_code))
     check("A wrong app password gets the same 401 as the Joomla password",
           wrong.status_code == 401 and wrong.headers.get("WWW-Authenticate") == joomla.headers.get("WWW-Authenticate")
           and wrong.content == joomla.content)
+    check("Another user's app password cannot authenticate WRITER",
+          mismatch.status_code == 401 and mismatch.content == wrong.content, str(mismatch.status_code))
+    for secret in (user("writer")["password"], user("writer")["app_password"], user("reader")["app_password"]):
+        check("Authentication errors never echo a submitted secret",
+              all(secret not in r.text and secret not in str(dict(r.headers)) for r in (joomla, wrong, mismatch)))
+    # Use the same app password with an upper-case Joomla user name.
+    uppercase = niquests.request("PROPFIND", BASE + DAV,
+                                auth=(user("writer")["username"].upper(), user("writer")["app_password"]),
+                                headers={"Depth": "0"}, verify=CA, allow_redirects=False, timeout=30)
+    check("CalDAV user names are case-insensitive", uppercase.status_code == 207, str(uppercase.status_code))
 
     def library_discovery() -> None:
         client = caldav_client("writer", BASE + "/.well-known/caldav")
@@ -296,6 +318,14 @@ def phase_discovery() -> None:
     check("Default deny: an object of CAL-F is 404 for WRITER", hidden.status_code == 404, str(hidden.status_code))
     mk = http("MKCALENDAR", home("writer") + "ci-new/", "writer")
     check("MKCALENDAR is refused with 403", mk.status_code == 403, str(mk.status_code))
+    for method, body in (
+        ("ACL", '<d:acl xmlns:d="DAV:"/>'),
+        ("POST", '<cs:share xmlns:cs="http://calendarserver.org/ns/"/>'),
+    ):
+        denied = http(method, calendar("owner", "T"), "owner",
+                      headers={"Content-Type": "application/xml"}, body=body)
+        check(f"{method} cannot share a calendar even as OWNER (403)",
+              denied.status_code == 403, str(denied.status_code))
 
     props = collection_props(calendar("writer", "T"), "writer")
     check("CTag equals the sync token", props["ctag"] is not None and props["ctag"] == props["token"], f"{props['ctag']} / {props['token']}")
@@ -315,6 +345,27 @@ def phase_sync() -> None:
     expected = {seeds[n]["uid"] + ".ics" for n in ("EV-1", "EV-2", "EV-3")}
     check("Initial sync-collection returns every object of CAL-T", status == 207 and names == expected, f"{status} {sorted(names)}")
     check("Initial sync reports no deletion", not deleted)
+    check("Initial sync returns a non-empty token", bool(token))
+
+    client = caldav_client("writer", BASE + DAV)
+    cal = client.calendar(url=BASE + path)
+    initial = cal.get_objects_by_sync_token(load_objects=True, disable_fallback=True)
+    check("caldav performs a real initial sync without a full-query fallback",
+          bool(initial.sync_token) and not str(initial.sync_token).startswith("fake-")
+          and {path_of(str(item.url)).rsplit("/", 1)[-1] for item in initial} == expected)
+    parsed = {}
+    for item in initial:
+        event = ICalendar.from_ical(item.data).walk("VEVENT")[0]
+        parsed[str(event["UID"])] = event
+    all_day = parsed[seeds["EV-2"]["uid"]]
+    check("caldav preserves all-day date values and the exclusive end date",
+          all_day["DTSTART"].params.get("VALUE") == all_day["DTEND"].params.get("VALUE") == "DATE"
+          and all_day.decoded("DTEND") - all_day.decoded("DTSTART") == timedelta(days=1))
+    series = parsed[seeds["EV-3"]["uid"]]
+    check("caldav preserves the weekly recurrence and excluded instance",
+          series["RRULE"]["FREQ"] == ["WEEKLY"] and series["RRULE"]["COUNT"] == [6]
+          and len(series["EXDATE"].dts) == 1)
+    client_token = initial.sync_token
 
     status, again, changed, deleted, _ = sync_collection(path, "writer", token or "")
     check("A repeated sync without changes transfers nothing and keeps the token",
@@ -324,10 +375,14 @@ def phase_sync() -> None:
     ev1 = seeds["EV-1"]["href_owner"]
     ev2 = seeds["EV-2"]["href_owner"]
     current = http("GET", ev1, "owner")
-    put(ev1, "owner", ics(seeds["EV-1"]["uid"], "CI single event, changed", day(2, 10)), {"If-Match": current.headers.get("ETag", "")})
-    http("DELETE", ev2, "owner")
+    check("OWNER reads the object before updating it", current.status_code == 200 and bool(current.headers.get("ETag")))
+    update = put(ev1, "owner", ics(seeds["EV-1"]["uid"], "CI single event, changed", day(2, 10)), {"If-Match": current.headers.get("ETag", "")})
+    check("OWNER updates EV-1", update.status_code in (200, 204), str(update.status_code))
+    remove = http("DELETE", ev2, "owner")
+    check("OWNER deletes EV-2", remove.status_code == 204, str(remove.status_code))
     ev4 = "ci-ev4-" + uuid.uuid4().hex
-    put(calendar("owner", "T") + ev4 + ".ics", "owner", ics(ev4, "CI added later", day(6, 15)), {"If-None-Match": "*"})
+    create = put(calendar("owner", "T") + ev4 + ".ics", "owner", ics(ev4, "CI added later", day(6, 15)), {"If-None-Match": "*"})
+    check("OWNER creates EV-4", create.status_code == 201, str(create.status_code))
 
     ctag_after = collection_props(path, "writer")["ctag"]
     check("The CTag changes with every change", ctag_after not in (None, ctag_before), f"{ctag_before} -> {ctag_after}")
@@ -338,6 +393,15 @@ def phase_sync() -> None:
     check("Incremental sync reports the deleted object",
           {p.rsplit("/", 1)[-1] for p in deleted} == {seeds["EV-2"]["uid"] + ".ics"}, f"{sorted(deleted)}")
     check("Incremental sync gives a new token", newer not in (None, token))
+    incremental = cal.get_objects_by_sync_token(client_token, load_objects=True, disable_fallback=True)
+    removed = {path_of(str(url)).rsplit("/", 1)[-1] for url in incremental.deleted_urls}
+    downloaded = {path_of(str(item.url)).rsplit("/", 1)[-1] for item in incremental
+                  if item.url.canonical() not in incremental.deleted_urls}
+    check("caldav incrementally downloads exactly the changed and added objects",
+          downloaded == {seeds["EV-1"]["uid"] + ".ics", ev4 + ".ics"}
+          and incremental.sync_token not in (None, client_token), str(downloaded))
+    check("caldav incrementally receives the deleted object",
+          removed == {seeds["EV-2"]["uid"] + ".ics"}, str(removed))
 
     status, _, _, _, body = sync_collection(path, "writer", "http://invalid.example/ci-bogus-token")
     check("An unknown sync token is refused with valid-sync-token", status in (403, 409) and b"valid-sync-token" in body, str(status))
@@ -354,7 +418,7 @@ def phase_sync() -> None:
         event.load()
         event.data = ics(uid, "CI written by WRITER, changed", day(5, 11))
         event.save()
-        text = get(owner_view[uid], "owner").text
+        text = event_text(owner_view[uid], "owner")
         check("An event changed with caldav reaches OWNER", "SUMMARY:" + escape_text("CI written by WRITER, changed") in text)
         event.delete()
         check("An event deleted with caldav is gone for OWNER", uid not in uids_of(calendar("owner", "T"), "owner"))
@@ -368,6 +432,12 @@ def phase_sync() -> None:
     check("PUT with a stale If-Match is refused with 412", stale.status_code == 412, str(stale.status_code))
     exists = put(href, "writer", ics(seeds["EV-1"]["uid"], "CI overwrite", day(2, 12)), {"If-None-Match": "*"})
     check("PUT with If-None-Match * on an existing object is refused with 412", exists.status_code == 412, str(exists.status_code))
+    stale_delete = http("DELETE", href, "writer", headers={"If-Match": '"ci-stale-etag"'})
+    check("DELETE with a stale If-Match is refused with 412", stale_delete.status_code == 412, str(stale_delete.status_code))
+    preserved = get(href, "writer")
+    check("Rejected preconditions leave the object and its ETag unchanged",
+          preserved.status_code == current.status_code == 200 and preserved.content == current.content
+          and preserved.headers.get("ETag") == current.headers.get("ETag") is not None)
     fresh = put(href, "writer", ics(seeds["EV-1"]["uid"], "CI single event, by WRITER", day(2, 10)), {"If-Match": current.headers.get("ETag", "")})
     check("PUT with the current If-Match succeeds", fresh.status_code in (200, 204), str(fresh.status_code))
     duplicate = put(calendar("writer", "T") + "ci-duplicate-" + uuid.uuid4().hex + ".ics", "writer",
@@ -391,7 +461,7 @@ def phase_roles() -> None:
           and "{DAV:}write-content" not in privileges, f"{sorted(privileges)}")
 
     path = calendar("busy", "T")
-    texts = [get(h, "busy").text for h in objects(path, "busy")]
+    texts = [event_text(h, "busy") for h in objects(path, "busy")]
     check("BUSY sees one busy block per object", len(texts) == 3, str(len(texts)))
     joined = "\n".join(texts)
     check("Busy blocks carry the summary «Busy» only", all("SUMMARY:Busy" in t for t in texts) and "CI single event" not in joined
@@ -403,6 +473,10 @@ def phase_roles() -> None:
     check("The busy series keeps its recurrence", "RRULE:FREQ=WEEKLY" in joined)
     blocked = put(path + "ci-busy.ics", "busy", ics("ci-busy-" + uuid.uuid4().hex, "CI", day(2, 10)))
     check("BUSY cannot write (403)", blocked.status_code == 403, str(blocked.status_code))
+    busy_href = next(iter(objects(path, "busy")))
+    check("BUSY cannot delete an object (403)", http("DELETE", busy_href, "busy").status_code == 403)
+    check("BUSY cannot change an object (403)",
+          put(busy_href, "busy", ics("ci-busy-change", "CI", day(2, 10))).status_code == 403)
 
 
 def vdirsyncer_config() -> pathlib.Path:
@@ -472,12 +546,37 @@ def phase_vdirsyncer() -> None:
     (folder / f"{uid}.ics").write_text(ics(uid, "CI created by vdirsyncer", day(7, 9)))
     upload = vdirsyncer("sync")
     check("vdirsyncer uploads a local event", upload.returncode == 0 and uid in uids_of(calendar("owner", "T"), "owner"))
+    local = next(p for p in local_items() if uid in p.read_text())
+    local.write_text(ics(uid, "CI changed locally by vdirsyncer", day(7, 10)))
+    change = vdirsyncer("sync")
+    owner_items = uids_of(calendar("owner", "T"), "owner")
+    check("vdirsyncer uploads a local change",
+          change.returncode == 0 and uid in owner_items
+          and "SUMMARY:CI changed locally by vdirsyncer" in event_text(owner_items[uid], "owner"))
+    local.unlink()
+    remove = vdirsyncer("sync")
+    check("vdirsyncer removes a locally deleted event from the server",
+          remove.returncode == 0 and uid not in uids_of(calendar("owner", "T"), "owner"))
 
     ev5 = "ci-ev8-" + uuid.uuid4().hex
-    put(calendar("owner", "T") + ev5 + ".ics", "owner", ics(ev5, "CI added by OWNER for vdirsyncer", day(7, 11)), {"If-None-Match": "*"})
+    href = calendar("owner", "T") + ev5 + ".ics"
+    create = put(href, "owner", ics(ev5, "CI added by OWNER for vdirsyncer", day(7, 11)), {"If-None-Match": "*"})
+    check("OWNER creates the vdirsyncer download fixture", create.status_code == 201, str(create.status_code))
     download = vdirsyncer("sync")
     check("vdirsyncer downloads a server event",
           download.returncode == 0 and any(ev5 in p.read_text() for p in local_items()))
+    update = put(href, "owner", ics(ev5, "CI changed on server for vdirsyncer", day(7, 12)),
+                 {"If-Match": get(href, "owner").headers.get("ETag", "")})
+    check("OWNER changes the vdirsyncer download fixture", update.status_code in (200, 204), str(update.status_code))
+    download = vdirsyncer("sync")
+    check("vdirsyncer downloads a server change",
+          download.returncode == 0 and any(ev5 in p.read_text() and "SUMMARY:CI changed on server for vdirsyncer" in p.read_text()
+                                         for p in local_items()))
+    remove = http("DELETE", href, "owner", headers={"If-Match": get(href, "owner").headers.get("ETag", "")})
+    check("OWNER deletes the vdirsyncer download fixture", remove.status_code == 204, str(remove.status_code))
+    download = vdirsyncer("sync")
+    check("vdirsyncer deletes a server-removed event locally",
+          download.returncode == 0 and not any(ev5 in p.read_text() for p in local_items()))
     save({"vdir_uid": uid})
 
 
@@ -486,17 +585,17 @@ def phase_booking() -> None:
     found = uids_of(calendar("writer", "T"), "writer")
     check("A booking appears in CAL-T for WRITER with the UID of its mail ICS", booking["uid"] in found)
     if booking["uid"] in found:
-        text = get(found[booking["uid"]], "writer").text
+        text = event_text(found[booking["uid"]], "writer")
         start = booking["start_utc"].replace("-", "").replace(":", "").replace(" ", "T")
         check("The booking object starts at the booked time", start in text, start)
     sync = vdirsyncer("sync")
     check("vdirsyncer fetches the booking", sync.returncode == 0 and any(booking["uid"] in p.read_text() for p in local_items()))
-    busy = "\n".join(get(h, "busy").text for h in objects(calendar("busy", "T"), "busy"))
+    busy = "\n".join(event_text(h, "busy") for h in objects(calendar("busy", "T"), "busy"))
     start = booking["start_utc"].replace("-", "").replace(":", "").replace(" ", "T")
     check("BUSY sees a busy block at the booked time", f"DTSTART:{start}" in busy, start)
     check("The booking is a busy block for BUSY, without the invitee",
           "Guest" not in busy and "ci-guest@" not in busy and "ATTENDEE" not in busy)
-    writer_text = get(found[booking["uid"]], "writer").text if booking["uid"] in found else ""
+    writer_text = event_text(found[booking["uid"]], "writer") if booking["uid"] in found else ""
     check("The invitee reached the booking object itself (so the BUSY check is meaningful)",
           "CI Guest" in writer_text and "ci-guest@" in writer_text, "invitee not in the object")
     save({"booking_uid": booking["uid"]})
@@ -505,6 +604,20 @@ def phase_booking() -> None:
 def phase_booking_cancelled() -> None:
     uid = saved()["booking_uid"]
     check("A cancelled booking disappears from CAL-T", uid not in uids_of(calendar("writer", "T"), "writer"))
+    sync = vdirsyncer("sync")
+    check("vdirsyncer removes the cancelled booking locally",
+          sync.returncode == 0 and not any(uid in p.read_text() for p in local_items()))
+
+
+def phase_mfa_denied() -> None:
+    response = propfind(calendar("writer", "T"), "writer", "1", "<d:getetag/>")
+    check("An active device without MFA is refused with 403", response.status_code == 403, str(response.status_code))
+    check("The MFA refusal reveals no calendar contents", "CI single event" not in response.text)
+
+
+def phase_mfa_restored() -> None:
+    check("Restoring MFA restores the effective grant",
+          propfind(calendar("writer", "T"), "writer", "0", "<d:displayname/>").status_code == 207)
 
 
 def phase_revoked() -> None:
@@ -519,7 +632,9 @@ def phase_revoked() -> None:
     check("The other calendar of WRITER is unaffected",
           propfind(calendar("writer", "T"), "writer", "0", "<d:displayname/>").status_code == 207)
     # Baseline for the clean-up phases, taken before run-clients.sh starts the clean-up.
-    save({"owner_baseline": objects(calendar("owner", "T"), "owner")})
+    save({"owner_baseline": objects(calendar("owner", "T"), "owner"),
+          "cleanup_known": list(objects(calendar("vdir", "T"), "vdir")),
+          "cleanup_token": collection_props(calendar("vdir", "T"), "vdir")["token"]})
 
 
 def unchanged_for_owner(phase: str) -> None:
@@ -532,6 +647,12 @@ def unchanged_for_owner(phase: str) -> None:
 
 def phase_cleanup_empty() -> None:
     path = calendar("vdir", "T")
+    before = saved()
+    status, token, changed, deleted, _ = sync_collection(path, "vdir", before["cleanup_token"])
+    check("Clean-up, empty: sync-collection reports every known object deleted",
+          status == 207 and not changed and bool(before["cleanup_known"])
+          and set(before["cleanup_known"]) <= deleted and token is not None,
+          f"{status}, {len(changed)} changed, {len(deleted)} deleted")
     check("Clean-up, empty: the calendar is served without objects", objects(path, "vdir") == {})
     props = collection_props(path, "vdir")
     check("Clean-up, empty: the CTag changed", props["ctag"] is not None and props["ctag"].endswith("-c"), str(props["ctag"]))
@@ -539,6 +660,7 @@ def phase_cleanup_empty() -> None:
     check("Clean-up, empty: writes are refused with 403", write.status_code == 403, str(write.status_code))
 
     count_before = len(local_items())
+    check("The clean-up starts with a non-empty local copy", count_before >= 3, str(count_before))
     guard = vdirsyncer("sync")
     check("vdirsyncer refuses to apply a completely emptied calendar without --force-delete",
           guard.returncode != 0 and len(local_items()) == count_before, f"{guard.returncode} {len(local_items())}")
@@ -560,6 +682,25 @@ def phase_cleanup_revoked() -> None:
     check("Clean-up done: the device is refused with 401", response.status_code == 401, str(response.status_code))
     sync = vdirsyncer("sync")
     check("vdirsyncer fails to sign in after the clean-up", sync.returncode != 0)
+    unchanged_for_owner("revoked")
+
+
+def phase_lockout() -> None:
+    # Last: the address bucket may lock every client on this throw-away network.
+    statuses = []
+    for _ in range(11):
+        response = http("PROPFIND", DAV, "owner", password="B" * 32, headers={"Depth": "0"})
+        statuses.append(response.status_code)
+        if response.status_code == 429:
+            break
+    check("Repeated authentication failures are refused and then rate-limited",
+          len(statuses) >= 2 and statuses[-1] == 429
+          and all(status == 401 for status in statuses[:-1]), str(statuses))
+    correct = propfind(calendar("owner", "T"), "owner", "0", "<d:displayname/>")
+    retry = correct.headers.get("Retry-After", "")
+    check("A locked account refuses even its correct app password with Retry-After",
+          correct.status_code == 429 and retry.isdigit() and int(retry) > 0,
+          f"{correct.status_code}, Retry-After={retry}")
 
 
 PHASES = {
@@ -570,10 +711,13 @@ PHASES = {
     "vdirsyncer": phase_vdirsyncer,
     "booking": phase_booking,
     "booking-cancelled": phase_booking_cancelled,
+    "mfa-denied": phase_mfa_denied,
+    "mfa-restored": phase_mfa_restored,
     "revoked": phase_revoked,
     "cleanup-empty": phase_cleanup_empty,
     "cleanup-hidden": phase_cleanup_hidden,
     "cleanup-revoked": phase_cleanup_revoked,
+    "lockout": phase_lockout,
 }
 
 if __name__ == "__main__":
