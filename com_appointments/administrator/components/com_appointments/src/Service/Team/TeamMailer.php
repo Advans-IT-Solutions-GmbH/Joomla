@@ -87,12 +87,29 @@ final class TeamMailer implements TeamMailerInterface
 
     public function invitation(string $email, #[\SensitiveParameter] string $link, \DateTimeImmutable $expiresUtc): void
     {
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL) || preg_match('#\Ahttps://#i', $link) !== 1) {
-            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MAIL', 503);
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $error = new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MAIL', 503);
+            $this->logFailure('invitation-email-validation', $error);
+
+            throw $error;
+        }
+
+        if (preg_match('#\Ahttps://#i', $link) !== 1) {
+            $error = new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MAIL', 503);
+            $this->logFailure('invitation-url-scheme-validation', $error);
+
+            throw $error;
         }
 
         // The account exists (an administrator created it): its language applies, else the site's.
-        $recipient = $this->userByEmail($email) ?? (object) ['id' => 0, 'name' => '', 'email' => $email, 'params' => '{}'];
+        try {
+            $recipient = $this->userByEmail($email) ?? (object) ['id' => 0, 'name' => '', 'email' => $email, 'params' => '{}'];
+        } catch (\Throwable $e) {
+            $this->logFailure('invitation-recipient-lookup', $e);
+
+            throw $e;
+        }
+
         $recipient->email = $email;
 
         $this->deliver('team_invitation', [$recipient], function (Language $language, object $recipient) use ($expiresUtc, $link): array {
@@ -233,12 +250,19 @@ final class TeamMailer implements TeamMailerInterface
      */
     private function deliver(string $purpose, array $recipients, callable $values, array $links = []): void
     {
-        $app = Factory::getApplication();
+        try {
+            $app = Factory::getApplication();
+        } catch (\Throwable $e) {
+            $this->logFailure('application-bootstrap', $e);
+
+            throw $e;
+        }
 
         if (!$app->get('mailonline', true)) {
-            Log::add('Internet calendar mail disabled: purpose ' . $purpose, Log::WARNING, 'com_appointments');
+            $error = new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MAIL', 503);
+            $this->logFailure('mail-disabled', $error, Log::WARNING);
 
-            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MAIL', 503);
+            throw $error;
         }
 
         $failures = 0;
@@ -246,21 +270,28 @@ final class TeamMailer implements TeamMailerInterface
 
         foreach ($recipients as $recipient) {
             if (!filter_var((string) $recipient->email, FILTER_VALIDATE_EMAIL)) {
+                $this->logFailure('recipient-email-validation', new \InvalidArgumentException());
                 $failures++;
 
                 continue;
             }
+
+            $phase = 'language';
 
             try {
                 $tag = $this->languageOf($recipient);
                 $language = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($tag);
                 $language->load('com_appointments', JPATH_ADMINISTRATOR, $tag, true);
                 $language->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments', $tag, true);
-                $message = self::fill($this->template($purpose, $tag, $language), [
+                $phase = 'template';
+                $template = $this->template($purpose, $tag, $language);
+                $phase = 'message-compose';
+                $message = self::fill($template, [
                     '{site_name}' => $siteName,
                     '{user_name}' => (string) $recipient->name,
                 ] + $values($language, $recipient), array_keys($links));
 
+                $phase = 'mailer-setup';
                 $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
                 $mailer->setSender([(string) $app->get('mailfrom'), (string) $app->get('fromname')]);
                 $mailer->addRecipient((string) $recipient->email);
@@ -271,6 +302,7 @@ final class TeamMailer implements TeamMailerInterface
                     $known[$url] = $language->_($labelKey);
                 }
 
+                $phase = 'html-render';
                 $html = MailHtml::render($message['body'], $tag, $siteName, null, $mailer, $known, $this->publicBase());
 
                 if ($html !== null) {
@@ -282,12 +314,12 @@ final class TeamMailer implements TeamMailerInterface
                     $mailer->setBody($message['body']);
                 }
 
+                $phase = 'transport-send';
                 if (!$mailer->send()) {
                     throw new \RuntimeException('Mail delivery was rejected.');
                 }
             } catch (\Throwable $e) {
-                // A transport error can carry addresses or credentials: purpose only.
-                Log::add('Internet calendar mail failed: purpose ' . $purpose, Log::ERROR, 'com_appointments');
+                $this->logFailure($phase, $e);
                 $failures++;
             }
         }
@@ -295,6 +327,11 @@ final class TeamMailer implements TeamMailerInterface
         if ($failures > 0) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MAIL', 503);
         }
+    }
+
+    private function logFailure(string $phase, \Throwable $error, int $priority = Log::ERROR): void
+    {
+        Log::add('Internet calendar mail failed: phase=' . $phase . ', exception=' . $error::class, $priority, 'com_appointments');
     }
 
     /**
