@@ -223,6 +223,19 @@ function ajaxforms_enable_html_mail(): void
 {
     ajaxforms_bootstrap_site_application();
 
+    \Joomla\CMS\Log\Log::addLogger([
+        'logger' => 'callback',
+        'callback' => static function ($entry): void {
+            $message = str_replace(JPATH_ROOT, '[site]', $entry->message);
+            $message = preg_replace(
+                ['#https?://\S+#i', '/[^\s<>]+@[^\s<>]+/u', '/\b[a-f0-9]{32,}\b/i'],
+                ['[url]', '[address]', '[token]'],
+                $message
+            );
+            echo 'Mail-template diagnostic: ' . substr($message, 0, 500) . "\n";
+        },
+    ], \Joomla\CMS\Log\Log::WARNING | \Joomla\CMS\Log\Log::ERROR, ['plg_ajax_joomlaajaxforms']);
+
     ComponentHelper::getParams('com_mails')->set('mail_style', 'both');
 }
 
@@ -267,6 +280,9 @@ function ajaxforms_bootstrap_site_application(): SiteApplication
     $property->setValue($app, $template);
 
     Factory::$application = $app;
+    // Match normal CMS initialization: MailTemplate loads com_mails helpers
+    // for a recipient locale different from the application's language.
+    $app->createExtensionNamespaceMap();
     $app->loadLanguage();
 
     return $app;

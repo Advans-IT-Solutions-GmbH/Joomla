@@ -1420,7 +1420,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         array $trustedTags = []
     ): bool {
         try {
-            if (!$this->hasMailTemplate($templateId, $languageTag)) {
+            $template = $this->getMailTemplate($templateId, $languageTag);
+
+            if ($template === null) {
                 Log::add(
                     $context . ': no mail template ' . $templateId . ', composing the mail in the plugin',
                     Log::WARNING,
@@ -1432,16 +1434,16 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
             $this->loadMailTemplateStrings($templateId, $languageTag);
 
-            // Joomla 6.2 deprecates a MailTemplate without mailer, language factory and database.
-            // Joomla 5.4 takes only the mailer and ignores the further arguments.
+            // Inject all dependencies on 6.2; older cores use the rendering adapter.
             $container = Factory::getContainer();
-            $mailer    = new MailTemplate(
+            $arguments = [
                 $templateId,
                 $languageTag,
                 $container->get(MailerFactoryInterface::class)->createMailer(),
-                $this->mailTemplateLanguageFactory($container->get(LanguageFactoryInterface::class)),
-                $this->getDatabase()
-            );
+                $this->mailTemplateLanguageFactory(),
+                $this->getDatabase(),
+            ];
+            $mailer = $this->createLocalizedMailTemplate($arguments, $template);
             $mailer->addTemplateData($data);
             $mailer->addRecipient($recipientEmail, $recipientName !== '' ? $recipientName : null);
 
@@ -1487,23 +1489,105 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      * @param   string  $templateId   Template identifier
      * @param   string  $languageTag  Recipient language
      *
-     * @return  bool
+     * @return  object|null
      */
-    protected function hasMailTemplate(string $templateId, string $languageTag): bool
+    protected function getMailTemplate(string $templateId, string $languageTag): ?object
     {
         $db    = $this->getDatabase();
         $query = $this->createDbQuery($db)
-            ->select('1')
+            ->select('*')
             ->from($db->quoteName('#__mail_templates'))
             ->where($db->quoteName('template_id') . ' = :templateId')
             ->where($db->quoteName('language') . ' IN (' . $db->quote('') . ', :languageTag)')
+            ->order($db->quoteName('language') . ' DESC')
             ->bind(':templateId', $templateId, ParameterType::STRING)
             ->bind(':languageTag', $languageTag, ParameterType::STRING)
             ->setLimit(1);
 
         $db->setQuery($query);
 
-        return $db->loadResult() !== null;
+        return $db->loadObject() ?: null;
+    }
+
+    /**
+     * Joomla 5.4 and 6.0 translate through global Text before replaceTags().
+     * Adapt that protected rendering hook, not global language state or stored
+     * templates. Joomla still owns layouts, transport, attachments and escaping.
+     *
+     * @param   array   $arguments  MailTemplate constructor dependencies
+     * @param   object  $template   Selected, unmodified com_mails row
+     *
+     * @return  MailTemplate
+     */
+    protected function createLocalizedMailTemplate(array $arguments, object $template): MailTemplate
+    {
+        $injected = (new \ReflectionMethod(MailTemplate::class, '__construct'))->getNumberOfParameters() >= 5;
+        $language = $arguments[3]->createLanguage($arguments[1]);
+        $mailer = new class (...array_slice($arguments, 0, $injected ? 5 : 3)) extends MailTemplate {
+            private ?Language $recipientLanguage = null;
+            private array $localizedFields = [];
+            private array $htmlTranslations = [];
+            private int $renderCalls = 0;
+            private bool $replacing = false;
+
+            public function send()
+            {
+                $this->renderCalls = 0;
+
+                return parent::send();
+            }
+
+            public function localizeLegacy(Language $language, object $template): void
+            {
+                $this->recipientLanguage = $language;
+                $this->localizedFields = [
+                    $language->_($template->subject),
+                    $language->_($template->body),
+                ];
+
+                if ($this->localizedFields[1] === '') {
+                    $this->localizedFields[1] = strip_tags(str_replace(
+                        ['<br>', '<br />', '<br/>'],
+                        "\n",
+                        $language->_($template->htmlbody)
+                    ));
+                }
+
+                foreach ([$template->body, $template->htmlbody] as $field) {
+                    if ($field !== '') {
+                        $this->htmlTranslations[Text::_($field)] = $language->_($field);
+                    }
+                }
+            }
+
+            protected function replaceTags($text, $tags, $isHtml = false)
+            {
+                if ($this->recipientLanguage === null || $this->replacing) {
+                    return parent::replaceTags($text, $tags, $isHtml);
+                }
+
+                // In 5.4/6.0 the first two calls render subject and plain body.
+                // Subsequent calls render HTML, including the complete layout.
+                $call = $this->renderCalls++;
+                $text = $call < 2
+                    ? $this->localizedFields[$call]
+                    : strtr($text, $this->htmlTranslations);
+
+                $this->replacing = true;
+
+                try {
+                    return parent::replaceTags($text, $tags, $isHtml || $call >= 2);
+                } finally {
+                    $this->replacing = false;
+                }
+            }
+        };
+
+        if (!$injected) {
+            $mailer->localizeLegacy($language, $template);
+        }
+
+        return $mailer;
     }
 
     /**
@@ -1563,32 +1647,33 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      * Add the shipped com_users translations to the language object created by
      * MailTemplate when its language differs from the request language.
      *
-     * Core language packs are optional on the site. The plugin translations
-     * supply only missing core mail keys; a site's own template text and any
-     * installed com_users translation keep precedence.
-     *
-     * @param   LanguageFactoryInterface  $factory  Joomla language factory
+     * Core language packs are optional. Exact-locale com_users files and
+     * language overrides take precedence over the shipped defaults.
      *
      * @return  LanguageFactoryInterface
      */
-    protected function mailTemplateLanguageFactory(LanguageFactoryInterface $factory): LanguageFactoryInterface
+    protected function mailTemplateLanguageFactory(): LanguageFactoryInterface
     {
-        return new class ($factory, function (Language $language, string $lang): void {
+        return new class (function (Language $language, string $lang): void {
             $this->loadCoreMailFallbackStrings($language, $lang);
         }) implements LanguageFactoryInterface {
-            private LanguageFactoryInterface $factory;
-
             private \Closure $loadFallbacks;
 
-            public function __construct(LanguageFactoryInterface $factory, \Closure $loadFallbacks)
+            public function __construct(\Closure $loadFallbacks)
             {
-                $this->factory       = $factory;
                 $this->loadFallbacks = $loadFallbacks;
             }
 
             public function createLanguage($lang, $debug = false): Language
             {
-                $language = $this->factory->createLanguage($lang, $debug);
+                $language = new class ($lang, $debug) extends Language {
+                    public function load($extension = 'joomla', $basePath = JPATH_BASE, $lang = null, $reload = false, $default = true)
+                    {
+                        // MailsHelper reloads com_users after factory creation.
+                        // Do not replace missing locale keys with English there.
+                        return parent::load($extension, $basePath, $lang, $reload, $extension === 'com_users' ? false : $default);
+                    }
+                };
 
                 $language->load('com_users', JPATH_SITE, $lang, true)
                     || $language->load('com_users', JPATH_SITE . '/components/com_users', $lang, true);
@@ -1608,9 +1693,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Load the shipped com_users defaults only when Joomla has no language
-     * file for that locale. Joomla's language overrides are applied after
-     * loaded files, and MailTemplate keeps rendering the stored site template.
+     * Fill missing recipient-locale com_users keys, including incomplete and
+     * administrator-only packs, while preserving exact-locale translations.
      *
      * @param   Language  $language     Language instance used by MailTemplate
      * @param   string    $languageTag  Language tag for this mail
@@ -1619,36 +1703,14 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function loadCoreMailFallbackStrings(Language $language, string $languageTag): void
     {
-        if ($this->hasCoreUsersLanguageFile($languageTag)) {
-            return;
+        // Defaults first, then exact-locale files and overrides. Never let an
+        // implicit English fallback stand in for a missing recipient-locale key.
+        $language->load('plg_ajax_joomlaajaxforms', JPATH_ADMINISTRATOR, $languageTag, true, false)
+            || $language->load('plg_ajax_joomlaajaxforms', JPATH_PLUGINS . '/ajax/joomlaajaxforms', $languageTag, true, false);
+
+        foreach ([JPATH_SITE, JPATH_SITE . '/components/com_users', JPATH_ADMINISTRATOR, JPATH_ADMINISTRATOR . '/components/com_users'] as $path) {
+            $language->load('com_users', $path, $languageTag, true, false);
         }
-
-        $language->load('plg_ajax_joomlaajaxforms', JPATH_ADMINISTRATOR, $languageTag, true)
-            || $language->load('plg_ajax_joomlaajaxforms', JPATH_PLUGINS . '/ajax/joomlaajaxforms', $languageTag, true);
-    }
-
-    /**
-     * Whether Joomla has a com_users translation file in any path used by
-     * MailsHelper for this language.
-     *
-     * @param   string  $languageTag  Language tag for this mail
-     *
-     * @return  bool
-     */
-    protected function hasCoreUsersLanguageFile(string $languageTag): bool
-    {
-        foreach ([
-            JPATH_SITE . '/language/' . $languageTag . '/com_users.ini',
-            JPATH_SITE . '/components/com_users/language/' . $languageTag . '/com_users.ini',
-            JPATH_ADMINISTRATOR . '/language/' . $languageTag . '/com_users.ini',
-            JPATH_ADMINISTRATOR . '/components/com_users/language/' . $languageTag . '/com_users.ini',
-        ] as $path) {
-            if (is_file($path)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**
@@ -1752,6 +1814,8 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function configuredMailLanguage(string $email): string
     {
+        $email = trim($email);
+
         try {
             $db    = $this->getDatabase();
             $query = $this->createDbQuery($db)
@@ -1762,10 +1826,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
             $db->setQuery($query);
             $candidates = $db->loadObjectList();
-            $foldedEmail = $this->foldMailAddress($email);
+            $normalizedEmail = $this->normalizeMailAddress($email);
             $accounts     = array_values(array_filter(
                 $candidates,
-                fn($account) => $this->foldMailAddress((string) $account->email) === $foldedEmail
+                fn($account) => $this->normalizeMailAddress((string) $account->email) === $normalizedEmail
             ));
 
             if (count($accounts) === 1) {
@@ -1779,18 +1843,18 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Unicode case-fold an email address for exact post-query comparison.
+     * Normalize an email address for exact post-query comparison.
      *
-     * Joomla installations require mbstring, which provides full Unicode
-     * case-folding (including characters that fold to multiple code points).
+     * Lowercasing preserves distinct addresses such as sharp-s versus ss,
+     * unlike full Unicode case folding or an accent-insensitive DB collation.
      *
-     * @param   string  $email  Address to fold
+     * @param   string  $email  Address to normalize
      *
      * @return  string
      */
-    protected function foldMailAddress(string $email): string
+    protected function normalizeMailAddress(string $email): string
     {
-        return mb_convert_case($email, MB_CASE_FOLD, 'UTF-8');
+        return mb_strtolower(trim($email), 'UTF-8');
     }
 
     /**

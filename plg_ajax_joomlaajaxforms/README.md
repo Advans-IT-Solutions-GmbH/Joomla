@@ -434,7 +434,10 @@ remain in effect. Joomla's `com_users` language pack supplies the standard
 wording when available; the plugin ships translated defaults for de-DE, en-GB
 and fr-FR and uses them only for missing core language keys. This lets a
 recipient receive a translated core template even when the site has only its
-default language pack installed. The plugin's older plain-text messages remain
+default language pack installed, or a recipient's pack contains only administrator
+strings or incomplete site strings. Exact-locale translations and language
+overrides take precedence; implicit English fallbacks do not count as translations
+of missing French or German keys. The plugin's older plain-text messages remain
 the last fallback when a core mail-template row is missing or sending the
 template fails; that deliberately unstyled fallback is still translated in all
 three shipped languages. No separate plugin HTML template is maintained: the
@@ -472,10 +475,13 @@ Three details follow from the plugin answering inside `com_ajax`:
   corresponding Joomla language pack is not installed. Otherwise a supported
   configured site language is used, or en-GB when the site language is
   unsupported; the request language does not affect the mail.
-- `MailTemplate` can create a separate language object for each recipient.
-  The plugin loads that object's exact `com_users` language before Joomla's
-  extension-level translation cache runs, so a second mail in another language
-  within the same request remains translated.
+- On cores with language-factory injection, `MailTemplate` receives a separate
+  language object for each recipient. The plugin loads exact-locale defaults and
+  translations before Joomla's extension-level translation cache runs.
+  Joomla 5.4 and 6.0/6.1 instead translate through the request's global `Text`
+  service: a compatibility adapter localizes the stored fields at the protected
+  tag-rendering hook and keeps HTML replacements escaped, without switching the
+  request language or replacing Joomla's layout renderer.
 
 ### The notice about a new registration
 

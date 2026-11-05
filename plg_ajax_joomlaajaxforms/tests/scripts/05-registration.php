@@ -308,12 +308,25 @@ class RegistrationTest
             ajaxforms_create_test_user('activationaccent', 'en-GB', 'ajaxforms_activátion@example.test');
 
             $this->test(
-                'Accent-insensitive database candidates do not override the exact Unicode-folded address match',
+                'Accent-insensitive database candidates do not override the exact lowercase address match',
                 $language->invoke($plugin, $user->email) === 'fr-FR',
                 'a collation-equivalent address was treated as the configured recipient'
             );
 
             $defaultLanguage = (string) \Joomla\CMS\Component\ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+            $sharpLanguage = $defaultLanguage === 'fr-FR' ? 'en-GB' : 'fr-FR';
+            ajaxforms_create_test_user('activationsharps', $sharpLanguage, 'ajaxforms_straße@example.test');
+
+            $this->test(
+                'Sharp-s and ss recipient addresses remain distinct despite database collation',
+                $language->invoke($plugin, 'ajaxforms_strasse@example.test') === $defaultLanguage,
+                'a distinct sharp-s address supplied the account language'
+            );
+            $this->test(
+                'Recipient address matching trims whitespace and preserves uppercase/lowercase matching',
+                $language->invoke($plugin, '  AJAXFORMS_STRAßE@EXAMPLE.TEST  ') === $sharpLanguage,
+                'the same address with uppercase letters and surrounding whitespace did not match'
+            );
 
             $this->test(
                 'An unmatched mailfrom address uses the default site language',
@@ -380,6 +393,7 @@ class RegistrationTest
             $app->set('mailfrom', $mailfrom);
             ajaxforms_delete_test_user('activationduplicate');
             ajaxforms_delete_test_user('activationaccent');
+            ajaxforms_delete_test_user('activationsharps');
         }
     }
 
