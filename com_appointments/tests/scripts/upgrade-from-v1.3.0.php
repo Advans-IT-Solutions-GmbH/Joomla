@@ -14,9 +14,13 @@ require_once __DIR__ . '/shared-test-helpers.php';
 $phase = $argv[1] ?? '';
 $upgradeFailures = 0;
 
-function upgrade_check(string $name, bool $ok, string $detail = ''): void
+function upgrade_check(mixed $name, mixed $ok, string $detail = ''): void
 {
     global $upgradeFailures;
+
+    if (!is_string($name) || !is_bool($ok)) {
+        throw new InvalidArgumentException('Upgrade checks require a name followed by a boolean result.');
+    }
 
     if ($ok) {
         echo "PASS $name\n";
@@ -318,34 +322,41 @@ function upgrade_verify(): void
     upgrade_require($db->query("DROP TRIGGER IF EXISTS `$migrationTrigger`") === true,
         'automatic migration hold is removed before post-upgrade behavior checks');
     $candidateHash = hash_file('sha256', $candidatePackage);
-    upgrade_check($candidateHash !== false && hash_equals($expectedCandidateHash, $candidateHash), 'candidate package digest remains unchanged');
+    upgrade_check('candidate package digest remains unchanged',
+        $candidateHash !== false && hash_equals($expectedCandidateHash, $candidateHash));
     $manifest = sh_read_package_manifest($candidatePackage);
     upgrade_require($manifest !== null, 'candidate manifest can be read');
 
     $extensionId = sh_find_extension_id($manifest);
-    upgrade_check($extensionId === (int) $fixture['extension_id'], 'component keeps its installed extension ID');
+    upgrade_check('component keeps its installed extension ID', $extensionId === (int) $fixture['extension_id']);
     $installDirectory = upgrade_install_directory($manifest);
     $manifestContents = upgrade_archive_entry($candidatePackage, $manifest['xmlfile']);
     $scriptContents = upgrade_archive_entry($candidatePackage, 'script.php');
     $installedManifest = $installDirectory . '/' . basename($manifest['xmlfile']);
-    upgrade_check($manifestContents !== null && is_file($installedManifest)
-        && hash_file('sha256', $installedManifest) === hash('sha256', $manifestContents), 'installed manifest matches the exact candidate ZIP');
-    upgrade_check($scriptContents !== null && is_file($installDirectory . '/script.php')
-        && hash_file('sha256', $installDirectory . '/script.php') === hash('sha256', $scriptContents), 'installed installer script matches the exact candidate ZIP');
+    upgrade_check('installed manifest matches the exact candidate ZIP',
+        $manifestContents !== null && is_file($installedManifest)
+        && hash_file('sha256', $installedManifest) === hash('sha256', $manifestContents));
+    upgrade_check('installed installer script matches the exact candidate ZIP',
+        $scriptContents !== null && is_file($installDirectory . '/script.php')
+        && hash_file('sha256', $installDirectory . '/script.php') === hash('sha256', $scriptContents));
 
     $prefix = (new JConfig())->dbprefix;
     $bookingsTable = $prefix . 'appointments_bookings';
     $eventtypesTable = $prefix . 'appointments_eventtypes';
     $nameColumn = upgrade_column($db, $bookingsTable, 'invitee_name');
     $customFieldsColumn = upgrade_column($db, $bookingsTable, 'custom_fields');
-    upgrade_check($nameColumn !== null && strtolower((string) $nameColumn['Type']) === 'text', '1.4.0 migration changes personal name storage to TEXT');
-    upgrade_check($customFieldsColumn !== null && strtolower((string) $customFieldsColumn['Type']) === 'mediumtext', '1.4.0 migration changes custom fields from JSON to MEDIUMTEXT');
-    upgrade_check(!upgrade_index_exists($db, $bookingsTable, 'idx_invitee_email'), '1.4.0 migration removes the plaintext e-mail index');
+    upgrade_check('1.4.0 migration changes personal name storage to TEXT',
+        $nameColumn !== null && strtolower((string) $nameColumn['Type']) === 'text');
+    upgrade_check('1.4.0 migration changes custom fields from JSON to MEDIUMTEXT',
+        $customFieldsColumn !== null && strtolower((string) $customFieldsColumn['Type']) === 'mediumtext');
+    upgrade_check('1.4.0 migration removes the plaintext e-mail index',
+        !upgrade_index_exists($db, $bookingsTable, 'idx_invitee_email'));
     $calendarColumn = upgrade_column($db, $eventtypesTable, 'calendar_id');
-    upgrade_check($calendarColumn !== null && $calendarColumn['Null'] === 'YES', '1.4.0 migration adds the optional target-calendar column');
+    upgrade_check('1.4.0 migration adds the optional target-calendar column',
+        $calendarColumn !== null && $calendarColumn['Null'] === 'YES');
 
     foreach (['appointments_calendars', 'appointments_calendar_grants', 'appointments_devices', 'appointments_teamlog'] as $table) {
-        upgrade_check(upgrade_table_exists($db, $prefix . $table), 'team-calendar schema table exists: ' . $table);
+        upgrade_check('team-calendar schema table exists: ' . $table, upgrade_table_exists($db, $prefix . $table));
     }
 
     $schemasTable = $prefix . 'schemas';
@@ -354,37 +365,39 @@ function upgrade_verify(): void
         $result = $db->query("SELECT version_id FROM `$schemasTable` WHERE extension_id = " . (int) $fixture['extension_id']);
         $schemaVersions = $result ? array_map('strval', array_column($result->fetch_all(MYSQLI_ASSOC), 'version_id')) : [];
     }
-    upgrade_check(in_array('1.4.0', $schemaVersions, true), 'Joomla records the 1.4.0 database schema update', implode(', ', $schemaVersions));
+    upgrade_check('Joomla records the 1.4.0 database schema update',
+        in_array('1.4.0', $schemaVersions, true), implode(', ', $schemaVersions));
 
     $eventId = (int) $fixture['eventtype_id'];
     $event = $db->query("SELECT schedule_id, host_user_id, feed_token, calendar_id FROM `$eventtypesTable` WHERE id = $eventId")->fetch_assoc();
-    upgrade_check($event !== null
+    upgrade_check('event type, schedule, host, and legacy feed token are preserved',
+        $event !== null
         && (int) $event['schedule_id'] === (int) $fixture['schedule_id']
         && (int) $event['host_user_id'] === (int) ($fixture['bookings']['confirmed']['core']['host_user_id'])
         && hash_equals((string) $fixture['feed_token'], (string) $event['feed_token'])
-        && $event['calendar_id'] === null, 'event type, schedule, host, and legacy feed token are preserved');
+        && $event['calendar_id'] === null);
     $rulesTable = $prefix . 'appointments_schedule_rules';
     $ruleCount = (int) $db->query("SELECT COUNT(*) FROM `$rulesTable` WHERE schedule_id = " . (int) $fixture['schedule_id'])->fetch_row()[0];
-    upgrade_check($ruleCount === 7, 'all seven previous schedule rules are preserved');
+    upgrade_check('all seven previous schedule rules are preserved', $ruleCount === 7);
 
     $extensionsTable = $prefix . 'extensions';
     $paramsRow = $db->query("SELECT params FROM `$extensionsTable` WHERE extension_id = " . (int) $fixture['extension_id'])->fetch_assoc();
     $params = $paramsRow ? json_decode((string) $paramsRow['params'], true) : null;
     upgrade_require(is_array($params), 'component options remain readable after upgrade');
-    upgrade_check(($params['legacy_feeds'] ?? null) === '1', 'existing token feeds remain enabled after upgrade');
+    upgrade_check('existing token feeds remain enabled after upgrade', ($params['legacy_feeds'] ?? null) === '1');
 
     require_once __DIR__ . '/appointments-bookingdata.php';
     $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) (new JConfig())->secret);
     $token = (string) (is_array($params) ? ($params[\Advans\Component\Appointments\Administrator\Helper\BookingData::MIGRATION_OPTION] ?? '') : '');
     $validCutoff = \Advans\Component\Appointments\Administrator\Helper\BookingData::migrationCutoff($token, $keys, time());
-    upgrade_check($validCutoff !== null, 'unfinished migration retains its authenticated seven-day window');
+    upgrade_check('unfinished migration retains its authenticated seven-day window', $validCutoff !== null);
     $windowData = \Advans\Component\Appointments\Administrator\Helper\BookingData::forToken($keys, $token);
 
     foreach ($fixture['bookings'] as $kind => $expected) {
         $bookingId = (int) $expected['id'];
         $row = $db->query("SELECT * FROM `$bookingsTable` WHERE id = $bookingId")->fetch_assoc();
         if ($row === null) {
-            upgrade_check(false, "$kind previous booking remains present");
+            upgrade_check("$kind previous booking remains present", false);
             continue;
         }
 
@@ -395,7 +408,7 @@ function upgrade_verify(): void
                 break;
             }
         }
-        upgrade_check($corePreserved, "$kind booking identity, status, and timing are preserved");
+        upgrade_check("$kind booking identity, status, and timing are preserved", $corePreserved);
 
         $opened = null;
         try {
@@ -416,7 +429,7 @@ function upgrade_verify(): void
                 && !\Advans\Component\Appointments\Administrator\Helper\BookingData::isSealed($row[$column])
                 && ($opened[$column] ?? null) === $value;
         }
-        upgrade_check($personalPreserved, "$kind previous booking remains plaintext and readable during the migration window");
+        upgrade_check("$kind previous booking remains plaintext and readable during the migration window", $personalPreserved);
     }
 
     $expiredCutoff = time() - 8 * 86400;
@@ -429,9 +442,9 @@ function upgrade_verify(): void
     upgrade_require($db->query("UPDATE `$extensionsTable` SET params = '" . $db->real_escape_string(json_encode($params, JSON_THROW_ON_ERROR))
         . "' WHERE extension_id = " . (int) $fixture['extension_id']) === true, 'expired migration token is installed for the fixture');
     $expiredData = \Advans\Component\Appointments\Administrator\Helper\BookingData::forToken($keys, $expiredToken);
-    upgrade_check(\Advans\Component\Appointments\Administrator\Helper\BookingData::migrationCutoff($expiredToken, $keys, time()) === null
-        && \Advans\Component\Appointments\Administrator\Helper\BookingData::tokenCutoff($expiredToken, $keys) === $expiredCutoff,
-        'the authentic migration token expires after seven days without losing its original cutoff');
+    upgrade_check('the authentic migration token expires after seven days without losing its original cutoff',
+        \Advans\Component\Appointments\Administrator\Helper\BookingData::migrationCutoff($expiredToken, $keys, time()) === null
+        && \Advans\Component\Appointments\Administrator\Helper\BookingData::tokenCutoff($expiredToken, $keys) === $expiredCutoff);
 
     foreach ($fixture['bookings'] as $kind => $expected) {
         $bookingId = (int) $expected['id'];
@@ -448,7 +461,7 @@ function upgrade_verify(): void
         foreach ($expected['personal'] as $column => $value) {
             $readable = $readable && ($row[$column] ?? null) === $value && ($opened[$column] ?? null) === $value;
         }
-        upgrade_check($readable, "$kind previous booking remains readable but unverified after the migration window");
+        upgrade_check("$kind previous booking remains readable but unverified after the migration window", $readable);
     }
 
     require_once __DIR__ . '/appointments-http.php';
@@ -469,9 +482,10 @@ function upgrade_verify(): void
         $unchangedAfterRefusal = $unchangedAfterRefusal && $row !== null
             && $row['invitee_email'] === $expected['personal']['invitee_email'];
     }
-    upgrade_check($admin->status === 403 && $unchangedAfterRefusal, 'encrypt action rejects a missing form token without changing legacy bookings');
+    upgrade_check('encrypt action rejects a missing form token without changing legacy bookings',
+        $admin->status === 403 && $unchangedAfterRefusal);
     $admin->request('/administrator/index.php?option=com_appointments&task=bookings.encrypt', [$admin->token($list) => 1]);
-    upgrade_check($admin->status === 200, 'authenticated administrator encrypt action completes', 'HTTP ' . $admin->status);
+    upgrade_check('authenticated administrator encrypt action completes', $admin->status === 200, 'HTTP ' . $admin->status);
 
     $bookingData = new \Advans\Component\Appointments\Administrator\Helper\BookingData($keys);
     $auditTable = $prefix . 'appointments_audit';
@@ -496,15 +510,15 @@ function upgrade_verify(): void
                 && ($opened[$column] ?? null) === $value;
         }
         $auditCount = (int) $db->query("SELECT COUNT(*) FROM `$auditTable` WHERE booking_id = $bookingId AND action = 'encrypt' AND path = 'admin'")->fetch_row()[0];
-        upgrade_check($sealed && $auditCount === 1,
-            "$kind previous booking is encrypted as v2, remains readable, and has exactly one administrator audit row");
+        upgrade_check("$kind previous booking is encrypted as v2, remains readable, and has exactly one administrator audit row",
+            $sealed && $auditCount === 1);
     }
 
     $finalParams = $db->query("SELECT params FROM `$extensionsTable` WHERE extension_id = " . (int) $fixture['extension_id'])->fetch_assoc();
     $finalOptions = $finalParams ? json_decode((string) $finalParams['params'], true) : null;
     $finalToken = is_array($finalOptions) ? (string) ($finalOptions[\Advans\Component\Appointments\Administrator\Helper\BookingData::MIGRATION_OPTION] ?? '') : '';
-    upgrade_check(\Advans\Component\Appointments\Administrator\Helper\BookingData::migrationDone($finalToken, $keys),
-        'administrator encryption leaves the keyed migration completion marker');
+    upgrade_check('administrator encryption leaves the keyed migration completion marker',
+        \Advans\Component\Appointments\Administrator\Helper\BookingData::migrationDone($finalToken, $keys));
 
     echo "\n=== v1.3.0 Upgrade Verification Summary ===\n";
     echo $upgradeFailures === 0 ? "All upgrade checks passed\n" : "$upgradeFailures check(s) failed\n";
