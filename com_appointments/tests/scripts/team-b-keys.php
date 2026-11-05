@@ -87,6 +87,208 @@ return static function (TeamSuite $suite): void {
 
     $recovery = '';
 
+    if ($suite->isStub(GrantService::class) || !str_starts_with($suite->base, 'https://')) {
+        $suite->pending('B: a no-grant backend administrator unlocks recovery only after a real second factor', 'C and HTTPS');
+    } else {
+        $suite->test('B: a no-grant backend administrator unlocks recovery only after a real second factor', static function () use ($suite, $db, $p, $user, $owner, $keys, $hex) {
+            if ((int) $db->query("SELECT COUNT(*) FROM {$p}appointments_keyring WHERE purpose='recovery'")->fetch_row()[0] !== 0) {
+                throw new \RuntimeException('Bootstrap regression needs an empty recovery keyring.');
+            }
+
+            $password = 'Bootstrap-' . bin2hex(random_bytes(12)) . '!';
+            $admin = $user('bootstrap', $password);
+            $holderPassword = 'Holder-' . bin2hex(random_bytes(12)) . '!';
+            $holder = $user('bootstrap-holder', $holderPassword);
+            $keys->createUserKey($holder, $holderPassword)->wipe();
+            $db->query("INSERT INTO {$p}user_usergroup_map (user_id, group_id) VALUES ({$admin}, 8)");
+            $username = (string) $db->query("SELECT username FROM {$p}users WHERE id = {$admin}")->fetch_row()[0];
+            $totp = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+            $options = $db->real_escape_string(json_encode(['key' => $totp]));
+            $db->query("INSERT INTO {$p}user_mfa (user_id, title, method, `default`, options, created_on) VALUES ({$admin}, 'Bootstrap', 'totp', 1, '{$options}', UTC_TIMESTAMP())");
+            $record = (int) $db->insert_id;
+            $componentParams = (string) $db->query("SELECT params FROM {$p}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0];
+            $usersParams = (string) $db->query("SELECT params FROM {$p}extensions WHERE type='component' AND element='com_users'")->fetch_row()[0];
+            $pluginEnabled = (int) $db->query("SELECT enabled FROM {$p}extensions WHERE type='plugin' AND folder='user' AND element='appointments'")->fetch_row()[0];
+            $params = json_decode($componentParams, true, 512, JSON_THROW_ON_ERROR);
+            $params['teamcal_enabled'] = 1;
+            $users = json_decode($usersParams, true, 512, JSON_THROW_ON_ERROR);
+            // Prove optional MFA, not incidental membership in a forced group.
+            $users['forceMFAUserGroups'] = [];
+            $users['neverMFAUserGroups'] = [];
+            $gate = bin2hex(random_bytes(32));
+            $probeName = 'teamb-bootstrap-' . bin2hex(random_bytes(8)) . '.php';
+            $probeFile = JPATH_ADMINISTRATOR . '/' . $probeName;
+            $calendar = 0;
+            $probe = <<<'PHP'
+<?php
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !hash_equals('__GATE__', (string) ($_POST['gate'] ?? ''))) {
+    http_response_code(404);
+    exit;
+}
+define('_JEXEC', 1);
+require __DIR__ . '/includes/defines.php';
+require JPATH_BASE . '/includes/framework.php';
+$container = \Joomla\CMS\Factory::getContainer();
+$container->alias('session', 'session.web.administrator')
+    ->alias(\Joomla\Session\SessionInterface::class, 'session.web.administrator');
+$app = $container->get(\Joomla\CMS\Application\AdministratorApplication::class);
+\Joomla\CMS\Factory::$application = $app;
+$app->getSession()->start();
+$app->loadLanguage($container->get(\Joomla\CMS\Language\LanguageFactoryInterface::class)->createLanguage('en-GB'));
+$app->createExtensionNamespaceMap();
+$app->bootComponent('com_appointments');
+$services = \Advans\Component\Appointments\Administrator\Service\Team\TeamServices::fromApplication();
+$unlocked = false;
+$context = null;
+try {
+    $context = $services->keySession()->requireUnlocked();
+    $unlocked = true;
+} catch (\Advans\Component\Appointments\Administrator\Helper\Team\TeamException $e) {
+    if ($e->getCode() !== 423) {
+        throw $e;
+    }
+}
+$identity = $app->getIdentity();
+$id = (int) ($identity->id ?? 0);
+$created = false;
+$recovered = false;
+if ($unlocked && $identity->authorise('core.admin', 'com_appointments') && ($_POST['create'] ?? '') === '1') {
+    $secret = $services->keys()->createRecoveryKey($id);
+    $created = $services->keys()->recoveryFingerprint() !== null;
+    $services->keys()->createCalendarKeys(__CALENDAR__, __HOLDER__);
+    $ring = $services->keys()->recoverKeyring(__CALENDAR__, $secret);
+    $recovered = $ring !== null;
+    $ring?->wipe();
+    \Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite::wipe($secret);
+}
+$noKey = $context !== null && $services->keys()->openKeyring(__CALENDAR__, $context) === null;
+$context?->wipe();
+header('Content-Type: application/json');
+echo json_encode([
+    'unlocked' => $unlocked,
+    'created' => $created,
+    'recovered' => $recovered,
+    'noAudience' => $services->grants()->audienceOf($id) === 'none',
+    'noCalendars' => $services->grants()->calendarsFor($id) === [],
+    'noAccess' => $services->grants()->accessFor($id, __CALENDAR__) === null,
+    'noKey' => $noKey,
+    'passed' => (int) $app->getSession()->get('com_users.mfa_checked', 0) === 1,
+]);
+PHP;
+            $curl = curl_init();
+            curl_setopt_array($curl, [
+                CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 5,
+                CURLOPT_COOKIEFILE => '', CURLOPT_TIMEOUT => 30,
+                CURLOPT_SSL_VERIFYPEER => false, CURLOPT_SSL_VERIFYHOST => 0,
+            ]);
+            $request = static function (string $path, ?array $data = null) use ($curl, $suite): string {
+                curl_setopt_array($curl, [CURLOPT_URL => $suite->base . $path, CURLOPT_POST => $data !== null]);
+
+                if ($data !== null) {
+                    curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($data));
+                }
+
+                $response = curl_exec($curl);
+
+                if ($response === false || curl_getinfo($curl, CURLINFO_HTTP_CODE) !== 200) {
+                    throw new \RuntimeException('Bootstrap fixture request failed.');
+                }
+
+                return $response;
+            };
+            $token = static function (string $html): string {
+                if (!preg_match('/name="([a-f0-9]{32})"\s+value="1"/', $html, $match)) {
+                    throw new \RuntimeException('Bootstrap fixture form token missing.');
+                }
+
+                return $match[1];
+            };
+            $inspect = static fn (bool $create = false): array => json_decode($request('/administrator/' . $probeName, ['gate' => $gate, 'create' => $create ? '1' : '0']), true, 512, JSON_THROW_ON_ERROR);
+
+            try {
+                $uri = bin2hex(random_bytes(16));
+                $db->query("INSERT INTO {$p}appointments_calendars (uri, title, owner_user_id, row_mac, created_utc, modified_utc) VALUES ('{$uri}', 'Bootstrap isolation', {$holder}, " . $hex(str_repeat("\0", 32)) . ', UTC_TIMESTAMP(), UTC_TIMESTAMP())');
+                $calendar = (int) $db->insert_id;
+                $mac = $keys->rowMac('calendars', ['id' => $calendar, 'uri' => $uri, 'owner_user_id' => $holder, 'allow_external' => 0, 'state' => 1]);
+                $db->query("UPDATE {$p}appointments_calendars SET row_mac=" . $hex($mac) . " WHERE id={$calendar}");
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string(json_encode($params, JSON_THROW_ON_ERROR)) . "' WHERE type='component' AND element='com_appointments'");
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string(json_encode($users, JSON_THROW_ON_ERROR)) . "' WHERE type='component' AND element='com_users'");
+                $db->query("UPDATE {$p}extensions SET enabled=1 WHERE type='plugin' AND folder='user' AND element='appointments'");
+
+                if (file_put_contents($probeFile, str_replace(['__GATE__', '__CALENDAR__', '__HOLDER__'], [$gate, (string) $calendar, (string) $holder], $probe)) === false) {
+                    throw new \RuntimeException('Could not write bootstrap fixture probe.');
+                }
+
+                $guest = $inspect();
+                $form = $request('/administrator/index.php');
+                $request('/administrator/index.php', [
+                    'option' => 'com_login', 'task' => 'login', 'username' => $username, 'passwd' => $password,
+                    'return' => base64_encode('index.php'), $token($form) => 1,
+                ]);
+                $pending = $inspect();
+                $captive = $request('/administrator/index.php?option=com_users&view=captive');
+                $request('/administrator/index.php?option=com_users&task=captive.validate&record_id=' . $record, [
+                    'code' => teamBTotp($totp, time()), $token($captive) => 1,
+                ]);
+                $passed = $inspect(true);
+                $recoveryCreated = (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_keyring WHERE purpose='recovery'")->fetch_row()[0] === 1;
+                $noImplicitGrants = (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendar_grants WHERE user_id={$admin}")->fetch_row()[0] === 0;
+                $siteSession = new \Advans\Component\Appointments\Administrator\Service\Team\KeySession(TeamServices::fromApplication());
+                $backendAdmin = new \ReflectionMethod($siteSession, 'isBackendKeyAdministrator');
+                $notOnSite = !$backendAdmin->invoke($siteSession, $admin);
+                $notOrdinaryUser = !$backendAdmin->invoke($siteSession, $owner);
+
+                $db->query("DELETE FROM {$p}user_usergroup_map WHERE user_id={$admin} AND group_id=8");
+                $revokedAdmin = $inspect();
+                $db->query("INSERT INTO {$p}user_usergroup_map (user_id, group_id) VALUES ({$admin}, 8)");
+                $users['neverMFAUserGroups'] = [8];
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string(json_encode($users, JSON_THROW_ON_ERROR)) . "' WHERE type='component' AND element='com_users'");
+                $excluded = $inspect();
+                $users['neverMFAUserGroups'] = [];
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string(json_encode($users, JSON_THROW_ON_ERROR)) . "' WHERE type='component' AND element='com_users'");
+                $db->query("UPDATE {$p}user_mfa SET method='email' WHERE id={$record}");
+                $emailOnly = $inspect();
+                $db->query("UPDATE {$p}user_mfa SET method='backupcodes' WHERE id={$record}");
+                $backupOnly = $inspect();
+                $db->query("DELETE FROM {$p}user_mfa WHERE user_id={$admin}");
+                $noFactor = $inspect();
+
+                $checks = [
+                    'guestLocked' => !$guest['unlocked'],
+                    'passwordOnlyLocked' => !$pending['unlocked'] && !$pending['passed'],
+                    'totpUnlocks' => $passed['passed'] && $passed['unlocked'],
+                    'recoveryCreated' => $passed['created'] && $recoveryCreated,
+                    'explicitRecoveryWorks' => $passed['recovered'],
+                    'noImplicitCalendarAccess' => $passed['noAudience'] && $passed['noCalendars'] && $passed['noAccess'] && $passed['noKey'] && $noImplicitGrants,
+                    'backendOnly' => $notOnSite,
+                    'ordinaryUserExcluded' => $notOrdinaryUser && !$revokedAdmin['unlocked'],
+                    'neverMfaExcluded' => !$excluded['unlocked'],
+                    'emailExcluded' => !$emailOnly['unlocked'],
+                    'backupExcluded' => !$backupOnly['unlocked'],
+                    'removedFactorExcluded' => !$noFactor['unlocked'],
+                ];
+                echo '  Bootstrap checks: ' . json_encode($checks, JSON_THROW_ON_ERROR) . "\n";
+
+                return !\in_array(false, $checks, true);
+            } finally {
+                curl_close($curl);
+
+                if (is_file($probeFile)) {
+                    unlink($probeFile);
+                }
+
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string($componentParams) . "' WHERE type='component' AND element='com_appointments'");
+                $db->query("UPDATE {$p}extensions SET params = '" . $db->real_escape_string($usersParams) . "' WHERE type='component' AND element='com_users'");
+                $db->query("UPDATE {$p}extensions SET enabled={$pluginEnabled} WHERE type='plugin' AND folder='user' AND element='appointments'");
+                $db->query("DELETE FROM {$p}appointments_keyring WHERE purpose='recovery' AND created_by={$admin}");
+                $db->query("DELETE FROM {$p}appointments_calendar_key_wraps WHERE calendar_id={$calendar}");
+                $db->query("DELETE FROM {$p}appointments_calendar_keys WHERE calendar_id={$calendar}");
+                $db->query("DELETE FROM {$p}appointments_calendars WHERE id={$calendar}");
+                $db->query("DELETE FROM {$p}user_mfa WHERE user_id={$admin}");
+            }
+        });
+    }
+
     $suite->test('B: the recovery key is created once, printed with a typing check, its secret never stored', static function () use ($suite, $keys, $refusal, $row, $p, &$recovery, &$st) {
         if ($suite->count("SELECT COUNT(*) FROM {$p}appointments_keyring") > 0) {
             return false;
