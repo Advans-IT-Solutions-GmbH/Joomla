@@ -86,13 +86,16 @@ PHP;
     $db->query("DROP TABLE IF EXISTS {$p}{$tag}_head");
     $db->query("CREATE TABLE {$p}{$tag}_log AS SELECT * FROM {$p}appointments_teamlog");
     $db->query("CREATE TABLE {$p}{$tag}_head AS SELECT * FROM {$p}appointments_teamlog_head");
-    $fresh = static function () use ($db, $p, $anchorFile): void {
-        $db->query("DELETE FROM {$p}appointments_teamlog");
-        $db->query("DELETE FROM {$p}appointments_teamlog_head");
-
+    $fresh = static function () use ($db, $p, $anchorFile, $run): void {
         if (is_file($anchorFile)) {
             unlink($anchorFile);
         }
+
+        // Rebuilding a missing anchor logs a MAC failure. Let B rebuild it
+        // before clearing the copied chain, not during the first tested append.
+        $run('return $services->anchor()->minimum("log", AuditService::HEAD_ID);');
+        $db->query("DELETE FROM {$p}appointments_teamlog");
+        $db->query("DELETE FROM {$p}appointments_teamlog_head");
     };
     $verify = static fn (): array => $run('$v = $services->audit()->verify(); return ["intact" => $v->intact, "rows" => $v->checkedRows, "broken" => $v->firstBrokenId, "head" => $v->headHash];');
     $row = static function (int $id) use ($db, $p): array {
@@ -485,24 +488,367 @@ sleep(3);
         }
     }
 
-    if ($suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\DeviceService::class)) {
-        $suite->pending('«Revoke now» in the devices view refuses the device with 401 from the next request on', 'A, D');
+    // ---- HTTP integration: revoke, website lock-out and CalDAV lock-out ------
+    $httpNeeds = [
+        'A' => [
+            \Advans\Component\Appointments\Administrator\Service\Team\CalendarObjectStore::class,
+        ],
+        'B' => [
+            \Advans\Component\Appointments\Administrator\Service\Team\EpochAnchor::class,
+            \Advans\Component\Appointments\Administrator\Service\Team\KeyService::class,
+            \Advans\Component\Appointments\Administrator\Service\Team\KeySession::class,
+        ],
+        'C' => [
+            \Advans\Component\Appointments\Administrator\Service\Team\CalendarService::class,
+            \Advans\Component\Appointments\Administrator\Service\Team\GrantService::class,
+        ],
+        'D' => [
+            \Advans\Component\Appointments\Administrator\Service\Team\DeviceService::class,
+        ],
+        'E' => [
+            \Advans\Component\Appointments\Administrator\Service\Team\TimingIndex::class,
+        ],
+        'F' => [
+            \Advans\Component\Appointments\Administrator\Service\Team\AuditService::class,
+            \Advans\Component\Appointments\Administrator\Service\Team\CleanupService::class,
+            \Advans\Component\Appointments\Administrator\Service\Team\LockoutService::class,
+        ],
+    ];
+    $openPackages = static function (array $packages) use ($suite, $httpNeeds): string {
+        $open = [];
+
+        foreach ($packages as $package) {
+            foreach ($httpNeeds[$package] as $class) {
+                if ($suite->isStub($class)) {
+                    $open[] = $package;
+                    break;
+                }
+            }
+        }
+
+        if (!str_starts_with($suite->base, 'https://')) {
+            $open[] = 'G';
+        }
+
+        return implode(', ', array_unique($open));
+    };
+    $startHttpFixture = static function () use ($db, $p, $suite): array {
+        $paramsRow = $db->query("SELECT params FROM {$p}extensions WHERE type='component' AND element='com_appointments'")->fetch_assoc();
+        $originalParams = (string) ($paramsRow['params'] ?? '{}');
+        $params = json_decode($originalParams, true) ?: [];
+        $params['teamcal_enabled'] = 1;
+        $statement = $db->prepare("UPDATE {$p}extensions SET params=? WHERE type='component' AND element='com_appointments'");
+        $encoded = json_encode($params);
+        $statement->bind_param('s', $encoded);
+        $statement->execute();
+        $plugins = [];
+
+        foreach ([['system', 'appointmentsdav'], ['user', 'appointments'], ['multifactorauth', 'totp'], ['privacy', 'appointments']] as [$folder, $element]) {
+            $result = $db->query("SELECT extension_id, enabled FROM {$p}extensions WHERE type='plugin' AND folder='{$folder}' AND element='{$element}'");
+
+            while ($result && ($row = $result->fetch_assoc())) {
+                $plugins[] = [(int) $row['extension_id'], (int) $row['enabled']];
+                $db->query("UPDATE {$p}extensions SET enabled=1 WHERE extension_id=" . (int) $row['extension_id']);
+            }
+        }
+
+        $fixture = null;
+        try {
+            $fixture = new TeamDavFixture($suite);
+            // Earlier parts loaded ComponentHelper's feature-off options in this process.
+            $fixture->services = new \Advans\Component\Appointments\Administrator\Service\Team\TeamServices(
+                $fixture->services->db(),
+                $fixture->services->keyProvider(),
+                new \Joomla\Registry\Registry($params),
+                static fn (): DateTimeImmutable => new DateTimeImmutable('now', new DateTimeZone('UTC'))
+            );
+            $fixture->create();
+        } catch (Throwable $e) {
+            $cleanupError = null;
+
+            if ($fixture !== null && !$fixture->cleanup()) {
+                $cleanupError = implode('; ', $fixture->cleanupErrors);
+            }
+
+            $statement = $db->prepare("UPDATE {$p}extensions SET params=? WHERE type='component' AND element='com_appointments'");
+            $statement->bind_param('s', $originalParams);
+            $statement->execute();
+
+            foreach ($plugins as [$extensionId, $enabled]) {
+                $db->query("UPDATE {$p}extensions SET enabled={$enabled} WHERE extension_id={$extensionId}");
+            }
+
+            if ($cleanupError !== null) {
+                throw new RuntimeException('Fixture creation failed and cleanup failed: ' . $cleanupError, 0, $e);
+            }
+
+            throw $e;
+        }
+
+        return [$fixture, $originalParams, $plugins];
+    };
+    $stopHttpFixture = static function (?TeamDavFixture $fixture, ?string $originalParams, array $plugins) use ($db, $p): void {
+        $cleanupError = null;
+
+        if ($fixture !== null) {
+            if (!$fixture->cleanup()) {
+                $cleanupError = implode('; ', $fixture->cleanupErrors);
+            }
+        }
+
+        if ($originalParams !== null) {
+            $statement = $db->prepare("UPDATE {$p}extensions SET params=? WHERE type='component' AND element='com_appointments'");
+            $statement->bind_param('s', $originalParams);
+            $statement->execute();
+        }
+
+        foreach ($plugins as [$extensionId, $enabled]) {
+            $db->query("UPDATE {$p}extensions SET enabled={$enabled} WHERE extension_id={$extensionId}");
+        }
+
+        if ($cleanupError !== null) {
+            throw new RuntimeException($cleanupError);
+        }
+    };
+    $installTotp = static function (TeamDavFixture $fixture, string $account) use ($run): string {
+        $secret = '';
+        $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+        for ($i = 0; $i < 32; $i++) {
+            $secret .= $alphabet[random_int(0, 31)];
+        }
+
+        $userId = (int) $fixture->accounts[$account]['id'];
+        $saved = $run('$userId = ' . $userId . ';
+            $db = $services->db();
+            $db->setQuery("DELETE FROM #__user_mfa WHERE user_id = $userId")->execute();
+            $mfa = $application->bootComponent("com_users")->getMVCFactory()->createTable("Mfa", "Administrator");
+            $mfa->save(["user_id" => $userId, "title" => "F HTTP integration factor", "method" => "totp", "default" => 1,
+                "options" => ["key" => ' . var_export($secret, true) . ']]);
+            return (int) $db->setQuery("SELECT COUNT(*) FROM #__user_mfa WHERE user_id = $userId AND method = \"totp\"")->loadResult() === 1;');
+
+        if ($saved !== true) {
+            throw new RuntimeException('Could not configure a real TOTP factor for the HTTP fixture.');
+        }
+
+        return $secret;
+    };
+    $siteLoginWithTotp = static function (TeamDBrowser $browser, array $account, string $secret): bool {
+        $form = TeamDBrowser::form($browser->request('/index.php?option=com_users&view=login'), 'user.login');
+
+        if ($form === null) {
+            return false;
+        }
+
+        $html = $browser->request($form['action'], $form['fields'] + [
+            'username' => $account['username'],
+            'password' => $account['password'],
+        ]);
+        $captive = TeamDBrowser::form($html, 'captive.validate');
+
+        if ($captive === null) {
+            return false;
+        }
+
+        $browser->request($captive['action'], $captive['fields'] + ['code' => team_d_totp($secret, time())]);
+
+        return $browser->status >= 200 && $browser->status < 400;
+    };
+
+    $httpFixture = null;
+    $httpFixtureParams = null;
+    $httpFixturePlugins = [];
+    $httpFixtureError = null;
+    $httpPackages = ['A', 'B', 'C', 'D', 'F'];
+
+    if ($openPackages($httpPackages) === '') {
+        try {
+            [$httpFixture, $httpFixtureParams, $httpFixturePlugins] = $startHttpFixture();
+        } catch (Throwable $e) {
+            $httpFixtureError = $e;
+        }
+    }
+
+    $revokeOpen = $openPackages(['A', 'B', 'C', 'D', 'F']);
+    if ($revokeOpen !== '') {
+        $suite->pending('«Revoke now» in the devices view refuses the device with 401 from the next request on (HTTP flow)', $revokeOpen);
     } else {
-        $suite->pending('«Revoke now» in the devices view refuses the device with 401 from the next request on (HTTP flow)', 'A, D integration');
+        $suite->test('«Revoke now» in the devices view refuses the device with 401 from the next request on (HTTP flow)', static function () use ($suite, &$httpFixture, $httpFixtureError, $p) {
+            if (!$httpFixture) {
+                throw new RuntimeException('HTTP fixture setup failed: ' . ($httpFixtureError?->getMessage() ?? 'not available'));
+            }
+
+            $account = $httpFixture->accounts['reader'];
+            $path = $httpFixture->home('reader');
+            $basic = 'Authorization: Basic ' . base64_encode($account['username'] . ':' . $account['app_password']);
+            $before = $suite->http('PROPFIND', $path, ['Depth: 0', $basic]);
+
+            if ($before['status'] !== 207) {
+                return false;
+            }
+
+            $admin = new TeamDBrowser($suite->base);
+            $login = TeamDBrowser::form($admin->request('/administrator/index.php'), 'login');
+
+            if ($login === null) {
+                return false;
+            }
+
+            $admin->request($login['action'], $login['fields'] + [
+                'username' => getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin',
+                'passwd' => getenv('JOOMLA_ADMIN_PASSWORD') ?: 'Admin123456789!@#',
+            ]);
+            $html = $admin->request('/administrator/index.php?option=com_appointments&view=devices');
+            $form = TeamDBrowser::form($html, 'view=devices');
+
+            if ($admin->status !== 200 || $form === null || !str_contains($html, $account['username'])) {
+                return false;
+            }
+
+            $admin->request($form['action'], array_merge($form['fields'], [
+                'cid' => [(string) $account['device_id']],
+                'task' => 'devices.revoke',
+            ]), 0);
+
+            if (!in_array($admin->status, [200, 303, 302], true)) {
+                return false;
+            }
+
+            $after = $suite->http('PROPFIND', $path, ['Depth: 0', $basic]);
+            $state = $suite->count('SELECT COUNT(*) FROM ' . $p . 'appointments_devices WHERE id=' . (int) $account['device_id'] . ' AND state=0');
+
+            return $after['status'] === 401 && $state === 1;
+        });
     }
 
     // ---- Website and CalDAV sign-in over HTTP ---------------------------------
-
-    if ($grantsStub || $suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\KeySession::class)) {
-        $suite->pending('Website sign-in while locked fails exactly like a wrong password, also with the correct password', 'B, C');
+    $websiteOpen = $openPackages(['A', 'B', 'C', 'D', 'F']);
+    if ($websiteOpen !== '') {
+        $suite->pending('Website sign-in while locked fails exactly like a wrong password, also with the correct password (HTTP flow with MFA account)', $websiteOpen);
     } else {
-        $suite->pending('Website sign-in while locked fails exactly like a wrong password, also with the correct password (HTTP flow with MFA account)', 'B, C integration');
+        $suite->test('Website sign-in while locked fails exactly like a wrong password, also with the correct password (HTTP flow with MFA account)', static function () use ($suite, &$httpFixture, $httpFixtureError, $run, $installTotp, $p) {
+            if (!$httpFixture) {
+                throw new RuntimeException('HTTP fixture setup failed: ' . ($httpFixtureError?->getMessage() ?? 'not available'));
+            }
+
+            $account = $httpFixture->accounts['lockout'];
+            $totpSecret = $installTotp($httpFixture, 'lockout');
+            $run('$u = ' . var_export($account['username'], true) . ';
+                for ($i = 0; $i < 10; $i++) { $forget(); $services->lockout()->recordFailure($u, "198.51.100.77"); }
+                return true;');
+            $submit = static function (string $password) use ($suite, $account): array {
+                $browser = new TeamDBrowser($suite->base);
+                $form = TeamDBrowser::form($browser->request('/index.php?option=com_users&view=login'), 'user.login');
+
+                if ($form === null) {
+                    throw new RuntimeException('The Joomla website login form was not rendered.');
+                }
+
+                $body = $browser->request($form['action'], $form['fields'] + [
+                    'username' => $account['username'],
+                    'password' => $password,
+                ]);
+                $document = new DOMDocument();
+                @$document->loadHTML('<?xml encoding="utf-8"?>' . $body);
+                $messages = [];
+
+                foreach ((new DOMXPath($document))->query('//*[contains(concat(" ", normalize-space(@class), " "), " alert ")]') as $node) {
+                    $messages[] = trim((string) preg_replace('/\s+/u', ' ', $node->textContent));
+                }
+
+                return ['status' => $browser->status, 'body' => $body, 'messages' => $messages];
+            };
+            $wrong = $submit('wrong-' . bin2hex(random_bytes(12)));
+            $correct = $submit($account['password']);
+
+            return $wrong['status'] === $correct['status']
+                && $wrong['messages'] !== []
+                && $wrong['messages'] === $correct['messages']
+                && preg_match('/password|username|credentials|sign.?in/i', implode(' ', $correct['messages'])) === 1
+                && TeamDBrowser::form($wrong['body'], 'captive.validate') === null
+                && TeamDBrowser::form($correct['body'], 'captive.validate') === null
+                && $suite->count("SELECT COUNT(*) FROM {$p}user_mfa WHERE user_id=" . (int) $account['id'] . " AND method='totp'") === 1
+                && $totpSecret !== '';
+        });
     }
 
-    if ($suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\CalendarObjectStore::class)) {
-        $suite->pending('CalDAV answers 429 with Retry-After while locked, also for a correct app password', 'A, D');
+    $davOpen = $openPackages(['A', 'B', 'C', 'D', 'F']);
+    if ($davOpen !== '') {
+        $suite->pending('CalDAV answers 429 with Retry-After while locked, also for a correct app password (HTTP flow)', $davOpen);
     } else {
-        $suite->pending('CalDAV answers 429 with Retry-After while locked, also for a correct app password (HTTP flow)', 'A, D integration');
+        $suite->test('CalDAV answers 429 with Retry-After while locked, also for a correct app password (HTTP flow)', static function () use ($suite, &$httpFixture, $httpFixtureError, $run) {
+            if (!$httpFixture) {
+                throw new RuntimeException('HTTP fixture setup failed: ' . ($httpFixtureError?->getMessage() ?? 'not available'));
+            }
+
+            $account = $httpFixture->accounts['lockout'];
+            $path = $httpFixture->home('lockout');
+            $header = static function (array $response, string $name): string {
+                return preg_match('/^' . preg_quote($name, '/') . ':\s*(.*?)\r?$/mi', $response['headers'], $m) === 1 ? $m[1] : '';
+            };
+
+            $request = static function (string $password) use ($suite, $path, $account): array {
+                $ch = curl_init(rtrim($suite->base, '/') . $path);
+                curl_setopt_array($ch, [
+                    CURLOPT_CUSTOMREQUEST => 'PROPFIND',
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_HEADER => true,
+                    CURLOPT_FOLLOWLOCATION => false,
+                    CURLOPT_TIMEOUT => 30,
+                    CURLOPT_INTERFACE => TeamDavFixture::LOCKOUT_SOURCE_IP,
+                    CURLOPT_HTTPHEADER => [
+                        'Depth: 0',
+                        'Authorization: Basic ' . base64_encode($account['username'] . ':' . $password),
+                    ],
+                    CURLOPT_CAINFO => '/etc/ssl/appointments-test/ca.pem',
+                ]);
+                $raw = (string) curl_exec($ch);
+                $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+
+                return ['status' => $status, 'headers' => $raw];
+            };
+
+            for ($attempt = 0; $attempt < 10; $attempt++) {
+                $wrong = $request(str_repeat('A', 32));
+
+                if ($wrong['status'] !== 401) {
+                    return false;
+                }
+            }
+
+            $correct = $request($account['app_password']);
+
+            return $correct['status'] === 429 && (int) $header($correct, 'Retry-After') > 0;
+        });
+    }
+
+    try {
+        if ($httpFixture !== null) {
+            // The website bucket is distinct from CalDAV's account bucket, but the
+            // source-address bucket is shared and must not survive this fixture.
+            $websiteUserId = (int) ($httpFixture->accounts['lockout']['id'] ?? 0);
+            if ($websiteUserId > 0) {
+                $run('$id = ' . $websiteUserId . '; $ip = "198.51.100.77";
+                    $key = $services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_AUTH_BUCKET);
+                    try {
+                        foreach (LockoutService::buckets($key, LockoutService::identityFor($id, ""), $ip) as $bucket) {
+                            $services->db()->setQuery("DELETE FROM #__appointments_auth_failures WHERE bucket = UNHEX(" . $services->db()->quote(bin2hex($bucket)) . ")")->execute();
+                        }
+                    } finally { \Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite::wipe($key); }
+                    return true;');
+            }
+        }
+    } finally {
+        if ($httpFixtureParams !== null || $httpFixture !== null) {
+            try {
+                $stopHttpFixture($httpFixture, $httpFixtureParams, $httpFixturePlugins);
+            } catch (Throwable $e) {
+                $suite->test('HTTP fixture cleanup restored all test rows and settings', static function () use ($e): bool {
+                    throw new RuntimeException($e->getMessage(), 0, $e);
+                });
+            }
+        }
     }
 
     // ---- Clean-up phases ------------------------------------------------------
@@ -713,10 +1059,140 @@ sleep(3);
             }
         });
 
-        if ($suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\CalendarObjectStore::class)) {
-            $suite->pending('Privacy export and removal find calendar entries by the address blind index', 'A, E');
+        $privacyOpen = $openPackages(['A', 'B', 'C', 'D', 'E', 'F']);
+
+        if ($privacyOpen !== '') {
+            $suite->pending('Privacy export and removal find calendar entries by the address blind index (needs objects written through A)', $privacyOpen);
         } else {
-            $suite->pending('Privacy export and removal find calendar entries by the address blind index (needs objects written through A)', 'A, E integration');
+            $suite->test('Privacy export and removal find calendar entries by the address blind index (needs objects written through A)', static function () use (
+                $suite,
+                $startHttpFixture,
+                $stopHttpFixture,
+                $installTotp,
+                $siteLoginWithTotp,
+                $run,
+                $p,
+                $tag
+            ) {
+                [$fixture, $originalParams, $plugins] = $startHttpFixture();
+
+                try {
+                    $account = $fixture->accounts['owner'];
+                    $secret = $installTotp($fixture, 'owner');
+                    $browser = new TeamDBrowser($suite->base);
+
+                    if (!$siteLoginWithTotp($browser, $account, $secret)) {
+                        throw new RuntimeException('The calendar owner could not complete the HTTPS password and TOTP sign-in.');
+                    }
+
+                    $email = $tag . '-privacy@example.test';
+                    $uri = 'privacy-' . bin2hex(random_bytes(5)) . '.ics';
+                    $ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Appointments Privacy Test//EN\r\n"
+                        . "BEGIN:VEVENT\r\nUID:" . bin2hex(random_bytes(12)) . "@example.test\r\n"
+                        . "DTSTAMP:" . gmdate('Ymd\THis\Z') . "\r\nDTSTART:20270112T090000Z\r\n"
+                        . "DTEND:20270112T100000Z\r\nSUMMARY:Privacy calendar fixture\r\n"
+                        . "ATTENDEE;CN=Privacy Guest:mailto:{$email}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+                    $created = $suite->http('PUT', $fixture->calendar('owner') . $uri, [
+                        'Content-Type: text/calendar',
+                        'Authorization: Basic ' . base64_encode($account['username'] . ':' . $account['app_password']),
+                    ], $ics);
+
+                    if ($created['status'] !== 201) {
+                        throw new RuntimeException('CalDAV did not create the privacy fixture object (HTTP ' . $created['status'] . ').');
+                    }
+
+                    $jarProperty = new ReflectionProperty(TeamDBrowser::class, 'jar');
+                    $jarProperty->setAccessible(true);
+                    $jar = (string) $jarProperty->getValue($browser);
+                    $cookies = [];
+
+                    foreach (file($jar, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+                        if (str_starts_with($line, '#HttpOnly_')) {
+                            $line = substr($line, 10);
+                        } elseif (str_starts_with($line, '#')) {
+                            continue;
+                        }
+
+                        $fields = explode("\t", $line);
+                        if (count($fields) >= 7) {
+                            $cookies[$fields[5]] = $fields[6];
+                        }
+                    }
+
+                    if ($cookies === []) {
+                        throw new RuntimeException('The HTTPS sign-in did not leave a Joomla session cookie for the privacy flow.');
+                    }
+
+                    $cookieHeader = implode('; ', array_map(
+                        static fn (string $name, string $value): string => $name . '=' . $value,
+                        array_keys($cookies),
+                        array_values($cookies)
+                    ));
+                    $php = '$_COOKIE = ' . var_export($cookies, true) . ';
+                        $_SERVER["HTTP_COOKIE"] = ' . var_export($cookieHeader, true) . ';
+                        $_SERVER["HTTPS"] = "on"; $_SERVER["SERVER_PORT"] = "443"; $_SERVER["HTTP_HOST"] = "localhost";
+                        require "/var/www/html/tests/scripts/appointments-joomla.php";
+                        $session = $application->getSession();
+                        $session->start();
+                        $identity = $session->get("user");
+                        if (!$identity instanceof \Joomla\CMS\User\User || (int) $identity->id !== ' . (int) $account['id'] . ') {
+                            throw new \RuntimeException("The real HTTPS browser session did not restore its signed-in owner.");
+                        }
+                        $application->loadIdentity($identity);
+                        if ((int) $session->get("com_users.mfa_checked", 0) !== 1) {
+                            throw new \RuntimeException("The restored browser session has not passed Joomla MFA.");
+                        }
+                        $application->bootComponent("com_privacy");
+                        $plugin = $application->bootPlugin("appointments", "privacy");
+                        $request = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
+                        $request->email = ' . var_export($email, true) . ';
+                        $request->status = 1;
+                        $user = \Joomla\CMS\User\User::getInstance(0);
+                        $export = new \Joomla\CMS\Event\Privacy\ExportRequestEvent("onPrivacyExportRequest", ["subject" => $request, "user" => $user]);
+                        $plugin->onPrivacyExportRequest($export);
+                        $items = 0; $content = ""; $domainFound = false;
+                        foreach ($export->getArgument("result") as $set) {
+                            foreach ($set as $domain) {
+                                if ($domain->name !== "appointments_calendar_entries") { continue; }
+                                $domainFound = true;
+                                foreach ($domain->getItems() as $item) {
+                                    $items++;
+                                    foreach ($item->getFields() as $field) {
+                                        if ($field->name === "content") { $content .= (string) $field->value; }
+                                    }
+                                }
+                            }
+                        }
+                        $remove = new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => $user]);
+                        $plugin->onPrivacyRemoveData($remove);
+                        $remaining = (int) $joomlaDb->setQuery("SELECT COUNT(*) FROM #__appointments_calendar_objects WHERE calendar_id = ' . (int) $fixture->calendarId . ' AND uri = " . $joomlaDb->quote(' . var_export($uri, true) . ')")->loadResult();
+                        $result = ["domain" => $domainFound, "items" => $items, "content" => $content, "remaining" => $remaining,
+                            "actor" => (int) $application->getIdentity()->id];
+                        echo "\n@@TEAMFPRIV@@".json_encode($result);';
+                    exec('cd /var/www/html && php -r ' . escapeshellarg($php) . ' 2>&1', $output, $exit);
+                    $text = implode("\n", $output);
+                    $marker = strrpos($text, '@@TEAMFPRIV@@');
+
+                    if ($exit !== 0 || $marker === false) {
+                        throw new RuntimeException('The HTTPS-session privacy request failed: ' . substr($text, 0, 2000));
+                    }
+
+                    $result = json_decode(substr($text, $marker + 13), true);
+                    $removed = $suite->http('GET', $fixture->calendar('owner') . $uri, [
+                        'Authorization: Basic ' . base64_encode($account['username'] . ':' . $account['app_password']),
+                    ]);
+
+                    return is_array($result)
+                        && $result['domain'] === true
+                        && $result['items'] === 1
+                        && str_contains($result['content'], $email)
+                        && $result['remaining'] === 0
+                        && $result['actor'] === (int) $account['id']
+                        && $removed['status'] === 404;
+                } finally {
+                    $stopHttpFixture($fixture, $originalParams, $plugins);
+                }
+            });
         }
     } finally {
         $db->query("UPDATE {$p}extensions SET params='" . $db->real_escape_string((string) $params) . "' WHERE element='com_appointments' AND type='component'");
