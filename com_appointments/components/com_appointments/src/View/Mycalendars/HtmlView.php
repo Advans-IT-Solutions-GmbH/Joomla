@@ -10,7 +10,6 @@
 namespace Advans\Component\Appointments\Site\View\Mycalendars;
 
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarAccess;
-use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\Team\DeviceService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
@@ -112,7 +111,7 @@ class HtmlView extends BaseHtmlView
 
         try {
             $this->devices = $services->devices()->listForUser($userId);
-        } catch (TeamException $e) {
+        } catch (\Throwable $e) {
             $this->unavailable = true;
         }
 
@@ -195,7 +194,7 @@ class HtmlView extends BaseHtmlView
     {
         try {
             $calendars = $services->grants()->calendarsFor($userId);
-        } catch (TeamException $e) {
+        } catch (\Throwable $e) {
             $this->unavailable = true;
 
             return [];
@@ -208,6 +207,8 @@ class HtmlView extends BaseHtmlView
 
     /**
      * Why «Add device» cannot be offered now, in the order the user can fix it.
+     * A check that cannot be made (e.g. a database error) blocks the form with the
+     * general text; its message never reaches the page.
      */
     private function addBlockedReason(TeamServices $services, int $userId): string
     {
@@ -221,7 +222,7 @@ class HtmlView extends BaseHtmlView
             }
 
             $keys = $services->keySession()->current();
-        } catch (TeamException $e) {
+        } catch (\Throwable $e) {
             return 'COM_APPOINTMENTS_MYCALENDARS_NOT_READY';
         }
 
