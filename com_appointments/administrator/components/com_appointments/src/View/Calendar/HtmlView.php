@@ -60,6 +60,9 @@ class HtmlView extends BaseHtmlView
     /** @var bool */
     protected $canDelete = false;
 
+    /** @var int  The owner chosen in a form that came back with an error. */
+    protected $ownerChoice = 0;
+
     /** @var bool  Whether the signed-in user may see who holds which grant. */
     protected $showGrants = false;
 
@@ -150,6 +153,7 @@ class HtmlView extends BaseHtmlView
         }
 
         $this->form = $this->getModel()->getForm($data);
+        $this->ownerChoice = (int) ($data['owner_user_id'] ?? 0);
         $editable = $id > 0 ? $this->myRole === CalendarRole::Manage : $user->authorise('core.create', 'com_appointments');
 
         if (!$editable && $this->form) {

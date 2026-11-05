@@ -66,7 +66,7 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
                         <select class="form-select" id="calendar-owner" name="jform[owner_user_id]" required aria-describedby="calendar-owner-desc">
                             <option value=""><?php echo Text::_('JSELECT'); ?></option>
                             <?php foreach ($this->owners as $owner) : ?>
-                                <option value="<?php echo (int) $owner->id; ?>"><?php echo $this->escape($owner->name . ' (' . $owner->username . ')'); ?></option>
+                                <option value="<?php echo (int) $owner->id; ?>"<?php echo (int) $owner->id === $this->ownerChoice ? ' selected' : ''; ?>><?php echo $this->escape($owner->name . ' (' . $owner->username . ')'); ?></option>
                             <?php endforeach; ?>
                         </select>
                         <div id="calendar-owner-desc" class="form-text"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_FIELD_OWNER_DESC'); ?></div>

@@ -175,11 +175,14 @@ final class InvitationService implements InvitationServiceInterface
             . ' ORDER BY i.id DESC LIMIT 500'
         )->loadObjectList() ?: [];
 
+        $audiences = [];
+
         foreach ($rows as $row) {
             $row->mac_valid = \strlen((string) $row->row_mac) === 32
                 && $services->keys()->verifyRowMac(self::TABLE, self::macFields($row), (string) $row->row_mac);
             $row->email_masked = $row->user_email === null ? '' : self::maskEmail((string) $row->user_email);
-            $row->audience = $services->grants()->audienceOf((int) $row->user_id);
+            // One group lookup per account, not per link.
+            $row->audience = $audiences[(int) $row->user_id] ??= $services->grants()->audienceOf((int) $row->user_id);
             unset($row->row_mac, $row->token_hash, $row->email_hash, $row->user_email);
         }
 
