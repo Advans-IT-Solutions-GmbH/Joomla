@@ -572,6 +572,7 @@ class DataIsolationTest
     {
         $class   = \Joomla\Component\Privacy\Administrator\Table\RequestTable::class;
         $request = (new ReflectionClass($class))->newInstanceWithoutConstructor();
+        $request->id           = 0;
         $request->email        = $email;
         $request->request_type = 'remove';
         $request->status       = 1;
