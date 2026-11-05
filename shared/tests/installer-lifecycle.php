@@ -64,6 +64,16 @@ namespace Joomla\CMS\Language {
     }
 }
 
+namespace Joomla\CMS\Uri {
+    final class Uri
+    {
+        public static string $scheme = 'http';
+
+        public static function getInstance(): self { return new self(); }
+        public function getScheme(): string { return self::$scheme; }
+    }
+}
+
 namespace Joomla\CMS\Log {
     final class Log
     {
@@ -100,6 +110,12 @@ namespace {
     $app = new class {
         public string $tag = 'en-GB';
         public array $messages = [];
+        public bool $cli = true;
+
+        public function isClient(string $client): bool
+        {
+            return $client === ($this->cli ? 'cli' : 'administrator');
+        }
 
         public function getLanguage(): object
         {
@@ -214,8 +230,30 @@ namespace {
         $disabled = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
         \Joomla\CMS\Factory::$db->enabled = true;
         $enabled = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
-        $assert(count($disabled['warnings']) === 1 && count($enabled['warnings']) === 0, 'Repeating the check did not refresh actual plugin state.');
+        $assert(count($disabled['warnings']) === count($enabled['warnings']) + 1, 'Repeating the check did not refresh actual plugin state.');
         $assert($enabled['blockers'] === [], 'Available platform was reported blocked.');
+        $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_HTTPS_UNKNOWN'), array_column($enabled['warnings'], 1), true), 'CLI transport was incorrectly treated as verified.');
+        $app->cli = false;
+        $insecure = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_HTTPS_INSECURE'), array_column($insecure['warnings'], 1), true), 'HTTP request was not reported insecure.');
+        \Joomla\CMS\Uri\Uri::$scheme = 'https';
+        $secure = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_HTTPS_CURRENT'), array_column($secure['passed'], 1), true), 'HTTPS administrator request was not recognized.');
+        $rewrite = "RewriteCond %{QUERY_STRING} ^option=com_ [NC]\nRewriteRule ^index\\.php$ / [R=301,L]\n";
+        file_put_contents(JPATH_ROOT . '/.htaccess', $rewrite);
+        $blocked = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_BLOCKED'), array_column($blocked['warnings'], 1), true), 'Blocking option rewrite was not reported.');
+        $assert(file_get_contents(JPATH_ROOT . '/.htaccess') === $rewrite, 'Routing check modified existing server configuration.');
+        $allowlisted = "RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]\n" . $rewrite;
+        file_put_contents(JPATH_ROOT . '/.htaccess', $allowlisted);
+        $safe = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($safe['warnings'], 1), true), 'Allowlisted routes were blocked or incorrectly reported as HTTP-verified.');
+        $routing = new \Advans\Installer\RoutingCheck();
+        $assert($routing->analyse("RewriteRule ^component/(.*)$ / [R=301,L]") === ['component'], 'Component route blocking was missed.');
+        $assert($routing->analyse("RewriteCond %{QUERY_STRING} !plugin= [NC]\nRewriteRule ^component/(.*)$ / [R=301,L]") === [], 'Plugin exclusion was ignored.');
+        $assert($routing->analyse("RewriteCond %{QUERY_STRING} !plugin= [NC,OR]\nRewriteCond %{REQUEST_URI} ^/component/\nRewriteRule ^component/(.*)$ / [R=301,L]") === ['component'], 'OR group bypass was missed.');
+        $assert($routing->analyse("RewriteCond %{HTTPS} off\nRewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]") === [], 'Generic HTTPS redirection was treated as component blocking.');
+        $assert($routing->analyse($rewrite, 'com_appointments') === ['option'], 'Non-AJAX component option routes were not checked.');
         $mixedShops = \Advans\Installer\SystemCheck::results('plg_osmap_j2commerce');
         $shopRows = array_values(array_filter($mixedShops['passed'], static fn(array $row): bool => $row[0] === \Joomla\CMS\Language\Text::_('ADVANS_CHECK_SHOP')));
         $assert(count($shopRows) === 1 && $shopRows[0][1] === 'com_j2commerce, com_j2store', 'Mixed-shop check hid an enabled shop or implied a shared routing priority.');

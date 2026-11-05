@@ -76,9 +76,15 @@ The **System check** tab is read-only and can be reopened and refreshed without 
 | DMARC package | **Components → DMARC Reports → Options → System check**, which also repeats the installed package's child checks; open the children's individual tabs for details |
 
 These are local checks of the running platform, required PHP extensions, database driver where
-applicable, installed/enabled dependencies, active shop tables and writable extension directory.
+applicable, installed/enabled dependencies, enabled shop tables and writable extension directory.
 Optional archive support and disabled plugins are warnings. The report names the next menu path
-for configuration, scheduler history and mail testing. Keep using DMARC Reports' existing
+for configuration, scheduler history and mail testing. It also checks the current administrator
+request's HTTPS scheme (unknown during CLI installation) and reads the root `.htaccess` for
+known component/option redirect or deny patterns, using the same analyzer as AJAX Forms.
+Missing or unreadable rules, possible routing blocks and unverified HTTP routing are warnings:
+neither an HTTPS administrator request nor the absence of known rewrite patterns proves that
+public endpoints work. It sends no HTTP probes and never changes web-server configuration.
+Keep using DMARC Reports' existing
 **System Check** view for its deeper IMAP/DNS/MTA-STS diagnostics; the common tab does not contact
 external systems or replace that view.
 

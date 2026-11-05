@@ -12,6 +12,7 @@ defined('_JEXEC') or die;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Version;
+use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
 
 final class SystemCheck
@@ -60,6 +61,30 @@ final class SystemCheck
         $add(version_compare(PHP_VERSION, '8.1', '>='), 'PHP >= 8.1', PHP_VERSION, Text::_('ADVANS_CHECK_SERVER'));
         $joomla = (new Version())->getShortVersion();
         $add(version_compare($joomla, '5.4', '>=') && version_compare($joomla, '7', '<'), 'Joomla 5.4 / 6', $joomla, Text::_('ADVANS_CHECK_JOOMLA_UPDATE'));
+        $cli = Factory::getApplication()->isClient('cli');
+        $https = !$cli && Uri::getInstance()->getScheme() === 'https';
+        $add($https, Text::_('ADVANS_CHECK_HTTPS'), Text::_($cli ? 'ADVANS_CHECK_HTTPS_UNKNOWN' : ($https ? 'ADVANS_CHECK_HTTPS_CURRENT' : 'ADVANS_CHECK_HTTPS_INSECURE')), Text::_('ADVANS_CHECK_HTTPS_PATH'), true);
+
+        $htaccess = JPATH_ROOT . '/.htaccess';
+        $routing = 'ADVANS_CHECK_ROUTING_ABSENT';
+
+        if (is_file($htaccess)) {
+            if (!is_readable($htaccess)) {
+                $routing = 'ADVANS_CHECK_ROUTING_UNREADABLE';
+            } else {
+                $content = file_get_contents($htaccess);
+
+                if ($content === false) {
+                    throw new \RuntimeException('Cannot read the routing configuration.');
+                }
+
+                $component = $definition['type'] === 'component' ? $id : ($definition['dependencies'][0] ?? 'com_ajax');
+                $issues = (new RoutingCheck())->analyse($content, str_starts_with($component, 'com_') ? $component : 'com_ajax');
+                $routing = $issues === [] ? 'ADVANS_CHECK_ROUTING_UNVERIFIED' : 'ADVANS_CHECK_ROUTING_BLOCKED';
+            }
+        }
+
+        $results['warnings'][] = [Text::_('ADVANS_CHECK_ROUTING'), Text::_($routing), Text::_('ADVANS_CHECK_ROUTING_PATH')];
 
         foreach ($definition['php'] ?? [] as $extension) {
             $ok = extension_loaded($extension);
