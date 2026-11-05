@@ -26,6 +26,55 @@ final class PrivacyAddress
         return self::normalise($stored) === self::normalise($requested);
     }
 
+    /**
+     * The additional guests of a booking as stored in `guest_emails` (one address per line).
+     *
+     * @return list<string>
+     */
+    public static function guestList(?string $stored): array
+    {
+        $guests = [];
+
+        foreach (preg_split('/\r\n|\r|\n/', (string) $stored) as $line) {
+            if (trim($line) !== '') {
+                $guests[] = trim($line);
+            }
+        }
+
+        return $guests;
+    }
+
+    /**
+     * Whether $address is one of the guests: exact per line after Unicode case folding, like
+     * the invitee address, never a substring of another address.
+     */
+    public static function isGuest(?string $stored, string $address): bool
+    {
+        foreach (self::guestList($stored) as $guest) {
+            if (self::sameAddress($guest, $address)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** The guest list without $address, in the stored format (one address per line). */
+    public static function withoutGuest(?string $stored, string $address): string
+    {
+        return implode("\n", array_values(array_filter(self::guestList($stored),
+            static fn (string $guest): bool => !self::sameAddress($guest, $address))));
+    }
+
+    private static function sameAddress(string $stored, string $requested): bool
+    {
+        try {
+            return self::matches($stored, $requested);
+        } catch (\InvalidArgumentException $e) {
+            return false;
+        }
+    }
+
     public static function answers(?string $value): array
     {
         if ($value === null) {

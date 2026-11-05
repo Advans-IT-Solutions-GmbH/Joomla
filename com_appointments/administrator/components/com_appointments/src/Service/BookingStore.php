@@ -15,6 +15,7 @@ use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Helper\ModifiedTime;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Advans\Component\Appointments\Administrator\Helper\Anonymiser;
+use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Joomla\Database\DatabaseInterface;
 use Joomla\CMS\Component\ComponentHelper;
 
@@ -300,6 +301,67 @@ final class BookingStore
 
         return ['changed' => true, 'notification' => $notification,
             '_conference_cleanup_error' => !empty($cleanup['_conference_cleanup_error']) || !empty($cleanup['_conference_error'])];
+    }
+
+    /**
+     * Removes one additional guest's address from a booking and nothing else: the booking, the
+     * invitee's data and the other guests stay. The guest is identified either by the signed
+     * guest link ($links + $signature, path `self_service`) or by the address of a formal
+     * privacy request ($address, path `privacy_request`), always by exact per-line comparison.
+     *
+     * The row version (`modified_utc`) is deliberately left unchanged: the signed links of the
+     * invitee and of the other guests stay valid. A used guest link cannot be replayed anyway,
+     * because the address it was signed for is no longer among the guests.
+     *
+     * The audit row holds the booking id, the action `remove_guest` and the path, never the
+     * address.
+     *
+     * @return array{changed: bool, guest: ?string}
+     */
+    public function removeGuest(int $bookingId, \DateTimeImmutable $now, string $path, ?string $address = null,
+        ?SignedLink $links = null, string $signature = ''): array
+    {
+        if (!in_array($path, ['self_service', 'privacy_request'], true)
+            || ($path === 'self_service' ? $links === null || $address !== null : $links !== null || $address === null)) {
+            throw new \InvalidArgumentException('Invalid guest removal provenance.');
+        }
+        $db = $this->db;
+        $host = $this->bookingHost($bookingId, $links === null);
+        if ($host === 0) {
+            return ['changed' => false, 'guest' => null];
+        }
+        $db->transactionStart();
+
+        try {
+            // Only the booking row: a removal changes one column and no availability, so it takes no
+            // host lock. While a mail delivery holds the row (NotificationService::send), the removal
+            // waits without stalling the host's other bookings, and no lock is held in the other order.
+            $booking = $this->lockedBooking($bookingId);
+            $guests = PrivacyAddress::guestList($booking['guest_emails'] ?? null);
+            if ($links !== null) {
+                $address = $booking && $booking['anonymised_utc'] === null
+                    ? $links->guestFor($bookingId, $guests, (string) $booking['modified_utc'], $signature) : null;
+                if ($address === null) {
+                    throw new InvalidBookingLinkException();
+                }
+            }
+            if (!$booking || $booking['anonymised_utc'] !== null || !PrivacyAddress::isGuest($booking['guest_emails'], (string) $address)) {
+                $db->transactionCommit();
+
+                return ['changed' => false, 'guest' => null];
+            }
+            $row = (object) ['id' => $bookingId, 'guest_emails' => PrivacyAddress::withoutGuest($booking['guest_emails'], (string) $address)];
+            $db->updateObject('#__appointments_bookings', $row, 'id');
+            $audit = (object) ['booking_id' => $bookingId, 'action' => 'remove_guest', 'path' => $path, 'actor_user_id' => null,
+                'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')];
+            $db->insertObject('#__appointments_audit', $audit);
+            $db->transactionCommit();
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+            throw $e;
+        }
+
+        return ['changed' => true, 'guest' => $address];
     }
 
     private function bookingHost(int $bookingId, bool $missingAllowed = false): int

@@ -7,6 +7,7 @@
  */
 
 use Joomla\CMS\HTML\HTMLHelper;
+use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
@@ -15,7 +16,14 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=eventtype&layout=edit&id=' . (int) $this->item->id); ?>"
       method="post" name="adminForm" id="eventtype-form" class="form-validate">
     <div class="row">
-        <div class="col-lg-9"><?php echo $this->form->renderFieldset('details'); ?><?php echo $this->form->renderFieldset('conference'); ?></div>
+        <div class="col-lg-9">
+            <?php echo $this->form->renderFieldset('details'); ?>
+            <fieldset class="options-form" id="eventtype-display">
+                <legend><?php echo Text::_('COM_APPOINTMENTS_EVENTTYPE_FIELDSET_DISPLAY'); ?></legend>
+                <?php echo $this->form->renderFieldset('display'); ?>
+            </fieldset>
+            <?php echo $this->form->renderFieldset('conference'); ?>
+        </div>
         <div class="col-lg-3"><?php echo $this->form->renderFieldset('state'); ?></div>
     </div>
     <input type="hidden" name="task" value="">

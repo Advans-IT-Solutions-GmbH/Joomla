@@ -19,6 +19,7 @@ final class AnonymiserTest extends TestCase
             'eventtype_id' => 2, 'host_user_id' => 3,
             'start_utc' => '2026-10-15 10:00:00', 'end_utc' => '2026-10-15 10:30:00',
             'state' => 1, 'invitee_name' => 'Private Person',
+            'invitee_first_name' => 'Private', 'invitee_last_name' => 'Person',
             'invitee_email' => 'private@example.test', 'invitee_phone' => 'private-phone',
             'invitee_timezone' => 'Europe/Zurich', 'invitee_language' => 'de-DE',
             'guest_emails' => 'guest@example.test', 'custom_fields' => '{"question":"private-answer"}',
@@ -26,6 +27,7 @@ final class AnonymiserTest extends TestCase
             'conference_url' => 'https://example.test/private-room', 'conference_room' => 'private-room',
             'conference_state' => 'failed', 'conference_error' => 'private-diagnostic',
             'reminder_sent_utc' => '[]', 'anonymised_utc' => null,
+            'consent_utc' => '2026-10-10 10:00:00', 'consent_version' => str_repeat('a', 64),
             'created_utc' => '2026-10-10 10:00:00', 'modified_utc' => '2026-10-14 10:00:00',
         ];
     }
@@ -40,7 +42,7 @@ final class AnonymiserTest extends TestCase
         $original = $this->booking();
         $result = (new Anonymiser())->anonymise($original, $this->now());
         $erased = [
-            'invitee_name', 'invitee_email', 'invitee_phone', 'invitee_timezone',
+            'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone', 'invitee_timezone',
             'invitee_language', 'guest_emails', 'custom_fields', 'cancel_reason',
             'conference_provider', 'conference_url', 'conference_room', 'conference_state', 'conference_error',
         ];
@@ -50,7 +52,8 @@ final class AnonymiserTest extends TestCase
             self::assertNull($result[$field], $field);
         }
 
-        foreach (['id', 'uid', 'eventtype_id', 'host_user_id', 'start_utc', 'end_utc', 'created_utc', 'reminder_sent_utc'] as $field) {
+        // The proof of consent is not data of the person and stays on the anonymised row.
+        foreach (['id', 'uid', 'eventtype_id', 'host_user_id', 'start_utc', 'end_utc', 'created_utc', 'reminder_sent_utc', 'consent_utc', 'consent_version'] as $field) {
             self::assertSame($original[$field], $result[$field], $field);
         }
 
@@ -60,6 +63,7 @@ final class AnonymiserTest extends TestCase
         self::assertSame('2026-10-14 10:00:00', $result['anonymised_utc']);
         self::assertSame('2026-10-14 10:00:01', $result['modified_utc']);
         self::assertSame('Private Person', $original['invitee_name']);
+        self::assertSame('Private', $original['invitee_first_name']);
     }
 
     public function testIdempotenceAndUsedSignedLinkInvalidation(): void

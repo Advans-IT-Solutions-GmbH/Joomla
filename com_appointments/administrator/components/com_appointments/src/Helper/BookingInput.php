@@ -42,10 +42,53 @@ final class BookingInput
      */
     private const KEEP_LEADING_ZERO = ['39', '378', '379', '225', '229', '242'];
 
+    /** Default and upper bound of the component option `max_guests` (0 = no guest field). */
+    public const DEFAULT_MAX_GUESTS = 10;
+    public const MAX_GUESTS_LIMIT = 50;
+
+    /**
+     * Longest first or last name. The full name "first last" is stored in the 255-character
+     * `invitee_name` column, so both parts together with the space must fit there.
+     */
+    public const NAME_PART_LENGTH = 127;
+
+    /** The calling code every telephone number must use for the current validate() call, or ''. */
+    private string $fixedDialCode = '';
+
+    /**
+     * The calling code all telephone fields are limited to, or '' when the visitor chooses
+     * the code. It is the preselected code (`phone_default_country`) when the option
+     * `phone_country_choice` is 0 and that code is a valid calling code; otherwise ''.
+     */
+    public static function fixedDialCode(object $params): string
+    {
+        $get = static fn (string $name, mixed $default): mixed => method_exists($params, 'get')
+            ? $params->get($name, $default) : ($params->$name ?? $default);
+        $code = trim((string) $get('phone_default_country', ''), " +\t");
+
+        return (string) $get('phone_country_choice', '1') === '0' && in_array($code, self::DIAL_CODES, true) ? $code : '';
+    }
+
     /** Whether an event type with this location type asks for the invitee's telephone number. */
     public static function requiresPhone(string $locationType): bool
     {
         return in_array($locationType, self::PHONE_LOCATIONS, true);
+    }
+
+    /**
+     * The configured maximum number of additional guests, clamped to 0..50. The form, the
+     * hint and the server-side check all read it through this method, so they cannot differ.
+     * A value that is not a whole number (an edited parameter) falls back to the default.
+     */
+    public static function maxGuests(mixed $configured): int
+    {
+        $value = filter_var($configured, FILTER_VALIDATE_INT);
+
+        if ($value === false) {
+            return self::DEFAULT_MAX_GUESTS;
+        }
+
+        return max(0, min(self::MAX_GUESTS_LIMIT, $value));
     }
 
     /**
@@ -56,19 +99,36 @@ final class BookingInput
      * With $phoneRequired (both telephone location types) the fixed telephone field
      * `phone` is mandatory and is what `invitee_phone` stores. Otherwise the first answered
      * custom telephone field fills `invitee_phone`, as before.
+     *
+     * First and last name are separate required fields. `invitee_name` keeps the full name
+     * ("first last"), so every consumer of the full name (mails, calendar, lists) is unchanged.
+     *
+     * $maxGuests is the component option `max_guests` (see maxGuests()). With 0 the form has
+     * no guest field, so submitted guests are a tampered form, not a visitor error.
+     *
+     * $fixedDialCode (see fixedDialCode()) limits every telephone field to that calling code:
+     * an empty selector means that code, and another code, chosen or typed with + or 00, is
+     * refused at the field.
      */
-    public function validate(array $input, array $fields, string $language, bool $phoneRequired = false): array
+    public function validate(array $input, array $fields, string $language, bool $phoneRequired = false,
+        int $maxGuests = self::DEFAULT_MAX_GUESTS, string $fixedDialCode = ''): array
     {
         $errors = [];
-        $name = $this->collect($errors, 'name', 'COM_APPOINTMENTS_BOOKING_ERROR_NAME', function () use ($input): string {
-            $name = $this->text($input['name'] ?? '', 255);
+        $this->fixedDialCode = in_array($fixedDialCode, self::DIAL_CODES, true) ? $fixedDialCode : '';
+        $maxGuests = self::maxGuests($maxGuests);
+        $namePart = function (string $field, string $message) use ($input): string {
+            $value = $this->text($input[$field] ?? '', self::NAME_PART_LENGTH);
 
-            if ($name === '' || preg_match('/[\x00-\x1f\x7f]/', $name)) {
-                throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_NAME');
+            if ($value === '' || preg_match('/[\x00-\x1f\x7f]/', $value)) {
+                throw new BookingValidationException($message);
             }
 
-            return $name;
-        });
+            return $value;
+        };
+        $firstName = $this->collect($errors, 'first_name', 'COM_APPOINTMENTS_BOOKING_ERROR_FIRST_NAME',
+            fn (): string => $namePart('first_name', 'COM_APPOINTMENTS_BOOKING_ERROR_FIRST_NAME'));
+        $lastName = $this->collect($errors, 'last_name', 'COM_APPOINTMENTS_BOOKING_ERROR_LAST_NAME',
+            fn (): string => $namePart('last_name', 'COM_APPOINTMENTS_BOOKING_ERROR_LAST_NAME'));
         $email = $this->collect($errors, 'email', 'COM_APPOINTMENTS_BOOKING_ERROR_EMAIL', function () use ($input): string {
             $email = $this->text($input['email'] ?? '', 255);
 
@@ -89,9 +149,15 @@ final class BookingInput
             $language = 'en-GB';
         }
 
-        $guests = $this->collect($errors, 'guests', 'COM_APPOINTMENTS_BOOKING_ERROR_GUESTS', function () use ($input, $email): array {
+        if ($maxGuests === 0 && !(is_string($input['guests'] ?? '') && trim($input['guests'] ?? '') === '')) {
+            throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
+        }
+
+        // The message is a sprintf text with the maximum (%d), rendered by the layout.
+        $guests = $this->collect($errors, 'guests', 'COM_APPOINTMENTS_BOOKING_ERROR_GUESTS', function () use ($input, $email, $maxGuests): array {
             $guests = [];
-            $rawGuests = $this->text($input['guests'] ?? '', 3000);
+            // Each address may take 255 characters plus a separator.
+            $rawGuests = $this->text($input['guests'] ?? '', max(3000, 256 * $maxGuests));
 
             foreach (preg_split('/[\s,;]+/', $rawGuests, -1, PREG_SPLIT_NO_EMPTY) as $guest) {
                 if (strlen($guest) > 255 || !filter_var($guest, FILTER_VALIDATE_EMAIL)) {
@@ -103,7 +169,7 @@ final class BookingInput
                 }
             }
 
-            if (count($guests) > 10) {
+            if (count($guests) > $maxGuests) {
                 throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_GUESTS');
             }
 
@@ -155,7 +221,9 @@ final class BookingInput
         }
 
         return [
-            'invitee_name' => $name, 'invitee_email' => $email, 'invitee_phone' => $phone,
+            'invitee_name' => $firstName . ' ' . $lastName,
+            'invitee_first_name' => $firstName, 'invitee_last_name' => $lastName,
+            'invitee_email' => $email, 'invitee_phone' => $phone,
             'invitee_timezone' => $zone, 'invitee_language' => $language,
             'guest_emails' => implode("\n", array_values($guests)),
             'custom_fields' => json_encode($answers, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
@@ -266,6 +334,12 @@ final class BookingInput
             }
 
             $digits = substr($match[1], strlen($code));
+        } elseif ($this->fixedDialCode !== '' && $code === '') {
+            $code = $this->fixedDialCode;
+        }
+
+        if ($this->fixedDialCode !== '' && $code !== $this->fixedDialCode) {
+            throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
         }
 
         if (!in_array($code, self::DIAL_CODES, true)) {

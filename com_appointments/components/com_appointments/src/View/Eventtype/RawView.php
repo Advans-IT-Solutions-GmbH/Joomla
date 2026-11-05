@@ -9,7 +9,6 @@
 namespace Advans\Component\Appointments\Site\View\Eventtype;
 
 use Joomla\CMS\Factory;
-use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 
 defined('_JEXEC') or die;
 
@@ -19,6 +18,8 @@ defined('_JEXEC') or die;
  * the full page, so a template override of `default_picker.php` applies to both and
  * the script never renders dates or times itself. The address is the address of the
  * day or month link plus `format=raw`; without JavaScript that link opens the full page.
+ * The time-zone note (`default_zone_note.php`) follows the part: in the full page it stands
+ * outside of it, and it names the zone of the times just loaded.
  */
 class RawView extends HtmlView
 {
@@ -27,6 +28,8 @@ class RawView extends HtmlView
         $this->prepare(false);
         Factory::getApplication()->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
 
-        return BaseHtmlView::display('picker');
+        echo $this->loadTemplate('picker') . $this->loadTemplate('zone_note');
+
+        return null;
     }
 }

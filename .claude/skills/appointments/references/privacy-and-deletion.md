@@ -35,13 +35,14 @@ no contact form.
 
 | Field | After deletion |
 |---|---|
-| `invitee_name`, `invitee_email`, `invitee_phone`, `invitee_timezone` | erased |
+| `invitee_name`, `invitee_first_name`, `invitee_last_name`, `invitee_email`, `invitee_phone`, `invitee_timezone` | erased |
 | all custom field answers | erased |
 | guest e-mail addresses | erased |
 | `cancel_reason`, any free text | erased |
 | conference room identifier and link | erased, and the room is torn down if the adapter supports it |
 | anti-bot timing data | never stored in the first place, so there is nothing to erase |
 | `start_utc`, `end_utc`, `eventtype_id`, `state`, `created_utc` | kept |
+| `consent_utc`, `consent_version` | kept: the proof that the processing had a consent, which the operator may have to show after the erasure (accountability). Without the erased contact data they identify nobody; the version is a hash of mode, language and label text, never of personal data. In delete mode they go with the row |
 | `anonymised_utc` | set |
 
 A future booking is set to cancelled first, so the slot is released and the host is notified, and
@@ -64,6 +65,25 @@ is released the same way.
 - Deleting is idempotent. A second click says the data is already gone, and does not error.
 - The whole operation runs in one transaction.
 
+### Additional guests remove their own address
+
+A guest is not the person who booked, so the invitee's links are never in a guest's mail. Every
+guest mail (the `guest_*` templates, neutral salutation) instead carries one signed link of the
+guest's own, `task=guest.confirm&id=…&signature=…`:
+
+- Signed with its own `KeyProvider` purpose (`guest-link`) over booking id, the action
+  `remove_guest`, the guest address in Unicode lower case and `modified_utc`. The address is not in
+  the URL; the server finds the guest whose signature it is among the booking's guests.
+- GET shows the appointment and the guest's own address, nothing of the invitee or the other
+  guests, and a POST form with the CSRF token (task `guest.remove`). Both are rate limited
+  (bucket `guest`, 60 per 15 minutes).
+- POST removes exactly that address from `guest_emails`, under a lock of the booking row only (no host lock: it changes no availability, and a mail delivery holding the row with a shared lock makes it wait without stalling the host's other bookings), and writes
+  an audit row `remove_guest` / `self_service` without the address. The booking, the invitee's data
+  and the other guests stay.
+- `modified_utc` is deliberately **not** changed, so the invitee's and the other guests' links keep
+  working. A used link cannot be replayed anyway: its address is no longer a guest, so it matches
+  nobody and answers 404 like a tampered or outdated link. The same browser gets a receipt.
+
 ## Path 2 — formal request through Joomla's own privacy component
 
 Joomla ships a data subject request workflow in `com_privacy`: a person enters their e-mail address,
@@ -78,6 +98,12 @@ writing it; the mechanics, the event names and the known traps are documented th
   structures, with all fields including custom answers, in a readable form.
 - **Removal request:** apply the same anonymisation as path 1, to every booking for that address,
   and report what was done.
+- **Guest addresses:** the address is also looked up in `guest_emails` of other people's bookings,
+  exactly per line after Unicode case folding (SQL only narrows the candidates). The export has a
+  second domain, `appointments_guest_invitations`, with only the booking id, the guest address,
+  the event type title, the UTC times and the state. Removal takes the address out of those guest
+  lists only (audit `remove_guest` / `privacy_request`) and leaves those bookings otherwise
+  unchanged. The configured legal reason blocks guest removals too.
 - **Removal check:** if the operator has a legal reason to keep a booking, the plugin reports it as
   blocked rather than silently skipping it. The reason is a component setting with a free-text
   explanation, so an operator with a retention obligation can state it.
@@ -121,7 +147,17 @@ is narrower than "no personal data", and saying it the loose way would be wrong:
 
 ## Visibility on the booking page
 
-The booking form shows, next to the consent checkbox:
+The component option `consent_mode` (`ConsentMode`) decides what the form asks: `notice` (default,
+also for unknown values) shows only the privacy notice with its link, no checkbox and nothing
+stored; `acknowledge` requires a "taken note" checkbox and stores nothing; `consent` requires a
+consent checkbox and stores `consent_utc` and `consent_version` (see the table above). Controller
+and layout derive the label text with `ConsentMode::labelText()` and the link with
+`Site\Helper\PrivacyLink::resolve()`, so the stored version names the label that was shown. Joomla's
+System - Privacy Consent plugin only extends com_users forms and never this form.
+
+With `notice` the booking page shows one sentence at the foot of the information column, in every step, with the link to the site's own privacy notice (configured as a Joomla menu item or URL); without a configured notice nothing is shown. The delete link itself reaches the invitee with every mail.
+
+With a checkbox mode (`acknowledge` or `consent`) step 2 additionally shows the checkbox and below it:
 
 - What is collected and why, taken from a component setting so the operator writes their own text.
 - A link to the site's own privacy notice, configured as a Joomla menu item or URL.
@@ -161,3 +197,7 @@ component gives the operator the mechanism; the legal text is theirs.
   added column fails the suite. `actor_user_id` is the one operator identifier and is set for the
   `admin` path only; see "What the audit table is, and what it is not".
 - Audit rows older than the audit retention period are deleted by the retention task.
+- A guest link removes only its own address, keeps the booking and the other links valid, and a
+  tampered or foreign guest link answers 404, a used one too, except in the browser session that removed the address, which sees its receipt again (HTTP 200).
+- The privacy sub-plugin exports and removes an address that is a guest of another person's
+  booking as a guest only, and never matches an address that merely contains it.
