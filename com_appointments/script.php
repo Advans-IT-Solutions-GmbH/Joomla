@@ -13,6 +13,7 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Installer\InstallerScript;
 use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Table\Asset;
 use Joomla\CMS\User\CurrentUserInterface;
 use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
@@ -78,6 +79,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
         'plg_task_appointments.teaminvitations',
         'plg_task_appointments.teamretention',
     ];
+
+    private const RETAINED_ASSET_NAME = 'com_appointments.retained';
 
     /**
      * Hard requirement checks before the files are copied.
@@ -150,6 +153,10 @@ class Com_appointmentsInstallerScript extends InstallerScript
             }
         }
 
+        if (($type === 'install' || $type === 'discover_install') && !$this->restoreRetainedAssets()) {
+            return false;
+        }
+
         return true;
     }
 
@@ -219,6 +226,15 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $params = $this->componentParams($db, 'com_appointments') ?? [];
         $deleteData = ($params['uninstall_data_action'] ?? '') === 'delete';
 
+        if (!$deleteData && $this->hasRetainedComponentAsset($db)) {
+            Factory::getApplication()->enqueueMessage(
+                Text::_('COM_APPOINTMENTS_UNINSTALL_RETAINED_ACL_CONFLICT'),
+                'error'
+            );
+
+            return false;
+        }
+
         if (!$deleteData) {
             $this->migrateLegacyEpochAnchor();
         }
@@ -258,10 +274,112 @@ class Com_appointmentsInstallerScript extends InstallerScript
             }
             $this->removeEpochAnchor();
         } else {
+            if (!$this->retainComponentAsset($db)) {
+                return false;
+            }
+
             $app = Factory::getApplication();
             $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
             $app->enqueueMessage(Text::_('COM_APPOINTMENTS_UNINSTALL_DATA_RETAINED'), 'warning');
         }
+
+        return true;
+    }
+
+    private function hasRetainedComponentAsset(DatabaseInterface $db): bool
+    {
+        $query = $this->createDbQuery($db)
+            ->select('COUNT(*)')
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = ' . $db->quote(self::RETAINED_ASSET_NAME));
+
+        return (int) $db->setQuery($query)->loadResult() > 0;
+    }
+
+    /**
+     * Joomla removes the component's asset subtree during uninstall, including per-event-type ACL.
+     * Rename its root so Joomla leaves the subtree intact; preflight restores it on reinstall.
+     */
+    private function retainComponentAsset(DatabaseInterface $db): bool
+    {
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('id'))
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = ' . $db->quote('com_appointments'));
+        $assetId = (int) $db->setQuery($query)->loadResult();
+
+        if ($assetId === 0) {
+            return true;
+        }
+
+        $query = $this->createDbQuery($db)
+            ->select('COUNT(*)')
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = ' . $db->quote(self::RETAINED_ASSET_NAME));
+
+        if ((int) $db->setQuery($query)->loadResult() > 0) {
+            Factory::getApplication()->enqueueMessage(
+                Text::_('COM_APPOINTMENTS_UNINSTALL_RETAINED_ACL_CONFLICT'),
+                'error'
+            );
+
+            return false;
+        }
+
+        $query = $this->createDbQuery($db)
+            ->update($db->quoteName('#__assets'))
+            ->set($db->quoteName('name') . ' = ' . $db->quote(self::RETAINED_ASSET_NAME))
+            ->where($db->quoteName('id') . ' = ' . $assetId);
+        $db->setQuery($query)->execute();
+
+        return true;
+    }
+
+    /**
+     * Restore retained ACL before Joomla finalises a fresh component installation.
+     */
+    private function restoreRetainedAssets(): bool
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('id'))
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = ' . $db->quote(self::RETAINED_ASSET_NAME));
+        $assetId = (int) $db->setQuery($query)->loadResult();
+
+        if ($assetId === 0) {
+            return true;
+        }
+
+        if (!$this->hasExistingAppointmentsTables) {
+            $asset = new Asset($db);
+
+            if (!$asset->load($assetId) || !$asset->delete()) {
+                throw new \RuntimeException('Retained Appointments permissions could not be removed.');
+            }
+
+            return true;
+        }
+
+        $query = $this->createDbQuery($db)
+            ->select('COUNT(*)')
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = ' . $db->quote('com_appointments'));
+
+        if ((int) $db->setQuery($query)->loadResult() > 0) {
+            Factory::getApplication()->enqueueMessage(
+                Text::_('COM_APPOINTMENTS_INSTALL_RETAINED_ACL_CONFLICT'),
+                'error'
+            );
+
+            return false;
+        }
+
+        $query = $this->createDbQuery($db)
+            ->update($db->quoteName('#__assets'))
+            ->set($db->quoteName('name') . ' = ' . $db->quote('com_appointments'))
+            ->where($db->quoteName('id') . ' = ' . $assetId);
+        $db->setQuery($query)->execute();
 
         return true;
     }

@@ -66,6 +66,7 @@ class UninstallTest
         echo "=== Uninstall Tests ===\n\n";
 
         $extensionId = $this->extensionId();
+        $aclFixture = $this->prepareEventtypeAclFixture();
 
         $this->test('Extension ID found before uninstall', function () use ($extensionId) {
             return $extensionId > 0;
@@ -125,6 +126,14 @@ class UninstallTest
             return $row && (int) $row['cnt'] === 1;
         });
 
+        $this->test('Retained uninstall preserves component and event-type ACL assets', function () use ($aclFixture) {
+            $componentAsset = $this->assetRow('com_appointments.retained');
+            $eventtypeAsset = $this->assetRow($aclFixture['asset_name']);
+
+            return $componentAsset !== null && $componentAsset['rules'] === $aclFixture['component_rules']
+                && $eventtypeAsset !== null && $eventtypeAsset['rules'] === $aclFixture['rules'];
+        });
+
         $this->test('All six Appointments Scheduler task types are removed', function () {
             $types = "'" . implode("','", self::TASK_TYPES) . "'";
             $result = $this->db->query(
@@ -148,6 +157,18 @@ class UninstallTest
             return $exitCode === 0 && $this->extensionId() > 0
                 && is_file($anchorPath) && file_get_contents($anchorPath) === $anchorContent
                 && !is_file($legacyAnchorPath);
+        });
+        $this->test('Reinstall restores the component ACL tree and event-type deny rule', function () use ($aclFixture) {
+            $componentAsset = $this->assetRow('com_appointments');
+            $eventtypeAsset = $this->assetRow($aclFixture['asset_name']);
+            $eventtype = $this->db->query(
+                "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}appointments_eventtypes WHERE id = {$aclFixture['eventtype_id']}"
+            );
+            $row = $eventtype ? $eventtype->fetch_assoc() : null;
+
+            return $componentAsset !== null && $componentAsset['rules'] === $aclFixture['component_rules']
+                && $eventtypeAsset !== null && $eventtypeAsset['rules'] === $aclFixture['rules']
+                && $row && (int) $row['cnt'] === 1;
         });
         $this->test('Reinstalled Scheduler routines stay disabled until reviewed', function () {
             $types = "'plg_task_appointments.reminders','plg_task_appointments.retention'";
@@ -189,6 +210,11 @@ class UninstallTest
             $row = $result ? $result->fetch_assoc() : null;
 
             return $row && (int) $row['cnt'] === 0 && !is_file($anchorPath) && !is_file($legacyAnchorPath);
+        });
+        $this->test('Explicit delete choice removes the retained component and event-type ACL assets', function () use ($aclFixture) {
+            return $this->assetRow('com_appointments') === null
+                && $this->assetRow('com_appointments.retained') === null
+                && $this->assetRow($aclFixture['asset_name']) === null;
         });
 
         $this->test('Component registration is removed', function () {
@@ -276,6 +302,78 @@ class UninstallTest
         $row = $result ? $result->fetch_assoc() : null;
 
         return $row ? (int) $row['extension_id'] : 0;
+    }
+
+    private function prepareEventtypeAclFixture(): array
+    {
+        $time = gmdate('Y-m-d H:i:s');
+        $title = 'uninstall-acl-' . bin2hex(random_bytes(6));
+        $escapedTitle = $this->db->real_escape_string($title);
+        if (!$this->db->query(
+            "INSERT INTO {$this->dbPrefix}appointments_schedules (title, timezone, owner_user_id, created_utc, modified_utc)"
+            . " VALUES ('{$escapedTitle}', 'UTC', 0, '{$time}', '{$time}')"
+        )) {
+            throw new \RuntimeException('Could not create the retained ACL test schedule.');
+        }
+
+        $scheduleId = (int) $this->db->insert_id;
+        $token = bin2hex(random_bytes(32));
+        if (!$this->db->query(
+            "INSERT INTO {$this->dbPrefix}appointments_eventtypes"
+            . " (title, alias, schedule_id, host_user_id, feed_token, created_utc, modified_utc)"
+            . " VALUES ('{$escapedTitle}', '{$escapedTitle}', {$scheduleId}, 0, '{$token}', '{$time}', '{$time}')"
+        )) {
+            throw new \RuntimeException('Could not create the retained ACL test event type.');
+        }
+
+        $eventtypeId = (int) $this->db->insert_id;
+        $assetName = 'com_appointments.eventtype.' . $eventtypeId;
+        $escapedAssetName = $this->db->real_escape_string($assetName);
+        $rules = '{"core.delete":{"2147483647":-1}}';
+        $escapedRules = $this->db->real_escape_string($rules);
+        $component = $this->assetRow('com_appointments');
+
+        if ($component === null) {
+            throw new \RuntimeException('The Appointments component asset is missing before uninstall.');
+        }
+
+        $componentId = (int) $component['id'];
+        $right = (int) $component['rgt'];
+        $level = (int) $component['level'] + 1;
+        if (!$this->db->query("UPDATE {$this->dbPrefix}assets SET rgt = rgt + 2 WHERE rgt >= {$right}")
+            || !$this->db->query("UPDATE {$this->dbPrefix}assets SET lft = lft + 2 WHERE lft > {$right}")
+            || !$this->db->query(
+            "INSERT INTO {$this->dbPrefix}assets (parent_id, lft, rgt, level, name, title, rules)"
+            . " VALUES ({$componentId}, {$right}, " . ($right + 1) . ", {$level}, '{$escapedAssetName}',"
+            . " '{$escapedTitle}', '{$escapedRules}')"
+        )) {
+            throw new \RuntimeException('Could not create the retained ACL test asset.');
+        }
+
+        $assetId = (int) $this->db->insert_id;
+        if (!$this->db->query(
+            "UPDATE {$this->dbPrefix}appointments_eventtypes SET asset_id = {$assetId} WHERE id = {$eventtypeId}"
+        )) {
+            throw new \RuntimeException('Could not link the retained ACL test asset.');
+        }
+
+        return [
+            'asset_name' => $assetName,
+            'component_rules' => $component['rules'],
+            'eventtype_id' => $eventtypeId,
+            'rules' => $rules,
+        ];
+    }
+
+    private function assetRow(string $name): ?array
+    {
+        $escapedName = $this->db->real_escape_string($name);
+        $result = $this->db->query(
+            "SELECT id, lft, rgt, level, rules FROM {$this->dbPrefix}assets WHERE name = '{$escapedName}'"
+        );
+        $row = $result ? $result->fetch_assoc() : null;
+
+        return $row ?: null;
     }
 
     private function setUninstallChoice(?string $choice): void
