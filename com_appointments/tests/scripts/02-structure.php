@@ -397,7 +397,6 @@ class StructureTest
             'Dashboard view'          => $this->admin . '/src/View/Dashboard/HtmlView.php',
             'Dashboard layout'        => $this->admin . '/tmpl/dashboard/default.php',
             'Install SQL'             => $this->admin . '/sql/install.mysql.utf8.sql',
-            'Uninstall SQL'           => $this->admin . '/sql/uninstall.mysql.utf8.sql',
             'Schema migration'        => $this->admin . '/sql/updates/mysql/1.0.0.sql',
             'Display migration'       => $this->admin . '/sql/updates/mysql/1.3.0.sql',
             'Team calendar migration' => $this->admin . '/sql/updates/mysql/1.4.0.sql',
