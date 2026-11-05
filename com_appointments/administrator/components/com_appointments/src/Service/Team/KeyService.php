@@ -635,6 +635,12 @@ final class KeyService implements KeyServiceInterface
                 $current = $e->getMessage() === 'COM_APPOINTMENTS_TEAM_B_ERROR_KEY_CHANGED' ? null : $this->currentVersion($calendarId, true);
             } catch (\Throwable $readFailure) {
                 $keyring->wipe();
+
+                // A deadlock here rolled back the caller's whole transaction.
+                if ($readFailure instanceof TransactionLostException || (int) $readFailure->getCode() === 1213) {
+                    throw $readFailure instanceof TransactionLostException ? $readFailure : new TransactionLostException('The database transaction was lost.', 500, $readFailure);
+                }
+
                 $this->warn('the key version could not be read again', $readFailure);
 
                 return null;
@@ -1448,7 +1454,7 @@ final class KeyService implements KeyServiceInterface
             // is deliberately no TeamException, so no fallback catches it.
             $this->warn('a rollback failed, the outer transaction is lost', $e);
 
-            throw new \RuntimeException('The database transaction was lost.', 500, $e);
+            throw new TransactionLostException('The database transaction was lost.', 500, $e);
         }
     }
 
@@ -2107,4 +2113,15 @@ final class KeyService implements KeyServiceInterface
         } catch (\Throwable $ignored) {
         }
     }
+}
+
+/**
+ * The database rolled back the whole outer transaction (deadlock): the
+ * caller's earlier writes are gone. Never caught by the fallbacks of the key
+ * service and the key session; the outermost caller must abort.
+ *
+ * @since  1.4.0
+ */
+final class TransactionLostException extends \RuntimeException
+{
 }

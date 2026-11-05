@@ -62,6 +62,9 @@ final class KeySession implements KeySessionInterface
     /** The password signed in but no longer opens the stored key: reset and create at release. */
     private const MODE_REPLACE = 'replace';
 
+    /** Seconds after the password sign-in within which the counting factor must have been used. */
+    private const PROOF_WINDOW_SECONDS = 600;
+
     /** MFA methods that do not count as a second factor for keys: backup codes, and e-mail codes (the channel of the password reset). */
     private const NOT_A_SECOND_FACTOR = ['backupcodes', 'email'];
 
@@ -191,6 +194,8 @@ final class KeySession implements KeySessionInterface
     {
         try {
             return $this->release();
+        } catch (TransactionLostException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             $this->warn('the keys of the session could not be released', $e);
 
@@ -307,9 +312,21 @@ final class KeySession implements KeySessionInterface
             || (int) $session->get('com_users.mfa_checked', 0) !== 1
             || (int) $session->get('com_users.mandatory_mfa_setup', 0) !== 0
             || !$this->joomlaSecondFactor($userId)
-            || !hash_equals((string) ($escrow['nc'] ?? ''), $this->factorSnapshot($userId))
-            || !$this->countingFactorUsedSince($userId, (string) ($escrow['cs'] ?? ''))
             || !$this->services->grants()->hasSecondFactor($userId)) {
+            return null;
+        }
+
+        $signedInAt = (int) ($escrow['at'] ?? 0);
+        $proven = !empty($escrow['ok']);
+
+        // The proof that this sign-in passed with a counting factor is judged
+        // once, at the first release, and then frozen in the escrow: a later
+        // use of a counting factor in another session can never turn a failed
+        // proof into a success, and a failed one ends the escrow for good.
+        if (!$proven && (!hash_equals((string) ($escrow['nc'] ?? ''), $this->factorSnapshot($userId))
+            || !$this->countingFactorUsedSince($userId, (string) ($escrow['cs'] ?? ''), $signedInAt))) {
+            $this->forget();
+
             return null;
         }
 
@@ -325,7 +342,7 @@ final class KeySession implements KeySessionInterface
         $payload = CipherSuite::decrypt(
             $sessionKey,
             (string) base64_decode((string) $escrow['box'], true),
-            self::escrowAd($userId, $client, (string) $escrow['mode'], (int) $escrow['version'], $nonce, $observedPublic, $salt, (bool) $escrow['mfa'], (string) ($escrow['nc'] ?? ''), (string) ($escrow['cs'] ?? ''))
+            self::escrowAd($userId, $client, (string) $escrow['mode'], (int) $escrow['version'], $nonce, $observedPublic, $salt, (bool) $escrow['mfa'], (string) ($escrow['nc'] ?? ''), (string) ($escrow['cs'] ?? ''), $signedInAt, $proven)
         );
 
         if ($payload === null || \strlen($payload) !== CipherSuite::KEY_BYTES) {
@@ -377,9 +394,10 @@ final class KeySession implements KeySessionInterface
                 return null;
             }
 
-            if ($escrow['mode'] !== self::MODE_KEY) {
-                // From now on the session holds the key itself, under the same cookie.
-                $this->seal($session, $client, $sessionKey, $userId, self::MODE_KEY, $context->userKeyVersion(), $context->publicKey(), '', true, (string) $escrow['nc'], (string) $escrow['cs'], $context->secretKey());
+            if ($escrow['mode'] !== self::MODE_KEY || !$proven) {
+                // From now on the session holds the key itself, under the same
+                // cookie, with the proof frozen as passed.
+                $this->seal($session, $client, $sessionKey, $userId, self::MODE_KEY, $context->userKeyVersion(), $context->publicKey(), '', true, (string) $escrow['nc'], (string) $escrow['cs'], $signedInAt, true, $context->secretKey());
             }
 
             return $context;
@@ -416,8 +434,13 @@ final class KeySession implements KeySessionInterface
         } catch (\Throwable $e) {
             try {
                 $db->transactionRollback(true);
-            } catch (\Throwable $ignored) {
-                // After a deadlock the savepoint is gone already.
+            } catch (\Throwable $lost) {
+                // The savepoint is gone: the outer transaction was rolled back.
+                throw new TransactionLostException('The database transaction was lost.', 500, $lost);
+            }
+
+            if ($e instanceof TransactionLostException) {
+                throw $e;
             }
 
             $this->warn('a key reset was refused', $e);
@@ -485,14 +508,14 @@ final class KeySession implements KeySessionInterface
         $sessionKey = random_bytes(CipherSuite::KEY_BYTES);
 
         try {
-            $this->seal($app->getSession(), $client, $sessionKey, $userId, $mode, $version, $publicKey, $salt, $secondFactor, $this->factorSnapshot($userId), $this->countingSnapshot($userId), $payload);
+            $this->seal($app->getSession(), $client, $sessionKey, $userId, $mode, $version, $publicKey, $salt, $secondFactor, $this->factorSnapshot($userId), $this->countingSnapshot($userId), time(), false, $payload);
             $this->setCookie($app, $client, bin2hex($sessionKey), 0);
         } finally {
             CipherSuite::wipe($sessionKey);
         }
     }
 
-    private function seal(object $session, string $client, #[\SensitiveParameter] string $sessionKey, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, string $factorSnapshot, string $countingSnapshot, #[\SensitiveParameter] string $payload): void
+    private function seal(object $session, string $client, #[\SensitiveParameter] string $sessionKey, int $userId, string $mode, int $version, string $publicKey, string $salt, bool $secondFactor, string $factorSnapshot, string $countingSnapshot, int $signedInAt, bool $proven, #[\SensitiveParameter] string $payload): void
     {
         $nonce = random_bytes(16);
         $session->set(self::SESSION_KEY . $client, [
@@ -504,8 +527,10 @@ final class KeySession implements KeySessionInterface
             'mfa'     => $secondFactor,
             'nc'      => $factorSnapshot,
             'cs'      => $countingSnapshot,
+            'at'      => $signedInAt,
+            'ok'      => $proven,
             'nonce'   => base64_encode($nonce),
-            'box'     => base64_encode(CipherSuite::encrypt($sessionKey, $payload, self::escrowAd($userId, $client, $mode, $version, $nonce, $publicKey, $salt, $secondFactor, $factorSnapshot, $countingSnapshot))),
+            'box'     => base64_encode(CipherSuite::encrypt($sessionKey, $payload, self::escrowAd($userId, $client, $mode, $version, $nonce, $publicKey, $salt, $secondFactor, $factorSnapshot, $countingSnapshot, $signedInAt, $proven))),
         ]);
     }
 
@@ -516,9 +541,9 @@ final class KeySession implements KeySessionInterface
      * non-counting MFA records at sign-in), so neither a box nor a field can be
      * replayed or changed in the session table unnoticed.
      */
-    public static function escrowAd(int $userId, string $client, string $mode, int $version, string $nonce, string $publicKey, string $salt, bool $secondFactor, string $factorSnapshot, string $countingSnapshot): string
+    public static function escrowAd(int $userId, string $client, string $mode, int $version, string $nonce, string $publicKey, string $salt, bool $secondFactor, string $factorSnapshot, string $countingSnapshot, int $signedInAt, bool $proven): string
     {
-        return CipherSuite::associatedData('key-escrow', $userId, $client, $mode, $version, bin2hex($nonce), bin2hex($publicKey), bin2hex($salt), $secondFactor ? 1 : 0, $factorSnapshot, $countingSnapshot);
+        return CipherSuite::associatedData('key-escrow', $userId, $client, $mode, $version, bin2hex($nonce), bin2hex($publicKey), bin2hex($salt), $secondFactor ? 1 : 0, $factorSnapshot, $countingSnapshot, $signedInAt, $proven ? 1 : 0);
     }
 
     /**
@@ -556,19 +581,23 @@ final class KeySession implements KeySessionInterface
      * counting factor in another session also satisfies this half, but then
      * the exclusion still proves that this session used no backup or e-mail code.
      */
-    private function countingFactorUsedSince(int $userId, string $countingSnapshot): bool
+    private function countingFactorUsedSince(int $userId, string $countingSnapshot, int $signedInAt): bool
     {
         $before = json_decode($countingSnapshot, true);
 
-        if (!\is_array($before)) {
+        if (!\is_array($before) || $signedInAt <= 0) {
             return false;
         }
+
+        // Joomla's captive page follows the sign-in at once: a stamp later than
+        // this window belongs to another sign-in.
+        $latest = gmdate('Y-m-d H:i:s', $signedInAt + self::PROOF_WINDOW_SECONDS);
 
         foreach ($this->countingRecords($userId) as $record) {
             $id = (string) (int) $record->id;
             $now = (string) ($record->last_used ?? '');
 
-            if (\array_key_exists($id, $before) && $now !== '' && strcmp($now, (string) $before[$id]) > 0) {
+            if (\array_key_exists($id, $before) && $now !== '' && strcmp($now, (string) $before[$id]) > 0 && strcmp($now, $latest) <= 0) {
                 return true;
             }
         }

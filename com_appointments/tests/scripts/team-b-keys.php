@@ -427,11 +427,11 @@ return static function (TeamSuite $suite): void {
         $atSignIn = $snapshot->invoke($session, $member);
         $countingAtSignIn = $counting->invoke($session, $member);
         // Before any counting factor was used after the sign-in, nothing is proven.
-        $notYet = !$usedSince->invoke($session, $member, $countingAtSignIn);
+        $notYet = !$usedSince->invoke($session, $member, $countingAtSignIn, time() - 5);
         // This session passed with TOTP: the counting record is stamped.
         $db->query("UPDATE {$p}user_mfa SET last_used = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 1 SECOND) WHERE user_id = {$member} AND method = 'totp'");
         $withTotp = $snapshot->invoke($session, $member);
-        $totpProven = $usedSince->invoke($session, $member, $countingAtSignIn);
+        $totpProven = $usedSince->invoke($session, $member, $countingAtSignIn, time() - 5);
         // A backup code instead: the backup code record is stamped.
         $db->query("UPDATE {$p}user_mfa SET last_used = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 2 SECOND) WHERE user_id = {$member} AND method = 'backupcodes'");
         $withBackup = $snapshot->invoke($session, $member);
