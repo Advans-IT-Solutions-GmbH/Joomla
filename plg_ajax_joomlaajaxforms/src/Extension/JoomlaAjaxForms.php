@@ -1830,15 +1830,25 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
         try {
             $db    = $this->getDatabase();
+            $value = 'TRIM(' . $db->quoteName('email') . ')';
+            $postgres = method_exists($db, 'getServerType') && strtolower((string) $db->getServerType()) === 'postgresql';
+            // SQL case tables need not match PHP's Unicode lowercase tables.
+            // Keep every non-ASCII/control candidate; PHP decides exact identity.
+            $nonAscii = $postgres
+                ? '(OCTET_LENGTH(' . $value . ') <> CHAR_LENGTH(' . $value . ') OR ' . $value . " ~ '[[:cntrl:]]')"
+                : '(LENGTH(' . $value . ') <> CHAR_LENGTH(' . $value . ') OR ' . $value . " REGEXP '[[:cntrl:]]')";
+            $asciiLower = $postgres
+                ? 'LOWER(' . $value . ' COLLATE "C")'
+                : 'LOWER(CONVERT(' . $value . ' USING utf8mb4) COLLATE utf8mb4_bin)';
+            $normalizedEmail = $this->normalizeMailAddress($email);
             $query = $this->createDbQuery($db)
                 ->select($db->quoteName(['email', 'params']))
                 ->from($db->quoteName('#__users'))
-                ->where('LOWER(' . $db->quoteName('email') . ') = LOWER(:email)')
-                ->bind(':email', $email, ParameterType::STRING);
+                ->where('(' . $nonAscii . ' OR ' . $asciiLower . ' = :email)')
+                ->bind(':email', $normalizedEmail, ParameterType::STRING);
 
             $db->setQuery($query);
             $candidates = $db->loadObjectList();
-            $normalizedEmail = $this->normalizeMailAddress($email);
             $accounts     = array_values(array_filter(
                 $candidates,
                 fn($account) => $this->normalizeMailAddress((string) $account->email) === $normalizedEmail

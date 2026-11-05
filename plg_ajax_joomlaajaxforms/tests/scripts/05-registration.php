@@ -315,8 +315,13 @@ class RegistrationTest
 
             $defaultLanguage = (string) \Joomla\CMS\Component\ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
             $sharpLanguage = $defaultLanguage === 'fr-FR' ? 'en-GB' : 'fr-FR';
-            ajaxforms_create_test_user('activationsharps', $sharpLanguage, 'ajaxforms_straße@example.test');
+            ajaxforms_create_test_user('activationsharps', $sharpLanguage, " \tAJAXFORMS_STRA\u{1E9E}E@EXAMPLE.TEST\t ");
 
+            $this->test(
+                'Stored capital sharp-S and whitespace match a normalized Unicode-lowercase recipient through the database',
+                $language->invoke($plugin, 'ajaxforms_straße@example.test') === $sharpLanguage,
+                'database preselection lost the Unicode-lowercase equivalent account'
+            );
             $this->test(
                 'Sharp-s and ss recipient addresses remain distinct despite database collation',
                 $language->invoke($plugin, 'ajaxforms_strasse@example.test') === $defaultLanguage,

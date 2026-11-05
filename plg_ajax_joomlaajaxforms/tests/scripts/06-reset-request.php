@@ -676,14 +676,17 @@ class ResetRequestTest
                 ]);
                 $mailer->addUnsafeTags(['NAME']);
                 $mailer->addRecipient('attachment@example.test');
-                $mailer->addAttachment($file, '{NAME}.pdf');
+                $mailer->addAttachment('{NAME}.pdf', $file);
                 $this->test("$style attachment mail sends through MailTemplate", $mailer->send() === true);
                 $messages = ajaxforms_mailcatch_messages();
                 $this->test("$style attachment mail captured exactly once", count($messages) === 1);
                 $raw = $messages[0] ?? '';
+                preg_match('/\bfilename=(?:"([^"\r\n]*)"|([^;\s\r\n]+))/i', $raw, $filename);
+                $attachmentName = ($filename[1] ?? '') !== '' ? $filename[1] : ($filename[2] ?? '');
                 $this->test(
                     "$style attachment filename keeps an unescaped ampersand",
-                    str_contains($raw, 'filename="A&B.pdf"') && !str_contains($raw, 'A&amp;B.pdf')
+                    $attachmentName === 'A&B.pdf',
+                    'attachment filename: ' . json_encode($attachmentName)
                 );
             }
         } finally {
