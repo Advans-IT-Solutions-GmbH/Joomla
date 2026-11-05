@@ -478,10 +478,12 @@ Three details follow from the plugin answering inside `com_ajax`:
 - On cores with language-factory injection, `MailTemplate` receives a separate
   language object for each recipient. The plugin loads exact-locale defaults and
   translations before Joomla's extension-level translation cache runs.
-  Joomla 5.4 and 6.0/6.1 instead translate through the request's global `Text`
-  service: a compatibility adapter localizes the stored fields at the protected
-  tag-rendering hook and keeps HTML replacements escaped, without switching the
-  request language or replacing Joomla's layout renderer.
+  Factory injection is recognized with both four constructor arguments (including
+  the Joomla 5.4 backport) and five arguments (Joomla 6.2).
+  Earlier three-argument cores instead translate through the request's global
+  `Text` service: a compatibility adapter localizes the stored fields at the
+  protected tag-rendering hook and keeps HTML replacements escaped, without
+  switching the request language or replacing Joomla's layout renderer.
 
 ### The notice about a new registration
 

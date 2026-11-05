@@ -1521,9 +1521,13 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      */
     protected function createLocalizedMailTemplate(array $arguments, object $template): MailTemplate
     {
-        $injected = (new \ReflectionMethod(MailTemplate::class, '__construct'))->getNumberOfParameters() >= 5;
+        $parameterCount = (new \ReflectionMethod(MailTemplate::class, '__construct'))->getNumberOfParameters();
+        // Factory injection was backported to 5.4 with four arguments; 6.2
+        // adds the fifth database argument. Only three-argument cores need
+        // the legacy Text rendering adapter.
+        $injected = $parameterCount >= 4;
         $language = $arguments[3]->createLanguage($arguments[1]);
-        $mailer = new class (...array_slice($arguments, 0, $injected ? 5 : 3)) extends MailTemplate {
+        $mailer = new class (...array_slice($arguments, 0, min($parameterCount, count($arguments)))) extends MailTemplate {
             private ?Language $recipientLanguage = null;
             private array $localizedFields = [];
             private array $htmlTranslations = [];

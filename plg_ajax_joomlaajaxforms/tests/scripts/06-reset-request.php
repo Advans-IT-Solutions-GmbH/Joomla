@@ -454,7 +454,12 @@ class ResetRequestTest
 
                     $raw  = $messages[0];
                     $text = ajaxforms_mail_text($raw);
-                    $this->test("$tag template keys are translated", stripos($text, 'COM_USERS_EMAIL_') === false);
+                    preg_match_all('/COM_USERS_EMAIL_[A-Z0-9_]+/i', $text, $untranslatedKeys);
+                    $this->test(
+                        "$tag template keys are translated",
+                        stripos($text, 'COM_USERS_EMAIL_') === false,
+                        'untranslated language keys: ' . implode(', ', array_unique($untranslatedKeys[0]))
+                    );
                     $installed = array_keys(\Joomla\CMS\Language\LanguageHelper::getInstalledLanguages(0));
                     $this->test(
                         "$tag rendered mail contains translated core wording",
@@ -585,6 +590,15 @@ class ResetRequestTest
             $container->get(DatabaseInterface::class),
         ];
         $mailer = $create->invoke($plugin, $arguments, $template);
+        $constructor = new ReflectionMethod(\Joomla\CMS\Mail\MailTemplate::class, '__construct');
+        if ($constructor->getNumberOfParameters() >= 4) {
+            $factoryProperty = new ReflectionProperty(\Joomla\CMS\Mail\MailTemplate::class, 'languageFactory');
+            $factoryProperty->setAccessible(true);
+            $this->test(
+                'Factory-injection cores, including four-argument 5.4 backports, receive the recipient language factory',
+                $factoryProperty->getValue($mailer) === $factory
+            );
+        }
         // Exercise the compatibility branch even on factory-injection cores.
         $mailer->localizeLegacy($language, $template);
         $mailer->addUnsafeTags(['NAME']);
