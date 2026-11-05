@@ -336,6 +336,40 @@ return static function (TeamSuite $suite): void {
         $calendars[] = $calendar;
         $grants = $services->grants();
 
+        $suite->test('An unavailable calendar retains its held id and token-protected Close form', static function () use ($calendar) {
+            $input = \Joomla\CMS\Factory::getApplication()->getInput();
+            $originalId = $input->get('id', null, 'raw');
+            $input->set('id', $calendar);
+            $view = new class {
+                public bool $enabled = true;
+                public bool $available = false;
+
+                public function render(): string
+                {
+                    ob_start();
+
+                    try {
+                        include JPATH_ADMINISTRATOR . '/components/com_appointments/tmpl/calendar/edit.php';
+
+                        return (string) ob_get_contents();
+                    } finally {
+                        ob_end_clean();
+                    }
+                }
+            };
+
+            try {
+                $html = $view->render();
+            } finally {
+                $input->set('id', $originalId);
+            }
+
+            return str_contains($html, 'id="calendar-form" class="form-validate"')
+                && str_contains($html, 'name="id" value="' . $calendar . '"')
+                && preg_match('/name="[a-f0-9]{32}" value="1"/', $html) === 1
+                && !str_contains($html, 'name="jform[');
+        });
+
         $suite->test('A calendar edit can be cancelled after disabling the feature, with token and edit-id release', static function () use ($admin, $base, $calendar, $setOptions) {
             $admin->request($base . '&task=calendars.edit&id=' . $calendar);
             $setOptions(['teamcal_enabled' => 0]);
