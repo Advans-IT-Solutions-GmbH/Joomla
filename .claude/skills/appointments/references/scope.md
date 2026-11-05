@@ -62,7 +62,7 @@ have to exist, not a configuration anyone has to use:
   selector), e-mail, URL, single choice, multiple choice, checkbox, date. Each with label,
   description, required flag and ordering.
 - Honeypot plus a timing check against bots. No external CAPTCHA.
-- Consent checkbox with a configurable text and a link to the site's own privacy notice.
+- A privacy notice with a link to the site's own privacy notice at the foot of the information column (default), or optionally an acknowledgement or a consent checkbox with a configurable text (option `consent_mode`).
 
 ### Booking lifecycle
 - Confirm immediately, or require the host's approval before the booking counts as confirmed

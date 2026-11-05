@@ -145,6 +145,24 @@ redisplay therefore uses plain text fields for both bounds: Joomla's calendar fi
 convert them again and even normalise an impossible date. The refusal marker is cleared before the
 next valid submission; normal saves and edits continue to use the calendar's `user_utc` conversion.
 
+Two defaults of Joomla's calendar field are traps, for every form of the component:
+
+- **`translateformat="true"` makes the submitted string language-dependent.** The field then sends
+  `DATE_FORMAT_FILTER_DATETIME` of the operator's language (`2026-06-02 14:00:00` in English,
+  `02.06.2026 14:00:00` in German), and code that reads the submitted text before Joomla converts it
+  cannot check a format that changes with the reader. Calendar fields therefore declare a fixed
+  format (`%Y-%m-%d %H:%M:%S` for a timestamp, `%Y-%m-%d` for a bare date) and no translated
+  submit format.
+- **A missing `filter` attribute is not "no filter".** The field then presets `user_utc` for the
+  *display* only while the output filter stays unset, so a stored bare date is converted on the way
+  out and not on the way back in. For an operator west of UTC that moves the date one day earlier
+  on every round trip. Every calendar field names its filter: `user_utc` for a timestamp,
+  `filter="none"` for a bare date such as a schedule override.
+
+`02-structure.php` asserts this for **all** calendar fields of the component as a set (no
+translated submit format, an explicit filter, a given format), so a field added later is covered
+without further work.
+
 ## iCalendar output
 
 RFC 5545. Two shapes are produced, and they are not the same.

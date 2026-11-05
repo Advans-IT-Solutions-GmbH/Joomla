@@ -343,9 +343,16 @@ play back an older, validly signed grant, calendar, device or invitation row.
 
 - Encrypted with `key(PURPOSE_BOOKING_DATA)`: `invitee_name`, `invitee_first_name`, `invitee_last_name`,
   `invitee_email`, `invitee_phone`, `guest_emails`, `custom_fields`, `cancel_reason`, `conference_url`.
-  Value format `v1:` plus Base64 of `CipherSuite::encrypt(key, value, associatedData('booking', uid, created_utc, column))`;
-  `uid` and `created_utc` exist before the insert, so the row id is not needed, and the fields of one booking
-  cannot be copied to another. The update writes a keyed token (`booking_data_migration`) holding the
+  Value format `v2:` plus Base64 of `CipherSuite::encrypt(key, value, associatedData('booking/v2', id,
+  eventtype_id, host_user_id, uid, created_utc, column))`. Every seal and open obtains and verifies this
+  complete context from the authoritative booking row. Creation reserves the row id with a skeleton insert
+  containing no personal data, seals and updates the protected fields in the same transaction, and commits
+  only after the update succeeds; any failure rolls back the skeleton. `eventtype_id` and `host_user_id`
+  are set at creation and cannot be changed while a booking exists; mutations reject a changed context.
+  The pre-release `v1:` format is not accepted: it existed only in disposable test data. There is no v1
+  fallback or automatic v1 migration, and existing database records are never deleted to address this
+  incompatibility. Replace v1 fixtures only in isolated disposable test setups. The update writes a keyed
+  token (`booking_data_migration`) holding the
   update time and an expiry of at most 7 days; `migrate()` renews it while rows created before the update
   hold clear text and replaces it by a keyed end marker when none is left; only those rows are ever read
   in clear or encrypted, so clear text planted later by a database writer counts as unreadable and is

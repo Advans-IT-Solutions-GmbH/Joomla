@@ -116,15 +116,23 @@
                     return '';
                 }
             };
-            const longName = (zone) => {
+            // The name of a zone in the page language: the generic name without summer or winter time
+            // ("Mitteleuropäische Zeit") where the browser knows it, else the current one.
+            const zoneName = (zone, style) => {
                 try {
-                    const part = new Intl.DateTimeFormat(language, { timeZone: zone, timeZoneName: 'long' })
+                    const part = new Intl.DateTimeFormat(language, { timeZone: zone, timeZoneName: style })
                         .formatToParts(new Date()).find((item) => item.type === 'timeZoneName');
 
                     return part ? part.value : '';
                 } catch (error) {
                     return '';
                 }
+            };
+            const longName = (zone) => {
+                const generic = zoneName(zone, 'longGeneric');
+
+                // Without a name of its own the browser answers with an offset such as "GMT+05:45".
+                return generic && !/^(?:GMT|UTC)[+-]/.test(generic) ? generic : zoneName(zone, 'long');
             };
             const list = (p) => {
                 if (!zones) {
@@ -184,8 +192,13 @@
                 }
 
                 const option = p.select.options[p.select.selectedIndex];
+                const name = option ? option.text : p.select.value;
+                const generic = longName(p.select.value);
 
-                p.current.textContent = option ? option.text : p.select.value;
+                // Like a hosted scheduling page: the name of the zone in the page language, the
+                // identifier of the zone (city) as the tooltip and in the list.
+                p.current.textContent = generic || name;
+                p.button.title = name;
                 p.now.textContent = timeIn(p.select.value, p.box.dataset.clock);
                 p.box.querySelectorAll('[data-clock]').forEach((button) => {
                     if (button.tagName === 'BUTTON') {

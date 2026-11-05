@@ -48,7 +48,7 @@ final class MailComposer
 
         return [
             'subject' => $subject,
-            'body' => strtr($template['body'], $placeholders),
+            'body' => strtr(self::withoutEmptyDetails($template['body'], $placeholders), $placeholders),
             'attachments' => [
                 [
                     'filename' => 'invite.ics',
@@ -64,13 +64,31 @@ final class MailComposer
         ];
     }
 
+    /**
+     * Leaves out a detail line of the template whose only placeholder is empty, such as
+     * "Location: {location}" for a telephone appointment or "Phone: {invitee_phone}" without a
+     * number, so the mail shows no label without a value. A line with text or another value
+     * around the placeholder stays.
+     *
+     * @param array<string, string> $placeholders
+     */
+    public static function withoutEmptyDetails(string $body, array $placeholders): string
+    {
+        return (string) preg_replace_callback(
+            '/^[^\S\r\n]*[^{}:\r\n]{1,60}:[^\S\r\n]*(\{[a-z_.0-9]+\})[^\S\r\n]*(?:\r?\n|$)/mi',
+            static fn (array $line): string => array_key_exists($line[1], $placeholders) && trim($placeholders[$line[1]]) === '' ? '' : $line[0],
+            $body
+        );
+    }
+
     /** All schema fields, including null/JSON fields, have a documented token. */
     public function placeholders(array $booking, array $event, array $links = []): array
     {
         $fields = [
             'id', 'uid', 'sequence', 'eventtype_id', 'host_user_id', 'start_utc', 'end_utc', 'state',
             'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone',
-            'invitee_timezone', 'invitee_language', 'guest_emails', 'custom_fields', 'conference_provider', 'conference_url', 'conference_room',
+            'invitee_timezone', 'invitee_language', 'guest_emails', 'custom_fields', 'consent_utc', 'consent_version',
+            'conference_provider', 'conference_url', 'conference_room',
             'conference_state', 'conference_error', 'cancel_reason', 'reminder_sent_utc',
             'anonymised_utc', 'created_utc', 'modified_utc',
         ];

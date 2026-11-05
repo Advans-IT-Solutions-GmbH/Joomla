@@ -267,7 +267,7 @@ Perform these four steps for every field type:
 | FF-06 | POS/NEG | URL | `https://example.org/test` | `javascript:` or an invalid URL | Only permitted URL accepted; no executable link. |
 | FF-07 | POS/NEG | Single selection | One configured option | Unconfigured option in a manipulated POST | Only configured choices accepted. |
 | FF-08 | POS/NEG | Multiple selection | Two configured options | Unconfigured option or empty required selection | Valid selection stored completely; invalid selection refused. |
-| FF-09 | POS/NEG | Checkbox | Checked | Unchecked required field | Required consent enforced. |
+| FF-09 | POS/NEG | Checkbox | Checked | Unchecked required field | A required checkbox is enforced. |
 | FF-10 | POS/NEG | Date | Valid date | For example, 31 February | No silent normalisation to a different date. |
 
 For the FF-01 length boundaries and FF-03 numeric boundaries, submit controlled POST requests
@@ -288,14 +288,14 @@ Additional field administration:
 
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
-| BU-01 | POS | Open E-A, choose a free day, a time and **Next**, then submit valid data and consent. | Exactly one booking; one step visible at a time; the chosen time stands in the information column on step 2; confirmation with summary, working `.ics` download and reschedule/cancel links; backend entry; slot then occupied. |
+| BU-01 | POS | Open E-A, choose a free day, a time and **Next**, then submit valid data (with **Privacy notice on the booking form** *Notice only* there is no checkbox; the notice with its link stands at the foot of the information column in every step). | Exactly one booking; one step visible at a time; the chosen time stands in the information column on step 2; confirmation with summary, working `.ics` download and reschedule/cancel links; backend entry; slot then occupied. |
 | BU-02 | POS | Repeat the whole flow with JavaScript disabled, and reload each step. | Month, day, time with **Next**, **Back**, time zone, form and confirmation usable without JavaScript; each step keeps its address (`month`, `day`, `start`) on reload. |
 | BU-03 | POS | Use Tab, Shift+Tab, arrow keys, Enter and Space to operate calendar, times, **Next**, **Back** and the form. | Visible focus, sensible order, clearly labelled fields and selectable slots; after a step change the focus stands at the new times or the new step title. |
 | BU-04 | POS | With a screen reader, inspect at least date, slot, step changes, required fields and errors. | Understandable control names; each step change announced ("Step 2 of 3: …" or the times of the day); errors discoverable and associated with the field. |
 | BU-05 | POS | Book on a narrow smartphone screen and at 200% zoom, with both information-column layouts. | Date, times and details one at a time with a way back; no clipped required actions, unusable tables or overlapping controls. |
 | BU-05a | POS | With each of the three information-column layouts and both title places, open the calendar and then choose a day at a tablet width (about 768 px) and at desktop widths (1024 px and wider). | The card has the same width before and after a day is chosen (a hint stands in the times column until then); calendar and times side by side, at tablet width below the information bar, from about 1024 px beside the information column; *Appointment only* shows no image; *Above the card* shows the one main heading above the card, aligned with it; the time zone stands in one line below the times. |
-| BU-05b | POS | On step 2, check the fields at 375 px and at 768 px and wider. | One column of fields, only name and email side by side from about 768 px; every required field carries the same mark; no label or control is pushed down by its neighbour; at 375 px the information column keeps date, time and zone and leaves out the description and the location text. |
-| BU-06 | NEG | Omit first name, last name, email or consent. Bypass browser validation and resubmit. | Server-side refusal too; no booking or notification; previously valid input retained. |
+| BU-05b | POS | On step 2, check the fields at 375 px and at 768 px and wider. | One field per row, each as wide as the form (first name, last name, email, telephone, custom fields, guests); every required field carries the same mark; no label or control is pushed down by its neighbour; at 375 px the information column keeps date, time and zone and leaves out the description and the location text. |
+| BU-06 | NEG | Omit first name, last name or email, and with the *Acknowledgement* or *Consent* option the checkbox. Submit once with JavaScript (the browser check shows its messages at the fields) and once bypassing browser validation. With *Consent*, also change the option or its wording while the form is open and submit the old form. | Server-side refusal too, the message at each field; no booking or notification; previously valid input retained; a tick given to an older wording is refused at the checkbox; with *Consent* the booking stores the consent time and version. |
 | BU-07 | NEG | Submit a form older than one hour. | Understandable refusal or required reload; no booking. |
 | BU-08 | NEG | Fill the honeypot using developer tools, or submit in less than two seconds. | Refusal without booking; no external CAPTCHA request. |
 | BU-09 | POS | Enter as many distinct valid guests as **Options → Maximum number of additional guests** allows (default 10); also test duplicate addresses and the option set to 0. | Permitted guests processed; duplicates do not create repeated identical recipients. |
@@ -467,7 +467,7 @@ calendar copies or backups. Treat these separately from removal in the active ex
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
 | DS-09 | INT | Request, confirm and process a Joomla export for an address with several bookings. | All of that address's bookings and readable answers exported; no other bookings. |
-| DS-10 | NEG | Request export and removal as an additional guest address; then use the removal link of a guest mail, once more and in another browser, and with a changed signature. | The export lists only the guest invitation (address, event type, time, state); no disclosure of primary invitee or other guests' personal information. Removal and the guest link remove only that address; the booking and the other links stay; a used or changed link answers 404. |
+| DS-10 | NEG | Request export and removal as an additional guest address; then use the removal link of a guest mail, once more and in another browser, and with a changed signature. | The export lists only the guest invitation (address, event type, time, state); no disclosure of primary invitee or other guests' personal information. Removal and the guest link remove only that address; the booking and the other links stay; the used link shows the receipt again in the same browser session (HTTP 200) and answers 404 in another browser, a changed link answers 404. |
 | DS-11 | NEG | Test addresses differing only in accents; test letter case separately. | Accent similarity does not establish ownership; case follows documented normalisation. |
 | DS-12 | INT | Process a confirmed Joomla removal request. | Same erasure scope as self-service; audit path `privacy_request`. |
 | DS-13 | NEG | Configure a legal blocking reason and repeat formal removal. | Removal explicitly blocked, reason visible; no silent partial processing. |
@@ -641,7 +641,7 @@ Configure this scenario **only through Joomla administration**, without file/dat
    - required phone with country selector;
    - two required single-line fields;
    - one optional multiline field;
-   - mandatory privacy consent.
+   - **Privacy notice on the booking form** *Notice only* (the default), with a privacy notice link.
 5. Create a public menu item.
 6. Configure host address, mail transport, privacy notice and Scheduler.
 

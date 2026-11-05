@@ -77,7 +77,7 @@ guest's own, `task=guest.confirm&id=…&signature=…`:
 - GET shows the appointment and the guest's own address, nothing of the invitee or the other
   guests, and a POST form with the CSRF token (task `guest.remove`). Both are rate limited
   (bucket `guest`, 60 per 15 minutes).
-- POST removes exactly that address from `guest_emails`, in the host and booking lock, and writes
+- POST removes exactly that address from `guest_emails`, under a lock of the booking row only (no host lock: it changes no availability, and a mail delivery holding the row with a shared lock makes it wait without stalling the host's other bookings), and writes
   an audit row `remove_guest` / `self_service` without the address. The booking, the invitee's data
   and the other guests stay.
 - `modified_utc` is deliberately **not** changed, so the invitee's and the other guests' links keep
@@ -155,7 +155,9 @@ and layout derive the label text with `ConsentMode::labelText()` and the link wi
 `Site\Helper\PrivacyLink::resolve()`, so the stored version names the label that was shown. Joomla's
 System - Privacy Consent plugin only extends com_users forms and never this form.
 
-The privacy notice of the booking page (and the checkbox, where the mode has one) shows:
+With `notice` the booking page shows one sentence at the foot of the information column, in every step, with the link to the site's own privacy notice (configured as a Joomla menu item or URL); without a configured notice nothing is shown. The delete link itself reaches the invitee with every mail.
+
+With a checkbox mode (`acknowledge` or `consent`) step 2 additionally shows the checkbox and below it:
 
 - What is collected and why, taken from a component setting so the operator writes their own text.
 - A link to the site's own privacy notice, configured as a Joomla menu item or URL.
@@ -196,6 +198,6 @@ component gives the operator the mechanism; the legal text is theirs.
   `admin` path only; see "What the audit table is, and what it is not".
 - Audit rows older than the audit retention period are deleted by the retention task.
 - A guest link removes only its own address, keeps the booking and the other links valid, and a
-  tampered, foreign or used guest link answers 404.
+  tampered or foreign guest link answers 404, a used one too, except in the browser session that removed the address, which sees its receipt again (HTTP 200).
 - The privacy sub-plugin exports and removes an address that is a guest of another person's
   booking as a guest only, and never matches an address that merely contains it.

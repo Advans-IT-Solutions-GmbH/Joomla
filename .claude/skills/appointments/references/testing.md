@@ -197,6 +197,10 @@ date and each DST refusal. Both bounds must remain exactly as submitted. A corre
 must update the same row using the normal UTC conversion, and a subsequent edit must display it in
 the operator's zone again.
 
+A record the edit task has checked out is not removed by the list's delete task. A suite that
+deletes a record it edited first releases the checkout (`05-blocked.php` posts `blocked.cancel`
+before `blockeds.delete`), or deletes before any edit attempt.
+
 ### The mail assertion
 
 `09-mail.php` is the test that enforces a stated constraint of the project. It must not check one

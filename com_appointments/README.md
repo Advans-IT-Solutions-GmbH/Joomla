@@ -298,14 +298,17 @@ the associated Joomla user object.
 
 ### Scheduler, reminders and retention
 
-The component installs and enables **Task - Appointments**. Updates preserve its enabled/disabled
-state; uninstalling the component removes the plugin and its Scheduler tasks. Installation and
-every update create the two tasks in **System → Scheduled Tasks** through Joomla's Scheduler,
-enabled: **Appointments: reminders**, running every five minutes, and **Appointments: retention**,
-running daily, each with a batch size of 100. A task is only created when no task of its routine
-exists at all, in any state: a task you disabled or trashed is never enabled or created again, and
-its schedule and options are never overwritten. A task that was deleted permanently is created
-again by the next update, so disable a task instead of deleting it. If a task cannot be created,
+The component installs and enables **Task - Appointments**. Updates preserve an existing task's
+enabled/disabled state; uninstalling the component removes the plugin and its Scheduler tasks.
+On installation and updates, Joomla's Scheduler ensures these tasks exist in **System → Scheduled Tasks**:
+**Appointments: reminders**, running every five minutes, and **Appointments: retention**,
+running daily, each with a batch size of 100. A first installation creates both tasks enabled.
+An update creates a missing task **disabled** and says so, because retention would otherwise start
+anonymising existing bookings and reminders start writing to invitees without your decision: enable
+the task yourself. A task is created only when no task of its routine exists in any state: a task
+you disabled or trashed is never enabled or created again, and its schedule and options are never
+overwritten. A task deleted permanently is created again by the next update, so disable a task
+instead of deleting it. If a task cannot be created,
 the installation shows a warning and you create it by hand. Configure Joomla's Scheduler execution mechanism or
 invoke its CLI from the server's cron; a quiet website must not rely solely on visitor-triggered
 execution for timely reminders.
@@ -445,7 +448,7 @@ show the appointment in the invitee's time zone, like the booking page.
 The booking page shows the times in the schedule's zone. The **Time zone** field below the calendar
 is always visible and shows the zone of the times. Without JavaScript it is a normal select with a
 button that applies the choice. The booking script switches to the browser's zone on arrival
-(unless the address names a zone already) and turns the field into a button with the zone and its
+(unless the address names a zone already) and turns the field into a button with the name of the zone in the page language as the browser knows it (for example "Mitteleuropäische Zeit", the identifier as tooltip) and its
 current time: it opens a panel with a search field (an ARIA combobox) over the list of zones (an
 ARIA listbox, each zone with its name and current time from the browser) and a switch between the
 12-hour and the 24-hour clock. Arrow keys, Page Up and Page Down move through the list, Enter
@@ -721,7 +724,9 @@ component preserves existing templates rather than overwriting operator changes.
 labels are installed privately from the same shipped language files, so a stored recipient
 language does not depend on that Joomla language pack being installed.
 
-Templates are plain text. Placeholders are written `{name}` and replaced in one pass:
+Templates are plain text. Placeholders are written `{name}` and replaced in one pass. A detail line
+that holds only a label and one placeholder (`Location: {location}`) is left out when the value is
+empty, so a telephone appointment shows no empty location:
 
 | Placeholder | Value |
 |---|---|
@@ -733,8 +738,9 @@ Templates are plain text. Placeholders are written `{name}` and replaced in one 
 | `{guest_emails}` | All additional guests, one per line |
 | `{conference_url}` | The joining link (the host's moderator link in the host's mail) |
 | `{custom_fields.ID}` | One answer, ID being the custom field ID; `{custom_fields}` all answers as JSON |
-| `{start}`, `{end}`, `{timezone}` | The appointment in the recipient's zone, with the invitee's stored locale or the host's Joomla profile settings |
+| `{start}`, `{end}`, `{timezone}` | The appointment in the recipient's zone, with the invitee's stored locale or the host's Joomla profile settings (a host without a profile language gets the site's default language) |
 | `{state_label}` | The translated status |
+| `{consent_utc}`, `{consent_version}` | The consent proof (UTC time and label version) with **Privacy notice on the booking form** *Consent checkbox*, otherwise empty |
 | `{start_utc}`, `{end_utc}`, `{state}`, `{id}`, `{uid}`, `{sequence}` and the other booking columns | Raw booking values |
 | `{reschedule_url}`, `{cancel_url}`, `{erase_url}` | Signed links, in mails to the booking person only |
 | `{guest_email}`, `{guest_remove_url}` | In a guest template only: the guest's own address and the signed link that removes only that address |

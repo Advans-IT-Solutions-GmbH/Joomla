@@ -43,13 +43,23 @@ final class MailComposerTest extends TestCase
         self::assertSame("Private Invitee: Answer {host_email} / ä,;\nhttps://example.test/erase?signature=example", $mail['body']);
     }
 
+    public function testDetailLinesWithAnEmptyValueAreLeftOut(): void
+    {
+        $body = "Guten Tag,\nOrt: {location}\nTelefon: {invitee_phone}\nE-Mail: {invitee_email}\nHinweis: {location} folgt\n{conference_url}\nEnde";
+        $placeholders = ['{location}' => '', '{invitee_phone}' => ' ', '{invitee_email}' => 'a@example.test', '{conference_url}' => ''];
+
+        self::assertSame("Guten Tag,\nE-Mail: {invitee_email}\nHinweis: {location} folgt\n{conference_url}\nEnde",
+            MailComposer::withoutEmptyDetails($body, $placeholders));
+        self::assertSame("Ort: {unknown}\n", MailComposer::withoutEmptyDetails("Ort: {unknown}\n", $placeholders), 'An unknown token is kept');
+    }
+
     public function testAllBookingFixedAndCustomFieldsHavePlaceholders(): void
     {
         $composer = new MailComposer(new IcsWriter());
         $fields = [
             'id', 'uid', 'sequence', 'eventtype_id', 'host_user_id', 'start_utc', 'end_utc', 'state',
             'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone', 'invitee_timezone', 'invitee_language',
-            'guest_emails', 'custom_fields', 'conference_provider', 'conference_url', 'conference_room',
+            'guest_emails', 'custom_fields', 'consent_utc', 'consent_version', 'conference_provider', 'conference_url', 'conference_room',
             'conference_state', 'conference_error', 'cancel_reason', 'reminder_sent_utc',
             'anonymised_utc', 'created_utc', 'modified_utc',
         ];
@@ -70,6 +80,8 @@ final class MailComposerTest extends TestCase
         }
 
         self::assertSame('', $placeholders['{anonymised_utc}']);
+        self::assertSame('', $placeholders['{consent_utc}']);
+        self::assertSame('', $placeholders['{consent_version}']);
         self::assertSame('Answer {host_email}', $placeholders['{custom_fields.question}']);
         $booking = array_replace($this->booking(), ['custom_fields' => '{"question":"stored JSON"}']);
         self::assertSame('stored JSON', $composer->placeholders($booking, $this->event())['{custom_fields.question}']);

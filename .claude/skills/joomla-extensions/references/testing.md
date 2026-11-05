@@ -337,6 +337,13 @@ Notable test details:
   128 KiB of runs, and Linux rejects an argument of that size (`Argument list too long`), which failed
   the gate closed. `test-collect-results.sh` covers a list above that limit. Keep new list handling on
   stdin as well.
+- **A conflicting pull request runs no `pull_request` workflow at all.** GitHub cannot build
+  `refs/pull/<n>/merge` while the pull request conflicts with its base, so neither the extension's
+  `Build & Test` nor `Collect Results` starts. This happens typically to a stacked branch after its
+  base was squash-merged. `gh pr checks` then lists only the CodeQL checks and reports them green:
+  that looks like a passing CI and is none. Before stating anything about the CI of such a pull
+  request, check `gh pr view <n> --json mergeable` first and rebase the branch onto `main` if it is
+  `CONFLICTING`; cross-check the number of checks, not only their colour.
 - **Security Scan** (`security.yml`) runs on push and pull request to `main` and manually: Gitleaks is
   blocking; Semgrep and zizmor are report-only.
 - **Infrastructure Tests:** `.github/scripts/test-publish-release.py` and

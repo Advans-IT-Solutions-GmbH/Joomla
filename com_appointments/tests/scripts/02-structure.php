@@ -712,9 +712,9 @@ class StructureTest
             ['invitee_last_name', 'text', 'YES', null],
         ];
         // What the 1.3.0 migration alone adds to a table of the previous version;
-        // 1.4.0 then turns both columns into text.
+        // 1.4.0 then turns all three columns into text for encrypted values.
         $afterNameMigration = [
-            ['invitee_name', 'text', 'YES', null],
+            ['invitee_name', 'varchar(255)', 'YES', null],
             ['invitee_first_name', 'varchar(255)', 'YES', null],
             ['invitee_last_name', 'varchar(255)', 'YES', null],
         ];
