@@ -438,6 +438,10 @@ return static function (TeamSuite $suite): void {
             $state['recovery'] = true;
         }
 
+        // Calendar creation needs the owner's public key before the browser session releases
+        // its escrow. Seed that fixture separately; device creation still needs real password/MFA sign-in.
+        $services->keys()->createUserKey($member, $password)->wipe();
+
         $signIn = static function (TeamDBrowser $browser, string $username, string $password, string $secret): bool {
             $login = TeamDBrowser::form($browser->request('/index.php?option=com_users&view=login'), 'user.login');
 
