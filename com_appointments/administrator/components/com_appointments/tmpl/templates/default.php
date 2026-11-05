@@ -22,7 +22,17 @@ $purposeKeys = [
     'cancellation' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_CANCELLATION',
     'reminder' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_REMINDER',
     'host_notice' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_NOTICE',
+    'host_approved' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_APPROVED',
+    'host_reschedule' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_RESCHEDULE',
+    'host_cancellation' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_CANCELLATION',
+    'host_reminder' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_REMINDER',
     'erasure_notice' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_ERASURE_NOTICE',
+    'guest_confirmation' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_CONFIRMATION',
+    'guest_pending' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_PENDING',
+    'guest_approved' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_APPROVED',
+    'guest_reschedule' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_RESCHEDULE',
+    'guest_cancellation' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_CANCELLATION',
+    'guest_reminder' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_REMINDER',
 ];
 ?>
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=templates'); ?>" method="post" name="adminForm" id="adminForm">

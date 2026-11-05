@@ -9,6 +9,7 @@
 
 namespace Advans\Component\Appointments\Site\View\Eventtypes;
 
+use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
@@ -24,6 +25,7 @@ defined('_JEXEC') or die;
 class HtmlView extends BaseHtmlView
 {
     use PageTitleTrait;
+    use AssetsTrait;
 
     /**
      * @var  array<int, \stdClass>
@@ -37,9 +39,7 @@ class HtmlView extends BaseHtmlView
         // Every asset ships with the package and is declared in the component's
         // own joomla.asset.json: no remote font, no content delivery network,
         // nothing that leaves the operator's own server.
-        $assets = Factory::getApplication()->getDocument()->getWebAssetManager();
-        $assets->getRegistry()->addExtensionRegistryFile('com_appointments');
-        $assets->useStyle('com_appointments.site');
+        $this->useAppointmentsAssets(false);
         $this->applyPageTitle('eventtypes', Text::_('COM_APPOINTMENTS_EVENTTYPES_HEADING'));
 
         return parent::display($tpl);

@@ -54,7 +54,7 @@ final class AppointmentsFixture
         $html = $browser->request($path, $form);
         $time = $this->db->real_escape_string($start);
         $booking = $this->db->query("SELECT * FROM {$this->prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$time}' AND state IN (0,1)")->fetch_assoc();
-        if (!$booking || $browser->status !== 200 || !str_contains($html, 'Appointment received')) {
+        if (!$booking || $browser->status !== 200 || preg_match('/Appointment (?:received|confirmed)/', $html) !== 1) {
             throw new RuntimeException('The fixture HTTP booking did not succeed.');
         }
 
@@ -75,6 +75,17 @@ final class AppointmentsFixture
         return '/index.php?' . http_build_query(['option' => 'com_appointments', 'view' => 'manage',
             'id' => $booking['id'], 'action' => $action,
             'signature' => $links->sign((int) $booking['id'], $action, $booking['modified_utc'])]);
+    }
+
+    /** The signed link with which one additional guest removes their own address. */
+    public function guestLink(array $booking, string $guest): string
+    {
+        $links = new \Advans\Component\Appointments\Administrator\Helper\SignedLink(
+            new \Advans\Component\Appointments\Administrator\Helper\KeyProvider($this->config->secret)
+        );
+
+        return '/index.php?' . http_build_query(['option' => 'com_appointments', 'task' => 'guest.confirm',
+            'id' => $booking['id'], 'signature' => $links->signGuest((int) $booking['id'], $guest, $booking['modified_utc'])]);
     }
 
     public function apply(AppointmentsHttp $client, string $link, array $fields = []): string

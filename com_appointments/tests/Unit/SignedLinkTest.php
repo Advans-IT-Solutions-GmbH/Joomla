@@ -61,6 +61,67 @@ final class SignedLinkTest extends TestCase
         }
     }
 
+    public function testGuestLinkIsBoundToBookingAddressAndVersionWithItsOwnKey(): void
+    {
+        $keys = new KeyProvider('test-site-secret');
+        $links = new SignedLink($keys);
+        $signature = $links->signGuest(42, ' Guest@Example.test ', '2026-10-14 10:00:00');
+
+        self::assertSame(
+            hash_hmac('sha256', "42\nremove_guest\nguest@example.test\n2026-10-14 10:00:00", $keys->key(KeyProvider::PURPOSE_GUEST_LINK)),
+            $signature
+        );
+        self::assertTrue($links->verifyGuest(42, 'guest@example.test', '2026-10-14 10:00:00', $signature));
+        self::assertTrue($links->verifyGuest(42, 'GUEST@EXAMPLE.TEST', '2026-10-14 10:00:00', $signature));
+        self::assertFalse($links->verifyGuest(43, 'guest@example.test', '2026-10-14 10:00:00', $signature));
+        self::assertFalse($links->verifyGuest(42, 'other@example.test', '2026-10-14 10:00:00', $signature));
+        self::assertFalse($links->verifyGuest(42, 'guest@example.test', '2026-10-14 10:00:01', $signature));
+        self::assertFalse((new SignedLink(new KeyProvider('another-secret')))->verifyGuest(42, 'guest@example.test', '2026-10-14 10:00:00', $signature));
+
+        // Neither kind of link verifies as the other.
+        foreach (['reschedule', 'cancel', 'erase'] as $action) {
+            self::assertFalse($links->verify(42, $action, '2026-10-14 10:00:00', $signature));
+            self::assertFalse($links->verifyGuest(42, 'guest@example.test', '2026-10-14 10:00:00', $links->sign(42, $action, '2026-10-14 10:00:00')));
+        }
+    }
+
+    public function testGuestForFindsOnlyTheSignedGuest(): void
+    {
+        $links = new SignedLink(new KeyProvider('secret'));
+        $guests = ['first@example.test', 'Second@example.test', 'third@example.test'];
+        $signature = $links->signGuest(7, 'second@example.test', '2026-10-14 10:00:00');
+
+        self::assertSame('Second@example.test', $links->guestFor(7, $guests, '2026-10-14 10:00:00', $signature));
+        self::assertNull($links->guestFor(7, ['first@example.test', 'third@example.test'], '2026-10-14 10:00:00', $signature), 'A removed guest cannot replay the link');
+        self::assertNull($links->guestFor(7, $guests, '2026-10-14 10:00:01', $signature), 'A changed booking invalidates the link');
+        self::assertNull($links->guestFor(7, $guests, '2026-10-14 10:00:00', strrev($signature)), 'A tampered signature matches nobody');
+        self::assertNull($links->guestFor(7, $guests, '2026-10-14 10:00:00', ''));
+        self::assertNull($links->guestFor(8, $guests, '2026-10-14 10:00:00', $signature));
+    }
+
+    public function testGuestSignerRefusesMalformedInput(): void
+    {
+        $links = new SignedLink(new KeyProvider('secret'));
+
+        // Each guard on its own: the signer refuses the input instead of signing it, so a removed
+        // guard makes this test fail. A malformed value therefore never verifies either.
+        foreach ([[0, 'guest@example.test', '2026-10-14 10:00:00'], [1, '  ', '2026-10-14 10:00:00'],
+            [1, "guest@example.test\nother@example.test", '2026-10-14 10:00:00'], [1, "\xff", '2026-10-14 10:00:00'],
+            [1, 'guest@example.test', 'tomorrow']] as $arguments) {
+            try {
+                $links->signGuest(...$arguments);
+                self::fail('Signed malformed input: ' . json_encode($arguments, JSON_INVALID_UTF8_SUBSTITUTE));
+            } catch (\InvalidArgumentException $exception) {
+                self::assertStringStartsWith('Invalid', $exception->getMessage());
+            }
+
+            self::assertFalse($links->verifyGuest(...[...$arguments, str_repeat('0', 64)]));
+        }
+
+        // The valid counterpart of every case is signed, so the refusals above come from the guards.
+        self::assertSame(64, strlen($links->signGuest(1, 'guest@example.test', '2026-10-14 10:00:00')));
+    }
+
     public function testSignerRefusesInvalidAction(): void
     {
         $this->expectException(\InvalidArgumentException::class);

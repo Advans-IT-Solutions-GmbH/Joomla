@@ -20,7 +20,7 @@ class BookingsModel extends ListModel
 {
     public function __construct($config = [], $factory = null)
     {
-        $config['filter_fields'] ??= ['b.id', 'b.start_utc', 'b.state', 'e.title'];
+        $config['filter_fields'] ??= ['b.id', 'b.start_utc', 'b.state', 'e.title', 'b.invitee_last_name', 'b.invitee_first_name'];
         parent::__construct($config, $factory);
     }
 
@@ -34,7 +34,8 @@ class BookingsModel extends ListModel
         $db = $this->getDatabase();
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
         $query->select($db->quoteName(['b.id', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state',
-            'b.invitee_name', 'b.invitee_email', 'b.invitee_phone', 'b.guest_emails', 'b.custom_fields',
+            'b.invitee_name', 'b.invitee_first_name', 'b.invitee_last_name', 'b.invitee_email', 'b.invitee_phone', 'b.guest_emails', 'b.custom_fields',
+            'b.consent_utc', 'b.consent_version',
             'b.sequence', 'b.conference_state', 'b.conference_error', 'b.anonymised_utc']))
             ->select($db->quoteName('e.title', 'eventtype_title'))
             ->from($db->quoteName('#__appointments_bookings', 'b'))
@@ -64,15 +65,23 @@ class BookingsModel extends ListModel
         $search = (string) $this->getState('filter.search', '');
         if ($search !== '') {
             $value = $db->quote('%' . $db->escape($search, true) . '%', false);
-            $query->where('(' . $db->quoteName('b.invitee_name') . ' LIKE ' . $value
-                . ' OR ' . $db->quoteName('b.invitee_email') . ' LIKE ' . $value . ')');
+            // The full name finds "first last"; first and last name each find a search for one of
+            // them, also on rows whose full name was entered differently.
+            $query->where('(' . implode(' OR ', array_map(static fn (string $column): string => $db->quoteName($column) . ' LIKE ' . $value,
+                ['b.invitee_name', 'b.invitee_first_name', 'b.invitee_last_name', 'b.invitee_email'])) . ')');
         }
 
         $order = (string) $this->getState('list.ordering', 'b.start_utc');
         $order = in_array($order, $this->filter_fields, true) ? $order : 'b.start_utc';
         $direction = strtoupper((string) $this->getState('list.direction')) === 'ASC' ? 'ASC' : 'DESC';
+        $query->order($db->quoteName($order) . ' ' . $direction);
 
-        return $query->order($db->quoteName($order) . ' ' . $direction);
+        // Sorting by last name keeps people with the same last name in first-name order.
+        if ($order === 'b.invitee_last_name') {
+            $query->order($db->quoteName('b.invitee_first_name') . ' ' . $direction);
+        }
+
+        return $query;
     }
 
     protected function populateState($ordering = 'b.start_utc', $direction = 'DESC')

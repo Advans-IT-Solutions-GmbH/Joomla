@@ -86,7 +86,9 @@ try {
         $check($localeId > 0, 'Independent language override saved: ' . $language);
     }
 
-    foreach (['pending', 'approved', 'reschedule', 'cancellation', 'reminder', 'host_notice', 'erasure_notice'] as $purpose) {
+    foreach (['pending', 'approved', 'reschedule', 'cancellation', 'reminder', 'host_notice', 'erasure_notice',
+        'guest_confirmation', 'guest_pending', 'guest_approved', 'guest_reschedule', 'guest_cancellation', 'guest_reminder',
+        'host_approved', 'host_reschedule', 'host_cancellation', 'host_reminder'] as $purpose) {
         $http->submit('template', array_replace($base, ['purpose' => $purpose]));
         $purposeId = $find($eventA, $purpose, 'en-GB');
         $templateIds[] = $purposeId;

@@ -40,8 +40,8 @@ class BookingsController extends BaseController
         $this->requireEditRequest();
         $model = $this->getModel('Bookings', 'Administrator', ['ignore_request' => false]);
         $db = Factory::getContainer()->get(DatabaseInterface::class);
-        $columns = ['id', 'eventtype_title', 'start_utc', 'end_utc', 'state', 'invitee_name', 'invitee_email',
-            'invitee_phone', 'guest_emails', 'custom_fields', 'sequence', 'conference_state', 'conference_error', 'anonymised_utc'];
+        $columns = ['id', 'eventtype_title', 'start_utc', 'end_utc', 'state', 'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email',
+            'invitee_phone', 'guest_emails', 'custom_fields', 'consent_utc', 'consent_version', 'sequence', 'conference_state', 'conference_error', 'anonymised_utc'];
         $output = tmpfile();
         if ($output === false) {
             throw new \RuntimeException(Text::_('COM_APPOINTMENTS_BOOKINGS_EXPORT_FAILED'), 503);

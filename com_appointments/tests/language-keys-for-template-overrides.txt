@@ -2,3 +2,6 @@
 COM_APPOINTMENTS_N_ITEMS_PUBLISHED
 COM_APPOINTMENTS_N_ITEMS_UNPUBLISHED
 COM_APPOINTMENTS_N_ITEMS_DELETED
+# The single name field before first and last name were separate. Kept for template overrides
+# that still render one name label.
+COM_APPOINTMENTS_BOOKING_NAME
