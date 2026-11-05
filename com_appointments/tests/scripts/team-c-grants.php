@@ -410,6 +410,42 @@ return static function (TeamSuite $suite): void {
         $second = $services->calendars()->create($boss, ['title' => $tag . '-second', 'owner_user_id' => $boss, 'allow_external' => 1]);
         $calendars[] = $second;
 
+        foreach (['grant', 'wrap'] as $lost) {
+            $suite->test("A stale REPEATABLE READ snapshot cannot authorise mutations after a manager loses its {$lost}", static function () use (
+                $services, $grants, $owner, $ownerKeys, $boss, $member, $refused, $db, $p, $tag, &$calendars, $lost
+            ) {
+                $title = $tag . '-snapshot-' . $lost;
+                $id = $services->calendars()->create($boss, ['title' => $title, 'owner_user_id' => $owner]);
+                $calendars[] = $id;
+                $grants->grant($owner, $id, $boss, CalendarRole::Manage, $ownerKeys);
+                $grants->grant($owner, $id, $member, CalendarRole::Read, $ownerKeys);
+                $connection = $services->db();
+                $connection->setQuery('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')->execute();
+                $connection->transactionStart();
+
+                try {
+                    $before = $grants->accessFor($boss, $id)?->role === CalendarRole::Manage;
+                    // The suite's mysqli connection commits independently of Joomla's
+                    // snapshot. Do not advance the anchor: it must not be needed to
+                    // detect a missing grant or wrap in the current database.
+                    $table = $lost === 'grant' ? 'appointments_calendar_grants' : 'appointments_calendar_key_wraps';
+                    $db->query("DELETE FROM {$p}{$table} WHERE calendar_id={$id} AND user_id={$boss}");
+                    $stale = $grants->accessFor($boss, $id)?->role === CalendarRole::Manage;
+                    $checks = [];
+                    $checks[] = $refused(static fn () => $services->calendars()->update($boss, $id, ['title' => 'refused']), 403);
+                    $checks[] = $refused(static fn () => $grants->grant($boss, $id, $member, CalendarRole::FreeBusy, null), 403);
+                    $checks[] = $refused(static fn () => $grants->revoke($boss, $id, $member, null), 403);
+                    $checks[] = $refused(static fn () => $services->calendars()->delete($boss, $id), 403);
+                    $unchanged = $connection->setQuery("SELECT title FROM {$p}appointments_calendars WHERE id={$id} FOR UPDATE")->loadResult() === $title
+                        && (int) $connection->setQuery("SELECT role FROM {$p}appointments_calendar_grants WHERE calendar_id={$id} AND user_id={$member} FOR UPDATE")->loadResult() === CalendarRole::Read->value;
+
+                    return $before && $stale && !in_array(false, $checks, true) && $unchanged;
+                } finally {
+                    $connection->transactionRollback();
+                }
+            });
+        }
+
         $suite->test($replayE2e[1], static function () use ($grants, $services, $second, $boss, $external, $restore, $db, $p) {
             $grants->grant($boss, $second, $external, CalendarRole::FreeBusy, null);
             $calendarBefore = $db->query("SELECT * FROM {$p}appointments_calendars WHERE id={$second}")->fetch_assoc();

@@ -777,6 +777,23 @@ final class GrantService implements GrantServiceInterface
         return $grant === null ? null : $this->effective($calendar, $grant);
     }
 
+    /**
+     * Authorise a mutation against its already-locked calendar and current
+     * grant/wrap rows, never a caller's older REPEATABLE READ snapshot.
+     * The caller must hold the calendar row lock until its mutation commits.
+     */
+    public static function accessUnderLock(TeamServices $services, int $userId, object $calendar): ?CalendarAccess
+    {
+        if ($userId <= 0 || !CalendarService::rowValid($services, $calendar)) {
+            return null;
+        }
+
+        $grants = new self($services);
+        $grant = $grants->grantRow((int) $calendar->id, $userId, true);
+
+        return $grant === null ? null : $grants->effective($calendar, $grant, true);
+    }
+
     public function calendarsFor(int $userId): array
     {
         if ($userId <= 0) {
@@ -885,16 +902,22 @@ final class GrantService implements GrantServiceInterface
     public function canGrant(int $actorUserId, int $calendarId, int $granteeUserId, CalendarRole $role): bool
     {
         $calendar = $this->services->calendars()->get($calendarId);
+
+        return $calendar !== null && $this->canGrantOnCalendar($actorUserId, $calendar, $granteeUserId, $role);
+    }
+
+    private function canGrantOnCalendar(int $actorUserId, object $calendar, int $granteeUserId, CalendarRole $role, bool $locked = false): bool
+    {
         $grantee = self::user($granteeUserId);
 
-        if ($calendar === null || (int) $calendar->state !== 1 || $grantee === null || $grantee->block || $actorUserId <= 0) {
+        if ((int) $calendar->state !== 1 || $grantee === null || $grantee->block || $actorUserId <= 0) {
             return false;
         }
 
         $audience = $this->audienceOf($granteeUserId);
 
         return self::mayGrant(
-            $this->accessFor($actorUserId, $calendarId)?->role,
+            ($locked ? self::accessUnderLock($this->services, $actorUserId, $calendar) : $this->accessFor($actorUserId, (int) $calendar->id))?->role,
             $audience === TeamStates::AUDIENCE_EXTERNAL && self::sharesExternally($this->services, $actorUserId),
             $audience,
             $role,
@@ -913,7 +936,8 @@ final class GrantService implements GrantServiceInterface
             // actor's own grant cannot slip between the check and the write.
             $locked = $this->lockCalendar($calendarId);
 
-            if ($locked === null || !$this->canGrant($actorUserId, $calendarId, $granteeUserId, $role)) {
+            if ($locked === null || !CalendarService::rowValid($this->services, $locked)
+                || !$this->canGrantOnCalendar($actorUserId, $locked, $granteeUserId, $role, true)) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
             }
 
@@ -962,7 +986,7 @@ final class GrantService implements GrantServiceInterface
             // the account's groups alone decide.
             $granteeAudience = $this->audienceOf($granteeUserId);
             $allowed = self::mayRevoke(
-                $this->accessFor($actorUserId, $calendarId)?->role,
+                self::accessUnderLock($this->services, $actorUserId, $calendar)?->role,
                 self::sharesExternally($this->services, $actorUserId),
                 $this->grantMacValid($grant, (int) $calendar->grant_epoch) ? (string) $grant->audience : $granteeAudience,
                 $granteeAudience,
@@ -1095,7 +1119,7 @@ final class GrantService implements GrantServiceInterface
                 (int) $calendar->allow_external === 1,
                 $granteeUserId === $ownerId
             );
-            $ownerVacant = $ownerId === 0 || $this->accessFor($ownerId, $calendarId) === null;
+            $ownerVacant = $ownerId === 0 || self::accessUnderLock($this->services, $ownerId, $calendar) === null;
 
             if (!$allowed || ($makeOwner && ($role !== CalendarRole::Manage || $audience !== TeamStates::AUDIENCE_TEAM || !$ownerVacant))) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
@@ -1145,7 +1169,7 @@ final class GrantService implements GrantServiceInterface
     // Internals
     // ------------------------------------------------------------------
 
-    private function effective(object $calendar, object $grant): ?CalendarAccess
+    private function effective(object $calendar, object $grant, bool $locked = false): ?CalendarAccess
     {
         $calendarId = (int) $calendar->id;
         $userId = (int) $grant->user_id;
@@ -1167,7 +1191,7 @@ final class GrantService implements GrantServiceInterface
             'account_blocked'          => fn (): bool => (bool) $loadAccount()?->block,
             'audience'                 => fn (): string => $this->audienceOf($userId),
             'second_factor'            => fn (): bool => $this->hasSecondFactor($userId),
-            'wrap'                     => fn (): bool => $this->wrapExists($calendarId, (int) $calendar->key_version, $userId),
+            'wrap'                     => fn (): bool => $this->wrapExists($calendarId, (int) $calendar->key_version, $userId, $locked),
         ]);
 
         if (!$effective || $role === null) {
@@ -1224,13 +1248,14 @@ final class GrantService implements GrantServiceInterface
 
 
 
-    private function wrapExists(int $calendarId, int $keyVersion, int $userId): bool
+    private function wrapExists(int $calendarId, int $keyVersion, int $userId, bool $locked = false): bool
     {
         $db = $this->services->db();
 
         return (int) $db->setQuery(
-            'SELECT COUNT(*) FROM ' . $db->quoteName('#__appointments_calendar_key_wraps') . ' WHERE calendar_id = ' . $calendarId
+            'SELECT user_id FROM ' . $db->quoteName('#__appointments_calendar_key_wraps') . ' WHERE calendar_id = ' . $calendarId
             . ' AND key_version = ' . $keyVersion . ' AND user_id = ' . $userId
+            . ($locked ? ' FOR UPDATE' : '')
         )->loadResult() > 0;
     }
 

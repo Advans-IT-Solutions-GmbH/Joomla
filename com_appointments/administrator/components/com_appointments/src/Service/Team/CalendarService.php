@@ -365,7 +365,7 @@ final class CalendarService implements CalendarServiceInterface
             }
 
             // Decided under the row lock, against the verified row.
-            if ($this->services->grants()->accessFor($actorUserId, $calendarId)?->role !== CalendarRole::Manage) {
+            if (GrantService::accessUnderLock($this->services, $actorUserId, $row)?->role !== CalendarRole::Manage) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
             }
 
@@ -442,7 +442,7 @@ final class CalendarService implements CalendarServiceInterface
             // never grants).
             $valid = $this->macValid($row);
             $allowed = $valid
-                ? $this->services->grants()->accessFor($actorUserId, $calendarId)?->role === CalendarRole::Manage
+                ? GrantService::accessUnderLock($this->services, $actorUserId, $row)?->role === CalendarRole::Manage
                 : $actor->authorise('core.admin', 'com_appointments');
 
             if (!$allowed) {
