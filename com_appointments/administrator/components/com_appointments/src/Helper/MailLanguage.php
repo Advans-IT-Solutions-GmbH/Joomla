@@ -31,13 +31,25 @@ final class MailLanguage
     public static function forAddress(DatabaseInterface $db, string $address, string $siteLanguage): string
     {
         $normalised = PrivacyAddress::normalise($address);
+        $column = $db->quoteName('email');
+        $postgres = strtolower((string) $db->getServerType()) === 'postgresql';
+        $value = 'TRIM(' . $column . ')';
+        $folded = $postgres
+            ? 'LOWER(' . $value . ' COLLATE "C")'
+            : 'LOWER(CONVERT(' . $value . ' USING utf8mb4) COLLATE utf8mb4_bin)';
+        $controls = $postgres
+            ? $column . " ~ '[[:cntrl:]]'"
+            : $column . " REGEXP '[[:cntrl:]]'";
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        // SQL casing can lag behind PHP; non-ASCII and trimmed controls remain candidates.
         $query->select($db->quoteName(['email', 'params']))
             ->from($db->quoteName('#__users'))
-            ->where('LOWER(' . $db->quoteName('email') . ') = :email')
+            ->where('(' . $folded . ' = :email OR OCTET_LENGTH(' . $column
+                . ') <> CHAR_LENGTH(' . $column . ') OR ' . $controls . ')')
             ->bind(':email', $normalised, ParameterType::STRING);
         $matches = array_values(array_filter($db->setQuery($query)->loadObjectList(),
-            static fn (object $user): bool => PrivacyAddress::matches((string) $user->email, $address)));
+            static fn (object $user): bool => trim((string) $user->email) !== ''
+                && PrivacyAddress::matches((string) $user->email, $address)));
         $params = count($matches) === 1 ? json_decode((string) $matches[0]->params, true) : [];
 
         return self::resolve((string) ($params['language'] ?? ''), $siteLanguage);

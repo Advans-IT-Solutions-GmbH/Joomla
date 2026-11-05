@@ -310,6 +310,37 @@ return static function (TeamSuite $suite): void {
             return \Advans\Component\Appointments\Administrator\Helper\MailLanguage::forAddress($joomla, $tag . '-no-account@example.test', 'fr-FR') === 'fr-FR';
         });
 
+        foreach ([
+            'Unicode sharp S' => ["\u{1E9E}", false],
+            'Georgian case' => ["\u{1C90}", false],
+            'trimmed controls' => ['', true],
+        ] as $case => [$letter, $controls]) {
+            $suite->test("Mail preference lookup handles $case independently of SQL casing", static function () use ($user, $db, $joomla, $p, $tag, $case, $letter, $controls) {
+                $id = $user('mail-' . str_replace(' ', '-', $case), 'Calendar mail fixture 1!', [2]);
+                $stored = $tag . '-' . str_replace(' ', '-', $case) . $letter . '@example.test';
+                $requested = mb_strtolower($stored, 'UTF-8');
+                if ($controls) {
+                    $stored = "\t " . $stored . " \r\n";
+                }
+                $email = $db->real_escape_string($stored);
+                $params = $db->real_escape_string(json_encode(['language' => 'fr-FR'], JSON_THROW_ON_ERROR));
+                $db->query("UPDATE {$p}users SET email='{$email}', params='{$params}' WHERE id={$id}");
+                $matches = \Advans\Component\Appointments\Administrator\Helper\MailLanguage::forAddress($joomla, $requested, 'de-DE') === 'fr-FR';
+                if ($letter === "\u{1E9E}") {
+                    $other = $user('mail-distinct-ss', 'Calendar mail fixture 1!', [2]);
+                    $distinct = str_replace("\u{00DF}", 'ss', $requested);
+                    $email = $db->real_escape_string($distinct);
+                    $params = $db->real_escape_string(json_encode(['language' => 'en-GB'], JSON_THROW_ON_ERROR));
+                    $db->query("UPDATE {$p}users SET email='{$email}', params='{$params}' WHERE id={$other}");
+                    $matches = $matches
+                        && \Advans\Component\Appointments\Administrator\Helper\MailLanguage::forAddress($joomla, $requested, 'de-DE') === 'fr-FR'
+                        && \Advans\Component\Appointments\Administrator\Helper\MailLanguage::forAddress($joomla, $distinct, 'de-DE') === 'en-GB';
+                }
+
+                return $matches;
+            });
+        }
+
         $suite->test('A template of an internet calendar mail cannot be bound to an event type', static function () use ($joomla) {
             $table = new TemplateTable($joomla);
             $table->bind(['eventtype_id' => 5, 'purpose' => 'team_device_added', 'language' => 'en-GB', 'subject' => 'S', 'body' => 'B', 'published' => 1]);
