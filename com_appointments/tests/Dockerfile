@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     default-mysql-client \
     libzip-dev \
+    openssl \
     && docker-php-ext-install zip \
     && rm -rf /var/lib/apt/lists/*
 
@@ -24,6 +25,13 @@ RUN chmod +x /usr/local/bin/custom-entrypoint.sh /usr/local/bin/appointments-cap
     && mkdir /tmp/appointments-mail && chmod 1777 /tmp/appointments-mail
 
 ENV EXTENSION_NAME="Appointments Component"
+
+# HTTPS on port 443 with a test CA (caldav/tls/setup-tls.sh); port 80 stays as
+# it is for every other suite. The internet calendar suites read TEAM_BASE_URL.
+COPY caldav/tls/setup-tls.sh /tmp/setup-tls.sh
+RUN sh /tmp/setup-tls.sh && rm /tmp/setup-tls.sh
+ENV TEAM_BASE_URL="https://localhost"
+EXPOSE 443
 
 ENTRYPOINT ["/usr/local/bin/custom-entrypoint.sh"]
 CMD ["apache2-foreground"]

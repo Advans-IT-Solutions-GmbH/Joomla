@@ -6,6 +6,7 @@ services:
     container_name: com_appointments_test
     ports:
       - "8080:80"
+      - "8443:443"
     environment:
       JOOMLA_DB_HOST: mysql
       JOOMLA_DB_USER: joomla

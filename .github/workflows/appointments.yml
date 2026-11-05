@@ -211,6 +211,9 @@ jobs:
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec com_appointments_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
           echo "Container ready"
+          # HTTPS from the test image (caldav/tls/setup-tls.sh), verified against the
+          # test CA: the internet calendar suites address the site over TLS.
+          docker exec com_appointments_test curl -sS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
       - name: Show container logs
         if: always()
         run: |
@@ -316,6 +319,9 @@ jobs:
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec com_appointments_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
           echo "Container ready"
+          # HTTPS from the test image (caldav/tls/setup-tls.sh), verified against the
+          # test CA: the internet calendar suites address the site over TLS.
+          docker exec com_appointments_j6_test curl -sS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
       - name: Show container logs
         if: always()
         run: |
@@ -388,6 +394,9 @@ jobs:
           echo "Waiting for container to be ready..."
           timeout 300 bash -c 'until docker exec com_appointments_mariadb_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
           echo "Container ready"
+          # HTTPS from the test image (caldav/tls/setup-tls.sh), verified against the
+          # test CA: the internet calendar suites address the site over TLS.
+          docker exec com_appointments_mariadb_test curl -sS --cacert /etc/ssl/appointments-test/ca.pem -o /dev/null -w 'HTTPS answered with %{http_code}\n' https://localhost/
       - name: Show database and container versions
         if: always()
         run: |
