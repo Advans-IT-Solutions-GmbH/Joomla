@@ -91,10 +91,41 @@ image and in the image's system trust store. The images set `TEAM_BASE_URL=https
 which `21-teamcalendars.php` reads; every other suite keeps using `http://localhost`. Host ports:
 8443 (J5), 8444 (J6), 8445 (MariaDB).
 
-Certificates are verified, never switched off: the workflow's `curl --cacert` probe right after
+Certificates are verified, never switched off: the workflow's `curl -f --cacert` probe right after
 each container is ready, so a broken TLS set-up fails before any suite runs, and `TeamSuite::http()`
 in `21-teamcalendars.php`, which sets `CURLOPT_CAINFO` to `ca.pem`. A client outside the container
 verifies against `ca.pem` too (copy it out with `docker cp`).
+
+**Real CalDAV clients** (job `caldav-clients`, J6 lane): `tests/caldav/run-clients.sh` builds a
+client container (`tests/caldav/Dockerfile`, pinned Python `caldav` and `vdirsyncer`) on the compose
+network, which reaches the site as `https://joomla` and verifies the certificate against `ca.pem`.
+`tests/caldav/fixture.php` prepares and changes the server between the phases of
+`tests/caldav/clients.py` through the component's own services: seed, discovery, sync, roles,
+vdirsyncer, booking, revocation and the three clean-up phases. Automated assertions cover real
+initial and incremental CalDAV sync with `disable_fallback=True`, preservation of all-day and
+recurring events, and vdirsyncer create/change/delete in both directions. Negative assertions
+cover anonymous and mismatched credentials, case-insensitive names, MFA removal/restoration,
+and stale DELETE rejection with contents retained. Sync tombstones remove local entries during
+clean-up, booking cancellation removes the local event, and the final lockout assertion requires
+HTTP 429 with `Retry-After`. These are automated assertions, not a claim that end-to-end execution
+succeeded on a partial branch. Phases whose work package still ships its stub print PENDING, as
+`TeamSuite::pending()` does (a failure with `TEAM_NO_PENDING=1`).
+The job also verifies the Joomla runtime's required PHP extensions before starting the clients.
+Its output and compose diagnostics are uploaded even on failure; Bash's pipeline failure handling
+keeps a failed runner from being hidden by `tee`.
+
+On PRs to `main`, pushes to `main`, and integrated manual dispatches, the client job sets
+`TEAM_NO_PENDING=1` and first runs `21-teamcalendars.php` with that flag explicitly passed through
+`docker exec`. The shared test runner does not forward this flag. Any unfinished work package
+therefore fails the integrated gate, rather than producing a misleading success.
+Manual dispatches on a partial branch retain explicit PENDING dependencies by default;
+that lane is not evidence of complete calendar-client support. Select `integrated: true`
+when dispatching an assembled integration branch to require the complete gate. Dispatches on
+`main` are always strict, regardless of that input. The run summary records which mode ran.
+
+Locally, with the Joomla 6 stack running: `bash caldav/run-clients.sh` from `tests/`.
+Use `TEAM_NO_PENDING=1 bash caldav/run-clients.sh` for the integrated client gate; successful static
+checks alone do not prove that either real client ran.
 
 ```
 com_appointments/tests/scripts/
@@ -214,7 +245,7 @@ Three new files, mirroring the DMARC set:
 
 | File | Trigger | Purpose |
 |---|---|---|
-| `.github/workflows/appointments.yml` | push/PR to `main` for `com_appointments/**`, the shared files the component actually uses, and the workflow file; plus manual | Build & Test, both lanes in the matrix |
+| `.github/workflows/appointments.yml` | push/PR to `main` for `com_appointments/**`, the shared files the component actually uses, and the workflow file; plus manual | Build & Test, both lanes in the matrix and real CalDAV clients on J6 |
 | `.github/workflows/release-appointments.yml` | `workflow_dispatch` | Stage 1: bump and open the release pull request |
 | `.github/workflows/publish-appointments.yml` | release pull request merged | Stage 2: package, tag, GitHub Release |
 
@@ -232,3 +263,8 @@ Concurrency: cancel a superseded run of the same branch or pull request, never o
 
 The required check on a pull request is `Collect Results` alone. After re-running a failed component
 workflow, re-run `Collect Results` too.
+This component workflow, the collector and the other repository-wide PR workflows target `main`;
+they do not automatically run for the partial base `feat/appointments-teamkalender`. A manual
+dispatch is separate execution evidence, not proof that the PR-triggered required gate ran.
+An empty `statusCheckRollup` is never a successful gate. Preserve the partial PR base and use a
+manual dispatch; do not retarget the PR or weaken branch protections to obtain checks.
