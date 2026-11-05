@@ -130,6 +130,14 @@ class SystemModel extends BaseDatabaseModel
                 $on, Text::_($on ? 'JENABLED' : 'JDISABLED'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_PLUGIN_FIX');
         }
 
+        // The API's Basic Auth plugin signs in with the Joomla password: no
+        // second factor and no sign-in lock (guardLogin covers site and administrator only).
+        $basic = (int) $db->setQuery($this->query()->select($db->quoteName('enabled'))->from($db->quoteName('#__extensions'))
+            ->where($db->quoteName('type') . " = 'plugin'")->where($db->quoteName('folder') . " = 'api-authentication'")
+            ->where($db->quoteName('element') . " = 'basic'"))->loadResult() === 1;
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_API_BASIC', !$basic, Text::_($basic ? 'JENABLED' : 'JDISABLED'),
+            'COM_APPOINTMENTS_TEAM_F_SYSTEM_API_BASIC_FIX');
+
         $users = ComponentHelper::getParams('com_users');
         $groups = array_values(array_filter(array_map('intval', array_merge((array) $params->get('team_groups', []),
             [(int) $params->get('external_group', 0)])), static fn (int $id): bool => $id > 0));

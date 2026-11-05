@@ -79,6 +79,27 @@ final class AuditPrivacyRedactTest extends TestCase
         self::assertStringNotContainsString('boss', $out);
     }
 
+    public function testLargeSitesAreSearchedWithinHardLimits(): void
+    {
+        // 10,000 calendars of 300 entries each: far more than one request may load.
+        $ids = range(1, 10000);
+        $stats = [];
+
+        foreach ($ids as $id) {
+            $stats[$id] = ['objects' => 300, 'bytes' => $id === 3 ? TeamPrivacy::MAX_CALENDAR_BYTES + 1 : 300 * 4096];
+        }
+
+        $plan = TeamPrivacy::plan($ids, $stats);
+        $loaded = array_sum(array_map(static fn (int $id): int => $stats[$id]['objects'], $plan));
+
+        self::assertNotContains(3, $plan, 'A calendar above the byte limit is never loaded');
+        self::assertLessThanOrEqual(TeamPrivacy::MAX_OBJECTS, $loaded);
+        self::assertSame(array_slice(array_values(array_diff($ids, [3])), 0, intdiv(TeamPrivacy::MAX_OBJECTS, 300)), $plan);
+        self::assertSame([], TeamPrivacy::plan([1, 2], [1 => ['objects' => 5, 'bytes' => 10], 2 => ['objects' => 5, 'bytes' => 10]], 100, 4),
+            'Nothing above the entry limit');
+        self::assertSame([7], TeamPrivacy::plan([7], []), 'An empty calendar is searched');
+    }
+
     public function testFoldedLinesAreUnfoldedFirst(): void
     {
         $out = TeamPrivacy::redact("BEGIN:VEVENT\r\nATTENDEE;CN=\"Long\r\n Name\":mailto:x@example.test\r\nDESCRIPTION:a\r\n b\r\nEND:VEVENT", 'an@example.test', 'other');

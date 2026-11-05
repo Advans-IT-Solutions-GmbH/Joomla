@@ -52,6 +52,12 @@ final class TeamPrivacy
 {
     private const LOG_ROWS = 5000;
 
+    /** Hard limits of one request, so a large site never exhausts memory or time. */
+    public const MAX_CALENDAR_BYTES = 16777216;
+    public const MAX_OBJECTS = 20000;
+    public const MAX_EXPORT_BYTES = 4194304;
+    public const TIME_BUDGET_SECONDS = 20;
+
     /**
      * @param   TeamServices|null  $services  Null when the internet calendars could not be reached
      *                                         although they are on: every request is then reported incomplete.
@@ -182,6 +188,37 @@ final class TeamPrivacy
         }
 
         return implode("\r\n", $lines);
+    }
+
+    /**
+     * Which calendars one request may load: a calendar whose entries exceed
+     * MAX_CALENDAR_BYTES is never loaded, and the calendars together stay
+     * below MAX_OBJECTS entries. Pure, in calendar order.
+     *
+     * @param   int[]                                                 $calendarIds
+     * @param   array<int|string, array{objects: int|string, bytes: int|string}>  $stats  Per calendar id.
+     *
+     * @return  int[]  The calendars to search; the others are reported as not searched.
+     */
+    public static function plan(array $calendarIds, array $stats, int $maxCalendarBytes = self::MAX_CALENDAR_BYTES,
+        int $maxObjects = self::MAX_OBJECTS): array
+    {
+        $plan = [];
+        $objects = 0;
+
+        foreach ($calendarIds as $id) {
+            $count = (int) ($stats[$id]['objects'] ?? 0);
+            $bytes = (int) ($stats[$id]['bytes'] ?? 0);
+
+            if ($bytes > $maxCalendarBytes || $objects + $count > $maxObjects) {
+                continue;
+            }
+
+            $objects += $count;
+            $plan[] = $id;
+        }
+
+        return $plan;
     }
 
     /**
@@ -358,6 +395,12 @@ final class TeamPrivacy
         $db = $this->services->db();
         $calendars = $db->setQuery($this->query()->select($db->quoteName(['id', 'title']))
             ->from($db->quoteName('#__appointments_calendars'))->order($db->quoteName('id') . ' ASC'))->loadAssocList();
+        $stats = $db->setQuery($this->query()->select([$db->quoteName('calendar_id'), 'COUNT(*) AS ' . $db->quoteName('objects'),
+            'COALESCE(SUM(' . $db->quoteName('size') . '), 0) AS ' . $db->quoteName('bytes')])
+            ->from($db->quoteName('#__appointments_calendar_objects'))->group($db->quoteName('calendar_id')))->loadAssocList('calendar_id') ?: [];
+        $plan = self::plan(array_map(static fn (array $calendar): int => (int) $calendar['id'], $calendars), $stats);
+        $deadline = microtime(true) + self::TIME_BUDGET_SECONDS;
+        $exported = 0;
         $matches = [];
         $unsearched = [];
         $searched = 0;
@@ -365,6 +408,15 @@ final class TeamPrivacy
         foreach ($calendars as $calendar) {
             $id = (int) $calendar['id'];
             $title = (string) $calendar['title'] !== '' ? (string) $calendar['title'] : '#' . $id;
+
+            // Beyond the limits of one request (too large, too many entries,
+            // out of time): named as not searched, never a silent stop.
+            if (!\in_array($id, $plan, true) || microtime(true) > $deadline) {
+                $unsearched[$id] = $title;
+
+                continue;
+            }
+
             $keyring = $address === '' ? null : $this->keyring($id);
 
             if ($keyring === null) {
@@ -377,6 +429,12 @@ final class TeamPrivacy
                 $objects = $this->services->objects()->all($id);
 
                 foreach ($objects as $index => $object) {
+                    if (microtime(true) > $deadline) {
+                        $unsearched[$id] = $title;
+
+                        break;
+                    }
+
                     $ics = $this->services->keys()->decryptObject($keyring, $object);
                     unset($objects[$index]);
 
@@ -388,9 +446,19 @@ final class TeamPrivacy
                     }
 
                     if (\in_array($address, $this->services->timing()->emails($ics), true)) {
+                        $content = $otherPerson === null ? '' : self::redact($ics, $address, $otherPerson);
+                        $exported += \strlen($content);
+
+                        if ($exported > self::MAX_EXPORT_BYTES) {
+                            // The export holds no more: this calendar counts as not searched.
+                            $unsearched[$id] = $title;
+
+                            break;
+                        }
+
                         $matches[] = ['id' => $object->id, 'calendar_id' => $object->calendarId, 'uri' => $object->uri,
                             'etag' => $object->etag, 'modified_utc' => $object->modifiedUtc->format('Y-m-d H:i:s'), 'title' => $title,
-                            'content' => $otherPerson === null ? '' : self::redact($ics, $address, $otherPerson)];
+                            'content' => $content];
                     }
 
                     unset($ics);

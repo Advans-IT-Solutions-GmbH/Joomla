@@ -439,8 +439,59 @@ sleep(3);
         return true;');
     }
 
-    // ---- Website and CalDAV sign-in over HTTP ---------------------------------
+    // ---- The sign-in guard on every core sign-in form --------------------------
     $grantsStub = $suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\GrantService::class);
+    // A locked calendar account posts its correct password through the forms
+    // Joomla itself offers: the site login (also what the login module posts)
+    // and the administrator login (field passwd). The guard must replace the
+    // password before Joomla compares it.
+    $guard = static fn (string $client, string $option, string $task, string $field): string => '
+        $db = $services->db();
+        $group = (int) (((array) $services->params()->get("team_groups", []))[0] ?? 0);
+        $name = "teamfguard" . bin2hex(random_bytes(3));
+        $db->setQuery("INSERT INTO #__users (name, username, email, password, block, registerDate, params) VALUES (\"F guard\", \"$name\", \"$name@example.test\", \"\", 0, UTC_TIMESTAMP(), \"{}\")")->execute();
+        $uid = (int) $db->insertid();
+        $db->setQuery("INSERT INTO #__user_usergroup_map (user_id, group_id) VALUES ($uid, $group)")->execute();
+
+        try {
+            for ($i = 0; $i < 10; $i++) { $services->lockout()->recordFailure($name, "192.0.2.77"); }
+            $forget();
+            $input = $application->getInput();
+            (new ReflectionProperty($application, "name"))->setValue($application, ' . var_export($client, true) . ');
+            $input->server->set("REQUEST_METHOD", "POST");
+            $input->server->set("REMOTE_ADDR", "192.0.2.77");
+            foreach (["option" => ' . var_export($option, true) . ', "task" => ' . var_export($task, true) . ', "username" => $name, ' . var_export($field, true) . ' => "the-correct-password"] as $k => $v) {
+                $input->set($k, $v);
+                $input->post->set($k, $v);
+            }
+            $input->post->set(\Joomla\CMS\Session\Session::getFormToken(), "1");
+            $services->lockout()->guardLogin($application);
+            $replaced = $input->post->get(' . var_export($field, true) . ', "", "raw");
+
+            return $replaced !== "the-correct-password" && strlen($replaced) === 64 && $services->lockout()->wasRefused($name, "192.0.2.77");
+        } finally {
+            $db->setQuery("DELETE FROM #__user_usergroup_map WHERE user_id = $uid")->execute();
+            $db->setQuery("DELETE FROM #__users WHERE id = $uid")->execute();
+        }';
+
+    foreach ([['site', 'com_users', 'user.login', 'password', 'site sign-in form and login module'],
+        ['administrator', 'com_login', 'login', 'passwd', 'administrator sign-in form']] as [$client, $option, $task, $field, $label]) {
+        if ($grantsStub) {
+            $suite->pending('A locked account\'s correct password never reaches Joomla through the ' . $label, 'C');
+        } else {
+            $suite->test('A locked account\'s correct password never reaches Joomla through the ' . $label, static function () use ($run, $guard, $client, $option, $task, $field) {
+                return $run($guard($client, $option, $task, $field)) === true;
+            });
+        }
+    }
+
+    if ($suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\DeviceService::class)) {
+        $suite->pending('«Revoke now» in the devices view refuses the device with 401 from the next request on', 'A, D');
+    } else {
+        $suite->pending('«Revoke now» in the devices view refuses the device with 401 from the next request on (HTTP flow)', 'A, D integration');
+    }
+
+    // ---- Website and CalDAV sign-in over HTTP ---------------------------------
 
     if ($grantsStub || $suite->isStub(\Advans\Component\Appointments\Administrator\Service\Team\KeySession::class)) {
         $suite->pending('Website sign-in while locked fails exactly like a wrong password, also with the correct password', 'B, C');
@@ -554,6 +605,31 @@ sleep(3);
                 return $r['executed'] === 1 && $r['code'] === 0;
             });
         }
+
+        $suite->test('A privacy export of a person with many log rows stays within its limit and says so', static function () use ($run, $db, $p, $tag) {
+            $db->query("INSERT INTO {$p}users (name, username, email, password, block, registerDate, params) VALUES ('F many', '{$tag}many', '{$tag}many@example.test', '', 0, UTC_TIMESTAMP(), '{}')");
+            $userId = (int) $db->insert_id;
+
+            try {
+                $r = $run('$userId = ' . $userId . ';
+                    for ($i = 0; $i < 5010; $i++) { $services->audit()->log(AuditEvent::LOGIN_SUCCESS, ["actor_user_id" => $userId]); }
+                    $application->bootComponent("com_privacy");
+                    $plugin = $application->bootPlugin("appointments", "privacy");
+                    $request = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
+                    $request->email = ' . var_export($tag . 'many@example.test', true) . ';
+                    $request->status = 1;
+                    $before = memory_get_peak_usage(true);
+                    $event = new \Joomla\CMS\Event\Privacy\ExportRequestEvent("onPrivacyExportRequest", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance($userId)]);
+                    $plugin->onPrivacyExportRequest($event);
+                    $rows = 0; $note = false;
+                    foreach ($event->getArgument("result") as $set) { foreach ($set as $domain) { if ($domain->name === "appointments_staff_log") { foreach ($domain->getItems() as $item) { $rows++; foreach ($item->getFields() as $f) { $note = $note || $f->name === "note"; } } } } }
+                    return ["rows" => $rows, "note" => $note, "mb" => (memory_get_peak_usage(true) - $before) / 1048576];');
+
+                return $r['rows'] === 5001 && $r['note'] === true && $r['mb'] < 64;
+            } finally {
+                $db->query("DELETE FROM {$p}users WHERE id={$userId}");
+            }
+        });
 
         // ---- Privacy: staff data through the real privacy plugin --------------
         $suite->test('Privacy export lists devices, grants and log rows of a staff member, without secrets', static function () use ($run, $db, $p, $tag) {
