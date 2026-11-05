@@ -97,9 +97,10 @@ factor before the recovery key and the grants are set up, so its session holds i
 | `NOGRANT` | Internet calendars internal | none |
 | `EXT` | Internet calendars external | write on `CAL-X` |
 
-`OWNER` also needs the Joomla backend permissions to manage and create event types
-(`core.manage`, `core.create` and `core.edit.state` on `com_appointments`) and `core.edit` on
-`E-CAL`, so the account can create and publish the fixture. Do not give these permissions to `ADMIN`
+`OWNER` is not a Super User. On the test site, explicitly grant and verify the backend ACL needed by
+these cases; do not rely on default permissions: `core.manage`, `core.create` and `core.edit.state`
+on `com_appointments`, plus `core.edit` on the `E-CAL` event-type asset. Confirm that `OWNER` can
+open Appointments and create, edit and publish `E-CAL`. Do not give these permissions to `ADMIN`
 merely because it is a Super User.
 
 ### 2.3 Calendars and booking
