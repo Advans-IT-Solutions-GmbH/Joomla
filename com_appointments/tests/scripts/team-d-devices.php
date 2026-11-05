@@ -389,6 +389,9 @@ return static function (TeamSuite $suite): void {
             'D: A revoked device row played back into the database does not authenticate',
             'D: A device row and user key row rolled back together are refused by the anchor',
             'D: A revocation inside a transaction that rolls back leaves the anchor below the database',
+            'D: A device whose owner was changed in the database stays revoked for its real owner',
+            'D: A device row with a broken MAC is refused without an exception',
+            'D: A user key row with a broken MAC refuses every device and «Add device»',
         ];
 
         if ($stubs !== []) {
@@ -641,6 +644,66 @@ return static function (TeamSuite $suite): void {
             $services->devices()->revoke(null, (int) $made['device_id'], 'test');
 
             return $ok;
+        });
+
+        $suite->test($flow[18], static function () use ($services, $probe, $rowOf, $restore, $tag, $db, $p, $user) {
+            $made = $probe($tag . ' owner');
+
+            if ($made === []) {
+                return false;
+            }
+
+            $other = $user('other', 'Other-' . bin2hex(random_bytes(8)) . '!', [2]);
+            $saved = $rowOf('appointments_devices', 'id = ' . (int) $made['device_id']);
+            $db->query("UPDATE {$p}appointments_devices SET user_id = {$other} WHERE id = " . (int) $made['device_id']);
+            $services->devices()->revoke(null, (int) $made['device_id'], 'test');
+            $restore('appointments_devices', $saved, 'id');
+            $refused = $services->devices()->authenticate($tag . 'member', $made['app_password']) === null;
+            $services->devices()->revoke(null, (int) $made['device_id'], 'test');
+
+            return $refused;
+        });
+
+        $suite->test($flow[19], static function () use ($services, $probe, $tag, $db, $p) {
+            $made = $probe($tag . ' broken');
+
+            if ($made === []) {
+                return false;
+            }
+
+            $db->query("UPDATE {$p}appointments_devices SET row_mac = X'" . bin2hex(random_bytes(32)) . "' WHERE id = " . (int) $made['device_id']);
+
+            try {
+                $refused = $services->devices()->authenticate($tag . 'member', $made['app_password']) === null;
+            } catch (\Throwable $e) {
+                $refused = false;
+            }
+
+            $services->devices()->revoke(null, (int) $made['device_id'], 'test');
+
+            return $refused;
+        });
+
+        $suite->test($flow[20], static function () use ($services, $rowOf, $restore, $tag, $db, $p, $member, $password, &$created, $refusal) {
+            $keys = $services->keys()->unlockWithPassword($member, $password);
+            $key = $rowOf('appointments_user_keys', 'user_id = ' . $member);
+
+            if ($keys === null || $key === null) {
+                return false;
+            }
+
+            $db->query("UPDATE {$p}appointments_user_keys SET row_mac = X'" . bin2hex(random_bytes(32)) . "' WHERE user_id = {$member}");
+
+            try {
+                $refusedDevice = $services->devices()->authenticate($tag . 'member', $created) === null;
+                $refusedAdd = $refusal(static fn () => $services->devices()->create($keys, $tag . ' broken key', 'other', true)) === 403;
+            } catch (\Throwable $e) {
+                $refusedDevice = $refusedAdd = false;
+            } finally {
+                $restore('appointments_user_keys', $key, 'user_id');
+            }
+
+            return $refusedDevice && $refusedAdd && $services->devices()->authenticate($tag . 'member', $created) !== null;
         });
 
         $suite->test($flow[7], static function () use ($browser, $page, $suite, $p, $member) {

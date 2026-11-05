@@ -669,6 +669,8 @@ final class DeviceService implements DeviceServiceInterface
                 ]);
             }
 
+            $targetIntact = false;
+
             foreach ($rows as $id => $row) {
                 $row['device_epoch'] = $old ?? 0;
                 $intact = $old !== null && $this->verifies((object) $row);
@@ -676,6 +678,7 @@ final class DeviceService implements DeviceServiceInterface
                 $update = $this->query()->update($db->quoteName('#__' . self::TABLE))->where($db->quoteName('id') . ' = ' . (int) $id);
 
                 if ((int) $id === $deviceId) {
+                    $targetIntact = $intact;
                     $row['state'] = $toState;
                     $row['usk_wrapped'] = null;
 
@@ -711,7 +714,102 @@ final class DeviceService implements DeviceServiceInterface
             $this->anchorEpoch($owner);
         }
 
+        // A target row that did not verify for its stored owner may have had its owner changed
+        // in the database, so that the revocation raises the wrong user's epoch and the saved
+        // row could be played back for the real owner later. When the row is signed for another
+        // user, that user's epoch rises too, which kills every older copy of the row.
+        if (!$targetIntact && ($signer = $this->signedOwner($target, $owner)) !== null) {
+            try {
+                $this->services->audit()->log(AuditEvent::ROW_MAC_FAILURE, [
+                    'subject_user_id' => $signer,
+                    'details' => ['table' => self::TABLE, 'reason' => 'owner_changed', 'device_id' => $deviceId],
+                ]);
+            } catch (\Throwable $e) {
+                Log::add('Internet calendar MAC failure not logged: device ' . $deviceId, Log::WARNING, 'com_appointments');
+            }
+
+            $this->advanceEpoch($signer);
+        }
+
         return true;
+    }
+
+    /**
+     * The user a device row is validly signed for, when it is not the stored owner: the row
+     * is checked with every other user's trusted epoch. Null when no user matches.
+     *
+     * @param   array<string, mixed>  $row  The device row as read, before any change.
+     */
+    private function signedOwner(array $row, int $storedOwner): ?int
+    {
+        $db = $this->services->db();
+        $query = $this->query()
+            ->select('*')
+            ->from($db->quoteName('#__appointments_user_keys'))
+            ->where($db->quoteName('user_id') . ' <> ' . (int) $storedOwner);
+
+        foreach ($db->setQuery($query)->loadAssocList() as $keyRow) {
+            $userId = (int) $keyRow['user_id'];
+            $epoch = $this->trustedEpoch($keyRow, $userId);
+
+            if ($epoch !== null && $this->verifies((object) (['user_id' => $userId, 'device_epoch' => $epoch] + $row))) {
+                return $userId;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Raise one user's device epoch and re-sign that user's devices with it, without changing
+     * any device state.
+     */
+    private function advanceEpoch(int $userId): void
+    {
+        $db = $this->services->db();
+        $db->transactionStart(true);
+
+        try {
+            $keyRow = $this->lockUserKey($userId);
+            $old = $this->trustedEpoch($keyRow, $userId);
+
+            if ($old === null) {
+                $db->transactionRollback(true);
+
+                return;
+            }
+
+            $new = $old + 1;
+            $query = $this->query()
+                ->select($db->quoteName(['id', 'user_id', 'secret_hash', 'kek_salt', 'usk_wrapped', 'user_key_version', 'state', 'row_mac']))
+                ->from($db->quoteName('#__' . self::TABLE))
+                ->where($db->quoteName('user_id') . ' = ' . (int) $userId)
+                ->where($db->quoteName('state') . ' <> ' . TeamStates::DEVICE_REVOKED);
+            $rows = $db->setQuery((string) $query . ' FOR UPDATE')->loadAssocList('id');
+            $this->raiseEpoch($keyRow, $new);
+
+            foreach ($rows as $id => $row) {
+                $row['device_epoch'] = $old;
+
+                if (!$this->verifies((object) $row)) {
+                    continue;
+                }
+
+                $row['device_epoch'] = $new;
+                $db->setQuery(
+                    'UPDATE ' . $db->quoteName('#__' . self::TABLE) . ' SET ' . $db->quoteName('row_mac') . ' = ' . self::hex($this->mac($row))
+                    . ' WHERE ' . $db->quoteName('id') . ' = ' . (int) $id
+                )->execute();
+            }
+
+            $db->transactionCommit(true);
+        } catch (\Throwable $e) {
+            $db->transactionRollback(true);
+
+            throw $e;
+        }
+
+        $this->anchorEpoch($userId);
     }
 
     /**
