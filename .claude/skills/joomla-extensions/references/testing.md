@@ -267,7 +267,9 @@ bundled-plugin files). Shared Path Coverage runs these regressions on PHP 8.1.
 Mail coverage belongs in the sender's existing CI suites. Appointments checks all 25 purposes in
 all three languages (subject, text and generated HTML), actual booking MIME for separate invitee
 and guest account/site preferences, and device notice MIME with published and shipped-default
-templates. Privacy tests every customer-body variant and administrator action in all three
+templates. Booking-mail regressions also unpublish both localized database candidates while
+English stays published, then check actual de-DE/fr-FR subjects and bodies against shipped defaults.
+Privacy tests every customer-body variant and administrator action in all three
 languages, account/address preference lookup and preservation before account pseudonymisation.
 Injected mail-language failures must not stop cleanup, change a successful address deletion into
 a failure, or escape the customer-notice failure result. Disabled administrator notices must not

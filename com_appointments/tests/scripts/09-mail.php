@@ -13,6 +13,7 @@ $mailsParams = null;
 $languageParams = null;
 $inviteeUser = 0;
 $guestUser = 0;
+$publishedTemplateIds = [];
 $failed = 0;
 $check = static function (bool $ok, string $message) use (&$failed): void {
     echo ($ok ? 'PASS ' : 'FAIL ') . $message . "\n";
@@ -85,7 +86,7 @@ $inspect = static function (array $before, array $booking, string $method, strin
         }
     }
     if ($localizedSubject !== null) {
-        $check($localized, 'Notification uses the stored invitee language');
+        $check($localized, 'Notification uses the recipient account language');
     }
 };
 
@@ -195,6 +196,58 @@ try {
     $check($htmlMails === 3, 'With com_mails HTML every notification is HTML in the mail layout with a plain-text alternative');
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string((string) $mailsParams) . "' WHERE element='com_mails' AND type='component'");
     $mailsParams = null;
+
+    $templateRows = $db->query("SELECT id FROM {$prefix}appointments_templates WHERE eventtype_id IN (0,{$event})"
+        . " AND purpose='confirmation' AND language IN ('de-DE','fr-FR') AND published=1")->fetch_all(MYSQLI_ASSOC);
+    $publishedTemplateIds = array_map('intval', array_column($templateRows, 'id'));
+    if ($publishedTemplateIds === []) {
+        throw new RuntimeException('Localized confirmation templates are missing before the fallback regression.');
+    }
+    $db->query("UPDATE {$prefix}appointments_templates SET published=0 WHERE id IN (" . implode(',', $publishedTemplateIds) . ')');
+    $check((int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_templates WHERE eventtype_id IN (0,{$event})"
+        . " AND purpose='confirmation' AND language IN ('de-DE','fr-FR') AND published=1")->fetch_row()[0] === 0
+        && (int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_templates WHERE eventtype_id IN (0,{$event})"
+            . " AND purpose='confirmation' AND language='en-GB' AND published=1")->fetch_row()[0] > 0,
+        'Fallback fixture disables both localized database candidates while English remains published');
+
+    foreach (['de-DE' => 14, 'fr-FR' => 15] as $locale => $hour) {
+        $db->query("UPDATE {$prefix}users SET params='{\"language\":\"{$locale}\"}' WHERE id={$inviteeUser}");
+        $client = new AppointmentsHttp('http://localhost', 'mail-default-' . $locale);
+        $start = $day . ' ' . $hour . ':00:00';
+        [$browser, $path, $form] = $client->bookingForm($event, $start, ['first_name' => 'Fallback', 'last_name' => 'Recipient']);
+        sleep(2);
+        $before = $spool();
+        $browser->request($path, $form);
+        $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$start}'")->fetch_assoc();
+        if (!$booking) {
+            throw new RuntimeException('The shipped-default fixture booking was not saved.');
+        }
+        $inspect($before, $booking, 'REQUEST', 'CONFIRMED', 2);
+        $defaults = parse_ini_file('/var/www/html/administrator/components/com_appointments/language/' . $locale . '/com_appointments.ini', false, INI_SCANNER_RAW);
+        if (!isset($defaults['COM_APPOINTMENTS_MAIL_CONFIRMATION_SUBJECT'], $defaults['COM_APPOINTMENTS_MAIL_CONFIRMATION_BODY'])) {
+            throw new RuntimeException('The shipped confirmation defaults are missing for ' . $locale . '.');
+        }
+        $expectedSubject = str_replace('{event_title}', $tag, $defaults['COM_APPOINTMENTS_MAIL_CONFIRMATION_SUBJECT']);
+        $body = str_replace('\n', "\n", $defaults['COM_APPOINTMENTS_MAIL_CONFIRMATION_BODY']);
+        $intro = str_replace('{invitee_name}', 'Fallback Recipient', explode('{event_title}', $body)[0]);
+        $paragraphs = explode("\n\n", $body);
+        $ending = end($paragraphs);
+        $localizedBody = false;
+        foreach (AppointmentsMail::messagesSince($before) as $mime) {
+            if (!preg_match('/^To:.*invitee@example\.test/mi', preg_replace('/\r?\n[ \t]+/', ' ', $mime))) {
+                continue;
+            }
+            $decoded = str_replace("\r\n", "\n", AppointmentsMail::decoded($mime));
+            $localizedBody = str_contains($decoded, $intro) && str_contains($decoded, $ending)
+                && preg_match('/COM_APPOINTMENTS_[A-Z_]+/', $decoded) === 0;
+        }
+        $check($subjectFor($before, 'invitee@example.test') === $expectedSubject && $localizedBody,
+            "$locale: booking mail uses the shipped localized subject/body, not the published English template");
+    }
+    $db->query("UPDATE {$prefix}appointments_templates SET published=1 WHERE id IN (" . implode(',', $publishedTemplateIds) . ')');
+    $publishedTemplateIds = [];
+    $db->query("UPDATE {$prefix}users SET params='{\"language\":\"en-GB\"}' WHERE id={$inviteeUser}");
+
     $client = new AppointmentsHttp('http://localhost', 'mail-failure');
     [$browser, $path, $form] = $client->bookingForm($event, $day . ' 12:00:00');
     sleep(2);
@@ -218,6 +271,9 @@ try {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;
 } finally {
+    if ($publishedTemplateIds !== []) {
+        $db->query("UPDATE {$prefix}appointments_templates SET published=1 WHERE id IN (" . implode(',', $publishedTemplateIds) . ')');
+    }
     if ($languageParams !== null) {
         $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string((string) $languageParams) . "' WHERE element='com_languages' AND type='component'");
     }
