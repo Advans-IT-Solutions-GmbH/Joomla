@@ -610,11 +610,7 @@ final class KeySession implements KeySessionInterface
      */
     private function countingRecords(int $userId): array
     {
-        $methods = [];
-
-        foreach (MfaHelper::getMfaMethods() as $method) {
-            $methods[] = (string) ($method['name'] ?? '');
-        }
+        $methods = $this->enabledMethods();
 
         return array_values(array_filter(
             MfaHelper::getUserMfaRecords($userId),
@@ -755,11 +751,7 @@ final class KeySession implements KeySessionInterface
             return false;
         }
 
-        $methods = [];
-
-        foreach (MfaHelper::getMfaMethods() as $method) {
-            $methods[] = (string) ($method['name'] ?? '');
-        }
+        $methods = $this->enabledMethods();
 
         foreach (MfaHelper::getUserMfaRecords($userId) as $record) {
             if (!\in_array($record->method, self::NOT_A_SECOND_FACTOR, true) && \in_array($record->method, $methods, true)) {
@@ -768,6 +760,27 @@ final class KeySession implements KeySessionInterface
         }
 
         return false;
+    }
+
+    /**
+     * The MFA methods whose plugin is enabled now, read from the extensions
+     * table (a method is named after its plugin). Neither the plugins nor the
+     * plugin helper are asked: both may start a session.
+     *
+     * @return  string[]
+     */
+    private function enabledMethods(): array
+    {
+        $db = $this->services->db();
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+
+        return array_map('strval', $db->setQuery(
+            $query->select($db->quoteName('element'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote('multifactorauth'))
+                ->where($db->quoteName('enabled') . ' = 1')
+        )->loadColumn() ?: []);
     }
 
     private function keyService(): KeyService
