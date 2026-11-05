@@ -103,6 +103,8 @@ return static function (TeamSuite $suite): void {
             $sealedName = (new BookingData($keys))->seal($fixture->stored($mixed))['invitee_name'];
             $suite->db->query("UPDATE {$suite->prefix}appointments_bookings SET invitee_name='"
                 . $suite->db->real_escape_string($sealedName) . "' WHERE id={$mixed}");
+            $v1 = 'v1:' . base64_encode(random_bytes(64));
+            $unsupported = $insert(['invitee_name' => $v1, 'invitee_email' => 'unsupported@example.test']);
 
             // A migration that runs (the token of an update one minute ago).
             $params = json_decode((string) $suite->db->query("SELECT params FROM {$suite->prefix}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0], true) ?: [];
@@ -120,10 +122,16 @@ return static function (TeamSuite $suite): void {
             $failed = [];
             $planted = $fixture->stored($mixed);
             $mixedOpened = $data->openLenient($planted, $failed);
+            $unsupportedStored = $fixture->stored($unsupported);
+            $unsupportedFailed = [];
+            $unsupportedOpened = $data->openLenient($unsupportedStored, $unsupportedFailed);
             $token = (string) ((json_decode((string) $suite->db->query("SELECT params FROM {$suite->prefix}extensions WHERE type='component' AND element='com_appointments'")->fetch_row()[0], true) ?: [])[BookingData::MIGRATION_OPTION] ?? '');
 
             return $sealed && $opened['invitee_email'] === 'legacy@example.test' && $opened['guest_emails'] === 'guest@example.test'
                 && $planted['invitee_email'] === 'planted@example.test' && $mixedOpened['invitee_email'] === null && $failed === ['invitee_email']
+                && $unsupportedStored['invitee_name'] === $v1 && $unsupportedStored['invitee_email'] === 'unsupported@example.test'
+                && $unsupportedOpened['invitee_name'] === null && $unsupportedOpened['invitee_email'] === null
+                && $unsupportedFailed === ['invitee_name', 'invitee_email']
                 && $mixedOpened['invitee_name'] === 'Sealed Invitee' && BookingData::migrationDone($token, $keys);
         });
 
@@ -184,6 +192,75 @@ return static function (TeamSuite $suite): void {
             $expect($audit === 1, 'The administrator encryption must create exactly one audit row.');
             $done = BookingData::migrationDone((string) ($readParams()[BookingData::MIGRATION_OPTION] ?? ''), $keys);
             $expect($done, 'The administrator action must persist the migration completion marker.');
+
+            return true;
+        });
+
+        $suite->test('An audit SQL failure rolls back legacy encryption and a retry records each booking once', static function () use ($suite, $fixture) {
+            $db = Factory::getContainer()->get(DatabaseInterface::class);
+            $keys = new KeyProvider((string) (new JConfig())->secret);
+            $event = $fixture->event();
+            $cutoff = time() - (BookingData::MIGRATION_LIMIT_DAYS + 10) * 86400;
+            $created = gmdate('Y-m-d H:i:s', $cutoff - 86400);
+            $ids = [];
+
+            foreach ([0, 1] as $index) {
+                $uid = bin2hex(random_bytes(32));
+                $suite->db->query("INSERT INTO {$suite->prefix}appointments_bookings"
+                    . " (uid,eventtype_id,host_user_id,start_utc,end_utc,state,created_utc,modified_utc,invitee_name,invitee_email)"
+                    . " VALUES ('{$uid}',{$event},{$fixture->host},'{$created}','{$created}',2,'{$created}','{$created}',"
+                    . " 'Audit Invitee {$index}','audit{$index}@example.test')");
+                $ids[] = (int) $suite->db->insert_id;
+            }
+
+            $params = json_decode((string) $suite->db->query("SELECT params FROM {$suite->prefix}extensions"
+                . " WHERE type='component' AND element='com_appointments'")->fetch_row()[0], true) ?: [];
+            $token = BookingData::migrationToken($keys, $cutoff + BookingData::MIGRATION_DAYS * 86400, $cutoff);
+            $params[BookingData::MIGRATION_OPTION] = $token;
+            $suite->db->query("UPDATE {$suite->prefix}extensions SET params='" . $suite->db->real_escape_string(json_encode($params))
+                . "' WHERE type='component' AND element='com_appointments'");
+            $trigger = 'suite_e_audit_' . bin2hex(random_bytes(6));
+            $suite->db->query("CREATE TRIGGER `{$trigger}` BEFORE INSERT ON {$suite->prefix}appointments_audit FOR EACH ROW"
+                . " BEGIN IF NEW.booking_id={$ids[1]} AND NEW.action='encrypt' THEN SIGNAL SQLSTATE '45000'"
+                . " SET MESSAGE_TEXT='Injected encryption audit failure'; END IF; END");
+
+            try {
+                try {
+                    BookingRecords::encryptRemaining($db, $keys, $fixture->host);
+
+                    throw new RuntimeException('The audit SQL failure must propagate.');
+                } catch (\Joomla\Database\Exception\ExecutionFailureException $exception) {
+                    if (!str_contains($exception->getMessage(), 'Injected encryption audit failure')) {
+                        throw $exception;
+                    }
+                }
+
+                foreach ($ids as $index => $id) {
+                    if ($fixture->stored($id)['invitee_email'] !== "audit{$index}@example.test") {
+                        throw new RuntimeException('A failed audit insert must roll back every encrypted row in the batch.');
+                    }
+                }
+
+                if ($suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_audit WHERE booking_id IN ("
+                    . implode(',', $ids) . ") AND action='encrypt'") !== 0) {
+                    throw new RuntimeException('A failed audit insert must leave no partial encrypt audit rows.');
+                }
+            } finally {
+                $suite->db->query("DROP TRIGGER `{$trigger}`");
+            }
+
+            if (BookingRecords::encryptRemaining($db, $keys, $fixture->host) < 2) {
+                throw new RuntimeException('Retrying after an audit failure must encrypt the rolled-back rows.');
+            }
+
+            foreach ($ids as $index => $id) {
+                $row = $fixture->stored($id);
+                if (!BookingData::isSealed($row['invitee_email'])
+                    || (new BookingData($keys))->open($row)['invitee_email'] !== "audit{$index}@example.test"
+                    || $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_audit WHERE booking_id={$id} AND action='encrypt'") !== 1) {
+                    throw new RuntimeException('A successful retry must keep each address readable and record exactly one audit row.');
+                }
+            }
 
             return true;
         });
