@@ -282,6 +282,12 @@ return static function (TeamSuite $suite): void {
             'A calendar row rolled back together with its grants is refused by the anchor',
         ];
         $deleteE2e = 'Deleting a calendar removes it with its grants and mails the owner and the managers';
+        $aclE2e = 'Real Joomla ACL controls creation, external sharing and deletion independently of calendar management';
+        $groupE2e = 'Real group changes invalidate the old audience and an external membership takes precedence';
+        $snapshotE2e = array_combine(['grant', 'wrap'], array_map(
+            static fn (string $lost): string => "A stale REPEATABLE READ snapshot cannot authorise mutations after a manager loses its {$lost}",
+            ['grant', 'wrap']
+        ));
 
         if ($needKeys) {
             foreach ($grantE2e as $index => $name) {
@@ -289,6 +295,10 @@ return static function (TeamSuite $suite): void {
             }
 
             foreach ($replayE2e as $name) {
+                $suite->pending($name, 'B');
+            }
+
+            foreach (array_merge([$aclE2e, $groupE2e], array_values($snapshotE2e)) as $name) {
                 $suite->pending($name, 'B');
             }
 
@@ -324,6 +334,69 @@ return static function (TeamSuite $suite): void {
         $calendar = $services->calendars()->create($super, ['title' => $tag, 'owner_user_id' => $owner, 'allow_external' => 1]);
         $calendars[] = $calendar;
         $grants = $services->grants();
+
+        $suite->test($aclE2e, static function () use (
+            $services, $grants, $owner, $member, $nomfa, $external, $outsider, $teamGroup, $refused, $db, $p, $tag, &$calendars
+        ) {
+            $asset = $db->query("SELECT id,rules FROM {$p}assets WHERE name='com_appointments'")->fetch_assoc();
+            $original = (string) $asset['rules'];
+            $rules = json_decode($original, true) ?: [];
+            $apply = static function (array $permissions) use ($db, $p, $asset, $rules, $teamGroup): void {
+                $changed = $rules;
+
+                foreach ($permissions as $action => $allowed) {
+                    $changed[$action][(string) $teamGroup] = $allowed;
+                }
+
+                $json = $db->real_escape_string(json_encode($changed));
+                $db->query("UPDATE {$p}assets SET rules='{$json}' WHERE id=" . (int) $asset['id']);
+                \Joomla\CMS\Access\Access::clearStatics();
+            };
+
+            try {
+                $apply(['core.create' => false, 'core.delete' => false, 'appointments.team.external' => false]);
+                $deniedCreate = $refused(static fn () => $services->calendars()->create($owner, ['title' => $tag . '-acl', 'owner_user_id' => $owner]), 403);
+                $apply(['core.create' => true, 'core.delete' => false, 'appointments.team.external' => true]);
+                $id = $services->calendars()->create($owner, ['title' => $tag . '-acl', 'owner_user_id' => $owner, 'allow_external' => 1]);
+                $calendars[] = $id;
+                // This member has the Joomla sharing permission but no calendar grant.
+                $grants->grant($member, $id, $external, CalendarRole::FreeBusy, null);
+                $shared = $grants->accessFor($external, $id)?->role === CalendarRole::FreeBusy
+                    && $grants->accessFor($member, $id) === null;
+                $limits = $refused(static fn () => $grants->grant($member, $id, $external, CalendarRole::Manage, null), 403)
+                    && $refused(static fn () => $grants->grant($member, $id, $nomfa, CalendarRole::Read, null), 403)
+                    && $refused(static fn () => $grants->grant($owner, $id, $outsider, CalendarRole::FreeBusy, null), 403);
+                $deniedDelete = $refused(static fn () => $services->calendars()->delete($owner, $id), 403);
+                $apply(['core.create' => true, 'core.delete' => false, 'appointments.team.external' => false]);
+                $deniedShare = $refused(static fn () => $grants->grant($owner, $id, $external, CalendarRole::Read, null), 403);
+                $apply(['core.delete' => true]);
+                $services->calendars()->delete($owner, $id);
+
+                return $deniedCreate && $shared && $limits && $deniedDelete && $deniedShare
+                    && (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendars WHERE id={$id}")->fetch_row()[0] === 0;
+            } finally {
+                $json = $db->real_escape_string($original);
+                $db->query("UPDATE {$p}assets SET rules='{$json}' WHERE id=" . (int) $asset['id']);
+                \Joomla\CMS\Access\Access::clearStatics();
+            }
+        });
+
+        $suite->test($groupE2e, static function () use ($services, $grants, $keys, $user, $teamGroup, $externalGroup, $super, $owner, $ownerKeys, $calendar, $refused, $db, $p) {
+            $dual = $user('dual', [$teamGroup, $externalGroup], true);
+            $keys->createUserKey($dual, 'Fixture-Password-1!');
+            $externalFirst = $grants->audienceOf($dual) === TeamStates::AUDIENCE_EXTERNAL;
+            $noManager = $refused(static fn () => $grants->grant($super, $calendar, $dual, CalendarRole::Manage, null), 403);
+            $grants->grant($super, $calendar, $dual, CalendarRole::FreeBusy, null);
+            $externalAccess = $grants->accessFor($dual, $calendar)?->role === CalendarRole::FreeBusy;
+            $db->query("DELETE FROM {$p}user_usergroup_map WHERE user_id={$dual} AND group_id={$externalGroup}");
+            $oldAudienceRefused = $grants->accessFor($dual, $calendar) === null;
+            $grants->grant($owner, $calendar, $dual, CalendarRole::Read, $ownerKeys);
+            $teamAccess = $grants->accessFor($dual, $calendar)?->role === CalendarRole::Read;
+            $db->query("INSERT INTO {$p}user_usergroup_map (user_id,group_id) VALUES ({$dual},{$externalGroup})");
+
+            return $externalFirst && $noManager && $externalAccess && $oldAudienceRefused && $teamAccess
+                && $grants->accessFor($dual, $calendar) === null;
+        });
 
         $suite->test($grantE2e[0], static function () use ($grants, $calendar, $owner, $super) {
             return $grants->accessFor($owner, $calendar)?->role === CalendarRole::Manage
@@ -410,8 +483,8 @@ return static function (TeamSuite $suite): void {
         $second = $services->calendars()->create($boss, ['title' => $tag . '-second', 'owner_user_id' => $boss, 'allow_external' => 1]);
         $calendars[] = $second;
 
-        foreach (['grant', 'wrap'] as $lost) {
-            $suite->test("A stale REPEATABLE READ snapshot cannot authorise mutations after a manager loses its {$lost}", static function () use (
+        foreach ($snapshotE2e as $lost => $name) {
+            $suite->test($name, static function () use (
                 $services, $grants, $owner, $ownerKeys, $boss, $member, $refused, $db, $p, $tag, &$calendars, $lost
             ) {
                 $title = $tag . '-snapshot-' . $lost;
