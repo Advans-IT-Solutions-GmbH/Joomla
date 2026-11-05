@@ -222,15 +222,15 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
     public function uninstall($parent)
     {
+        $app = Factory::getApplication();
+        $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
+
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $params = $this->componentParams($db, 'com_appointments') ?? [];
         $deleteData = ($params['uninstall_data_action'] ?? '') === 'delete';
 
         if (!$deleteData && $this->hasRetainedComponentAsset($db)) {
-            Factory::getApplication()->enqueueMessage(
-                Text::_('COM_APPOINTMENTS_UNINSTALL_RETAINED_ACL_CONFLICT'),
-                'error'
-            );
+            $app->enqueueMessage(Text::_('COM_APPOINTMENTS_UNINSTALL_RETAINED_ACL_CONFLICT'), 'error');
 
             return false;
         }
@@ -278,8 +278,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 return false;
             }
 
-            $app = Factory::getApplication();
-            $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
             $app->enqueueMessage(Text::_('COM_APPOINTMENTS_UNINSTALL_DATA_RETAINED'), 'warning');
         }
 
