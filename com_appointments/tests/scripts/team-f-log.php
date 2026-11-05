@@ -1165,10 +1165,11 @@ sleep(3);
                         }
                         $remove = new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => $user]);
                         $plugin->onPrivacyRemoveData($remove);
-                        $remaining = (int) $joomlaDb->setQuery("SELECT COUNT(*) FROM #__appointments_calendar_objects WHERE calendar_id = ' . (int) $fixture->calendarId . ' AND uri = " . $joomlaDb->quote(' . var_export($uri, true) . ')")->loadResult();
+                        $remaining = (int) $joomlaDb->setQuery("SELECT COUNT(*) FROM #__appointments_calendar_objects WHERE calendar_id = ' . (int) $fixture->calendarId . ' AND uri = " . $joomlaDb->quote(' . var_export($uri, true) . '))->loadResult();
                         $result = ["domain" => $domainFound, "items" => $items, "content" => $content, "remaining" => $remaining,
                             "actor" => (int) $application->getIdentity()->id];
                         echo "\n@@TEAMFPRIV@@".json_encode($result);';
+                    token_get_all("<?php\n" . $php, TOKEN_PARSE);
                     exec('cd /var/www/html && php -r ' . escapeshellarg($php) . ' 2>&1', $output, $exit);
                     $text = implode("\n", $output);
                     $marker = strrpos($text, '@@TEAMFPRIV@@');
