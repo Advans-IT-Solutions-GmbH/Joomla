@@ -51,7 +51,7 @@ final class AppointmentsDav extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        $handler = new DavRequestHandler($app, $this->params, $services);
+        $handler = new DavRequestHandler($app, $services);
 
         if (!$handler->matches()) {
             return;
