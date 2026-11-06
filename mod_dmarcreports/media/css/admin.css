@@ -1,0 +1,39 @@
+/**
+ * @package     DMARC Reports Dashboard Module
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/* Focus and accordion reflow must not start competing smooth-scroll animations. */
+html:has(#module-form #jform_module[value="mod_dmarcreports"]) {
+    scroll-behavior: auto;
+}
+
+#module-form #permissions-sliders > joomla-tab-element {
+    min-inline-size: 0;
+}
+
+@media (max-width: 991.98px) {
+    /* Atum gives vertical tab navigation the full width below its lg breakpoint. */
+    #module-form #permissions-sliders[view="tabs"] {
+        flex-wrap: wrap;
+    }
+
+    #module-form #permissions-sliders .respTable td:nth-child(2)::before {
+        display: block;
+        float: none;
+        padding-inline-end: 0;
+        margin-block-end: .5rem;
+    }
+
+    #module-form #permissions-sliders .respTable td:nth-child(2) .d-flex {
+        flex-direction: column;
+        align-items: stretch !important;
+    }
+
+    #module-form #permissions-sliders .respTable select {
+        inline-size: 100%;
+        max-inline-size: 100%;
+    }
+}

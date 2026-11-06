@@ -2,6 +2,12 @@
 
 ## Test Infrastructure
 
+The separate [backend pointer suite](../../../../shared/tests/browser/README.md) exercises the
+installed Appointments event-type and DMARC module editors with real Edge/Firefox pointer clicks
+at seven widths in light/dark mode. `Backend Pointer Regression` runs it on an isolated Joomla 6
+container; it uses a synthetic CLI-created session, not a browser password login. It complements
+the PHP suites below and does not replace exhaustive visual/manual acceptance.
+
 Tests run via Docker against a real Joomla (+ J2Commerce) installation. The shared runner is
 `shared/tests/run-tests.sh`; each extension's `tests/run-tests.sh` delegates to it. The runner:
 
