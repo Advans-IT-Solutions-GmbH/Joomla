@@ -77,6 +77,7 @@ def main():
         fixture("teardown")
     for name in ("state.json", "authenticated.json", "clients.json"):
         (args.work / name).unlink(missing_ok=True)
+    (args.work / "vdirsyncer-authenticated" / "config").unlink(missing_ok=True)
     print("PASS authenticated: native real-client flow and authorized teardown complete")
 
 
