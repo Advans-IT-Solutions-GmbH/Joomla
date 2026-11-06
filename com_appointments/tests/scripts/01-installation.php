@@ -4,6 +4,7 @@
  */
 
 require_once __DIR__ . '/shared-database-check-lib.php';
+require_once __DIR__ . '/shared-test-helpers.php';
 
 class InstallationTest
 {
@@ -216,12 +217,10 @@ class InstallationTest
             copy($admin . '/appointments.xml', $admin . '/com_appointments.xml');
             $this->db->query("UPDATE {$this->dbPrefix}extensions SET manifest_cache = JSON_SET(manifest_cache, '$.version', '')"
                 . " WHERE type = 'component' AND element = 'com_appointments'");
-            $output = [];
-            $exitCode = 0;
-            exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=' . escapeshellarg('/tmp/extension.zip') . ' 2>&1', $output, $exitCode);
+            [$exitCode, $output] = sh_cli_install_reviewed_fixture('/var/www/html', '/tmp/extension.zip');
 
             if ($exitCode !== 0) {
-                echo '    ' . implode("\n    ", $output) . "\n";
+                echo '    ' . $output . "\n";
 
                 return false;
             }
@@ -244,11 +243,9 @@ class InstallationTest
             return $found;
         };
         $reinstall = function (): bool {
-            $output = [];
-            $exitCode = 0;
-            exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=' . escapeshellarg('/tmp/extension.zip') . ' 2>&1', $output, $exitCode);
+            [$exitCode, $output] = sh_cli_install_reviewed_fixture('/var/www/html', '/tmp/extension.zip');
             if ($exitCode !== 0) {
-                echo '    ' . implode("\n    ", $output) . "\n";
+                echo '    ' . $output . "\n";
             }
 
             return $exitCode === 0;

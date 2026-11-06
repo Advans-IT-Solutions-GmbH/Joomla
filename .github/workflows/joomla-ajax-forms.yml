@@ -8,6 +8,7 @@ on:
     paths:
       - 'plg_ajax_joomlaajaxforms/**'
       - 'shared/build/**'
+      - 'shared/installer/**'
       - 'shared/tests/run-tests.sh'
       - 'shared/tests/lang-lint.php'
       - 'shared/tests/requirements-check.php'
@@ -26,6 +27,7 @@ on:
     paths:
       - 'plg_ajax_joomlaajaxforms/**'
       - 'shared/build/**'
+      - 'shared/installer/**'
       - 'shared/tests/run-tests.sh'
       - 'shared/tests/lang-lint.php'
       - 'shared/tests/requirements-check.php'

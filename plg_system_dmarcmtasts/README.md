@@ -1,5 +1,7 @@
 # DMARC MTA-STS Policy System Plugin
 
+**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+
 ## Description
 
 `plg_system_dmarcmtasts` serves the MTA-STS policy (RFC 8461) for the DMARC Reports component.

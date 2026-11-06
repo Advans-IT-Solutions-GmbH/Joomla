@@ -49,9 +49,10 @@ install_with_web_installer() {
     local package_path="$1"
     local label="$2"
     local strict="${3:-0}"
+    local review="${4:-0}"
 
     echo "Installing ${label} via Joomla Web Installer..."
-    if PACKAGE_PATH="${package_path}" EXTENSION_NAME="${label}" STRICT_MESSAGES="${strict}" php /usr/local/bin/install-extension-http.php; then
+    if PACKAGE_PATH="${package_path}" EXTENSION_NAME="${label}" STRICT_MESSAGES="${strict}" REVIEW_TRUSTED_FIXTURE="${review}" php /usr/local/bin/install-extension-http.php; then
         echo "${label} installed via Joomla Web Installer"
     else
         echo "ERROR: ${label} installation FAILED via Joomla Web Installer"
@@ -79,7 +80,7 @@ fi
 # stay unknown to later CLI runs. On real sites the cache belongs to the web server.
 chown -R www-data:www-data /var/www/html/administrator/cache 2>/dev/null || true
 install_with_web_installer /tmp/osmap.zip "OSMap"
-install_with_web_installer /tmp/extension.zip "OSMap J2Commerce plugin" "${STRICT_INSTALL_MESSAGES:-1}"
+install_with_web_installer /tmp/extension.zip "OSMap J2Commerce plugin" "${STRICT_INSTALL_MESSAGES:-1}" 1
 
 echo "Waiting for plugin in DB..."
 until mysql -h mysql -u joomla -pjoomla_pass joomla_db \

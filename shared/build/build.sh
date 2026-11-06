@@ -85,6 +85,8 @@ rsync -av --exclude="$BUILD_DIR" \
     --exclude="composer.json" \
     ./ "$BUILD_DIR/"
 
+php "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/prepare-installer.php" "$BUILD_DIR"
+
 # Create installation package
 echo "Creating installation package..."
 cd "$BUILD_DIR"
