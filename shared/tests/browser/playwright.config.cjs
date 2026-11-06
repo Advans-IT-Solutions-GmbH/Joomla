@@ -36,7 +36,7 @@ module.exports = defineConfig({
         [375, 768, 1024, 1280, 1440, 1600, 1920].flatMap(width =>
             ['light', 'dark'].map(colorScheme => ({
                 name: `${browser}-${locale}-${width}-${colorScheme}-${surface}`,
-                grep: new RegExp(`${surface}:`),
+                grep: new RegExp(`${surface}: ${[375, 1600].includes(width) ? '' : 'every tab'}`),
                 use: {
                     browserName: browser === 'edge' ? 'chromium' : 'firefox',
                     ...(browser === 'edge' ? { channel: 'msedge' } : {}),

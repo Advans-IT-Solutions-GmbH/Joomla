@@ -65,6 +65,42 @@ $db->insertObject('#__user_usergroup_map', $membership);
 $user = $container->get(UserFactoryInterface::class)->loadUserById((int) $userData->id);
 $app->loadIdentity($user);
 
+$schedule = (object) [
+    'title' => 'Synthetic pointer schedule',
+    'timezone' => 'UTC',
+    'owner_user_id' => $userData->id,
+    'published' => 1,
+    'created_utc' => gmdate('Y-m-d H:i:s'),
+    'modified_utc' => gmdate('Y-m-d H:i:s'),
+];
+$db->insertObject('#__appointments_schedules', $schedule, 'id');
+$model = $app->bootComponent('com_appointments')->getMVCFactory()
+    ->createModel('Eventtype', 'Administrator', ['ignore_request' => true]);
+if (!$model->save([
+    'title' => 'Synthetic pointer event',
+    'alias' => 'synthetic-pointer-' . $userData->id,
+    'schedule_id' => $schedule->id,
+    'host_user_id' => $userData->id,
+    'duration_minutes' => 30, 'slot_step_minutes' => 30,
+    'buffer_before_minutes' => 0, 'buffer_after_minutes' => 0,
+    'min_notice_minutes' => 0, 'horizon_days' => 30,
+    'max_per_day' => 0, 'max_per_week' => 0,
+    'location_type' => 'custom_text', 'location_text' => 'Synthetic local room',
+    'requires_approval' => 0, 'published' => 0, 'access' => 1, 'language' => '*',
+    'description' => '', 'colour' => '', 'ordering' => 0,
+    'info_layout' => 'logo', 'info_title' => 'card',
+    'conference_params' => ['conference_provider' => 'none'],
+    'rules' => [],
+])) {
+    throw new RuntimeException('Cannot create the synthetic event: ' . $model->getError());
+}
+$eventtypeId = (int) $model->getState('eventtype.id');
+$eventtypeAssetId = (int) $db->setQuery('SELECT asset_id FROM #__appointments_eventtypes WHERE id=' . $eventtypeId)->loadResult();
+if ($eventtypeId <= 0 || $eventtypeAssetId <= 0) {
+    throw new RuntimeException('The synthetic event must have its own ACL asset.');
+}
+
+$permissionGroupId = 0;
 $db->transactionStart();
 try {
     for ($i = 1; $i <= 7; $i++) {
@@ -73,6 +109,7 @@ try {
         $db->setQuery("UPDATE #__usergroups SET rgt=rgt+2 WHERE rgt>=$right")->execute();
         $title = $db->quote('Synthetic pointer group ' . $i . ' (' . $userData->id . ')');
         $db->setQuery("INSERT INTO #__usergroups(parent_id,lft,rgt,title) VALUES(1,$right,$right+1,$title)")->execute();
+        $permissionGroupId = (int) $db->insertid();
     }
     $db->transactionCommit();
 } catch (Throwable $error) {
@@ -111,6 +148,9 @@ foreach (['en-GB', 'de-DE', 'fr-FR'] as $locale) {
 echo json_encode([
     'baseURL' => $baseUrl,
     'moduleId' => $moduleId,
+    'eventtypeId' => $eventtypeId,
+    'eventtypeAssetId' => $eventtypeAssetId,
+    'permissionGroupId' => $permissionGroupId,
     'groupCount' => (int) $db->setQuery('SELECT COUNT(*) FROM #__usergroups')->loadResult(),
     'cookiesByLocale' => $cookiesByLocale,
 ], JSON_THROW_ON_ERROR);

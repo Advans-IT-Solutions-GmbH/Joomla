@@ -3,6 +3,7 @@
 <form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
     <fieldset name="details">
         <field name="id" type="hidden" filter="integer" />
+        <field name="asset_id" type="hidden" filter="unset" />
         <field name="title" type="text" label="JGLOBAL_TITLE" required="true" maxlength="255" />
         <field name="alias" type="text" label="JFIELD_ALIAS_LABEL" maxlength="255" />
         <field name="description" type="editor" label="JGLOBAL_DESCRIPTION" filter="safehtml" />

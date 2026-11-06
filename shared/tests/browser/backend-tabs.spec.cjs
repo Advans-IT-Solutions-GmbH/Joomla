@@ -37,12 +37,60 @@ async function clickTab(button) {
     await button.click({ timeout: 2_000 });
 }
 
+function tabTrigger(tabs, id) {
+    return tabs.locator(`:scope > div[role="tablist"] > button[aria-controls="${id}"], :scope > button[aria-controls="${id}"]`).filter({ visible: true });
+}
+
+async function showPane(tabs, id) {
+    const pane = tabs.locator(`:scope > joomla-tab-element[id="${id}"]`);
+    if (!await pane.isVisible()) {
+        await clickTab(tabTrigger(tabs, id));
+    }
+    await expect(pane).toBeVisible();
+}
+
+async function openEditor(page, testInfo, surface) {
+    await page.context().addCookies([
+        ...fixture.cookiesByLocale[testInfo.project.use.locale],
+        { name: 'userColorScheme', value: testInfo.project.use.colorScheme, url: fixture.baseURL },
+    ]);
+    const route = surface === 'eventtype'
+        ? `index.php?option=com_appointments&task=eventtype.edit&id=${fixture.eventtypeId}`
+        : `index.php?option=com_modules&task=module.edit&id=${fixture.moduleId}`;
+    await page.setViewportSize({ width: 1600, height: 900 });
+    const response = await page.goto(`/administrator/${route}`);
+    expect(response.status()).toBe(200);
+    await expect(page.locator('#form-login')).toHaveCount(0);
+    await expect(page.locator('html')).toHaveAttribute('data-bs-theme', testInfo.project.use.colorScheme);
+    await expect(page.locator('html')).toHaveAttribute('lang', new RegExp(`^${testInfo.project.use.locale}$`, 'i'));
+    await expect(page.locator('html')).toHaveCSS('scroll-behavior', 'auto');
+    const rootTabs = page.locator(surface === 'eventtype' ? '#eventtype-tabs' : '#myTab');
+    await expect(rootTabs.locator(':scope > div[role=tablist]')).toHaveCount(1);
+    await expect(rootTabs.locator(':scope > joomla-tab-element')).toHaveCount(surface === 'eventtype' ? 2 : 3);
+    const permissions = page.locator('#permissions-sliders');
+    await expect(permissions.locator(':scope > joomla-tab-element')).toHaveCount(fixture.groupCount);
+    if (surface === 'eventtype') {
+        await expect(page.locator('#jform_asset_id')).toHaveValue(String(fixture.eventtypeAssetId));
+    }
+    await page.setViewportSize(testInfo.project.use.viewport);
+    await expect(rootTabs).toHaveAttribute('view', testInfo.project.use.viewport.width <= 768 ? 'accordion' : 'tabs');
+    return { rootTabs, permissions, route };
+}
+
+async function applyForm(page) {
+    const apply = page.locator('#toolbar-apply button');
+    if (!await apply.isVisible()) {
+        await page.locator('button[aria-controls="subhead-container"]').click({ timeout: 2_000 });
+    }
+    await apply.click({ timeout: 2_000 });
+}
+
 async function exerciseTabs(page, tabs) {
     let clicks = 0;
     const controls = await tabs.locator(':scope > joomla-tab-element').evaluateAll(panes => panes.map(pane => pane.id));
     expect(controls.length).toBeGreaterThan(0);
     for (const id of controls) {
-        const trigger = tabs.locator(`:scope > div[role="tablist"] > button[aria-controls="${id}"], :scope > button[aria-controls="${id}"]`).filter({ visible: true });
+        const trigger = tabTrigger(tabs, id);
         const pane = tabs.locator(`:scope > joomla-tab-element[id="${id}"]`);
         await expect(trigger).toHaveCount(1);
         const accordion = await tabs.getAttribute('view') === 'accordion';
@@ -84,29 +132,9 @@ async function exerciseTabs(page, tabs) {
 
 for (const surface of ['eventtype', 'module']) {
     test(`${surface}: every tab and permission group accepts pointer clicks`, async ({ page }, testInfo) => {
-        await page.context().addCookies([
-            ...fixture.cookiesByLocale[testInfo.project.use.locale],
-            { name: 'userColorScheme', value: testInfo.project.use.colorScheme, url: fixture.baseURL },
-        ]);
         const errors = [];
         page.on('pageerror', error => errors.push(error.message));
-        const route = surface === 'eventtype'
-            ? 'index.php?option=com_appointments&view=eventtype&layout=edit&id=0'
-            : `index.php?option=com_modules&task=module.edit&id=${fixture.moduleId}`;
-        await page.setViewportSize({ width: 1600, height: 900 });
-        const response = await page.goto(`/administrator/${route}`);
-        expect(response.status()).toBe(200);
-        await expect(page.locator('#form-login')).toHaveCount(0);
-        await expect(page.locator('html')).toHaveAttribute('data-bs-theme', testInfo.project.use.colorScheme);
-        await expect(page.locator('html')).toHaveAttribute('lang', new RegExp(`^${testInfo.project.use.locale}$`, 'i'));
-        await expect(page.locator('html')).toHaveCSS('scroll-behavior', 'auto');
-        const rootTabs = page.locator(surface === 'eventtype' ? '#eventtype-tabs' : '#myTab');
-        await expect(rootTabs.locator(':scope > div[role=tablist]')).toHaveCount(1);
-        await expect(rootTabs.locator(':scope > joomla-tab-element')).toHaveCount(surface === 'eventtype' ? 2 : 3);
-        const permissions = page.locator('#permissions-sliders');
-        await expect(permissions.locator(':scope > joomla-tab-element')).toHaveCount(fixture.groupCount);
-        await page.setViewportSize(testInfo.project.use.viewport);
-        await expect(rootTabs).toHaveAttribute('view', testInfo.project.use.viewport.width <= 768 ? 'accordion' : 'tabs');
+        const { rootTabs, permissions } = await openEditor(page, testInfo, surface);
         const title = page.locator('#jform_title');
         await title.fill('Synthetic unsaved pointer title');
         const ruleValues = await permissions.locator('select').evaluateAll(fields => fields.map(field => [field.name, field.value]));
@@ -119,5 +147,42 @@ for (const surface of ['eventtype', 'module']) {
         await expect(title).toHaveValue('Synthetic unsaved pointer title');
         expect(await permissions.locator('select').evaluateAll(fields => fields.map(field => [field.name, field.value]))).toEqual(ruleValues);
         expect(errors).toEqual([]);
+    });
+
+    test(`${surface}: valid saves and required-field rejection preserve record rules`, async ({ page }, testInfo) => {
+        const { rootTabs, permissions, route } = await openEditor(page, testInfo, surface);
+        const title = page.locator('#jform_title');
+        const task = surface === 'eventtype' ? 'eventtype.apply' : 'module.apply';
+        const submissions = [];
+        page.on('request', request => {
+            if (request.method() === 'POST' && new URLSearchParams(request.postData()).get('task') === task) {
+                submissions.push(request);
+            }
+        });
+        await title.fill('');
+        await showPane(rootTabs, 'permissions');
+        await applyForm(page);
+        await expect(title).toHaveAttribute('aria-invalid', 'true');
+        expect(submissions).toHaveLength(0);
+
+        await showPane(rootTabs, surface === 'eventtype' ? 'details' : 'general');
+        const savedTitle = `Synthetic saved ${testInfo.project.name}`;
+        await title.fill(savedTitle);
+        await showPane(rootTabs, 'permissions');
+        const rule = permissions.locator(`select[name$="[${fixture.permissionGroupId}]"]`).first();
+        const paneId = await rule.evaluate(element => element.closest('joomla-tab-element').id);
+        await showPane(permissions, paneId);
+        const name = await rule.getAttribute('name');
+        const value = await rule.inputValue() === '1' ? '0' : '1';
+        await rule.selectOption(value);
+        const saved = page.waitForResponse(response => response.request().method() === 'POST'
+            && new URLSearchParams(response.request().postData()).get('task') === task);
+        await applyForm(page);
+        const response = await saved;
+        expect(response.status()).toBeLessThan(400);
+        expect(new URLSearchParams(response.request().postData()).get(name)).toBe(value);
+        await page.goto(`/administrator/${route}`);
+        await expect(title).toHaveValue(savedTitle);
+        await expect(rule).toHaveValue(value);
     });
 }

@@ -46,6 +46,8 @@ or neighbouring fields. This uses core Joomla layouts without custom colours or 
 A stylesheet scoped to this form wraps the permission navigation at Atum's small-screen breakpoint
 and keeps its stacked permission selectors inside their cells. It also disables smooth scrolling
 on this editor page so focus and accordion reflow cannot start competing scroll animations.
+The rules widget binds the record's ACL asset through Joomla's standard hidden, `unset`-filtered
+asset field; it does not display the component's rules instead of the saved event-type rules.
 The [backend pointer regression matrix](../shared/tests/browser/README.md) covers the editor
 and the DMARC module editor in Edge and Firefox at seven widths in light and dark mode.
 
