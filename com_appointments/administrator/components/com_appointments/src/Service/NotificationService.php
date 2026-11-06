@@ -111,13 +111,13 @@ final class NotificationService
             $booking['guest_emails'] = $this->currentGuests((int) $booking['id'], $booking['guest_emails'] ?? null);
 
             if (!$hostOnly && !empty($booking['invitee_email'])) {
-                $recipients[] = [$booking['invitee_email'], MailLanguage::forAddress($this->db, $booking['invitee_email'], $siteLanguage), false, true, false];
+                $guests = isset(DefaultTemplates::GUEST[$purpose]) ? PrivacyAddress::guestList($booking['guest_emails'] ?? null) : [];
+                $languages = MailLanguage::forAddresses($this->db, [$booking['invitee_email'], ...$guests], $siteLanguage);
+                $recipients[] = [$booking['invitee_email'], $languages[$booking['invitee_email']], false, true, false];
                 // A guest gets the guest template of the purpose, with a neutral salutation and the
                 // link that removes only their own address. A purpose without one is not sent to guests.
-                if (isset(DefaultTemplates::GUEST[$purpose])) {
-                    foreach (PrivacyAddress::guestList($booking['guest_emails'] ?? null) as $guest) {
-                        $recipients[] = [$guest, MailLanguage::forAddress($this->db, $guest, $siteLanguage), false, false, true];
-                    }
+                foreach ($guests as $guest) {
+                    $recipients[] = [$guest, $languages[$guest], false, false, true];
                 }
             }
             $recipients[] = [$event['host_email'], $hostLanguage, true, false, false];

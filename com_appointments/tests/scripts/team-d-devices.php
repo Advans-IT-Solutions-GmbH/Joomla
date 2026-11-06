@@ -310,6 +310,26 @@ return static function (TeamSuite $suite): void {
             return \Advans\Component\Appointments\Administrator\Helper\MailLanguage::forAddress($joomla, $tag . '-no-account@example.test', 'fr-FR') === 'fr-FR';
         });
 
+        $suite->test('A mixed recipient batch resolves each account independently and leaves unknown guests on the site default', static function () use ($user, $db, $joomla, $p, $tag) {
+            $addresses = [];
+            $expected = [];
+
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $language) {
+                $id = $user('mail-batch-' . $language, 'Calendar mail fixture 1!', [2]);
+                $params = $db->real_escape_string(json_encode(['language' => $language], JSON_THROW_ON_ERROR));
+                $db->query("UPDATE {$p}users SET params='{$params}' WHERE id={$id}");
+                $address = "\t " . strtoupper($tag . 'mail-batch-' . $language . '@example.test') . " \r\n";
+                $addresses[] = $address;
+                $expected[$address] = $language;
+            }
+
+            $guest = $tag . 'mail-batch-guest@example.test';
+            $addresses[] = $guest;
+            $expected[$guest] = 'fr-FR';
+
+            return \Advans\Component\Appointments\Administrator\Helper\MailLanguage::forAddresses($joomla, $addresses, 'fr-FR') === $expected;
+        });
+
         foreach ([
             'Unicode sharp S' => ["\u{1E9E}", false],
             'Georgian case' => ["\u{1C90}", false],

@@ -275,6 +275,11 @@ configured site locale, and preservation before account pseudonymisation.
 Recipient lookup regressions include Unicode case-table differences, surrounding whitespace/control
 characters and sharp-s versus `ss` isolation. SQL only preselects candidates; trimmed Unicode
 lowercase equality in PHP decides the account, without full case folding.
+Appointments resolves invitee and guest preferences in one directory query per notification,
+without caching across sends. Unit regressions enforce one query for 1, 11 and 51 recipients,
+zero for an empty batch, distinct bound addresses and ambiguous-account fallback. The real-database
+device suite also resolves mixed account languages and an unknown guest in one batch. Recipient
+delivery stays inside the existing guest-removal lock; host-only notices need no address lookup.
 Injected mail-language failures must not stop cleanup, change a successful address deletion into
 a failure, or escape the customer-notice failure result. Disabled administrator notices must not
 load their translations.
