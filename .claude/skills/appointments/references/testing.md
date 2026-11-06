@@ -111,6 +111,13 @@ HTTP 429 with `Retry-After`. Clean-up uses independent devices for the sync tomb
 collection listing, vdirsyncer's deletion guard and explicitly forced local deletion: fetching the
 empty collection already advances that device to hidden, and listing its hidden home revokes it.
 A separate idle device checks both Scheduler timeout transitions without consuming those deliveries.
+The same job also runs `authenticated.py`: a synthetic account starts without a key or device,
+signs in through Joomla's real password and TOTP forms (codes generated locally), and releases
+its first key only after MFA. The fixture then grants calendar access; the browser submits
+the normal device form twice and both actual clients use the returned one-time app passwords
+to read, create, change and delete entries. Wrong app passwords and Joomla passwords are
+refused; blocking permits only empty cleanup delivery, and final revocation refuses both clients.
+Credentials, TOTP seeds and browser cookies stay in the private work directory, never in artifacts.
 These are automated assertions, not a claim that end-to-end execution
 succeeded on a partial branch. Phases whose work package still ships its stub print PENDING, as
 `TeamSuite::pending()` does (a failure with `TEAM_NO_PENDING=1`).
@@ -130,6 +137,21 @@ when dispatching an assembled integration branch to require the complete gate. D
 Locally, with the Joomla 6 stack running: `bash caldav/run-clients.sh` from `tests/`.
 Use `TEAM_NO_PENDING=1 bash caldav/run-clients.sh` for the integrated client gate; successful static
 checks alone do not prove that either real client ran.
+
+For a disposable native installation without Docker, `tests/caldav/run-authenticated.py`
+executes the same authenticated phases and seed fixture. It accepts only a loopback HTTPS origin,
+requires the test CA and an installed candidate, and never installs a test endpoint into Joomla.
+Use a private work directory, the pinned dependencies in `tests/caldav/requirements.txt`, a PHP
+configuration with the required extensions and the CLI name of the synthetic administrator:
+
+```text
+python tests/caldav/run-authenticated.py --root <disposable-joomla-root> --base <loopback-https-origin> --ca <test-ca.pem> --php-ini <test-php.ini> --admin-username <synthetic-admin> --work <new-private-directory>
+```
+
+The PHP fixture reads `APPOINTMENTS_TEST_ROOT`, `APPOINTMENTS_TEST_DAV_URL` and
+`APPOINTMENTS_FIXTURE_STATE` only in this test process; the installed runtime is unchanged.
+Successful teardown removes accounts, device secrets and cookies. Failed setup/teardown retains
+private checkpoints for retry; do not upload the work directory or point it at a real site.
 
 ```
 com_appointments/tests/scripts/

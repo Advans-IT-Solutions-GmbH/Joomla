@@ -230,11 +230,13 @@ class HtmlView extends BaseHtmlView
                 return 'COM_APPOINTMENTS_TEAM_D_ADD_NEEDS_MFA';
             }
 
+            // Release the first key after MFA even before a calendar is granted:
+            // a grant cannot wrap its calendar key without this public key.
+            $keys = $services->keySession()->current();
+
             if ($this->calendars === []) {
                 return 'COM_APPOINTMENTS_TEAM_D_ADD_NEEDS_GRANT';
             }
-
-            $keys = $services->keySession()->current();
         } catch (\Throwable $e) {
             return 'COM_APPOINTMENTS_MYCALENDARS_NOT_READY';
         }

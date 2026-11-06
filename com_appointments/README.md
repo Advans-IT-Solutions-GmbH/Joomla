@@ -1275,6 +1275,12 @@ and exactly one audit row per booking. The upgraded installations also run booki
 team-calendar behavior tests; Joomla 6 runs the real CalDAV clients. The transition-specific lane
 reports an explicit skip once the repository's latest-release-only policy retires the v1.3.0 asset.
 
+The client lane includes a complete synthetic password/TOTP sign-in, first calendar-key release
+and device creation through the real site forms. Python `caldav` and `vdirsyncer` then read,
+create, update and delete entries using those one-time app passwords. Negative checks cover
+wrong credentials, account blocking (cleanup-only access) and revoked devices. No real accounts,
+credentials or TOTP seeds are included in test artifacts.
+
 The full integration matrix runs on the newest Joomla 5.4 and Joomla 6 images with MySQL. A third
 lane runs the schema-sensitive suites on Joomla 6 with MariaDB 10.6, because the booking table
 relies on an indexed `STORED` generated column. No J2Commerce installation is needed.
@@ -1346,6 +1352,11 @@ composer test:unit
 
 Integration results are saved in `tests/test-results/`. If Bash or Docker is unavailable locally,
 the package build and integration suites must be verified in CI, not reported as local passes.
+The authenticated-client flow can additionally be reproduced without Docker against a disposable
+native Joomla installation with trusted loopback HTTPS using
+[`run-authenticated.py`](tests/caldav/run-authenticated.py); prerequisites and invocation are in the
+[appointments testing reference](../.claude/skills/appointments/references/testing.md).
+This narrower native test does not replace the full CI integration matrix.
 
 ## Troubleshooting
 

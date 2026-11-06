@@ -20,6 +20,7 @@ Every check prints one line, ✓ or ✗; the exit code is the number of failures
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sqlite3
 import subprocess
@@ -34,7 +35,7 @@ import caldav
 import niquests
 from icalendar import Calendar as ICalendar
 
-WORK = pathlib.Path("/work")
+WORK = pathlib.Path(os.environ.get("APPOINTMENTS_CLIENT_WORK", "/work"))
 CA = str(WORK / "ca.pem")
 STATE = json.loads((WORK / "state.json").read_text())
 # TeamServices::davBaseUrl() of the site, for example https://joomla/dav/.
@@ -490,7 +491,7 @@ def vdirsyncer_config(who: str = "vdir") -> pathlib.Path:
     config = directory / "config"
     vdir = user(who)
     config.write_text(f"""[general]
-status_path = "{directory}/status/"
+status_path = "{directory.as_posix()}/status/"
 
 [pair internet]
 a = "internet_local"
@@ -500,7 +501,7 @@ conflict_resolution = "b wins"
 
 [storage internet_local]
 type = "filesystem"
-path = "{directory}/calendars/"
+path = "{directory.as_posix()}/calendars/"
 fileext = ".ics"
 
 [storage internet_remote]

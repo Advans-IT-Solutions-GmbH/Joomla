@@ -139,6 +139,15 @@ client() {
     return 1
 }
 
+authenticated() {
+    if docker run --rm --network "$NETWORK" --user "$(id -u):$(id -g)" -e HOME=/work -v "$WORK:/work" \
+        --entrypoint python "$IMAGE" /opt/caldav-clients/authenticated.py "$1"; then
+        return 0
+    fi
+    failed=$((failed + 1))
+    return 1
+}
+
 step() {
     # One fixture command; its JSON goes to the work directory when a file is named.
     local output
@@ -190,6 +199,11 @@ client cleanup-hidden
 client cleanup-revoked
 step cleanup-advance
 step cleanup-advance
+if authenticated login && step authenticated-ready; then
+    authenticated clients
+    step authenticated-block && authenticated blocked
+    step authenticated-revoke && authenticated revoked
+fi
 client lockout
 
 summary
