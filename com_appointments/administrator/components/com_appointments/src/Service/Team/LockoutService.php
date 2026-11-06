@@ -104,6 +104,23 @@ final class LockoutService implements LockoutServiceInterface
     {
     }
 
+    public function remainingLock(string $username, string $ip): int
+    {
+        $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'));
+        $wait = 0;
+
+        foreach (self::buckets($this->key(), $this->identity($username), $ip) as $bucket) {
+            $row = $this->row(bin2hex($bucket));
+
+            if (!empty($row['locked_until_utc'])) {
+                $until = new \DateTimeImmutable((string) $row['locked_until_utc'], new \DateTimeZone('UTC'));
+                $wait = max($wait, $until->getTimestamp() - $now->getTimestamp());
+            }
+        }
+
+        return $wait;
+    }
+
     public function retryAfter(string $username, string $ip): int
     {
         $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'));

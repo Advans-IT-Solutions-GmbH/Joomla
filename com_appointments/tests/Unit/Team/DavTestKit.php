@@ -258,6 +258,11 @@ final class DavLockout implements LockoutServiceInterface
     /** @var string[] */
     public array $calls = [];
 
+    public function remainingLock(string $username, string $ip): int
+    {
+        return $this->retryAfter;
+    }
+
     public function retryAfter(string $username, string $ip): int
     {
         if ($this->fail) {

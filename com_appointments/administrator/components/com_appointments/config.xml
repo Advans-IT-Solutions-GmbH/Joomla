@@ -6,7 +6,7 @@
     SPDX-License-Identifier: GPL-3.0-or-later
 -->
 <config addruleprefix="Advans\Component\Appointments\Administrator\Rule">
-    <fieldset name="basic">
+    <fieldset name="basic" label="COM_APPOINTMENTS_CONFIG_BASIC_LABEL">
         <field name="autoload_language" type="hidden" default="1" />
         <field name="consent_mode" type="list" label="COM_APPOINTMENTS_CONFIG_CONSENT_MODE" description="COM_APPOINTMENTS_CONFIG_CONSENT_MODE_DESC" default="notice" filter="cmd" validate="options">
             <option value="notice">COM_APPOINTMENTS_CONFIG_CONSENT_MODE_NOTICE</option>

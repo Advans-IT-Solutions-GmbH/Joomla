@@ -34,6 +34,16 @@ $export = static function (AppointmentsHttp $client, array $filters = []) use ($
 
 try {
     $admin->login();
+    foreach (['schedule', 'blocked'] as $formView) {
+        $html = $admin->request('/administrator/index.php?option=com_appointments&task=' . $formView . '.add');
+        $document = new DOMDocument();
+        @$document->loadHTML($html);
+        $check((new DOMXPath($document))->query('//script[contains(@src, "/validate")]')->length > 0,
+            'Save & Close has its required Joomla form validator: ' . $formView);
+        $admin->request('/administrator/index.php?option=com_appointments', [
+            'task' => $formView . '.cancel', $admin->token($html) => 1,
+        ]);
+    }
     foreach ([0, 1] as $index) {
         $id = $fixture->event();
         $events[] = $id;
@@ -120,6 +130,56 @@ try {
     $dashboard = $admin->request('/administrator/index.php?option=com_appointments&view=dashboard');
     $check($admin->status === 200 && str_contains($dashboard, 'Upcoming active appointments')
         && str_contains($dashboard, 'Bookings by authorised event type'), 'Dashboard renders time-aware and per-event statistics');
+    $componentParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
+    try {
+        foreach ([0, 1] as $enabled) {
+            $params = json_decode($componentParams, true, 512, JSON_THROW_ON_ERROR);
+            $params['teamcal_enabled'] = $enabled;
+            $encoded = $db->real_escape_string(json_encode($params, JSON_THROW_ON_ERROR));
+            $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
+            $calendars = $admin->request('/administrator/index.php?option=com_appointments&view=calendars');
+            $document = new DOMDocument();
+            @$document->loadHTML($calendars);
+            $xpath = new DOMXPath($document);
+            $back = $xpath->query('//a[@id="toolbar-dashboard"]')->item(0);
+            $check($xpath->query('//a[@id="toolbar-invitations"]')->length === 1
+                && $xpath->query('//a[@id="toolbar-devices"]')->length === 1
+                && $xpath->query('//a[@id="toolbar-teamlog"]')->length === 1,
+                'Calendar hub retains authorised branch links, enabled=' . $enabled);
+            $check($admin->status === 200 && $back !== null,
+                'Calendar list has an overview toolbar link when internet calendars are ' . ($enabled ? 'enabled' : 'disabled'));
+            if ($back !== null) {
+                $link = html_entity_decode($back->getAttribute('href'));
+                $overview = $admin->request(str_starts_with($link, '/') ? $link : '/administrator/' . $link);
+                $check($admin->status === 200 && str_contains($overview, 'com-appointments-dashboard'),
+                    'Calendar overview link reaches the existing navigation');
+            }
+            foreach (['view=invitations', 'view=invitations&layout=revoke', 'view=calendar', 'view=devices', 'view=teamlog'] as $query) {
+                if ($enabled && $query === 'view=calendar') {
+                    continue;
+                }
+                $html = $admin->request('/administrator/index.php?option=com_appointments&' . $query);
+                $return = $query === 'view=calendar' ? 'id="toolbar-cancel"' : 'id="toolbar-calendars"';
+                $check($admin->status === 200 && str_contains($html, $return),
+                    'Calendar child view keeps its return toolbar: ' . $query . ', enabled=' . $enabled);
+                if ($query === 'view=calendar') {
+                    $check(str_contains($html, 'id="calendar-form" class="form-validate"'),
+                        'The disabled calendar Close button can find its form through Joomla core');
+                    $admin->request('/administrator/index.php?option=com_appointments', [
+                        'task' => 'calendars.cancel', $admin->token($html) => 1,
+                    ]);
+                    $check($admin->status === 200, 'A disabled calendar editor closes through its token-protected cancel task');
+                }
+            }
+        }
+    } finally {
+        $encoded = $db->real_escape_string($componentParams);
+        $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
+    }
+    $options = $admin->request('/administrator/index.php?option=com_config&view=component&component=com_appointments');
+    $check($admin->status === 200 && preg_match('/>\\s*General\\s*</', $options) === 1
+        && !str_contains($options, 'COM_CONFIG_basic_FIELDSET_LABEL'),
+        'Component options resolve the first fieldset label');
     $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
     $config = new JConfig();
     $check($admin->status === 200 && str_contains($system, 'Oldest accountability audit record')
@@ -169,6 +229,14 @@ try {
     $html = $listing($restricted);
     $check($restricted->status === 200 && str_contains($html, $tag . '-allowed') && !str_contains($html, $tag . '-denied'),
         'Per-event editor sees only permitted booking contacts');
+    $calendarHub = $restricted->request('/administrator/index.php?option=com_appointments&view=calendars');
+    $check($restricted->status === 200 && !str_contains($calendarHub, 'id="toolbar-devices"')
+        && !str_contains($calendarHub, 'id="toolbar-teamlog"') && !str_contains($calendarHub, 'id="toolbar-invitations"'),
+        'Calendar navigation does not advertise administrator-only branch pages to an event editor');
+    foreach (['devices', 'teamlog', 'invitations'] as $view) {
+        $restricted->request('/administrator/index.php?option=com_appointments&view=' . $view);
+        $check($restricted->status === 403, 'Direct calendar branch access retains its permission boundary: ' . $view);
+    }
     $csv = $export($restricted);
     $check(str_contains($csv, $tag . '-allowed') && !str_contains($csv, 'other@example.test'),
         'CSV cannot widen the editor scope');
