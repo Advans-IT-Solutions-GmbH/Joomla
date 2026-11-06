@@ -1209,7 +1209,10 @@ Verify the backup before deleting component data:
 Only after a successful restore and any needed readable exports should you select **Delete all
 Appointments data** in the component options and uninstall.
 
-The uninstaller always removes the bundled plugins, their Scheduler tasks and the component files.
+A successful uninstall removes the bundled plugins, their Scheduler tasks and the component files.
+When keeping data, preflight preserves the permission tree and replay-protection anchor before
+Joomla starts removal. A conflicting retained permission tree or failed anchor migration stops
+the uninstall before cleanup; resolve the reported problem before trying again.
 It does not remove the Joomla user groups, access level, or MFA group settings created for Internet
 calendars; review these separately if they are no longer used. When data is kept, the replay-protection
 epoch anchor remains at its stable path outside the component directory and is reused after

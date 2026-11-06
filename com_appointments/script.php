@@ -92,6 +92,14 @@ class Com_appointmentsInstallerScript extends InstallerScript
      */
     public function preflight($type, $parent)
     {
+        if ($type === 'uninstall') {
+            return $this->prepareUninstall();
+        }
+
+        $language = Factory::getApplication()->getLanguage();
+        $language->load('com_appointments', JPATH_ADMINISTRATOR);
+        $language->load('com_appointments', __DIR__ . '/administrator', null, true);
+
         if (!parent::preflight($type, $parent)) {
             return false;
         }
@@ -220,24 +228,36 @@ class Com_appointmentsInstallerScript extends InstallerScript
         return true;
     }
 
-    public function uninstall($parent)
+    private function prepareUninstall(): bool
     {
         $app = Factory::getApplication();
         $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
-
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $params = $this->componentParams($db, 'com_appointments') ?? [];
-        $deleteData = ($params['uninstall_data_action'] ?? '') === 'delete';
 
-        if (!$deleteData && $this->hasRetainedComponentAsset($db)) {
+        if (($params['uninstall_data_action'] ?? '') === 'delete') {
+            return true;
+        }
+
+        if ($this->hasRetainedComponentAsset($db)) {
             $app->enqueueMessage(Text::_('COM_APPOINTMENTS_UNINSTALL_RETAINED_ACL_CONFLICT'), 'error');
 
             return false;
         }
 
-        if (!$deleteData) {
-            $this->migrateLegacyEpochAnchor();
-        }
+        // Joomla ignores failures in uninstall(), but honours preflight refusals.
+        $this->migrateLegacyEpochAnchor();
+
+        return $this->retainComponentAsset($db);
+    }
+
+    public function uninstall($parent)
+    {
+        $app = Factory::getApplication();
+        $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $params = $this->componentParams($db, 'com_appointments') ?? [];
+        $deleteData = ($params['uninstall_data_action'] ?? '') === 'delete';
 
         foreach (self::BUNDLED_PLUGINS as $group => [$element]) {
             $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
@@ -274,10 +294,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
             }
             $this->removeEpochAnchor();
         } else {
-            if (!$this->retainComponentAsset($db)) {
-                return false;
-            }
-
             $app->enqueueMessage(Text::_('COM_APPOINTMENTS_UNINSTALL_DATA_RETAINED'), 'warning');
         }
 

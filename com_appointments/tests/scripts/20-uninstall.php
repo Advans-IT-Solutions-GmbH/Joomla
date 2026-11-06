@@ -98,6 +98,7 @@ class UninstallTest
             throw new \RuntimeException('Could not create the dual epoch anchor test fixtures.');
         }
         $this->insertSchedulerTasks();
+        $this->testConflictingRetainedAsset($extensionId, $anchorPath, $legacyAnchorPath);
 
         $output = [];
         $exitCode = 0;
@@ -148,6 +149,26 @@ class UninstallTest
             return is_file($anchorPath) && file_get_contents($anchorPath) === $anchorContent
                 && !is_file($legacyAnchorPath);
         });
+
+        $conflict = $this->insertConflictAsset('com_appointments');
+        $retained = $this->assetRow('com_appointments.retained');
+        $output = [];
+        $exitCode = 0;
+        exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/tmp/extension.zip --no-interaction 2>&1', $output, $exitCode);
+        clearstatcache(true);
+        try {
+            $this->test('Reinstall conflict preserves retained ACL and anchor without registering the component', function () use ($retained, $anchorPath, $anchorContent) {
+                return $this->extensionId() === 0 && $this->assetRow('com_appointments.retained') === $retained
+                    && is_file($anchorPath) && file_get_contents($anchorPath) === $anchorContent;
+            });
+            $this->test('Fresh reinstall conflict loads translated guidance from the incoming package', function () use ($output) {
+                $text = implode("\n", $output);
+
+                return str_contains($text, 'permission') && !str_contains($text, 'COM_APPOINTMENTS_INSTALL_RETAINED_ACL_CONFLICT');
+            });
+        } finally {
+            $this->removeConflictAsset($conflict);
+        }
 
         $output = [];
         $exitCode = 0;
@@ -302,6 +323,77 @@ class UninstallTest
         $row = $result ? $result->fetch_assoc() : null;
 
         return $row ? (int) $row['extension_id'] : 0;
+    }
+
+    private function testConflictingRetainedAsset(int $extensionId, string $anchorPath, string $legacyAnchorPath): void
+    {
+        $conflict = $this->insertConflictAsset('com_appointments.retained');
+        $componentAsset = $this->assetRow('com_appointments');
+        $stable = file_get_contents($anchorPath);
+        $legacy = file_get_contents($legacyAnchorPath);
+        $configHash = hash_file('sha256', '/var/www/html/administrator/components/com_appointments/config.xml');
+        $snapshot = function (): array {
+            return $this->db->query(
+                "SELECT extension_id FROM {$this->dbPrefix}extensions"
+                . " WHERE element = 'com_appointments' OR (element IN ('appointments','appointmentsdav') AND type = 'plugin')"
+                . ' ORDER BY extension_id'
+            )->fetch_all(MYSQLI_ASSOC);
+        };
+        $extensions = $snapshot();
+        $output = [];
+        $exitCode = 0;
+        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $extensionId --no-interaction 2>&1", $output, $exitCode);
+        clearstatcache(true);
+        try {
+            $this->test('Conflicting retained ACL stops Joomla before removing registration, plugins, files, assets or anchors', function () use (
+                $extensionId, $componentAsset, $anchorPath, $legacyAnchorPath, $stable, $legacy, $configHash, $extensions, $snapshot
+            ) {
+                return $this->extensionId() === $extensionId
+                    && $snapshot() === $extensions
+                    && $this->assetRow('com_appointments') === $componentAsset
+                    && is_file('/var/www/html/administrator/components/com_appointments/config.xml')
+                    && hash_file('sha256', '/var/www/html/administrator/components/com_appointments/config.xml') === $configHash
+                    && is_file($anchorPath) && file_get_contents($anchorPath) === $stable
+                    && is_file($legacyAnchorPath) && file_get_contents($legacyAnchorPath) === $legacy;
+            });
+            $this->test('Uninstall conflict displays translated permission recovery guidance', function () use ($output) {
+                $text = implode("\n", $output);
+
+                return str_contains($text, 'permission') && !str_contains($text, 'COM_APPOINTMENTS_UNINSTALL_RETAINED_ACL_CONFLICT');
+            });
+        } finally {
+            $this->removeConflictAsset($conflict);
+        }
+    }
+
+    private function insertConflictAsset(string $name): array
+    {
+        $root = $this->db->query("SELECT id, rgt, level FROM {$this->dbPrefix}assets WHERE parent_id = 0")->fetch_assoc();
+        $right = (int) $root['rgt'];
+        $parentId = (int) $root['id'];
+        $level = (int) $root['level'] + 1;
+        $name = $this->db->real_escape_string($name);
+        if (!$this->db->query("UPDATE {$this->dbPrefix}assets SET rgt = rgt + 2 WHERE rgt >= {$right}")
+            || !$this->db->query("UPDATE {$this->dbPrefix}assets SET lft = lft + 2 WHERE lft > {$right}")
+            || !$this->db->query(
+                "INSERT INTO {$this->dbPrefix}assets (parent_id,lft,rgt,level,name,title,rules)"
+                . " VALUES ({$parentId},{$right}," . ($right + 1) . ",{$level},'{$name}','Conflict fixture','{}')"
+            )) {
+            throw new \RuntimeException('Could not create the conflicting asset fixture.');
+        }
+
+        return ['id' => (int) $this->db->insert_id, 'right' => $right + 1];
+    }
+
+    private function removeConflictAsset(array $fixture): void
+    {
+        $id = (int) $fixture['id'];
+        $right = (int) $fixture['right'];
+        if (!$this->db->query("DELETE FROM {$this->dbPrefix}assets WHERE id = {$id}")
+            || !$this->db->query("UPDATE {$this->dbPrefix}assets SET lft = lft - 2 WHERE lft > {$right}")
+            || !$this->db->query("UPDATE {$this->dbPrefix}assets SET rgt = rgt - 2 WHERE rgt > {$right}")) {
+            throw new \RuntimeException('Could not remove the conflicting asset fixture.');
+        }
     }
 
     private function prepareEventtypeAclFixture(): array
