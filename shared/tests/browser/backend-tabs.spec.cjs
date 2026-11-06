@@ -5,11 +5,12 @@ const fixture = JSON.parse(fs.readFileSync(process.env.BACKEND_POINTER_FIXTURE, 
 
 async function clickTab(button) {
     // Ordinary scrolling is necessary with Atum's sticky toolbar. No force or DOM clicks.
-    await button.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center' }));
+    await button.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }));
     await button.click();
 }
 
 async function exerciseTabs(page, tabs) {
+    let clicks = 0;
     const controls = await tabs.locator(':scope > joomla-tab-element').evaluateAll(panes => panes.map(pane => pane.id));
     expect(controls.length).toBeGreaterThan(0);
     for (const id of controls) {
@@ -19,9 +20,11 @@ async function exerciseTabs(page, tabs) {
         const accordion = await tabs.getAttribute('view') === 'accordion';
         const wasOpen = await pane.isVisible();
         await clickTab(trigger);
+        clicks++;
         if (accordion && wasOpen) {
             await expect(pane).toBeHidden();
             await clickTab(trigger);
+            clicks++;
         }
         await expect(pane).toBeVisible();
         if (!accordion) {
@@ -30,14 +33,18 @@ async function exerciseTabs(page, tabs) {
         const nested = pane.locator('joomla-tab');
         if (await nested.count()) {
             await expect(nested).toHaveCount(1);
-            await exerciseTabs(page, nested);
+            clicks += await exerciseTabs(page, nested);
         }
     }
+    return clicks;
 }
 
 for (const surface of ['eventtype', 'module']) {
     test(`${surface}: every tab and permission group accepts pointer clicks`, async ({ page }, testInfo) => {
-        await page.context().addCookies(fixture.cookies);
+        await page.context().addCookies([
+            ...fixture.cookies,
+            { name: 'userColorScheme', value: testInfo.project.use.colorScheme, url: fixture.baseURL },
+        ]);
         const errors = [];
         page.on('pageerror', error => errors.push(error.message));
         const route = surface === 'eventtype'
@@ -52,8 +59,16 @@ for (const surface of ['eventtype', 'module']) {
         await expect(rootTabs.locator(':scope > joomla-tab-element')).toHaveCount(surface === 'eventtype' ? 2 : 3);
         const permissions = page.locator('#permissions-sliders');
         await expect(permissions.locator(':scope > joomla-tab-element')).toHaveCount(fixture.groupCount);
-        await exerciseTabs(page, rootTabs);
+        const title = page.locator('#jform_title');
+        await title.fill('Synthetic unsaved pointer title');
+        const ruleValues = await permissions.locator('select').evaluateAll(fields => fields.map(field => [field.name, field.value]));
+        expect(ruleValues.length).toBeGreaterThan(0);
+        const clicks = await exerciseTabs(page, rootTabs);
+        expect(clicks).toBeGreaterThan(fixture.groupCount);
+        testInfo.annotations.push({ type: 'pointer-clicks', description: String(clicks) });
         await expect(permissions).toBeVisible();
+        await expect(title).toHaveValue('Synthetic unsaved pointer title');
+        expect(await permissions.locator('select').evaluateAll(fields => fields.map(field => [field.name, field.value]))).toEqual(ruleValues);
         expect(errors).toEqual([]);
     });
 }

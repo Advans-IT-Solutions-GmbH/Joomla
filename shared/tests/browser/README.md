@@ -10,7 +10,12 @@ The matrix uses real Microsoft Edge and Playwright Firefox at **375, 768, 1024, 
 Each case starts in a fresh browser context. Tests assert the actual theme, generated tab
 structure, target pane visibility and desktop selection state. No forced clicks, JavaScript
 clicks, hidden-control skipping or retries turn a failed pointer action into a pass.
-Ordinary centred scrolling keeps controls away from Atum's sticky toolbar before clicking.
+The tests also preserve an unsaved title and every permission selector's name/value through
+navigation, and record the actual number of pointer clicks in each result.
+The theme is selected through Atum's supported `userColorScheme` preference cookie and checked
+on the rendered document, rather than assuming Firefox applies an OS preference at startup.
+Ordinary instantaneous centred scrolling keeps controls away from Atum's sticky toolbar before clicking;
+no pending smooth-scroll animation may move the hit target between mouse-down and mouse-up.
 Playwright then performs its normal visibility, stability and hit-target checks.
 
 `Backend Pointer Regression` builds the current-head packages, installs them in the existing
