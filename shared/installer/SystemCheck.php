@@ -79,8 +79,12 @@ final class SystemCheck
                     throw new \RuntimeException('Cannot read the routing configuration.');
                 }
 
-                $component = $definition['type'] === 'component' ? $id : ($definition['dependencies'][0] ?? 'com_ajax');
-                $issues = (new RoutingCheck())->analyse($content, str_starts_with($component, 'com_') ? $component : 'com_ajax');
+                $routes = $definition['routes'] ?? [[$definition['type'] === 'component' ? $id : 'com_ajax']];
+                $issues = [];
+
+                foreach ($routes as $route) {
+                    $issues = array_merge($issues, (new RoutingCheck())->analyse($content, $route[0], $route[1] ?? null));
+                }
                 $routing = $issues === [] ? 'ADVANS_CHECK_ROUTING_UNVERIFIED' : 'ADVANS_CHECK_ROUTING_BLOCKED';
             }
         }

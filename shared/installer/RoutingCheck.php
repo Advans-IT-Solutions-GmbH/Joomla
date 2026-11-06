@@ -17,10 +17,10 @@ final class RoutingCheck
     ];
 
     /** Static evidence only; this does not execute Apache rules or send HTTP requests. */
-    public function analyse(string $content, string $component = 'com_ajax'): array
+    public function analyse(string $content, string $component = 'com_ajax', ?string $parameters = null): array
     {
         $slug = substr($component, 4);
-        $extra = $component === 'com_ajax' ? '&plugin=joomlaajaxforms&group=ajax&format=json' : '';
+        $extra = $parameters !== null ? '&' . $parameters : ($component === 'com_ajax' ? '&plugin=joomlaajaxforms&group=ajax&format=json' : '');
         $requests = ['component' => [], 'option' => []];
 
         foreach (['component/' . $slug . '/', 'en/component/' . $slug . '/'] as $path) {
@@ -34,7 +34,7 @@ final class RoutingCheck
         }
 
         foreach (['index.php', ''] as $path) {
-            $query = 'option=' . $component . ($component === 'com_ajax' ? '&plugin=joomlaajaxforms&format=json' : '');
+            $query = 'option=' . $component . ($parameters !== null ? '&' . $parameters : ($component === 'com_ajax' ? '&plugin=joomlaajaxforms&format=json' : ''));
             $requests['option'][] = [
                 'path' => $path,
                 '%{REQUEST_URI}' => '/' . $path,
@@ -166,7 +166,9 @@ final class RoutingCheck
         foreach ($conditions as $condition) {
             if (str_starts_with($condition['pattern'], '!')
                 || !in_array($condition['variable'], self::TARGET_VARIABLES[$type]['variables'], true)
-                || stripos($condition['pattern'], $word) === false) {
+                || ($type === 'option'
+                    ? preg_match('/option|plugin|group|task/i', $condition['pattern']) !== 1
+                    : stripos($condition['pattern'], $word) === false)) {
                 continue;
             }
 

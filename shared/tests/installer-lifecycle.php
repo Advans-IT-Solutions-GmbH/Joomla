@@ -260,6 +260,19 @@ namespace {
         $assert($routing->analyse("RewriteCond %{QUERY_STRING} !plugin= [NC,OR]\nRewriteCond %{REQUEST_URI} ^/component/\nRewriteRule ^component/(.*)$ / [R=301,L]") === ['component'], 'OR group bypass was missed.');
         $assert($routing->analyse("RewriteCond %{HTTPS} off\nRewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]") === [], 'Generic HTTPS redirection was treated as component blocking.');
         $assert($routing->analyse($rewrite, 'com_appointments') === ['option'], 'Non-AJAX component option routes were not checked.');
+        foreach ([
+            "RewriteCond %{QUERY_STRING} ^option=com_ajax [NC]\n",
+            "RewriteCond %{QUERY_STRING} plugin=j2commercePrivacy [NC]\nRewriteCond %{QUERY_STRING} group=privacy [NC]\nRewriteCond %{QUERY_STRING} task=confirmRequest [NC]\n",
+            "RewriteCond %{QUERY_STRING} plugin=j2commercePrivacy [NC]\nRewriteCond %{QUERY_STRING} group=privacy [NC]\nRewriteCond %{QUERY_STRING} task=deleteAddress [NC]\n",
+        ] as $privacyConditions) {
+            $privacyRule = $privacyConditions . "RewriteRule ^index\\.php$ - [F,L]\n";
+            file_put_contents(JPATH_ROOT . '/.htaccess', $privacyRule);
+            $privacy = \Advans\Installer\SystemCheck::results('plg_privacy_j2commerce');
+            $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_BLOCKED'), array_column($privacy['warnings'], 1), true), 'Privacy AJAX endpoint blocking was missed.');
+            file_put_contents(JPATH_ROOT . '/.htaccess', "RewriteCond %{QUERY_STRING} !group=privacy [NC]\n" . $privacyRule);
+            $privacy = \Advans\Installer\SystemCheck::results('plg_privacy_j2commerce');
+            $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($privacy['warnings'], 1), true), 'Privacy AJAX route exclusion was ignored.');
+        }
         $mixedShops = \Advans\Installer\SystemCheck::results('plg_osmap_j2commerce');
         $shopRows = array_values(array_filter($mixedShops['passed'], static fn(array $row): bool => $row[0] === \Joomla\CMS\Language\Text::_('ADVANS_CHECK_SHOP')));
         $assert(count($shopRows) === 1 && $shopRows[0][1] === 'com_j2commerce, com_j2store', 'Mixed-shop check hid an enabled shop or implied a shared routing priority.');
