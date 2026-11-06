@@ -291,6 +291,9 @@ reinstalls with each language directory present, logs in with that language and 
 HTML language, raw keys and a translated string different from the English fallback. The fixture
 uses minimal language metadata, not a full translated Joomla core pack. It tests the component's
 own translations; it does not claim that every Joomla core page is translated.
+Appointments' event-types suite also checks the rendered empty-selection labels of its event,
+custom-field and mail-template forms against the core translation (`JSELECT`, not the undefined
+`JOPTION_SELECT`).
 
 These are not visual or exhaustive interactive tests. Complete acceptance additionally requires
 Edge (Chromium) and Firefox at 375, 768, 1024, 1280, 1440, 1600 and 1920 px, in light and dark mode:
