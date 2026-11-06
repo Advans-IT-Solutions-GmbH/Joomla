@@ -189,11 +189,12 @@ def items():
 def clients():
     data = configure()
     path = c.calendar("authenticated", "T")
-    bad = c.http("PROPFIND", path, "authenticated", secrets.token_hex(16),
+    wrong = base64.b32encode(secrets.token_bytes(20)).decode("ascii")
+    bad = c.http("PROPFIND", path, "authenticated", password=wrong,
                  headers={"Depth": "0"})
     require(bad.status_code == 401, "wrong app password is refused with 401")
-    denied_by_caldav(secrets.token_hex(16), "real caldav rejects the wrong app password")
-    user_password = c.http("PROPFIND", path, "authenticated", ACCOUNT["password"], headers={"Depth": "0"})
+    denied_by_caldav(wrong, "real caldav rejects the wrong app password")
+    user_password = c.http("PROPFIND", path, "authenticated", password=ACCOUNT["password"], headers={"Depth": "0"})
     require(user_password.status_code == 401, "Joomla password is not a CalDAV app password")
     client = c.caldav_client("authenticated", c.BASE + c.DAV)
     calendar = client.calendar(url=c.BASE + path)
@@ -215,10 +216,10 @@ def clients():
     require(len(items()) >= 3, "real vdirsyncer reads the calendar through the HTTP-created device")
     uid = "ci-auth-vdir-" + uuid.uuid4().hex
     local = items()[0].parent / (uid + ".ics")
-    local.write_text(c.ics(uid, "Synthetic vdir create", c.day(8, 9)), encoding="utf-8")
+    local.write_text(c.ics(uid, "Synthetic vdir create", c.day(8, 9)), encoding="utf-8", newline="")
     vdir("sync")
     require(uid in c.uids_of(path, "authenticated"), "real vdirsyncer creates on the server")
-    local.write_text(c.ics(uid, "Synthetic vdir change", c.day(8, 10)), encoding="utf-8")
+    local.write_text(c.ics(uid, "Synthetic vdir change", c.day(8, 10)), encoding="utf-8", newline="")
     vdir("sync")
     server = c.uids_of(path, "authenticated")
     require("Synthetic vdir change" in c.event_text(server[uid], "authenticated"), "real vdirsyncer changes on the server")
@@ -233,11 +234,7 @@ def blocked():
     result = c.put(path + "blocked.ics", "authenticated", c.ics("blocked-" + uuid.uuid4().hex, "Blocked", c.day(8, 11)))
     require(result.status_code in (401, 403, 404), "blocked account cannot upload calendar data")
     # Blocking deliberately preserves cleanup-only access, never original contents.
-    response = c.propfind(path, "authenticated", "1", "<d:getetag/>")
-    require(response.status_code in (207, 401, 404), "blocked account has only cleanup access or denial")
-    if response.status_code == 207:
-        root = c.multistatus(response)
-        require(not list(root.iterfind(".//d:getetag", c.NS)), "blocked account receives no event contents")
+    require(c.objects(path, "authenticated") == {}, "blocked account receives an empty cleanup collection, not events")
     c.STATE["users"]["authenticated"]["app_password"] = data["vdir"]
     sync = c.vdirsyncer("sync", "--force-delete", who="authenticated")
     require(sync.returncode == 0 and not items(), "blocked account's real vdirsyncer receives only deletion tombstones")
@@ -247,7 +244,7 @@ def revoked():
     data = activate()
     path = c.calendar("authenticated", "T")
     for key in ("caldav", "vdir"):
-        response = c.http("PROPFIND", path, "authenticated", data[key], headers={"Depth": "0"})
+        response = c.http("PROPFIND", path, "authenticated", password=data[key], headers={"Depth": "0"})
         require(response.status_code == 401, f"revoked HTTP-created {key} device is refused with 401")
     denied_by_caldav(data["caldav"], "real caldav cannot authenticate its revoked device")
     c.STATE["users"]["authenticated"]["app_password"] = data["vdir"]

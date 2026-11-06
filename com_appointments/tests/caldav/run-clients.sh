@@ -29,6 +29,7 @@ exec > >(tee "$RESULTS/caldav-clients.txt") 2>&1
 failed=0
 pending=0
 WORK=""
+AUTH_CONTAINER=""
 
 echo "=== CalDAV client tests ==="
 
@@ -126,6 +127,10 @@ teardown() {
         echo "✗ Fixture teardown failed"
         failed=$((failed + 1))
     fi
+    if [ -n "${AUTH_CONTAINER:-}" ] && ! docker rm -f "$AUTH_CONTAINER" >/dev/null; then
+        echo "✗ Authenticated client container cleanup failed"
+        failed=$((failed + 1))
+    fi
     rm -rf "$WORK"
     unset WORK
 }
@@ -140,8 +145,7 @@ client() {
 }
 
 authenticated() {
-    if docker run --rm --network "$NETWORK" --user "$(id -u):$(id -g)" -e HOME=/work -v "$WORK:/work" \
-        --entrypoint python "$IMAGE" /opt/caldav-clients/authenticated.py "$1"; then
+    if docker exec "$AUTH_CONTAINER" python /opt/caldav-clients/authenticated.py "$1"; then
         return 0
     fi
     failed=$((failed + 1))
@@ -173,6 +177,15 @@ if ! {
 fi
 
 step setup state.json || summary
+
+# Reserve a distinct source address before the short-lived protocol containers.
+# Authentication-negative tests must not spend each other's per-address budget.
+if ! AUTH_CONTAINER="$(docker run --rm -d --network "$NETWORK" --user "$(id -u):$(id -g)" \
+    -e HOME=/work -v "$WORK:/work" --entrypoint sleep "$IMAGE" infinity)"; then
+    echo "✗ The authenticated client container did not start"
+    failed=$((failed + 1))
+    summary
+fi
 
 client seed || summary
 

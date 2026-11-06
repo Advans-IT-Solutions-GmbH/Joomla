@@ -37,6 +37,8 @@ def main():
         "APPOINTMENTS_FIXTURE_STATE": str(args.work / "fixture-private.json"),
         "APPOINTMENTS_CLIENT_WORK": str(args.work),
         "JOOMLA_ADMIN_USERNAME": args.admin_username,
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
     here = pathlib.Path(__file__).resolve().parent
     php = [args.php, "-c", str(args.php_ini), str(here / "fixture.php")]

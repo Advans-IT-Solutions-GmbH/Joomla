@@ -509,7 +509,7 @@ type = "caldav"
 url = "{BASE}/"
 username = "{vdir['username']}"
 password = "{vdir['app_password']}"
-verify = "{CA}"
+verify = {json.dumps(CA)}
 """)
     return config
 
