@@ -13,17 +13,22 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Installer\InstallerScript;
 use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Table\Asset;
 use Joomla\CMS\User\CurrentUserInterface;
 use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 use Joomla\Filesystem\File;
 use Joomla\Filesystem\Folder;
+use Advans\Component\Appointments\Administrator\Service\Team\EpochAnchor;
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 
 class Com_appointmentsInstallerScript extends InstallerScript
 {
     protected $minimumJoomla = '5.4';
     protected $minimumPhp = '8.1';
+
+    private bool $hasExistingAppointmentsTables = false;
 
     /**
      * The plugins this package bundles: group => [element, enabled on first install].
@@ -37,6 +42,46 @@ class Com_appointmentsInstallerScript extends InstallerScript
         'user'    => ['appointments', false],
     ];
 
+    private const APPOINTMENT_TABLES = [
+        'eventtype_calendars',
+        'auth_failures',
+        'teamlog_head',
+        'teamlog',
+        'invitations',
+        'device_calendars',
+        'devices',
+        'calendar_busy',
+        'calendar_changes',
+        'calendar_objects',
+        'calendar_key_wraps',
+        'calendar_grants',
+        'calendar_keys',
+        'calendars',
+        'user_keys',
+        'keyring',
+        'ratelimit',
+        'audit',
+        'templates',
+        'fields',
+        'bookings',
+        'blocked',
+        'eventtypes',
+        'hosts',
+        'schedule_rules',
+        'schedules',
+    ];
+
+    private const SCHEDULER_TASK_TYPES = [
+        'plg_task_appointments.reminders',
+        'plg_task_appointments.retention',
+        'plg_task_appointments.teamcleanup',
+        'plg_task_appointments.teamlog',
+        'plg_task_appointments.teaminvitations',
+        'plg_task_appointments.teamretention',
+    ];
+
+    private const RETAINED_ASSET_NAME = 'com_appointments.retained';
+
     /**
      * Hard requirement checks before the files are copied.
      *
@@ -47,6 +92,14 @@ class Com_appointmentsInstallerScript extends InstallerScript
      */
     public function preflight($type, $parent)
     {
+        if ($type === 'uninstall') {
+            return $this->prepareUninstall();
+        }
+
+        $language = Factory::getApplication()->getLanguage();
+        $language->load('com_appointments', JPATH_ADMINISTRATOR);
+        $language->load('com_appointments', __DIR__ . '/administrator', null, true);
+
         if (!parent::preflight($type, $parent)) {
             return false;
         }
@@ -69,6 +122,13 @@ class Com_appointmentsInstallerScript extends InstallerScript
         if ($type === 'install' || $type === 'discover_install') {
             $db         = Factory::getContainer()->get(DatabaseInterface::class);
             $serverType = method_exists($db, 'getServerType') ? $db->getServerType() : 'mysql';
+            $prefix = $db->getPrefix() . 'appointments_';
+            foreach ($db->getTableList() as $table) {
+                if (str_starts_with($table, $prefix)) {
+                    $this->hasExistingAppointmentsTables = true;
+                    break;
+                }
+            }
 
             if ($serverType !== 'mysql') {
                 Factory::getApplication()->enqueueMessage(
@@ -101,6 +161,10 @@ class Com_appointmentsInstallerScript extends InstallerScript
             }
         }
 
+        if (($type === 'install' || $type === 'discover_install') && !$this->restoreRetainedAssets()) {
+            return false;
+        }
+
         return true;
     }
 
@@ -113,7 +177,13 @@ class Com_appointmentsInstallerScript extends InstallerScript
         // A fresh installation has fresh tables, so an epoch anchor left behind by
         // an earlier installation would close the new calendars and users.
         if ($type === 'install') {
-            $this->removeEpochAnchor();
+            if ($this->hasExistingAppointmentsTables) {
+                $this->migrateLegacyEpochAnchor();
+            } else {
+                $this->removeEpochAnchor();
+            }
+        } elseif ($type === 'update') {
+            $this->migrateLegacyEpochAnchor();
         }
 
         $this->ensureUpdateSite();
@@ -125,7 +195,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
         $lang->load('com_appointments', JPATH_ADMINISTRATOR);
-        $this->ensureSchedulerTasks($type === 'install');
+        $this->ensureSchedulerTasks($type === 'install' && !$this->hasExistingAppointmentsTables);
         $this->removeLegacyManifest();
         $this->ensureTeamGroups();
 
@@ -158,11 +228,37 @@ class Com_appointmentsInstallerScript extends InstallerScript
         return true;
     }
 
+    private function prepareUninstall(): bool
+    {
+        $app = Factory::getApplication();
+        $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $params = $this->componentParams($db, 'com_appointments') ?? [];
+
+        if (($params['uninstall_data_action'] ?? '') === 'delete') {
+            return true;
+        }
+
+        if ($this->hasRetainedComponentAsset($db)) {
+            $app->enqueueMessage(Text::_('COM_APPOINTMENTS_UNINSTALL_RETAINED_ACL_CONFLICT'), 'error');
+
+            return false;
+        }
+
+        // Joomla ignores failures in uninstall(), but honours preflight refusals.
+        $this->migrateLegacyEpochAnchor();
+
+        return $this->retainComponentAsset($db);
+    }
+
     public function uninstall($parent)
     {
-        $this->removeEpochAnchor();
-
+        $app = Factory::getApplication();
+        $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
         $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $params = $this->componentParams($db, 'com_appointments') ?? [];
+        $deleteData = ($params['uninstall_data_action'] ?? '') === 'delete';
+
         foreach (self::BUNDLED_PLUGINS as $group => [$element]) {
             $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
                 ->from($db->quoteName('#__extensions'))
@@ -190,8 +286,114 @@ class Com_appointmentsInstallerScript extends InstallerScript
             }
         }
         $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__scheduler_tasks'))
-            ->where($db->quoteName('type') . ' IN (' . $db->quote('plg_task_appointments.reminders')
-                . ',' . $db->quote('plg_task_appointments.retention') . ')'))->execute();
+            ->whereIn($db->quoteName('type'), self::SCHEDULER_TASK_TYPES, ParameterType::STRING))->execute();
+
+        if ($deleteData) {
+            foreach (self::APPOINTMENT_TABLES as $table) {
+                $db->setQuery('DROP TABLE IF EXISTS ' . $db->quoteName('#__appointments_' . $table))->execute();
+            }
+            $this->removeEpochAnchor();
+        } else {
+            $app->enqueueMessage(Text::_('COM_APPOINTMENTS_UNINSTALL_DATA_RETAINED'), 'warning');
+        }
+
+        return true;
+    }
+
+    private function hasRetainedComponentAsset(DatabaseInterface $db): bool
+    {
+        $query = $this->createDbQuery($db)
+            ->select('COUNT(*)')
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = ' . $db->quote(self::RETAINED_ASSET_NAME));
+
+        return (int) $db->setQuery($query)->loadResult() > 0;
+    }
+
+    /**
+     * Joomla removes the component's asset subtree during uninstall, including per-event-type ACL.
+     * Rename its root so Joomla leaves the subtree intact; preflight restores it on reinstall.
+     */
+    private function retainComponentAsset(DatabaseInterface $db): bool
+    {
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('id'))
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = ' . $db->quote('com_appointments'));
+        $assetId = (int) $db->setQuery($query)->loadResult();
+
+        if ($assetId === 0) {
+            return true;
+        }
+
+        $query = $this->createDbQuery($db)
+            ->select('COUNT(*)')
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = ' . $db->quote(self::RETAINED_ASSET_NAME));
+
+        if ((int) $db->setQuery($query)->loadResult() > 0) {
+            Factory::getApplication()->enqueueMessage(
+                Text::_('COM_APPOINTMENTS_UNINSTALL_RETAINED_ACL_CONFLICT'),
+                'error'
+            );
+
+            return false;
+        }
+
+        $query = $this->createDbQuery($db)
+            ->update($db->quoteName('#__assets'))
+            ->set($db->quoteName('name') . ' = ' . $db->quote(self::RETAINED_ASSET_NAME))
+            ->where($db->quoteName('id') . ' = ' . $assetId);
+        $db->setQuery($query)->execute();
+
+        return true;
+    }
+
+    /**
+     * Restore retained ACL before Joomla finalises a fresh component installation.
+     */
+    private function restoreRetainedAssets(): bool
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('id'))
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = ' . $db->quote(self::RETAINED_ASSET_NAME));
+        $assetId = (int) $db->setQuery($query)->loadResult();
+
+        if ($assetId === 0) {
+            return true;
+        }
+
+        if (!$this->hasExistingAppointmentsTables) {
+            $asset = new Asset($db);
+
+            if (!$asset->load($assetId) || !$asset->delete()) {
+                throw new \RuntimeException('Retained Appointments permissions could not be removed.');
+            }
+
+            return true;
+        }
+
+        $query = $this->createDbQuery($db)
+            ->select('COUNT(*)')
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = ' . $db->quote('com_appointments'));
+
+        if ((int) $db->setQuery($query)->loadResult() > 0) {
+            Factory::getApplication()->enqueueMessage(
+                Text::_('COM_APPOINTMENTS_INSTALL_RETAINED_ACL_CONFLICT'),
+                'error'
+            );
+
+            return false;
+        }
+
+        $query = $this->createDbQuery($db)
+            ->update($db->quoteName('#__assets'))
+            ->set($db->quoteName('name') . ' = ' . $db->quote('com_appointments'))
+            ->where($db->quoteName('id') . ' = ' . $assetId);
+        $db->setQuery($query)->execute();
 
         return true;
     }
@@ -202,11 +404,93 @@ class Com_appointmentsInstallerScript extends InstallerScript
      */
     private function removeEpochAnchor(): void
     {
-        $folder = JPATH_ADMINISTRATOR . '/components/com_appointments/data';
+        foreach ([$this->epochAnchorPath(), $this->legacyEpochAnchorPath()] as $path) {
+            if (!is_file($path) && (glob($path . '.*.tmp') ?: []) === []) {
+                continue;
+            }
 
-        foreach (glob($folder . '/epochs.php*') ?: [] as $file) {
-            if (is_file($file) && !@unlink($file)) {
+            try {
+                $this->withEpochAnchorLocks([$path], function () use ($path): void {
+                    foreach (glob($path . '.*.tmp') ?: [] as $temporary) {
+                        if (is_file($temporary) && !File::delete($temporary)) {
+                            Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_ANCHOR_NOT_REMOVED'), 'warning');
+                        }
+                    }
+
+                    if (is_file($path) && !File::delete($path)) {
+                        Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_ANCHOR_NOT_REMOVED'), 'warning');
+                    }
+                });
+            } catch (\Throwable $e) {
                 Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_ANCHOR_NOT_REMOVED'), 'warning');
+            }
+        }
+    }
+
+    private function epochAnchorPath(): string
+    {
+        return JPATH_ADMINISTRATOR . '/components/com_appointments-data/epochs.php';
+    }
+
+    private function legacyEpochAnchorPath(): string
+    {
+        return JPATH_ADMINISTRATOR . '/components/com_appointments/data/epochs.php';
+    }
+
+    private function migrateLegacyEpochAnchor(): void
+    {
+        $source = $this->legacyEpochAnchorPath();
+
+        if (!is_file($source)) {
+            return;
+        }
+
+        Factory::getApplication()->bootComponent('com_appointments');
+        (new EpochAnchor(TeamServices::fromApplication()))->migrateLegacy();
+    }
+
+    /**
+     * Lock anchor paths in the same order used by migrations to avoid deadlocks.
+     *
+     * @template T
+     *
+     * @param   string[]       $paths
+     * @param   callable():T   $operation
+     *
+     * @return  T
+     */
+    private function withEpochAnchorLocks(array $paths, callable $operation): mixed
+    {
+        $paths = array_values(array_unique($paths));
+        sort($paths, SORT_STRING);
+        $handles = [];
+
+        try {
+            foreach ($paths as $path) {
+                $folder = dirname($path);
+
+                if (!is_dir($folder) && !Folder::create($folder)) {
+                    throw new \RuntimeException('The Appointments epoch anchor folder could not be created.');
+                }
+
+                $handle = @fopen($path . '.lock', 'c');
+
+                if ($handle === false || !flock($handle, LOCK_EX)) {
+                    if ($handle !== false) {
+                        fclose($handle);
+                    }
+
+                    throw new \RuntimeException('The Appointments epoch anchor could not be locked.');
+                }
+
+                $handles[] = $handle;
+            }
+
+            return $operation();
+        } finally {
+            foreach (array_reverse($handles) as $handle) {
+                flock($handle, LOCK_UN);
+                fclose($handle);
             }
         }
     }
