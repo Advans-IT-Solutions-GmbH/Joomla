@@ -22,14 +22,20 @@
  */
 
 // Model the site's root HTTPS request before Joomla derives its CLI URI.
+const DEFAULT_DAV_URL = 'https://joomla/dav/';
+$davUrl = getenv('APPOINTMENTS_TEST_DAV_URL') ?: DEFAULT_DAV_URL;
 $_SERVER['HTTPS'] = 'on';
 $_SERVER['SERVER_PORT'] = '443';
-$_SERVER['HTTP_HOST'] = 'joomla';
+$_SERVER['HTTP_HOST'] = (string) parse_url($davUrl, PHP_URL_HOST)
+    . (parse_url($davUrl, PHP_URL_PORT) ? ':' . parse_url($davUrl, PHP_URL_PORT) : '');
 $_SERVER['PHP_SELF'] = '/index.php';
 $_SERVER['REQUEST_URI'] = '/';
 
+if (getenv('APPOINTMENTS_TEST_ROOT')) {
+    define('JPATH_BASE', getenv('APPOINTMENTS_TEST_ROOT'));
+}
+
 require __DIR__ . '/../scripts/appointments-joomla.php';
-require_once __DIR__ . '/../scripts/appointments-fixtures.php';
 
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\KeyContext;
@@ -37,7 +43,7 @@ use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Component\ComponentHelper;
 
-const STATE_FILE = '/tmp/appointments-caldav-fixture.json';
+define('STATE_FILE', getenv('APPOINTMENTS_FIXTURE_STATE') ?: '/tmp/appointments-caldav-fixture.json');
 
 /**
  * @var  array<string, CalendarRole|null>  Users of the job and their role on CAL-T; null: no grant there.
@@ -210,10 +216,10 @@ function setup(): void
     $params['teamcal_enabled'] = 1;
     setComponentParams($params);
     setPlugins(1);
-    setDavBaseUrl('https://joomla/dav/');
+    setDavBaseUrl($GLOBALS['davUrl']);
     $team = services();
 
-    if ($team->davBaseUrl() !== 'https://joomla/dav/') {
+    if ($team->davBaseUrl() !== $GLOBALS['davUrl']) {
         fail('The configured HTTPS CalDAV base URL was not accepted by the site.');
     }
 
@@ -244,6 +250,34 @@ function setup(): void
     // A team member with a second factor and no grant at all.
     $state['users']['nogrant'] = createUser('nogrant', $group);
     saveState($state);
+
+    // Unlike the protocol fixtures, this account starts without a key or device.
+    // Joomla encrypts its real TOTP options; the client must complete password/MFA.
+    $state['users']['authenticated'] = createUser('authenticated', $group);
+    saveState($state);
+    $authenticated = $state['users']['authenticated']['id'];
+    db()->query("DELETE FROM " . prefix() . "user_mfa WHERE user_id={$authenticated}");
+    $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    $totp = '';
+
+    for ($i = 0; $i < 32; $i++) {
+        $totp .= $alphabet[random_int(0, 31)];
+    }
+
+    $mfa = \Joomla\CMS\Factory::getApplication()->bootComponent('com_users')->getMVCFactory()->createTable('Mfa', 'Administrator');
+
+    if (!$mfa->save(['user_id' => $authenticated, 'title' => 'Synthetic TOTP', 'method' => 'totp', 'default' => 1, 'options' => ['key' => $totp]])) {
+        fail('Could not provision the synthetic TOTP method.');
+    }
+
+    $state['totp_enabled'] = (int) db()->query("SELECT enabled FROM " . prefix() . "extensions WHERE type='plugin' AND folder='multifactorauth' AND element='totp'")->fetch_assoc()['enabled'];
+    db()->query("UPDATE " . prefix() . "extensions SET enabled=1 WHERE type='plugin' AND folder='multifactorauth' AND element='totp'");
+    $state['users']['authenticated']['totp'] = $totp;
+    saveState($state);
+
+    if ($team->keys()->userKeyStatus($authenticated)['status'] !== 'none') {
+        fail('The synthetic sign-in account must start without a calendar key.');
+    }
 
     $owner = $state['users']['owner']['id'];
     $superGroup = (int) (db()->query("SELECT id FROM " . prefix() . "usergroups WHERE title='Super Users'")->fetch_assoc()['id'] ?? 0);
@@ -292,6 +326,7 @@ function setup(): void
             'id'           => $user['id'],
             'username'     => $user['username'],
             'password'     => $user['password'],
+            'totp'         => $user['totp'] ?? null,
             'app_password' => $user['app_password'] ?? null,
         ];
     }
@@ -301,6 +336,7 @@ function setup(): void
 
 function book(): void
 {
+    require_once __DIR__ . '/../scripts/appointments-fixtures.php';
     $state = state();
     $fixture = new AppointmentsFixture('caldav');
     $event = $fixture->event();
@@ -319,6 +355,7 @@ function book(): void
 
 function cancel(): void
 {
+    require_once __DIR__ . '/../scripts/appointments-fixtures.php';
     $state = state();
     $fixture = new AppointmentsFixture('caldav');
     $booking = $fixture->row((int) $state['booking']) ?? fail('The booking is gone.');
@@ -414,6 +451,60 @@ function deviceState(int $device): int
     return $row ? (int) $row['state'] : -1;
 }
 
+function authenticatedReady(): void
+{
+    $state = state();
+    $team = services();
+    $id = (int) $state['users']['authenticated']['id'];
+
+    if ($team->keys()->userKeyStatus($id)['status'] !== 'usable') {
+        fail('Password and real TOTP sign-in did not create the first user key.');
+    }
+
+    $count = (int) db()->query("SELECT COUNT(*) AS n FROM " . prefix() . "appointments_devices WHERE user_id={$id}")->fetch_assoc()['n'];
+
+    if ($count !== 0) {
+        fail('A device existed before the authenticated HTTP form was submitted.');
+    }
+
+    $team->grants()->grant($state['users']['owner']['id'], $state['calendars']['T']['id'], $id, CalendarRole::Write, unlock($team, $state, 'owner'));
+    out(['authenticated_key' => 'usable', 'grant' => 'write']);
+}
+
+function authenticatedBlock(): void
+{
+    $state = state();
+    $id = (int) $state['users']['authenticated']['id'];
+    $user = \Joomla\CMS\Factory::getContainer()->get(\Joomla\CMS\User\UserFactoryInterface::class)->loadUserById($id);
+    $user->block = 1;
+
+    if (!$user->save()) {
+        fail('Could not block the synthetic account through Joomla.');
+    }
+
+    out(['account' => 'blocked']);
+}
+
+function authenticatedRevoke(): void
+{
+    $state = state();
+    $id = (int) $state['users']['authenticated']['id'];
+    $team = services();
+    $rows = db()->query("SELECT id FROM " . prefix() . "appointments_devices WHERE user_id={$id}");
+    $count = 0;
+
+    while ($row = $rows->fetch_assoc()) {
+        $team->devices()->revoke($state['admin'], (int) $row['id'], 'synthetic_test');
+        $count++;
+    }
+
+    if ($count !== 2) {
+        fail('The real sign-in flow did not create exactly two HTTP devices.');
+    }
+
+    out(['revoked_devices' => $count]);
+}
+
 function teardown(): void
 {
     if (!is_file(STATE_FILE)) {
@@ -482,6 +573,9 @@ function teardown(): void
     setComponentParams($params);
     setDavBaseUrl('');
     setPlugins(0);
+    if (isset($state['totp_enabled'])) {
+        db()->query("UPDATE {$prefix}extensions SET enabled=" . (int) $state['totp_enabled'] . " WHERE type='plugin' AND folder='multifactorauth' AND element='totp'");
+    }
     unlink(STATE_FILE);
 
     out(['teardown' => 'done']);
@@ -496,6 +590,9 @@ $commands = [
     'revoke'          => 'revoke',
     'cleanup-start'   => 'cleanupStart',
     'cleanup-advance' => 'cleanupAdvance',
+    'authenticated-ready' => 'authenticatedReady',
+    'authenticated-block' => 'authenticatedBlock',
+    'authenticated-revoke' => 'authenticatedRevoke',
     'teardown'        => 'teardown',
 ];
 $command = $argv[1] ?? '';
