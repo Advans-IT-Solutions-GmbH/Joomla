@@ -8,8 +8,12 @@
  */
 defined('_JEXEC') or die;
 
+require_once is_file(__DIR__ . '/advansinstaller/load.php')
+    ? __DIR__ . '/advansinstaller/load.php'
+    : dirname(__DIR__, 2) . '/shared/installer/load.php';
+
 use Joomla\CMS\Factory;
-use Joomla\CMS\Installer\InstallerScript;
+use Advans\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -19,7 +23,7 @@ class Com_j2store_cleanupInstallerScript extends InstallerScript
     protected $minimumJoomla = '5.4';
     protected $minimumPhp = '8.1';
 
-    public function postflight($type, $parent)
+    protected function extensionPostflight($type, $parent)
     {
         if ($type === 'install' || $type === 'update') {
             $this->ensureUpdateSite();

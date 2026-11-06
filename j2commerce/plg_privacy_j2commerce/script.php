@@ -8,8 +8,12 @@
 
 defined('_JEXEC') or die;
 
+require_once is_file(__DIR__ . '/advansinstaller/load.php')
+    ? __DIR__ . '/advansinstaller/load.php'
+    : dirname(__DIR__, 2) . '/shared/installer/load.php';
+
 use Joomla\CMS\Factory;
-use Joomla\CMS\Installer\InstallerScript;
+use Advans\Installer\InstallerScript;
 use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
@@ -68,7 +72,63 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
     }
 
-    public function postflight($type, $parent)
+    protected function guardedFiles(string $type, object $parent): array
+    {
+        $source = $parent->getParent()->getPath('source');
+        $remove = $this->removalCandidate($parent, 'Remove obsolete privacy plugin file');
+        $files = [
+            JPATH_PLUGINS . '/privacy/j2commerce/plg_privacy_j2commerce.xml' => $remove,
+            JPATH_PLUGINS . '/privacy/j2commerce/src/Task/AutoCleanupTask.php' => $remove,
+        ];
+        $version = $this->getJ2CommerceVersion();
+        $hasEvent = $version !== '' && version_compare($version, self::MIN_J2COMMERCE_EVENT_VERSION, '>=');
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+
+        foreach ($this->getFrontendTemplates($db) as $template) {
+            $base = JPATH_SITE . '/templates/' . $template . '/html/';
+
+            foreach (['com_j2store', 'com_j2commerce'] as $component) {
+                $paths = $type === 'install'
+                    ? ['checkout/default_shipping_payment.php', 'myprofile/default.php', 'myprofile/default_addresses.php', 'myprofile/default_privacy.php']
+                    : ['myprofile/default_privacy.php'];
+
+                if ($type !== 'install' && (!is_dir(JPATH_SITE . '/components/' . $component)
+                    || !is_file($base . $component . '/myprofile/default.php'))) {
+                    continue;
+                }
+
+                foreach ($paths as $path) {
+                    $candidate = $source . '/overrides/' . $component . '/' . $path;
+                    $destination = $base . $component . '/' . $path;
+
+                    if (is_file($candidate) && !file_exists($destination)) {
+                        $files[$destination] = $candidate;
+                    }
+                }
+            }
+
+            $override = $base . 'com_j2commerce/checkout/default_shipping_payment.php';
+
+            if (!$hasEvent || !is_file($override) || !is_dir(JPATH_SITE . '/components/com_j2commerce')) {
+                continue;
+            }
+
+            $content = file_get_contents($override);
+
+            if ($content === false) {
+                throw new \RuntimeException('The existing checkout override could not be inspected.');
+            }
+
+            if (str_contains($content, self::BUNDLED_OVERRIDE_MARKER)
+                && in_array(hash('sha256', str_replace("\r\n", "\n", $content)), self::BUNDLED_CHECKOUT_OVERRIDE_HASHES, true)) {
+                $files[$override] = $this->removalCandidate($parent, 'Retire obsolete bundled checkout override by renaming it');
+            }
+        }
+
+        return $files;
+    }
+
+    protected function extensionPostflight($type, $parent)
     {
         if ($type === 'install' || $type === 'update') {
             $packageSource = $parent->getParent()->getPath('source');
@@ -594,7 +654,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $target = $file . self::RETIRED_OVERRIDE_SUFFIX;
 
             if (file_exists($target)) {
-                $target .= '-' . date('YmdHis');
+                $target .= '-' . bin2hex(random_bytes(16));
             }
 
             if (@rename($file, $target)) {
