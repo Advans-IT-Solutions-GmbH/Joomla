@@ -35,12 +35,16 @@
         <language tag="fr-FR">language/fr-FR/mod_dmarcreports.sys.ini</language>
     </languages>
 
+    <media destination="mod_dmarcreports" folder="media">
+        <folder>css</folder>
+    </media>
+
     <config>
-        <fields name="params">
+        <fields name="params" addfieldprefix="Advans\Module\DmarcReports\Administrator\Field">
             <fieldset name="basic">
                 <field
                     name="show_summary"
-                    type="radio"
+                    type="summary"
                     layout="joomla.form.field.radio.switcher"
                     label="MOD_DMARCREPORTS_FIELD_SHOW_SUMMARY_LABEL"
                     description="MOD_DMARCREPORTS_FIELD_SHOW_SUMMARY_DESC"

@@ -6,17 +6,24 @@ module editor: every top-level tab and every nested permission group, including 
 and reopening active mobile accordion sections.
 
 The matrix uses real Microsoft Edge and Playwright Firefox at **375, 768, 1024, 1280, 1440,
-1600 and 1920 px**, each in light and dark mode: 28 browser projects and 56 form cases.
-Each case starts in a fresh browser context. Tests assert the actual theme, generated tab
+1600 and 1920 px**, each in light and dark mode: 84 form cases. The six browser/language/form
+groups reproduce the original diagnostic matrix: Edge/French for both forms, Firefox/German
+for both forms, and Firefox/English and Firefox/French for the event-type form.
+Each case starts in a fresh browser context. Tests assert the actual language and theme, generated tab
 structure, target pane visibility and desktop selection state. No forced clicks, JavaScript
 clicks, hidden-control skipping or retries turn a failed pointer action into a pass.
+The form opens at desktop width, then resizes to the target width. Existing visible controls
+receive focus and native constraint checks before navigation, reproducing the original stress
+sequence without submitting data.
 The tests also preserve an unsaved title and every permission selector's name/value through
 navigation, and record the actual number of pointer clicks in each result.
 The theme is selected through Atum's supported `userColorScheme` preference cookie and checked
 on the rendered document, rather than assuming Firefox applies an OS preference at startup.
-Ordinary instantaneous centred scrolling keeps controls away from Atum's sticky toolbar before clicking;
-no pending smooth-scroll animation may move the hit target between mouse-down and mouse-up.
-Playwright then performs its normal visibility, stability and hit-target checks.
+Every initial click has a two-second action timeout, with Playwright's normal scrolling,
+visibility, stability and hit-target checks. There is no preparatory centred scrolling or
+recovery click. Permission panes must stay within the viewport, and their selectors must
+retain a usable width. Runtime styles scoped to the two editors prevent competing smooth
+scrolls during focus/accordion reflow and correct Atum's intermediate-width rules layout.
 
 `Backend Pointer Regression` builds the current-head packages, installs them in the existing
 Joomla 6 container and runs this matrix. `Collect Results` requires the workflow whenever its
@@ -25,7 +32,9 @@ path filters match. The existing Appointments J5/J6 functional suites remain unc
 ## Local execution
 
 Use only a disposable test installation with the Appointments component and DMARC module
-installed. **Never point this fixture at a deployment or production database.** The fixture
+installed, together with the official German and French Joomla language packages.
+CI resolves current Joomla 6 translations from Joomla's official metadata and verifies
+their advertised SHA256 checksums. **Never point this fixture at a deployment or production database.** The fixture
 requires explicit CLI opt-in, a loopback URL, a local database and disabled mail. It creates
 a new synthetic administrator and seven synthetic ACL groups. It authenticates through a
 CLI-created Joomla session, never a browser password login. Destroy the disposable database

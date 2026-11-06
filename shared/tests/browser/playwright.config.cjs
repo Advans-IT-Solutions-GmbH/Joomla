@@ -25,15 +25,24 @@ module.exports = defineConfig({
         // Screenshots contain only the synthetic test site; never persist authenticated traces.
         screenshot: 'only-on-failure',
     },
-    projects: ['edge', 'firefox'].flatMap(browser =>
+    projects: [
+        ['edge', 'fr-FR', 'eventtype'],
+        ['firefox', 'de-DE', 'eventtype'],
+        ['firefox', 'en-GB', 'eventtype'],
+        ['firefox', 'fr-FR', 'eventtype'],
+        ['edge', 'fr-FR', 'module'],
+        ['firefox', 'de-DE', 'module'],
+    ].flatMap(([browser, locale, surface]) =>
         [375, 768, 1024, 1280, 1440, 1600, 1920].flatMap(width =>
             ['light', 'dark'].map(colorScheme => ({
-                name: `${browser}-${width}-${colorScheme}`,
+                name: `${browser}-${locale}-${width}-${colorScheme}-${surface}`,
+                grep: new RegExp(`${surface}:`),
                 use: {
                     browserName: browser === 'edge' ? 'chromium' : 'firefox',
                     ...(browser === 'edge' ? { channel: 'msedge' } : {}),
                     viewport: { width, height: 900 },
                     colorScheme,
+                    locale,
                 },
             }))
         )

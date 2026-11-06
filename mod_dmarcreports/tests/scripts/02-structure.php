@@ -25,6 +25,8 @@ class StructureTest
             'Service provider'     => $this->base . '/services/provider.php',
             'Dispatcher'           => $this->base . '/src/Dispatcher/Dispatcher.php',
             'DmarcReports helper'  => $this->base . '/src/Helper/DmarcReportsHelper.php',
+            'Summary field'        => $this->base . '/src/Field/SummaryField.php',
+            'Editor layout style'  => JPATH_ROOT . '/media/mod_dmarcreports/css/admin.css',
             'Default layout'       => $this->base . '/tmpl/default.php',
             'LICENSE.txt'          => $this->base . '/LICENSE.txt',
             'Language en-GB (.ini)'     => $lang . '/en-GB/mod_dmarcreports.ini',

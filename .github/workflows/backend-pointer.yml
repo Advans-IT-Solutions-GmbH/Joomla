@@ -48,6 +48,11 @@ jobs:
           docker exec com_appointments_j6_test php /var/www/html/cli/joomla.php config:set mailonline=0
       - name: Install module and create synthetic CLI session
         run: |
+          php shared/tests/browser/prepare-languages.php "$RUNNER_TEMP"
+          for locale in de-DE fr-FR; do
+            docker cp "$RUNNER_TEMP/$locale.zip" "com_appointments_j6_test:/tmp/$locale.zip"
+            docker exec com_appointments_j6_test php /var/www/html/cli/joomla.php extension:install --path="/tmp/$locale.zip"
+          done
           docker cp mod_dmarcreports/tests/extension.zip com_appointments_j6_test:/tmp/backend-module.zip
           docker exec com_appointments_j6_test php /var/www/html/cli/joomla.php extension:install --path=/tmp/backend-module.zip
           docker cp shared/tests/browser/fixture.php com_appointments_j6_test:/tmp/backend-pointer-fixture.php

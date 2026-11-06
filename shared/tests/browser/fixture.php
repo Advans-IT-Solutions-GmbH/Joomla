@@ -8,6 +8,7 @@ declare(strict_types=1);
 use Joomla\CMS\Application\AdministratorApplication;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\LanguageFactoryInterface;
+use Joomla\CMS\Language\LanguageHelper;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
@@ -70,7 +71,7 @@ try {
         $right = (int) $db->setQuery('SELECT rgt FROM #__usergroups WHERE id=1')->loadResult();
         $db->setQuery("UPDATE #__usergroups SET lft=lft+2 WHERE lft>=$right")->execute();
         $db->setQuery("UPDATE #__usergroups SET rgt=rgt+2 WHERE rgt>=$right")->execute();
-        $title = $db->quote('Synthetic pointer group ' . $i);
+        $title = $db->quote('Synthetic pointer group ' . $i . ' (' . $userData->id . ')');
         $db->setQuery("INSERT INTO #__usergroups(parent_id,lft,rgt,title) VALUES(1,$right,$right+1,$title)")->execute();
     }
     $db->transactionCommit();
@@ -82,16 +83,21 @@ $moduleId = (int) $db->setQuery("SELECT id FROM #__modules WHERE module='mod_dma
 if ($moduleId <= 0) {
     throw new RuntimeException('Install the DMARC module test package first.');
 }
+$db->setQuery('UPDATE #__modules SET checked_out=NULL, checked_out_time=NULL WHERE id=' . $moduleId)->execute();
 $session = $app->getSession();
-$session->start();
-$session->set('user', $user);
-$app->setUserState('application.lang', 'en-GB');
-$session->close();
-echo json_encode([
-    'baseURL' => $baseUrl,
-    'moduleId' => $moduleId,
-    'groupCount' => (int) $db->setQuery('SELECT COUNT(*) FROM #__usergroups')->loadResult(),
-    'cookies' => [[
+if ($session->isActive()) {
+    $session->close();
+}
+$cookiesByLocale = [];
+foreach (['en-GB', 'de-DE', 'fr-FR'] as $locale) {
+    if (!LanguageHelper::exists($locale, JPATH_ADMINISTRATOR)) {
+        throw new RuntimeException("Install the official {$locale} language package first.");
+    }
+    $session->setId(bin2hex(random_bytes(24)));
+    $session->start();
+    $session->set('user', $user);
+    $app->setUserState('application.lang', $locale);
+    $cookiesByLocale[$locale] = [[
         'name' => $session->getName(),
         'value' => $session->getId(),
         'domain' => $host,
@@ -99,5 +105,12 @@ echo json_encode([
         'httpOnly' => true,
         'secure' => false,
         'sameSite' => 'Lax',
-    ]],
+    ]];
+    $session->close();
+}
+echo json_encode([
+    'baseURL' => $baseUrl,
+    'moduleId' => $moduleId,
+    'groupCount' => (int) $db->setQuery('SELECT COUNT(*) FROM #__usergroups')->loadResult(),
+    'cookiesByLocale' => $cookiesByLocale,
 ], JSON_THROW_ON_ERROR);
