@@ -41,6 +41,17 @@ class StructureTest
             });
         }
 
+        foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+            $this->test("$tag: module editor description is available without the system catalogue", function () use ($lang, $tag) {
+                $main = parse_ini_file($lang . '/' . $tag . '/mod_dmarcreports.ini', false, INI_SCANNER_RAW);
+                $system = parse_ini_file($lang . '/' . $tag . '/mod_dmarcreports.sys.ini', false, INI_SCANNER_RAW);
+                $key = 'MOD_DMARCREPORTS_XML_DESCRIPTION';
+
+                return is_array($main) && is_array($system)
+                    && !empty($main[$key]) && $main[$key] === ($system[$key] ?? null);
+            });
+        }
+
         $this->test('Manifest declares an administrator module element', function () {
             $xml = @simplexml_load_file($this->base . '/mod_dmarcreports.xml');
 
