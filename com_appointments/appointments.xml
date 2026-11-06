@@ -8,7 +8,7 @@
     <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
     <authorEmail>info@advans.ch</authorEmail>
     <authorUrl>https://advans.ch</authorUrl>
-    <version>1.3.0</version>
+    <version>1.4.0</version>
     <description>COM_APPOINTMENTS_XML_DESCRIPTION</description>
 
     <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
@@ -28,11 +28,6 @@
             <file driver="mysql" charset="utf8">sql/install.mysql.utf8.sql</file>
         </sql>
     </install>
-    <uninstall>
-        <sql>
-            <file driver="mysql" charset="utf8">sql/uninstall.mysql.utf8.sql</file>
-        </sql>
-    </uninstall>
     <update>
         <schemas>
             <schemapath type="mysql">sql/updates/mysql</schemapath>
