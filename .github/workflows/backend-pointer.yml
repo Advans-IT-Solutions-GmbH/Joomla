@@ -40,12 +40,17 @@ jobs:
         run: |
           (cd com_appointments && bash build.sh && cp com_appointments_*.zip tests/extension.zip)
           (cd mod_dmarcreports && bash build.sh && cp mod_dmarcreports_*.zip tests/extension.zip)
+      - name: Install pinned browser test dependencies
+        working-directory: shared/tests/browser
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps msedge firefox
       - name: Start isolated Joomla 6
         working-directory: com_appointments/tests
         run: |
           docker compose -f docker-compose.joomla6.yml up -d
           timeout 300 bash -c 'until docker exec com_appointments_j6_test test -f /var/www/html/health.txt; do sleep 5; done'
-          docker exec com_appointments_j6_test php /var/www/html/cli/joomla.php config:set mailonline=0
+          docker exec com_appointments_j6_test php /var/www/html/cli/joomla.php config:set mailonline=0 lifetime=60
       - name: Install module and create synthetic CLI session
         run: |
           php shared/tests/browser/prepare-languages.php "$RUNNER_TEMP"
@@ -61,11 +66,6 @@ jobs:
             -e BACKEND_POINTER_SITE=/var/www/html \
             -e BACKEND_POINTER_BASE_URL=http://localhost:8081 \
             com_appointments_j6_test php /tmp/backend-pointer-fixture.php > "$RUNNER_TEMP/backend-pointer-fixture.json"
-      - name: Install pinned browser test dependencies
-        working-directory: shared/tests/browser
-        run: |
-          npm ci --ignore-scripts --no-audit --no-fund
-          npx playwright install --with-deps msedge firefox
       - name: Exercise all tabs and permission groups
         working-directory: shared/tests/browser
         env:

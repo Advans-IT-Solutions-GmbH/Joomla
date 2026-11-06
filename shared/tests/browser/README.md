@@ -33,6 +33,9 @@ scrolls during focus/accordion reflow and correct Atum's intermediate-width rule
 `Backend Pointer Regression` builds the current-head packages, installs them in the existing
 Joomla 6 container and runs this matrix. `Collect Results` requires the workflow whenever its
 path filters match. The existing Appointments J5/J6 functional suites remain unchanged.
+CI installs browser binaries before creating authentication cookies, and gives only its
+disposable site a 60-minute session lifetime. A slow browser download must not expire every
+cookie before the first pointer test; authentication failures still fail the precondition.
 
 ## Local execution
 
