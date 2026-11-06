@@ -1,0 +1,80 @@
+name: Backend Pointer Regression
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'com_appointments/**'
+      - 'mod_dmarcreports/**'
+      - 'shared/build/**'
+      - 'shared/tests/browser/**'
+      - '.github/workflows/backend-pointer.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'com_appointments/**'
+      - 'mod_dmarcreports/**'
+      - 'shared/build/**'
+      - 'shared/tests/browser/**'
+      - '.github/workflows/backend-pointer.yml'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && github.run_id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pointer:
+    name: Edge and Firefox pointer clicks (J6)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build current-head packages
+        run: |
+          (cd com_appointments && bash build.sh && cp com_appointments_*.zip tests/extension.zip)
+          (cd mod_dmarcreports && bash build.sh && cp mod_dmarcreports_*.zip tests/extension.zip)
+      - name: Start isolated Joomla 6
+        working-directory: com_appointments/tests
+        run: |
+          docker compose -f docker-compose.joomla6.yml up -d
+          timeout 300 bash -c 'until docker exec com_appointments_j6_test test -f /var/www/html/health.txt; do sleep 5; done'
+          docker exec com_appointments_j6_test php /var/www/html/cli/joomla.php config:set mailonline=0
+      - name: Install module and create synthetic CLI session
+        run: |
+          docker cp mod_dmarcreports/tests/extension.zip com_appointments_j6_test:/tmp/backend-module.zip
+          docker exec com_appointments_j6_test php /var/www/html/cli/joomla.php extension:install --path=/tmp/backend-module.zip
+          docker cp shared/tests/browser/fixture.php com_appointments_j6_test:/tmp/backend-pointer-fixture.php
+          umask 077
+          docker exec -e BACKEND_POINTER_TEST=1 \
+            -e BACKEND_POINTER_SITE=/var/www/html \
+            -e BACKEND_POINTER_BASE_URL=http://localhost:8081 \
+            com_appointments_j6_test php /tmp/backend-pointer-fixture.php > "$RUNNER_TEMP/backend-pointer-fixture.json"
+      - name: Install pinned browser test dependencies
+        working-directory: shared/tests/browser
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps msedge firefox
+      - name: Exercise all tabs and permission groups
+        working-directory: shared/tests/browser
+        env:
+          BACKEND_POINTER_FIXTURE: ${{ runner.temp }}/backend-pointer-fixture.json
+        run: npm test
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: backend-pointer-results
+          path: shared/tests/browser/test-results/
+          retention-days: 7
+      - name: Remove disposable site and session fixture
+        if: always()
+        working-directory: com_appointments/tests
+        run: |
+          docker compose -f docker-compose.joomla6.yml down -v
+          rm -f "$RUNNER_TEMP/backend-pointer-fixture.json"

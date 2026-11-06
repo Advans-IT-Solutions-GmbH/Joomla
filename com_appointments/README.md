@@ -39,6 +39,13 @@ The component resolves its database through `DatabaseInterface`. Queries use `cr
 the driver provides it and fall back to `getQuery(true)` on Joomla 5.4. No platform-specific
 configuration is required.
 
+The event-type editor separates **Details** and **Permissions** with Joomla's standard tabs
+(accordions on narrow screens). The permissions widget uses the full card width instead of
+the state-field sidebar, so its group navigation and permission table do not overlap the editor
+or neighbouring fields. This uses core Joomla layouts without custom colours or typography.
+The [backend pointer regression matrix](../shared/tests/browser/README.md) covers the editor
+and the DMARC module editor in Edge and Firefox at seven widths in light and dark mode.
+
 ## Installation
 
 ### Currently: build from source

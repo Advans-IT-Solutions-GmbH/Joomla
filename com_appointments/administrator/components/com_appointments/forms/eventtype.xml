@@ -74,6 +74,8 @@
         <field name="access" type="accesslevel" label="JFIELD_ACCESS_LABEL" default="1" filter="integer" />
         <field name="language" type="contentlanguage" label="JFIELD_LANGUAGE_LABEL" default="*"><option value="*">JALL</option></field>
         <field name="ordering" type="number" label="JFIELD_ORDERING_LABEL" default="0" filter="integer" />
+    </fieldset>
+    <fieldset name="permissions" label="JCONFIG_PERMISSIONS_LABEL">
         <field name="rules" type="rules" label="JCONFIG_PERMISSIONS_LABEL" filter="rules" validate="rules" component="com_appointments" section="eventtype" />
     </fieldset>
 </form>
