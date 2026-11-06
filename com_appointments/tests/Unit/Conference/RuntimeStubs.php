@@ -2,6 +2,13 @@
 
 namespace Joomla\Database;
 
+if (!class_exists(ParameterType::class)) {
+    final class ParameterType
+    {
+        public const STRING = 'string';
+    }
+}
+
 // Only the API exercised here is needed when Joomla is absent from the unit environment.
 if (!interface_exists(DatabaseInterface::class)) {
     interface DatabaseInterface

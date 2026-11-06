@@ -68,7 +68,7 @@ index.php?option=com_ajax&plugin=j2commercePrivacy&group=privacy&format=html&tas
 ```
 The system plugin (`onMailBeforeRendering`) links the mails `com_privacy.notification.admin.export` / `.remove` to it.
 
-Guest matching: `ownerCondition(userId, emails, column, alias)` builds `user_id = X OR (user_id = 0 AND LOWER(TRIM(column)) IN (...))`; used by the export, `checkRetentionPeriod()`, `anonymizeOrders()` (selects primary keys once, updates the orders table by key, order info and consent evidence by order number unless another order shares the number, consent evidence only in the J2Commerce 6 set), `deleteAddresses()` and `customerLanguage()`.
+Guest matching: `ownerCondition(userId, emails, column, alias)` builds `user_id = X OR (user_id = 0 AND LOWER(TRIM(column)) IN (...))`; used by the export, `checkRetentionPeriod()`, `anonymizeOrders()` (selects primary keys once, updates the orders table by key, order info and consent evidence by order number unless another order shares the number, consent evidence only in the J2Commerce 6 set) and `deleteAddresses()`. Mail language comes from the recipient account, otherwise the site default, not an order. Address-based account lookup verifies the normalised address after the database query, so an accent-insensitive collation does not select another recipient's preference.
 
 No dependency on `plg_ajax_joomlaajaxforms` — uses Joomla Core `com_ajax` only.
 

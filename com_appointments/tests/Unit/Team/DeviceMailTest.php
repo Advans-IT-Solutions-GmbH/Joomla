@@ -7,6 +7,7 @@
  */
 
 use Advans\Component\Appointments\Administrator\Helper\DefaultTemplates;
+use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamMailer;
 use PHPUnit\Framework\TestCase;
 
@@ -43,9 +44,11 @@ final class DeviceMailTest extends TestCase
             $strings = parse_ini_file(self::LANGUAGE_DIR . '/' . $tag . '/com_appointments.ini', false, INI_SCANNER_RAW);
             self::assertIsArray($strings);
 
-            foreach (DefaultTemplates::TEAM_KEYS as $purpose => [$subject, $body]) {
+            foreach (DefaultTemplates::all() as $purpose => [$subject, $body]) {
                 self::assertNotSame('', trim((string) ($strings[$subject] ?? '')), "$tag $purpose subject");
                 self::assertNotSame('', trim((string) ($strings[$body] ?? '')), "$tag $purpose body");
+                $text = str_replace('\n', "\n", $strings[$body]);
+                self::assertStringContainsString('<p>', MailHtml::textToHtml($text), "$tag $purpose HTML from the same translated text");
             }
         }
     }

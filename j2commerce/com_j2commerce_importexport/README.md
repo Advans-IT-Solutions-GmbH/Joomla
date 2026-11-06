@@ -397,6 +397,11 @@ CI sets `TEST_STRICT_SKIP=1` (a test that would SKIP fails); prefix the command 
 
 ## Multi-Language Support
 
+All extensions and bundled plugins in this repository support exactly **de-DE, en-GB and fr-FR**,
+with complete key and placeholder parity. **de-DE uses Swiss High German** (`ss`, never `ß`,
+Swiss terminology and `z.B.`). No `de-CH` folders or build-generated copies are shipped.
+The shared language lint and package checks enforce this rule, including for future extensions.
+
 - English (`en-GB`)
 - German (`de-DE`)
 - French (`fr-FR`)

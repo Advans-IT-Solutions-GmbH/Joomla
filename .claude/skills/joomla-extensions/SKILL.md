@@ -64,11 +64,15 @@ Advans-IT-Solutions-GmbH/Joomla
   (`shared-deprecations.php`). Both must stay green.
 - **Plugin service providers** create the plugin with the config array only and never pass or set
   the dispatcher (`PluginHelper` sets it when booting the plugin).
-- **Languages:** sites run in `de-DE`, so `de-DE` carries the Swiss High German text in every
-  extension (`ss`, `z.B.`). The language lint fails on a key used but not defined, on `ß` and
-  `z. B.` in `de-DE`, and on a shipped `de-CH` that differs from `de-DE`. Keys only a site template
+- **Languages:** every extension and bundled plugin ships exactly `de-DE`, `en-GB` and `fr-FR`.
+  Sites run in `de-DE`, which carries Swiss High German (`ss`, Swiss terminology, `z.B.`).
+  No `de-CH` folders or declarations, and no build-generated `de-CH` copies. The language lint
+  rejects another language set, missing or extra keys, `ß` and `z. B.` in `de-DE`. Keys only a site template
   prints are listed per extension in `tests/language-keys-for-template-overrides.txt`. Details:
   `references/conventions.md`, section "Language Files".
+- **Mail languages:** all outgoing subjects and bodies are supplied in the same three languages,
+  including HTML where used. Recipient account language, else site default (also guests), not
+  request/order language. See root README "E-mail templates" and `references/testing.md`.
 - **Releases:** only the latest release per extension exists; the publish workflow deletes older
   releases and tags on purpose. Details: `references/release-workflow.md`.
 - **OSMap mixed installation** (J2Store and J2Commerce both enabled): `com_j2store` takes

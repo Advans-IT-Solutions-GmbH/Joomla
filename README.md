@@ -103,9 +103,36 @@ Local test prerequisites and commands: [`.claude/skills/joomla-extensions/refere
 
 ## Languages
 
-All extensions ship de-DE (Swiss High German), en-GB and fr-FR. No text is written into the code: PHP, layouts and JavaScript show language keys only, so a further language needs language files and, for extensions using `<languages>`, one manifest line per file.
+Every extension and bundled plugin ships exactly **de-DE, en-GB and fr-FR**, with complete key
+and placeholder parity per language file. This also applies to future extensions. Sites run in
+de-DE, whose wording is **Swiss High German** (`ss`, never `ß`, Swiss terminology, `z.B.`).
+No de-CH language folders or manifest declarations are shipped or generated at build time.
+The source language files remain checked in. The shared lint enforces this rule across all
+extensions, while package verification checks that the ZIP contains the same supported file set.
+No text is written into the code: PHP, layouts and JavaScript show language keys only.
+
+### E-mail templates
+
+Every extension that sends mail ships complete, equivalent subjects and message texts in
+**de-DE, en-GB and fr-FR**, even when only German is active on the website. HTML generated from
+translated text uses that same language; there is no second, untranslated HTML default.
+The recipient's supported account language wins, otherwise the **default site language** applies,
+including recipients without an account. A request, administrator session, order or another
+recipient must not choose the mail language. An unsupported site language falls back to en-GB.
+Operator-customised templates remain operator content and are not overwritten on update.
+
+| Extension | Outgoing templates |
+|---|---|
+| Appointments | 18 booking/invitee/guest/host purposes and 7 internet-calendar/device/activation/security purposes; subject and text in each locale, with HTML rendered through the configured Joomla mail layout |
+| AJAX Forms | Password reset, username reminder, self/admin activation and new-registration notice; Joomla `com_mails` templates with translated plugin fallbacks |
+| J2Commerce Privacy | Customer retention/removal notice (8 account/guest, address and newsletter variants) and 3 administrator action notices, including translated order details; plain-text mail |
+| Other extensions and bundled plugins | No outgoing message bodies of their own. DMARC ingestion receives reports, it does not send notifications. The Privacy system plugin changes confirmation URLs in Joomla-owned `com_privacy` mail without replacing its text or language selection |
 
 To add a language:
+
+The supported language set is a repository-wide decision. A new locale requires maintainer
+approval and must be added to all extensions, bundled plugins, the shared lint and package checks,
+not just to a single extension. Swiss wording is maintained in de-DE, not a separate de-CH locale.
 
 1. Copy the `en-GB` folder of every `language/` directory of the extension (bundled sub-plugins and `administrator/language` of components included) to the new tag and translate every value. Keep keys and `printf` placeholders.
 2. Import/Export, Cleanup, DMARC Reports, DMARC Reports Dashboard Module, DMARC Reports Package, Appointments and AJAX Forms list their files in the manifest (`<languages>`): add one `<language tag="xx-XX">` line per file. Appointments has two such blocks, one for the administrator files and one for the site files. The other extensions load their whole `language/` folder.

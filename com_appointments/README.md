@@ -981,10 +981,17 @@ An update adds missing templates, including the guest and host templates on an e
 installation, and never overwrites a template you edited. If you customised the invitee templates
 of those purposes for the host as well, adapt the new host templates.
 An event-specific template takes precedence over the published site-wide template for that purpose
-and language. If neither is available, the corresponding English template is used. Updating the
-component preserves existing templates rather than overwriting operator changes. Notification
-labels are installed privately from the same shipped language files, so a stored recipient
-language does not depend on that Joomla language pack being installed.
+and language. If neither is available, the shipped default of that **same language** is used.
+Every mail, including the seven internet-calendar/device/activation/security purposes, has
+complete subject and body defaults in **de-DE, en-GB and fr-FR**. Each recipient's supported Joomla
+account language wins, otherwise the default **site** language applies. The booking person and
+each additional guest are looked up separately by their address; guests without an account do
+not inherit the booking person's or request's language. Hosts use their own account preference.
+An unsupported account preference uses the site default; an unsupported site language uses en-GB.
+Updating the component preserves existing templates rather than overwriting operator changes.
+Notification labels are installed privately from the same shipped language files, so rendering
+does not require that Joomla core language pack to be installed. The website can remain German-only.
+Configured HTML layouts render the same translated text and retain the plain-text alternative.
 
 Templates are plain text. Placeholders are written `{name}` and replaced in one pass. A detail line
 that holds only a label and one placeholder (`Location: {location}`) is left out when the value is
@@ -1000,7 +1007,7 @@ empty, so a telephone appointment shows no empty location:
 | `{guest_emails}` | All additional guests, one per line |
 | `{conference_url}` | The joining link (the host's moderator link in the host's mail) |
 | `{custom_fields.ID}` | One answer, ID being the custom field ID; `{custom_fields}` all answers as JSON |
-| `{start}`, `{end}`, `{timezone}` | The appointment in the recipient's zone, with the invitee's stored locale or the host's Joomla profile settings (a host without a profile language gets the site's default language) |
+| `{start}`, `{end}`, `{timezone}` | The appointment in the invitee's stored zone or the host's profile zone, formatted in the recipient's account language, otherwise the site default |
 | `{state_label}` | The translated status |
 | `{consent_utc}`, `{consent_version}` | The consent proof (UTC time and label version) with **Privacy notice on the booking form** *Consent checkbox*, otherwise empty |
 | `{start_utc}`, `{end_utc}`, `{state}`, `{id}`, `{uid}`, `{sequence}` and the other booking columns | Raw booking values |
@@ -1366,6 +1373,11 @@ installation.
 skipped or repeated local hour during a clock change.
 
 ## Multi-Language Support
+
+All extensions and bundled plugins in this repository support exactly **de-DE, en-GB and fr-FR**,
+with complete key and placeholder parity. **de-DE uses Swiss High German** (`ss`, never `ß`,
+Swiss terminology and `z.B.`). No `de-CH` folders or build-generated copies are shipped.
+The shared language lint and package checks enforce this rule, including for future extensions.
 
 Like every extension in this repository, the component ships **English (`en-GB`)**, **German
 (`de-DE`, Swiss High German)** and **French (`fr-FR`)**, for both the administrator and site part.
