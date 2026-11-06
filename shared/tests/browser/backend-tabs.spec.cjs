@@ -58,7 +58,8 @@ async function openEditor(page, testInfo, surface) {
         ? `index.php?option=com_appointments&task=eventtype.edit&id=${fixture.eventtypeId}`
         : `index.php?option=com_modules&task=module.edit&id=${fixture.moduleId}`;
     await page.setViewportSize({ width: 1600, height: 900 });
-    const response = await page.goto(`/administrator/${route}`);
+    // Core consent notices are inserted by an initial AJAX request after document load.
+    const response = await page.goto(`/administrator/${route}`, { waitUntil: 'networkidle' });
     expect(response.status()).toBe(200);
     await expect(page.locator('#form-login')).toHaveCount(0);
     await expect(page.locator('html')).toHaveAttribute('data-bs-theme', testInfo.project.use.colorScheme);

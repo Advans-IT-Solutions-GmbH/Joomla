@@ -14,7 +14,10 @@ for both forms, and Firefox/English and Firefox/French for the event-type form.
 Each case starts in a fresh browser context. Tests assert the actual language and theme, generated tab
 structure, target pane visibility and desktop selection state. No forced clicks, JavaScript
 clicks, hidden-control skipping or retries turn a failed pointer action into a pass.
-The form opens at desktop width, then resizes to the target width. Existing visible controls
+The form opens at desktop width and awaits initial network idle, matching the original
+diagnostic protocol, before resizing to the target width. This includes Joomla's asynchronous
+statistics-consent notice; it must not shift the form between pointer down and pointer up.
+Existing visible controls
 receive focus and native constraint checks before navigation, reproducing the original stress
 sequence without submitting data.
 The tests also preserve an unsaved title and every permission selector's name/value through
