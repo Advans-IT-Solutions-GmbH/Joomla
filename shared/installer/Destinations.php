@@ -53,6 +53,10 @@ final class Destinations
         $manifestTarget = ($definition['type'] === 'package' ? dirname($root) : $root) . '/' . basename($manifestFile);
         self::add($files, $manifestTarget, $manifestFile);
 
+        if ($id === 'plg_j2commerce_productcompare') {
+            self::add($files, $root . '/productcompare.xml', $manifestFile);
+        }
+
         if ($id === 'com_dmarcreports') {
             self::add($files, $root . '/com_dmarcreports.xml', self::operation($source, 'Remove obsolete DMARC Reports manifest'));
         }

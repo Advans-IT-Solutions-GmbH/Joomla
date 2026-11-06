@@ -57,6 +57,7 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
                 $this->reportExtensionId($parent, $keptId);
             }
 
+            $this->installOptionsManifest($parent);
             $this->setGroupForInstalledStack($parent);
             $this->ensureUpdateSite();
 
@@ -275,6 +276,17 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         );
 
         $setId($adapter, $extensionId);
+    }
+
+    private function installOptionsManifest($parent): void
+    {
+        // Joomla's plugin options load {element}.xml, not the package manifest name.
+        $source = (string) $parent->getParent()->getPath('manifest');
+        $target = JPATH_PLUGINS . '/j2commerce/productcompare/productcompare.xml';
+
+        if (!copy($source, $target)) {
+            throw new \RuntimeException('The plugin options manifest could not be installed.');
+        }
     }
 
     /**

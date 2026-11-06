@@ -273,12 +273,28 @@ namespace {
         file_put_contents($canonical . '/custom.php', '<?php echo "canonical custom";');
         file_put_contents($mirror . '/custom.php', '<?php echo "mirror custom";');
         $productXml = '<extension type="plugin" group="j2commerce"><name>plg_j2commerce_productcompare</name><files><filename plugin="productcompare">payload.php</filename></files></extension>';
-        file_put_contents($productSource . '/productcompare.xml', $productXml);
-        $productFiles = \Advans\Installer\Destinations::files(simplexml_load_string($productXml), $productSource, $productSource . '/productcompare.xml');
+        $productManifest = $productSource . '/plg_j2commerce_productcompare.xml';
+        file_put_contents($productManifest, $productXml);
+        file_put_contents($canonical . '/productcompare.xml', '<foreign/>');
+        $productFiles = \Advans\Installer\Destinations::files(simplexml_load_string($productXml), $productSource, $productManifest);
+        mkdir($work . '/options-backups', 0700);
+        $optionsPlan = \Advans\Installer\FileGuard::inspect($productFiles, $work . '/options-backups');
+        $assert(count($optionsPlan) === 1 && !$optionsPlan[0]['approved'], 'A foreign options manifest must require explicit approval.');
+        $assert(file_get_contents($canonical . '/productcompare.xml') === '<foreign/>', 'Options manifest inventory changed existing bytes.');
+        \Advans\Installer\FileGuard::verifyBackup($optionsPlan[0]['backup'], $optionsPlan[0]['destination'], $optionsPlan[0]['existing']);
         require dirname(__DIR__, 2) . '/j2commerce/plg_j2commerce_productcompare/script.php';
+        $optionsInstaller = new \ReflectionMethod(\PlgJ2commerceProductcompareInstallerScript::class, 'installOptionsManifest');
+        $optionsParent = new class($productManifest) {
+            public function __construct(private string $manifest) {}
+            public function getParent(): self { return $this; }
+            public function getPath(string $key): string { return $this->manifest; }
+        };
+        $optionsInstaller->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $optionsParent);
+        $assert(file_get_contents($canonical . '/productcompare.xml') === $productXml, 'Plugin options manifest was not installed with its element name.');
         $copyMirror = new \ReflectionMethod(\PlgJ2commerceProductcompareInstallerScript::class, 'copyMirrorFiles');
         $copyMirror->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $productFiles, $mirror);
         $assert(file_get_contents($mirror . '/payload.php') === '<?php echo "incoming";', 'Incoming mirrored payload was not copied.');
+        $assert(file_get_contents($mirror . '/productcompare.xml') === $productXml, 'Joomla 5 mirror lacks the element-named options manifest.');
         $assert(file_get_contents($mirror . '/custom.php') === '<?php echo "mirror custom";', 'An unlisted canonical file overwrote a mirror customization.');
         $legacyCopy = new \ReflectionMethod(\PlgJ2commerceProductcompareInstallerScript::class, 'copyLegacyTree');
         $legacyCopy->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $canonical, $work . '/legacy-copy');

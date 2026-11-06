@@ -107,6 +107,8 @@ namespace {
                 if (strtolower((string) $manifest->name) === 'plg_j2commerce_productcompare') {
                     $mirror = str_replace('\\', '/', JPATH_PLUGINS . '/j2store/productcompare');
                     $assert(isset($files[$mirror . '/advansinstaller/SystemCheck.php']), 'Joomla 5 mirror is missing from the guarded destinations.');
+                    $assert(($files[str_replace('\\', '/', $installed . '/productcompare.xml')] ?? null) === $manifestFile, 'Canonical options manifest is not guarded with the incoming manifest bytes.');
+                    $assert(($files[$mirror . '/productcompare.xml'] ?? null) === $manifestFile, 'Mirrored options manifest is not guarded.');
                 }
 
                 if ($definition['type'] === 'package') {
