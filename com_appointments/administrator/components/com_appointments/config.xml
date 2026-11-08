@@ -6,7 +6,7 @@
     SPDX-License-Identifier: GPL-3.0-or-later
 -->
 <config addruleprefix="Advans\Component\Appointments\Administrator\Rule">
-    <fieldset name="basic">
+    <fieldset name="basic" label="COM_APPOINTMENTS_CONFIG_BASIC_LABEL">
         <field name="autoload_language" type="hidden" default="1" />
         <field name="consent_mode" type="list" label="COM_APPOINTMENTS_CONFIG_CONSENT_MODE" description="COM_APPOINTMENTS_CONFIG_CONSENT_MODE_DESC" default="notice" filter="cmd" validate="options">
             <option value="notice">COM_APPOINTMENTS_CONFIG_CONSENT_MODE_NOTICE</option>
@@ -83,5 +83,12 @@
     </fieldset>
     <fieldset name="permissions" label="JCONFIG_PERMISSIONS_LABEL" description="JCONFIG_PERMISSIONS_DESC">
         <field name="rules" type="rules" label="JCONFIG_PERMISSIONS_LABEL" class="inputbox" validate="rules" filter="rules" component="com_appointments" section="component" />
+    </fieldset>
+    <fieldset name="data-lifecycle" label="COM_APPOINTMENTS_CONFIG_UNINSTALL">
+        <field name="uninstall_data_action" type="list" label="COM_APPOINTMENTS_CONFIG_UNINSTALL_ACTION" description="COM_APPOINTMENTS_CONFIG_UNINSTALL_ACTION_DESC" default="" filter="cmd" validate="options">
+            <option value="">COM_APPOINTMENTS_CONFIG_UNINSTALL_ACTION_UNSET</option>
+            <option value="keep">COM_APPOINTMENTS_CONFIG_UNINSTALL_ACTION_KEEP</option>
+            <option value="delete">COM_APPOINTMENTS_CONFIG_UNINSTALL_ACTION_DELETE</option>
+        </field>
     </fieldset>
 </config>

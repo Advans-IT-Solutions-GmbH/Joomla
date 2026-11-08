@@ -1,5 +1,7 @@
 # DMARC Reports Ingestion Task Plugin
 
+**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+
 ## Description
 
 `plg_task_dmarcreports` is a Joomla Scheduler task plugin (group `task`) that runs the

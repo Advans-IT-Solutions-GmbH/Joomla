@@ -79,7 +79,7 @@ PHP;
     // ---- Log chain, on a copy of the log ------------------------------------
     // The file anchor of the log (work package B) only rises; this part works
     // on a copy of the log, so it sets the anchor file aside as well.
-    $anchorFile = '/var/www/html/administrator/components/com_appointments/data/epochs.php';
+    $anchorFile = '/var/www/html/administrator/components/com_appointments-data/epochs.php';
     $anchorCopy = is_file($anchorFile) ? (string) file_get_contents($anchorFile) : null;
     $earlier = $run('$v = $services->audit()->verify(); return ["intact" => $v->intact, "rows" => $v->checkedRows];');
     $db->query("DROP TABLE IF EXISTS {$p}{$tag}_log");
@@ -350,6 +350,25 @@ for ($i = 0; $i < 15; $i++) { $services->audit()->log("object.updated", ["calend
         '$u = ' . var_export($user, true) . '; $o = ' . var_export($other, true) . '; $l = $services->lockout();' . "\n" . $code, $now);
 
     try {
+        $suite->test('Authenticated lock checks neither consume attempts nor clear existing account or address locks', static function () use ($lock) {
+            $r = $lock('$subject = $u . "-read-only";
+                for ($i = 0; $i < 20; $i++) {
+                    if ($l->remainingLock($subject, "203.0.113.201") !== 0) { return false; }
+                }
+                for ($i = 0; $i < 9; $i++) { $l->recordFailure($subject, "203.0.113.201"); }
+                $forget();
+                for ($i = 0; $i < 20; $i++) {
+                    if ($l->remainingLock($subject, "203.0.113.201") !== 0) { return false; }
+                }
+                $l->recordFailure($subject, "203.0.113.201"); $forget();
+                $userLock = $l->remainingLock($subject, "203.0.113.202");
+                $addressLock = $l->remainingLock($subject . "-other", "203.0.113.201");
+                return $userLock > 0 && $addressLock > 0
+                    && $l->remainingLock($subject, "203.0.113.202") === $userLock;');
+
+            return $r === true;
+        });
+
         $suite->test('Nine failures do not lock, the tenth locks for one minute', static function () use ($lock) {
             $r = $lock('for ($i = 0; $i < 9; $i++) { $l->recordFailure($u, "198.51.100.7"); }
                 $nine = $l->retryAfter($u, "198.51.100.7");
@@ -437,12 +456,12 @@ sleep(3);
             return (int) $r === 10;
         });
     } finally {
-        $lock('foreach ([$u, $o, $u . "-burst", ' . var_export($tag . '-burst', true) . '] as $name) {
+        $lock('foreach ([$u, $o, $u . "-read-only", $u . "-burst", ' . var_export($tag . '-burst', true) . '] as $name) {
             foreach (LockoutService::buckets($services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_AUTH_BUCKET), LockoutService::identityFor(0, $name), "") as $b) {
                 $services->db()->setQuery("DELETE FROM #__appointments_auth_failures WHERE bucket = UNHEX(" . $services->db()->quote(bin2hex($b)) . ")")->execute();
             }
         }
-        foreach (["198.51.100.7", "203.0.113.50", "203.0.113.9", "2001:db8:7:7::1", "2001:db8:7:8::1"] as $ip) {
+        foreach (["198.51.100.7", "203.0.113.50", "203.0.113.9", "203.0.113.201", "2001:db8:7:7::1", "2001:db8:7:8::1"] as $ip) {
             $b = LockoutService::buckets($services->keyProvider()->key(KeyProvider::PURPOSE_TEAM_AUTH_BUCKET), "name:x", $ip)["ip"];
             $services->db()->setQuery("DELETE FROM #__appointments_auth_failures WHERE bucket = UNHEX(" . $services->db()->quote(bin2hex($b)) . ")")->execute();
         }

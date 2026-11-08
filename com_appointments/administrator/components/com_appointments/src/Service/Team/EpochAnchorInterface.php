@@ -24,7 +24,7 @@ defined('_JEXEC') or die;
  * the database together with its rows is detected: a row is valid only when its
  * epoch is at least the anchored one.
  *
- * File: `administrator/components/com_appointments/data/epochs.php`, a PHP file
+ * File: `administrator/components/com_appointments-data/epochs.php`, a PHP file
  * that returns its data only inside Joomla (`defined('_JEXEC') or die`), written
  * atomically (temporary file and rename) under an exclusive lock. When the file
  * cannot be written, every method keeps working without the anchor, writable()

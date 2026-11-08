@@ -57,6 +57,31 @@ class StructureTest
     {
         echo "=== Structure Tests ===\n\n";
 
+        $this->test('Uninstall choice defaults to keeping data and is not handled by uninstall SQL', function () {
+            $configPath = $this->admin . '/config.xml';
+            $manifestPath = $this->admin . '/appointments.xml';
+            $config = is_file($configPath) ? simplexml_load_file($configPath) : false;
+            $manifest = is_file($manifestPath) ? simplexml_load_file($manifestPath) : false;
+
+            if (!$config || !$manifest) {
+                return false;
+            }
+
+            $field = $config->xpath('//field[@name="uninstall_data_action"]');
+
+            if (!$field || (string) $field[0]['default'] !== '') {
+                return false;
+            }
+
+            $options = [];
+
+            foreach ($field[0]->option as $option) {
+                $options[] = (string) $option['value'];
+            }
+
+            return $options === ['', 'keep', 'delete'] && !isset($manifest->uninstall);
+        });
+
         foreach (self::TABLES as $table) {
             $this->test("Table #__{$table} exists", function () use ($table) {
                 $result = $this->db->query("SHOW TABLES LIKE '{$this->dbPrefix}{$table}'");
@@ -372,7 +397,6 @@ class StructureTest
             'Dashboard view'          => $this->admin . '/src/View/Dashboard/HtmlView.php',
             'Dashboard layout'        => $this->admin . '/tmpl/dashboard/default.php',
             'Install SQL'             => $this->admin . '/sql/install.mysql.utf8.sql',
-            'Uninstall SQL'           => $this->admin . '/sql/uninstall.mysql.utf8.sql',
             'Schema migration'        => $this->admin . '/sql/updates/mysql/1.0.0.sql',
             'Display migration'       => $this->admin . '/sql/updates/mysql/1.3.0.sql',
             'Team calendar migration' => $this->admin . '/sql/updates/mysql/1.4.0.sql',

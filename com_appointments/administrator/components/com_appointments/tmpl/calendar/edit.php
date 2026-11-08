@@ -19,8 +19,13 @@ defined('_JEXEC') or die;
 
 /** @var \Advans\Component\Appointments\Administrator\View\Calendar\HtmlView $this */
 
-if (!$this->enabled) : ?>
-    <div class="alert alert-info" role="status"><?php echo Text::_('COM_APPOINTMENTS_TEAM_DISABLED'); ?></div>
+if (!$this->enabled || !$this->available) : ?>
+    <div class="alert <?php echo $this->enabled ? 'alert-warning' : 'alert-info'; ?>" role="status"><?php echo Text::_($this->enabled ? 'COM_APPOINTMENTS_TEAM_C_ERROR_UNAVAILABLE' : 'COM_APPOINTMENTS_TEAM_DISABLED'); ?></div>
+    <form action="<?php echo Route::_('index.php?option=com_appointments'); ?>" method="post" name="adminForm" id="calendar-form" class="form-validate">
+        <input type="hidden" name="id" value="<?php echo Factory::getApplication()->getInput()->getInt('id', 0); ?>">
+        <input type="hidden" name="task" value="">
+        <?php echo HTMLHelper::_('form.token'); ?>
+    </form>
     <?php return; ?>
 <?php endif;
 
@@ -49,10 +54,6 @@ $roleSelect = function (string $id, ?int $selected, bool $external): string {
 };
 $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScript('keepalive');
 ?>
-<?php if (!$this->available) : ?>
-    <div class="alert alert-warning" role="status"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_ERROR_UNAVAILABLE'); ?></div>
-<?php endif; ?>
-
 <form action="<?php echo $action; ?>" method="post" name="adminForm" id="calendar-form" class="form-validate">
     <div class="row">
         <div class="col-lg-8">

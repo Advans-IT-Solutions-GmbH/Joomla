@@ -91,7 +91,8 @@ class CalendarsController extends BaseController
 
     public function cancel(): bool
     {
-        $this->guard(true);
+        // A held edit must also close after the feature has been switched off.
+        $this->guard(true, false);
         $id = $this->input->getInt('id', 0);
 
         if ($id > 0) {
@@ -416,7 +417,7 @@ class CalendarsController extends BaseController
         }
     }
 
-    private function guard(bool $post): TeamServices
+    private function guard(bool $post, bool $requireEnabled = true): TeamServices
     {
         if (!$this->app->getIdentity()->authorise('core.manage', 'com_appointments')) {
             throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
@@ -428,7 +429,7 @@ class CalendarsController extends BaseController
 
         $services = TeamServices::fromApplication();
 
-        if (!$services->enabled()) {
+        if ($requireEnabled && !$services->enabled()) {
             throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
         }
 

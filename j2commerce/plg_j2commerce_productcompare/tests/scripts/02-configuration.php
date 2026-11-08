@@ -54,9 +54,9 @@ class ConfigurationTest
             return file_exists(JPATH_PLUGINS . '/j2commerce/productcompare/language/de-DE/plg_j2commerce_productcompare.ini');
         });
 
-        $this->test('XML manifest exists', function () {
-            return file_exists(JPATH_PLUGINS . '/j2commerce/productcompare/plg_j2commerce_productcompare.xml')
-                || file_exists(JPATH_PLUGINS . '/j2commerce/productcompare/productcompare.xml');
+        $this->test('Element-named options manifest exists in the registered plugin group', function () {
+            $group = \Joomla\CMS\Version::MAJOR_VERSION >= 6 ? 'j2commerce' : 'j2store';
+            return file_exists(JPATH_PLUGINS . '/' . $group . '/productcompare/productcompare.xml');
         });
 
         $this->test('tmpl/button.php layout exists', function () {
@@ -134,7 +134,7 @@ class ConfigurationTest
 
     private function loadManifest(): ?\SimpleXMLElement
     {
-        $path = JPATH_PLUGINS . '/j2commerce/productcompare/plg_j2commerce_productcompare.xml';
+        $path = JPATH_PLUGINS . '/j2commerce/productcompare/productcompare.xml';
         if (!file_exists($path)) {
             return null;
         }

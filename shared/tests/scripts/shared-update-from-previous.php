@@ -147,7 +147,7 @@ $db->query("INSERT INTO $sitesMap (update_site_id, extension_id) VALUES ($legacy
 echo "Inserted legacy update site #$legacySiteId: $legacyUrl\n\n";
 
 // 2. Install the new package over the previous version.
-[$code, $output] = sh_cli_install(JOOMLA_ROOT, $updatePackage);
+[$code, $output] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, $updatePackage);
 $clean = sh_strip_ansi($output);
 echo $clean . "\n\n";
 

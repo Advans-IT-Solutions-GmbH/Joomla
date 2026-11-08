@@ -7,6 +7,7 @@
  */
 
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 
@@ -43,6 +44,7 @@ $details = $this->step === 'details';
 ?>
 <div class="com-appointments com-appointments-eventtype" data-appointments-booking>
     <div class="com-appointments-container" data-appointments-view data-step="<?php echo $details ? 'details' : 'time'; ?>">
+        <p><a class="btn btn-outline-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtypes'); ?>"><?php echo Text::_($details ? 'JCANCEL' : 'COM_APPOINTMENTS_BACK_TO_OVERVIEW'); ?></a></p>
         <?php if ($this->titleAbove) : ?>
             <h1 class="com-appointments-heading com-appointments-page-title"><?php echo $this->escape($this->pageHeading); ?></h1>
         <?php endif; ?>

@@ -84,6 +84,11 @@ Advans-IT-Solutions-GmbH/Joomla
 
 ## Workflows
 
+Shared installer support and the repeatable administrator check are staged at build time
+(`shared/installer/`, `shared/build/prepare-installer.php`; PHP CLI 8.1+ required).
+See the root `README.md`, section "Installation safety and repeatable system checks", for
+the file-backup/explicit-approval flow and administrator menu paths.
+
 See `references/release-workflow.md` for the full release process.
 See `references/testing.md` for running tests locally.
 

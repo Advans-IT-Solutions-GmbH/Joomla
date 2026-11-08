@@ -1,0 +1,11 @@
+{
+  "name": "joomla-backend-pointer-tests",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}

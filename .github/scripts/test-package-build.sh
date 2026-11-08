@@ -6,6 +6,7 @@ FIXTURE="$(mktemp -d)"
 trap 'rm -rf "$FIXTURE"' EXIT
 mkdir -p "$FIXTURE/bin" "$FIXTURE/build-tools" "$FIXTURE/extension"
 cp "$ROOT/shared/build/build.sh" "$FIXTURE/build-tools/build.sh"
+printf '%s\n' '<?php exit(0);' >"$FIXTURE/build-tools/prepare-installer.php"
 cat >"$FIXTURE/bin/rsync" <<'EOF'
 #!/usr/bin/env bash
 exit 0
