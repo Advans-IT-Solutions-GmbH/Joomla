@@ -77,7 +77,7 @@ final class GrantMatrixTest extends TestCase
 
     public function testTheExternalRightAloneDoesNotShareWithTheTeam(): void
     {
-        // A Super User has every permission, but no grant: default deny holds.
+        // External sharing alone is not component administrative authority.
         self::assertFalse(GrantService::mayGrant(null, true, self::TEAM, CalendarRole::Read, true, false, false));
         self::assertFalse(GrantService::mayGrant(CalendarRole::Write, true, self::TEAM, CalendarRole::Read, true, false, false));
     }
@@ -106,6 +106,18 @@ final class GrantMatrixTest extends TestCase
                 }
             }
         }
+    }
+
+    public function testAdministrativeGrantStillObeysAudienceAndOwnerLimits(): void
+    {
+        foreach (CalendarRole::cases() as $role) {
+            self::assertTrue(GrantService::mayGrant(null, false, self::TEAM, $role, false, false, true, true));
+            self::assertSame($role === CalendarRole::Manage, GrantService::mayGrant(null, false, self::TEAM, $role, false, true, true, true));
+            self::assertFalse(GrantService::mayGrant(null, true, self::NONE, $role, true, false, false, true));
+            self::assertFalse(GrantService::mayGrant(null, false, self::EXTERNAL, $role, true, false, false, true));
+            self::assertSame($role !== CalendarRole::Manage, GrantService::mayGrant(null, true, self::EXTERNAL, $role, true, false, true, true));
+        }
+        self::assertTrue(GrantService::mayRevoke(null, false, self::TEAM, self::NONE, true, true, true));
     }
 
     public function testRecoveryBypassesTheManagerRuleButNotTheAudienceRules(): void

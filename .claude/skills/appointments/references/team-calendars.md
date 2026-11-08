@@ -77,9 +77,23 @@ Protected:
   carry a `row_mac` (HMAC with a server key). A row added or changed without the site secret fails
   verification and grants nothing. Without this, an attacker who can write one table could insert a
   grant, swap a user's public key and receive the calendar key with the next key completion.
-- **Administrators without a grant**: a Super User sees calendar lists and the log, never contents.
-  A Super User can still grant themselves access; every grant is logged and mailed to the calendar's
-  owner and managers, so it cannot happen silently.
+- **Administrators without a grant**: an active component `core.admin` account manages calendar
+  settings, deletion (also `core.delete`), revocation and ownership, but sees no contents.
+  Administrative grants (including self-grants) and owner assignments require `requireUnlocked()`:
+  password sign-in, an approved session second factor and the actor's own user key, not calendar keys.
+  Grants obey audience/external limits and remain ineffective for key-holding roles without genuine
+  wraps. Only a real key holder or authorised offline recovery can complete those wraps.
+  Every grant is logged and mailed to the owner and managers.
+
+Administrative owner assignment writes a Manage grant and owner metadata atomically; it never
+manufactures keys. A pending owner has no effective Manage or content access. The former owner's
+grant is retained and can be administratively revoked separately (wrap removal, epoch advance,
+rotation due). Revoking the current owner clears owner metadata too. Metadata updates, revocation
+and deletion require no keys or MFA, except external-sharing changes retain their separate permission
+and MFA requirements. All backend POST/CSRF/edit-id and Joomla ACL gates remain.
+Administrators may configure public free/busy exposure through event-type calendar links and remove
+inaccessible old links. Hosts still need genuine effective busy access and target Write; ordinary
+editors must also hold their own access. Personal calendars and CalDAV never inherit `core.admin`.
 
 Not protected, stated plainly. **In one sentence: the encryption protects when the database or a
 backup leaks, not when somebody executes code on the server.** End-to-end encryption was considered

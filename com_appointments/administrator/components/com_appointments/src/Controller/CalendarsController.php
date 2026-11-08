@@ -195,6 +195,21 @@ class CalendarsController extends BaseController
         }, $this->editUrl($id));
     }
 
+    public function assignOwner(): bool
+    {
+        $services = $this->guard(true);
+        $this->requireAdmin();
+        $id = $this->heldId();
+        $grantee = $this->input->post->getInt('user_id', 0);
+
+        return $this->attempt(function () use ($services, $id, $grantee): void {
+            $services->grants()->grant($this->actor(), $id, $grantee, CalendarRole::Manage, $services->keySession()->requireUnlocked(), true);
+            $pending = $services->grants()->accessFor($grantee, $id) === null;
+            $this->app->enqueueMessage(Text::_($pending ? 'COM_APPOINTMENTS_TEAM_C_GRANT_SAVED_PENDING' : 'COM_APPOINTMENTS_TEAM_C_GRANT_SAVED'), 'message');
+            $this->setRedirect($this->editUrl($id));
+        }, $this->editUrl($id));
+    }
+
     public function rotate(): bool
     {
         $services = $this->guard(true);

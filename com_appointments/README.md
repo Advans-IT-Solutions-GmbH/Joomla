@@ -546,8 +546,15 @@ possible with CalDAV clients.
   dates, times, event types and states stay readable, because reminders and the slot calculation
   need them. A row added or changed in the database without the site
   secret grants nothing. A Super User without a grant sees calendar lists and the log, never
-  contents; granting oneself access is possible, but it is logged and mailed to the calendar's
-  owner and managers.
+  contents. Active accounts with `core.admin` on the component can edit settings, delete valid
+  foreign or orphan calendars (with `core.delete`), revoke any grant and assign an owner.
+  Grants, including self-grants and owner assignments, require a password-authenticated session
+  with an approved second factor and the administrator's unlocked own user key (not a calendar key),
+  and obey the configured audience and external-role limits. A key-holding grant without genuine
+  wraps remains pending: only a real key holder or authorised use of the offline recovery key can
+  complete it. Administrative privilege never decrypts contents. Each grant is logged and mailed
+  to the owner and managers.
+
 - **Not protected:** anybody who executes code on the server, which includes a compromised
   extension, the hosting provider and anybody with access to the files: while a key holder's request
   runs, the calendar key is in memory, and such an attacker can also capture app passwords. A copy
@@ -567,6 +574,20 @@ possible with CalDAV clients.
   forged booking request (a crafted POST, not the booking page) for a time the page did not offer
   is accepted, because the busy times of that calendar are unknown. The booking page itself offers
   only free times.
+
+**Administrative ownership:** assigning an active team account writes a Manage grant and updates
+the owner atomically. Without real wraps the new owner's grant is not effective; ownership alone
+does not permit contents or personal-calendar management. The former owner's existing grant is
+retained, not silently revoked. Revoke it separately if required: wraps are removed, the epoch
+advances and rotation is marked due until a genuine key holder rotates. Administratively revoking
+the current owner also clears ownership. Ordinary settings, revocation and deletion do not need MFA or
+a keyring; changing external sharing retains its separate permission and MFA requirements.
+The backend still enforces Joomla ACL, POST, CSRF and held edit ids.
+
+Component administrators may configure calendar links and remove inaccessible links on booking
+pages, deliberately controlling public free/busy exposure without obtaining contents. The host
+still needs real effective access to busy calendars and real Write access to the target, including
+when the host is a Super User. Ordinary editors still need their own effective access as well.
 
 #### Updating to 1.4.0
 

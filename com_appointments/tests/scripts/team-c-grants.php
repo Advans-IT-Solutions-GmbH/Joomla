@@ -269,7 +269,7 @@ return static function (TeamSuite $suite): void {
             'The owner manages a new calendar, a Super User without a grant sees nothing',
             'A manager grants the team, a reader grants nobody, a manager does not share externally',
             'Only the right to share externally grants an external user, at most write',
-            'Nobody changes the owner\'s grant or their own',
+            'Ordinary members cannot change the owner\'s grant or their own',
             'A grant without second factor, of a blocked account or outside the groups is not effective',
             'A grant or calendar row written by SQL alone grants nothing, also not after a suspension',
             'Revoking removes the key wraps and marks the rotation due',
@@ -335,6 +335,11 @@ return static function (TeamSuite $suite): void {
         $calendar = $services->calendars()->create($super, ['title' => $tag, 'owner_user_id' => $owner, 'allow_external' => 1]);
         $calendars[] = $calendar;
         $grants = $services->grants();
+
+        $administration = require __DIR__ . '/team-calendar-administration.php';
+        foreach ($administration($services, $super) as $name => $passed) {
+            $suite->test($name, static fn (): bool => $passed);
+        }
 
         $suite->test('An unavailable calendar retains its held id and token-protected Close form', static function () use ($calendar) {
             $input = \Joomla\CMS\Factory::getApplication()->getInput();
@@ -477,8 +482,7 @@ return static function (TeamSuite $suite): void {
         $suite->test($grantE2e[3], static function () use ($grants, $calendar, $owner, $member, $super, $refused) {
             return $refused(static fn () => $grants->grant($owner, $calendar, $owner, CalendarRole::Read, null), 403)
                 && $refused(static fn () => $grants->revoke($owner, $calendar, $owner, null), 403)
-                && $refused(static fn () => $grants->grant($member, $calendar, $member, CalendarRole::Manage, null), 403)
-                && $refused(static fn () => $grants->revoke($super, $calendar, $owner, null), 403);
+                && $refused(static fn () => $grants->grant($member, $calendar, $member, CalendarRole::Manage, null), 403);
         });
 
         $suite->test($grantE2e[4], static function () use ($grants, $calendar, $owner, $member, $nomfa, $ownerKeys, $teamGroup, $db, $p) {
@@ -537,33 +541,35 @@ return static function (TeamSuite $suite): void {
         $keys->createUserKey($boss, 'Fixture-Password-1!');
         $second = $services->calendars()->create($boss, ['title' => $tag . '-second', 'owner_user_id' => $boss, 'allow_external' => 1]);
         $calendars[] = $second;
+        $snapshotManager = $user('snapshotManager', [$teamGroup], true);
+        $keys->createUserKey($snapshotManager, 'Fixture-Password-1!');
 
         foreach ($snapshotE2e as $lost => $name) {
             $suite->test($name, static function () use (
-                $services, $grants, $owner, $ownerKeys, $boss, $member, $refused, $db, $p, $tag, &$calendars, $lost
+                $services, $grants, $owner, $ownerKeys, $boss, $snapshotManager, $member, $refused, $db, $p, $tag, &$calendars, $lost
             ) {
                 $title = $tag . '-snapshot-' . $lost;
                 $id = $services->calendars()->create($boss, ['title' => $title, 'owner_user_id' => $owner]);
                 $calendars[] = $id;
-                $grants->grant($owner, $id, $boss, CalendarRole::Manage, $ownerKeys);
+                $grants->grant($owner, $id, $snapshotManager, CalendarRole::Manage, $ownerKeys);
                 $grants->grant($owner, $id, $member, CalendarRole::Read, $ownerKeys);
                 $connection = $services->db();
                 $connection->setQuery('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')->execute();
                 $connection->transactionStart();
 
                 try {
-                    $before = $grants->accessFor($boss, $id)?->role === CalendarRole::Manage;
+                    $before = $grants->accessFor($snapshotManager, $id)?->role === CalendarRole::Manage;
                     // The suite's mysqli connection commits independently of Joomla's
                     // snapshot. Do not advance the anchor: it must not be needed to
                     // detect a missing grant or wrap in the current database.
                     $table = $lost === 'grant' ? 'appointments_calendar_grants' : 'appointments_calendar_key_wraps';
-                    $db->query("DELETE FROM {$p}{$table} WHERE calendar_id={$id} AND user_id={$boss}");
-                    $stale = $grants->accessFor($boss, $id)?->role === CalendarRole::Manage;
+                    $db->query("DELETE FROM {$p}{$table} WHERE calendar_id={$id} AND user_id={$snapshotManager}");
+                    $stale = $grants->accessFor($snapshotManager, $id)?->role === CalendarRole::Manage;
                     $checks = [];
-                    $checks[] = $refused(static fn () => $services->calendars()->update($boss, $id, ['title' => 'refused']), 403);
-                    $checks[] = $refused(static fn () => $grants->grant($boss, $id, $member, CalendarRole::FreeBusy, null), 403);
-                    $checks[] = $refused(static fn () => $grants->revoke($boss, $id, $member, null), 403);
-                    $checks[] = $refused(static fn () => $services->calendars()->delete($boss, $id), 403);
+                    $checks[] = $refused(static fn () => $services->calendars()->update($snapshotManager, $id, ['title' => 'refused']), 403);
+                    $checks[] = $refused(static fn () => $grants->grant($snapshotManager, $id, $member, CalendarRole::FreeBusy, null), 403);
+                    $checks[] = $refused(static fn () => $grants->revoke($snapshotManager, $id, $member, null), 403);
+                    $checks[] = $refused(static fn () => $services->calendars()->delete($snapshotManager, $id), 403);
                     $unchanged = $connection->setQuery("SELECT title FROM {$p}appointments_calendars WHERE id={$id} FOR UPDATE")->loadResult() === $title
                         && (int) $connection->setQuery("SELECT role FROM {$p}appointments_calendar_grants WHERE calendar_id={$id} AND user_id={$member} FOR UPDATE")->loadResult() === CalendarRole::Read->value;
 

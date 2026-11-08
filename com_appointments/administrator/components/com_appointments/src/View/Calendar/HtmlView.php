@@ -69,10 +69,13 @@ class HtmlView extends BaseHtmlView
     /** @var bool  May remove external grants (the right to share externally), whatever the calendar setting. */
     protected $canRevokeExternal = false;
 
+    protected $administrator = false;
+
     public function display($tpl = null)
     {
         $app = Factory::getApplication();
         $user = $app->getIdentity();
+        $this->administrator = GrantService::isAdministrator((int) $user->id);
 
         if (!$user->authorise('core.manage', 'com_appointments')) {
             throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
@@ -135,13 +138,16 @@ class HtmlView extends BaseHtmlView
                     && GrantService::sharesExternally($services, (int) $user->id);
 
                 foreach (GrantService::eligibleUsers($services) as $account) {
-                    if (!\in_array($account->id, $held, true) && $account->id !== (int) $user->id
-                        && ($account->audience === 'team' ? $this->myRole === CalendarRole::Manage : $this->canShareExternally)) {
+                    if (!\in_array($account->id, $held, true) && ($account->id !== (int) $user->id || $this->administrator)
+                        && ($account->audience === 'team' ? ($this->administrator || $this->myRole === CalendarRole::Manage) : $this->canShareExternally)) {
                         $this->candidates[] = $account;
+                    }
+                    if ($this->administrator && $account->audience === 'team') {
+                        $this->owners[] = $account;
                     }
                 }
 
-                $this->canDelete = $user->authorise('core.delete', 'com_appointments') && $this->myRole === CalendarRole::Manage;
+                $this->canDelete = $user->authorise('core.delete', 'com_appointments') && ($this->administrator || $this->myRole === CalendarRole::Manage);
                 $data = $data ?: (array) $this->item;
             } else {
                 foreach (GrantService::eligibleUsers($services) as $account) {
@@ -156,7 +162,7 @@ class HtmlView extends BaseHtmlView
 
         $this->form = $this->getModel()->getForm($data);
         $this->ownerChoice = (int) ($data['owner_user_id'] ?? 0);
-        $editable = $id > 0 ? $this->myRole === CalendarRole::Manage : $user->authorise('core.create', 'com_appointments');
+        $editable = $id > 0 ? ($this->administrator || $this->myRole === CalendarRole::Manage) : $user->authorise('core.create', 'com_appointments');
 
         if (!$editable && $this->form) {
             foreach (['title', 'description', 'colour', 'allow_external', 'blocks_availability', 'retention_days'] as $field) {

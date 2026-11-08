@@ -68,10 +68,13 @@ interface GrantServiceInterface
      * wrapped at once; without (or when the grantee has no key pair yet) the
      * grant is pending until a key holder's request completes it. Mails the
      * calendar's owner and managers, logs `grant.created` or `grant.changed`.
+     * MFA-checked component administrators may grant without their own calendar
+     * role, including to themselves. With $makeOwner (team Manage only), owner
+     * metadata changes atomically; the old owner's grant remains untouched.
      *
      * @throws  \Advans\Component\Appointments\Administrator\Helper\Team\TeamException  403 when not allowed.
      */
-    public function grant(int $actorUserId, int $calendarId, int $granteeUserId, CalendarRole $role, ?KeyContext $actorKeys): void;
+    public function grant(int $actorUserId, int $calendarId, int $granteeUserId, CalendarRole $role, ?KeyContext $actorKeys, bool $makeOwner = false): void;
 
     /**
      * Remove a grant and every wrap of the user for this calendar. When the user
