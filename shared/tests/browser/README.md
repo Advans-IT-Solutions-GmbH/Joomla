@@ -4,6 +4,10 @@ These tests run against installed extensions in a disposable, mail-disabled Joom
 not mocked HTML. They cover the Appointments event-type editor and the DMARC administrator
 module editor: every top-level tab and every nested permission group, including closing
 and reopening active mobile accordion sections.
+The module's four expected panes include the System Check pane injected into the built
+manifest by the shared installer. Its content and pointer access are checked in the same
+matrix as General, Advanced and Permissions; the source manifest alone is not the installed
+form contract.
 
 The matrix uses real Microsoft Edge and Playwright Firefox at **375, 768, 1024, 1280, 1440,
 1600 and 1920 px**, each in light and dark mode: 84 pointer cases. Another 24 cases at

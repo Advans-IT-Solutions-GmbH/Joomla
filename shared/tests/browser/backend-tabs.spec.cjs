@@ -67,7 +67,11 @@ async function openEditor(page, testInfo, surface) {
     await expect(page.locator('html')).toHaveCSS('scroll-behavior', 'auto');
     const rootTabs = page.locator(surface === 'eventtype' ? '#eventtype-tabs' : '#myTab');
     await expect(rootTabs.locator(':scope > div[role=tablist]')).toHaveCount(1);
-    await expect(rootTabs.locator(':scope > joomla-tab-element')).toHaveCount(surface === 'eventtype' ? 2 : 3);
+    const paneIds = surface === 'eventtype'
+        ? ['details', 'permissions']
+        : ['general', 'attrib-advanced', 'attrib-advans_systemcheck', 'permissions'];
+    await expect(rootTabs.locator(':scope > joomla-tab-element')).toHaveCount(paneIds.length);
+    expect(await rootTabs.locator(':scope > joomla-tab-element').evaluateAll(panes => panes.map(pane => pane.id))).toEqual(paneIds);
     const permissions = page.locator('#permissions-sliders');
     await expect(permissions.locator(':scope > joomla-tab-element')).toHaveCount(fixture.groupCount);
     if (surface === 'eventtype') {
@@ -104,6 +108,9 @@ async function exerciseTabs(page, tabs) {
             clicks++;
         }
         await expect(pane).toBeVisible();
+        if (id === 'attrib-advans_systemcheck') {
+            await expect(pane.locator('.advans-system-check')).toBeVisible();
+        }
         if (await tabs.getAttribute('id') === 'permissions-sliders') {
             const geometry = await pane.evaluate(element => {
                 const box = element.getBoundingClientRect();
