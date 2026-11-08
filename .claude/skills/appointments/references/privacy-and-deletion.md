@@ -99,7 +99,8 @@ writing it; the mechanics, the event names and the known traps are documented th
 - **Removal request:** apply the same anonymisation as path 1, to every booking for that address,
   and report what was done.
 - **Guest addresses:** the address is also looked up in `guest_emails` of other people's bookings,
-  exactly per line after Unicode case folding (SQL only narrows the candidates). The export has a
+  exactly per line after trimmed Unicode lowercasing, not full case folding (SQL only narrows the
+  candidates; the sharp s remains distinct from `ss`). The export has a
   second domain, `appointments_guest_invitations`, with only the booking id, the guest address,
   the event type title, the UTC times and the state. Removal takes the address out of those guest
   lists only (audit `remove_guest` / `privacy_request`) and leaves those bookings otherwise

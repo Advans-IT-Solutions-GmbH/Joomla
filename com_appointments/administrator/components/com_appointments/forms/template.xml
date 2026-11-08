@@ -4,10 +4,10 @@
     <fieldset name="details">
         <field name="id" type="hidden" filter="integer" />
         <field name="eventtype_id" type="Eventscope" sitewide="true" label="COM_APPOINTMENTS_TEMPLATE_SCOPE" description="COM_APPOINTMENTS_TEMPLATE_SCOPE_DESC" required="true" filter="integer">
-            <option value="">JOPTION_SELECT</option>
+            <option value="">JSELECT</option>
         </field>
         <field name="purpose" type="list" label="COM_APPOINTMENTS_TEMPLATE_PURPOSE" required="true">
-            <option value="">JOPTION_SELECT</option>
+            <option value="">JSELECT</option>
             <option value="confirmation">COM_APPOINTMENTS_TEMPLATE_PURPOSE_CONFIRMATION</option>
             <option value="pending">COM_APPOINTMENTS_TEMPLATE_PURPOSE_PENDING</option>
             <option value="approved">COM_APPOINTMENTS_TEMPLATE_PURPOSE_APPROVED</option>

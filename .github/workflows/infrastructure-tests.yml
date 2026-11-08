@@ -7,12 +7,20 @@ on:
       - '.github/scripts/**'
       - '.github/workflows/**'
       - 'shared/build/**'
+      - 'shared/installer/**'
+      - 'shared/tests/installer-file-guard.php'
+      - 'shared/tests/installer-pattern.php'
+      - 'shared/tests/installer-lifecycle.php'
   pull_request:
     branches: [main]
     paths:
       - '.github/scripts/**'
       - '.github/workflows/**'
       - 'shared/build/**'
+      - 'shared/installer/**'
+      - 'shared/tests/installer-file-guard.php'
+      - 'shared/tests/installer-pattern.php'
+      - 'shared/tests/installer-lifecycle.php'
 
 permissions: {}
 
@@ -37,3 +45,9 @@ jobs:
         run: bash .github/scripts/test-collect-results.sh
       - name: Test mandatory package verification
         run: bash .github/scripts/test-package-build.sh
+      - name: Check installer backups and exact-content approvals
+        run: php shared/tests/installer-file-guard.php
+      - name: Check shared installer staging and destination coverage
+        run: php shared/tests/installer-pattern.php
+      - name: Check common installer lifecycle and translated reports
+        run: php shared/tests/installer-lifecycle.php

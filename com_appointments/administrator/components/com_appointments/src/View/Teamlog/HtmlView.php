@@ -73,6 +73,8 @@ class HtmlView extends BaseHtmlView
         }
 
         $toolbar->linkButton('dashboard')->url('index.php?option=com_appointments')->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'));
+        $toolbar->linkButton('calendars')->url('index.php?option=com_appointments&view=calendars')
+            ->text(Text::_('COM_APPOINTMENTS_TEAM_C_NAV_CALENDARS'))->icon('icon-calendar');
 
         return parent::display($tpl);
     }

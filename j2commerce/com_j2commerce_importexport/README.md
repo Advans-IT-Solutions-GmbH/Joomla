@@ -1,5 +1,7 @@
 # J2Commerce Import/Export Component
 
+**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../../README.md#installation-safety-and-repeatable-system-checks).
+
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2commerce-import-export.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2commerce-import-export.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-importexport.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-importexport.yml)
 [![Joomla 5.4+](https://img.shields.io/badge/Joomla-5.4%2B-blue.svg)](https://www.joomla.org/)
@@ -396,6 +398,11 @@ CI sets `TEST_STRICT_SKIP=1` (a test that would SKIP fails); prefix the command 
 **Solution:** Enable "Update existing products" in import options. Ensure the import file contains `article_id`, `alias`, or `sku` values that match existing products.
 
 ## Multi-Language Support
+
+All extensions and bundled plugins in this repository support exactly **de-DE, en-GB and fr-FR**,
+with complete key and placeholder parity. **de-DE uses Swiss High German** (`ss`, never `ß`,
+Swiss terminology and `z.B.`). No `de-CH` folders or build-generated copies are shipped.
+The shared language lint and package checks enforce this rule, including for future extensions.
 
 - English (`en-GB`)
 - German (`de-DE`)

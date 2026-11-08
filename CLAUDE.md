@@ -20,6 +20,12 @@ Monorepo mehrerer eigenständiger Joomla-/J2Commerce-Extensions von Advans IT So
 
 Bevor du an einer Extension arbeitest, den passenden Skill in `.claude/skills/` lesen — Inhalt dort, nicht hier:
 
+Sprachregel für alle Erweiterungen und Unter-Plugins: genau `de-DE`, `en-GB`, `fr-FR`;
+Schweizer Hochdeutsch in `de-DE`, keine `de-CH`-Ordner. Massgeblich: `AGENTS.md` und
+`joomla-extensions/references/conventions.md`, „Language Files“.
+Das gilt auch für E-Mail-Vorlagen; Sprachwahl über das Empfängerkonto, sonst die
+Site-Standardsprache (auch Gäste). Sender-Inventar und Details: `README.md`, „E-mail templates“.
+
 - `joomla-extensions` — Repo-Struktur, Test- und Release-Workflow, `update.xml`-Anforderungen, Sprachdateien-Konventionen.
 - `privacy-plugin` — Domänenwissen zu `plg_privacy_j2commerce` (GDPR/DSGVO, Retention, Consent, MyProfile-Tab, Events).
 - `dmarc-reports` — Domänenwissen zu `com_dmarcreports` (RFC 7489 Parser, IMAP-/Datei-Ingestion, Datenmodell, Action Center), zum Dashboard-Modul `mod_dmarcreports`, zum Auto-Ingestion-Task-Plugin `plg_task_dmarcreports`, zum MTA-STS-/TLS-RPT-System-Plugin `plg_system_dmarcmtasts` und zum Paket `pkg_dmarcreports`.
@@ -48,7 +54,7 @@ Joomla/
 
 **`shared/` ist der Kern.** Kern sind zwei generische Skripte (unten); daneben liegen gemeinsame Hilfsdateien (`verify-package.sh`, Docker-Vorlage, Entrypoint, Installer). Die Extensions kopieren keine Logik:
 
-- `shared/build/build.sh` — generischer Paketierer. Liest `build.env` der Extension (`EXTENSION_NAME`, `VERSION`, `EXTENSION_TYPE`), rsync't die Dateien unter Ausschluss von Tests/Docker/Composer-Artefakten, erzeugt das Installations-ZIP und ruft anschließend `verify-package.sh`. Jede Extension hat nur einen dünnen Wrapper `build.sh`, der hierher delegiert.
+- `shared/build/build.sh` — generischer Paketierer. Liest `build.env` der Extension (`EXTENSION_NAME`, `VERSION`, `EXTENSION_TYPE`), rsync't die Dateien unter Ausschluss von Tests/Docker/Composer-Artefakten, bindet mit `prepare-installer.php` die gemeinsamen Installer-Prüfungen ein, erzeugt das Installations-ZIP und ruft anschließend `verify-package.sh`. Jede Extension hat nur einen dünnen Wrapper `build.sh`, der hierher delegiert. Builds benötigen PHP CLI 8.1+; das gemeinsame Post-Install-/Systemcheck- und Dateifreigabe-Muster steht in `README.md`, Abschnitt „Installation safety and repeatable system checks“.
 - `shared/tests/run-tests.sh` — generischer Test-Runner. Liest `test.env` (`CONTAINER_NAME`, `TEST_SCRIPTS`-Array im Format `"name:script.php"`), wartet bis der Joomla-Docker-Container bereit ist, kopiert die PHP-Testskripte hinein und führt sie aus. Jede Extension hat einen Wrapper `tests/run-tests.sh`, der via `exec` hierher delegiert.
 
 **Pro Extension** (Details: `.claude/skills/joomla-extensions/references/repo-structure.md`): `build.env`, Manifest (`{plugin}.xml` bzw. Komponenten-Manifest), `script.php` (install/update/uninstall), `services/provider.php` (DI), `src/`, `language/{de-DE,en-GB,fr-FR}/`, `updates/update.xml` und `tests/` (Komponenten weichen ab: siehe jeweiliges README). `VERSION`, das Manifest und `update.xml` werden **vom Release-Workflow verwaltet — nie von Hand setzen**. Plugin-`update.xml` muss `<client>site</client>` enthalten (Plugins installieren mit `client_id=0`).

@@ -46,6 +46,11 @@ preference — see `references/architecture.md`, section "Self-hosted by design"
 
 ## Non-negotiable constraints
 
+Mail defaults for every booking and internet-calendar purpose ship in de-DE, en-GB and fr-FR.
+Use each recipient's account language, otherwise the site default, including additional guests
+without an account; never inherit a booking/request language. HTML uses the same translated text.
+See the component README, "Email templates", and the repository-wide language conventions.
+
 1. **No external service calls for the core booking flow.** No cloud calendar API, no hosted
    scheduling backend, no analytics, no remote font or script. The component must work on a server
    with all outbound traffic blocked, except for the optional conferencing adapters that are
@@ -101,6 +106,17 @@ not repeated here. The points most easily missed on a new component:
 everything that is not booking-specific: directory layout, `build.sh`, `build.env`, `script.php`,
 `services/provider.php`, the three CI workflows, the test harness and the skill layout. Copy its
 shape, do not reinvent it.
+
+## Navigation
+
+Every view must retain a usable route within its branch and back to its parent or overview, including
+empty lists, disabled features and recoverable errors. Use the existing toolbar links and
+Save & Close / Cancel actions; leaving administrator edit forms must release their checkout.
+Authorisation takes precedence: never expose administrator links or another person's signed
+booking capabilities to a public visitor. Deliberate 403/404 privacy boundaries stay intact.
+Joomla component options use the native Close action, not a global navigation plugin.
+Test branch navigation in Edge and Firefox, light and dark, at 375, 768, 1024, 1280, 1440, 1600
+and 1920 pixels; record actual PASS/FAIL cases and screenshots rather than assuming coverage.
 
 ## swiss made software label
 

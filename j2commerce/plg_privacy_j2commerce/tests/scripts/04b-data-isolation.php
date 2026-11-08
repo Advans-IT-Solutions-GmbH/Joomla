@@ -340,8 +340,19 @@ class DataIsolationTest
             (int) $this->db->setQuery($q)->loadResult() === 1
         );
 
-        // Cleanup: delete the address directly (owner-delete path calls getApplication()
-        // which requires a full Joomla app context not available in CLI test scripts)
+        $noticeFailure = new class (['params' => new \Joomla\Registry\Registry(['admin_notifications' => 1])]) extends GuestRequestTestPlugin {
+            protected function pluginLanguage(string $tag): \Joomla\CMS\Language\Language
+            {
+                throw new \RuntimeException('Injected notification language failure');
+            }
+        };
+        $noticeFailure->setDatabase($this->db);
+        $result = $noticeFailure->call('deleteUserAddress', $addrId, $owner);
+        $this->test('A notification language failure cannot misreport an owned address deletion',
+            ($result['success'] ?? false) === true && (int) $this->db->setQuery($q)->loadResult() === 0,
+            json_encode($result));
+
+        // Cleanup also runs when the successful-delete assertion failed.
         $this->db->setQuery(
             'DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_addresses') .
             ' WHERE ' . $this->db->quoteName($addrPkCol) . ' = ' . $addrId
@@ -561,6 +572,7 @@ class DataIsolationTest
     {
         $class   = \Joomla\Component\Privacy\Administrator\Table\RequestTable::class;
         $request = (new ReflectionClass($class))->newInstanceWithoutConstructor();
+        $request->id           = 0;
         $request->email        = $email;
         $request->request_type = 'remove';
         $request->status       = 1;
@@ -632,6 +644,7 @@ class DataIsolationTest
         $legacy    = [];
         $addresses = [];
         $cartId    = 0;
+        $mailUser  = 0;
 
         // Guest customer: stored in mixed case, requested in lower case.
         $orders['guest_expired']   = $this->insertGuestTestOrder('GUEST-EXP-' . $suffix, 0, 'Guest.Buyer@Example.COM', $expired, 'Hans');
@@ -962,8 +975,7 @@ class DataIsolationTest
                 && array_column($merged['lifetime_expired'], 'order_number') === ['SET4-L'] && $merged['can_delete'] === true,
                 json_encode($merged));
 
-            // Customer language: newest order, looked up before the anonymization replaces the
-            // e-mail the guest orders are found by (an older lifetime order keeps it).
+            // Order languages are not recipient preferences. A guest uses the site default.
             $orders['lang_new'] = $this->insertGuestTestOrder('GUEST-LGN-' . $suffix, 0, 'lang.guest@example.com', gmdate('Y-m-d H:i:s', strtotime('-11 years')), 'Lena');
             $orders['lang_old'] = $this->insertGuestTestOrder('GUEST-LGO-' . $suffix, 0, 'lang.guest@example.com', gmdate('Y-m-d H:i:s', strtotime('-13 years')), 'Lena');
 
@@ -977,6 +989,19 @@ class DataIsolationTest
             $langPlugin = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['retention_years' => 10])]) extends GuestRequestTestPlugin {
                 public array $lifetime = [];
                 public array $reported = [];
+                public bool $failMailLanguage = false;
+                public int $mailLanguageLoads = 0;
+
+                protected function pluginLanguage(string $tag): \Joomla\CMS\Language\Language
+                {
+                    $this->mailLanguageLoads++;
+
+                    if ($this->failMailLanguage) {
+                        throw new \RuntimeException('Injected notification language failure');
+                    }
+
+                    return parent::pluginLanguage($tag);
+                }
 
                 protected function lifetimeOrderIds(array $orderIds): array
                 {
@@ -994,9 +1019,95 @@ class DataIsolationTest
                 'subject' => $this->guestTestRequest('lang.guest@example.com'),
                 'user'    => null,
             ]));
-            $this->test('Customer e-mail language: the newest order (looked up before the anonymization), not the older lifetime order',
-                ($langPlugin->reported[0][0] ?? '') === 'fr-FR' && ($langPlugin->reported[0][1] ?? []) === [$orders['lang_old']],
+            $this->test('Guest e-mail language: site default, independent of newest and older order languages',
+                ($langPlugin->reported[0][0] ?? '') === $langPlugin->call('resolveMailLanguage', '') && ($langPlugin->reported[0][1] ?? []) === [$orders['lang_old']],
                 json_encode($langPlugin->reported));
+
+            $mailAccount = (object) [
+                'name' => 'Mail fixture', 'username' => 'privacy-mail-' . $suffix,
+                'email' => 'privacy-mail-' . $suffix . '@example.test', 'password' => '',
+                'block' => 1, 'sendEmail' => 0, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+            ];
+            $this->db->insertObject('#__users', $mailAccount, 'id');
+            $mailUser = (int) $mailAccount->id;
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET params = '
+                    . $this->db->quote(json_encode(['language' => $tag])) . ' WHERE id = ' . $mailUser)->execute();
+                $this->test("$tag: account and address lookup select the recipient preference",
+                    $langPlugin->call('customerLanguage', $mailUser) === $tag
+                    && $langPlugin->call('customerLanguage', 0, [strtoupper($mailAccount->email)]) === $tag);
+            }
+            foreach (["\u{1E9E}", "\u{1C90}", ''] as $letter) {
+                $stored = "\t privacy-mail-" . $suffix . $letter . "@example.test \r\n";
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = '
+                    . $this->db->quote($stored) . ', params = ' . $this->db->quote(json_encode(['language' => 'fr-FR']))
+                    . ' WHERE id = ' . $mailUser)->execute();
+                $this->test('Recipient preference lookup preserves Unicode case and trim equivalence: ' . bin2hex($letter),
+                    $langPlugin->call('customerLanguage', 0, [mb_strtolower(trim($stored), 'UTF-8')]) === 'fr-FR');
+                if ($letter === "\u{1E9E}") {
+                    $distinct = str_replace("\u{00DF}", 'ss', mb_strtolower(trim($stored), 'UTF-8'));
+                    $this->test('Recipient preference lookup never equates sharp S with ss',
+                        $langPlugin->call('customerLanguage', 0, [$distinct]) === $langPlugin->call('resolveMailLanguage', ''));
+                }
+            }
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = '
+                . $this->db->quote($mailAccount->email) . ', params = '
+                . $this->db->quote(json_encode(['language' => 'it-IT'])) . ' WHERE id = ' . $mailUser)->execute();
+            // This CLI suite has no application to populate Joomla's component cache.
+            $components = new \ReflectionProperty(\Joomla\CMS\Component\ComponentHelper::class, 'components');
+            $previousComponents = $components->getValue();
+            $siteParams = new \Joomla\Registry\Registry();
+            $languageComponent = new \Joomla\CMS\Component\ComponentRecord(['option' => 'com_languages', 'enabled' => 1]);
+            $languageComponent->setParams($siteParams);
+            $components->setValue(null, array_replace($previousComponents, ['com_languages' => $languageComponent]));
+            try {
+                foreach (['de-DE', 'en-GB', 'fr-FR'] as $siteLanguage) {
+                    $siteParams->set('site', $siteLanguage);
+                    $langPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                        'subject' => $this->guestTestRequest('lang.guest@example.com'),
+                        'user' => null,
+                    ]));
+                    $this->test("$siteLanguage: guest removal uses the configured site language regardless of order language",
+                        (end($langPlugin->reported)[0] ?? '') === $siteLanguage);
+                    $this->test("$siteLanguage: unsupported account language uses the configured site language",
+                        $langPlugin->call('customerLanguage', $mailUser) === $siteLanguage);
+                }
+                $siteParams->set('site', 'it-IT');
+                $this->test('Unsupported account and site languages use en-GB',
+                    $langPlugin->call('customerLanguage', $mailUser) === 'en-GB');
+            } finally {
+                $components->setValue(null, $previousComponents);
+            }
+            $profile = new \Joomla\CMS\User\User();
+            $profile->id = $mailUser;
+            $profile->username = $mailAccount->username;
+            $profile->email = $mailAccount->email;
+            $profile->setParam('language', 'fr-FR');
+            $mailRequest = $this->guestTestRequest($mailAccount->email);
+            $langPlugin->onPrivacyCanRemoveData($mailRequest, $profile);
+            $profile->setParam('language', 'en-GB');
+            $langPlugin->onPrivacyRemoveData($mailRequest, $profile);
+            $this->test('The account language is captured before another privacy plugin can pseudonymise the account',
+                (end($langPlugin->reported)[0] ?? '') === 'fr-FR');
+
+            $langPlugin->failMailLanguage = true;
+            try {
+                foreach ([0, 1] as $enabled) {
+                    $key = 'lang_failure_' . $enabled;
+                    $orders[$key] = $this->insertGuestTestOrder('GUEST-LGF-' . $enabled . '-' . $suffix,
+                        $mailUser, $mailAccount->email, gmdate('Y-m-d H:i:s', strtotime('-11 years')), 'LanguageFailure');
+                    $langPlugin->params->set('admin_notifications', $enabled);
+                    $loadsBefore = $langPlugin->mailLanguageLoads;
+                    $langPlugin->onPrivacyRemoveData($mailRequest, $profile);
+                    $removed = $this->loadGuestTestOrder($orders[$key]);
+                    $this->test("Notification language failure cannot stop cleanup (admin notifications=$enabled)",
+                        $removed && $removed->user_email === 'anonymized@deleted.invalid'
+                        && $langPlugin->mailLanguageLoads === $loadsBefore + $enabled);
+                }
+            } finally {
+                $langPlugin->failMailLanguage = false;
+                $langPlugin->params->set('admin_notifications', 0);
+            }
 
             // Customer e-mail text names only what the request removed.
             $guestFlag = new ReflectionProperty(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class, 'guestRequest');
@@ -1061,6 +1172,9 @@ class DataIsolationTest
         } catch (\Throwable $e) {
             $this->test('Guest request tests ran without error', false, get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         } finally {
+            if ($mailUser > 0) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $mailUser)->execute();
+            }
             $orderList = implode(',', array_map([$this->db, 'quote'], array_values($orders)));
 
             if ($orderList !== '') {

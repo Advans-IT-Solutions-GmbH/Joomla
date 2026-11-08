@@ -25,6 +25,8 @@ class StructureTest
             'Service provider'     => $this->base . '/services/provider.php',
             'Dispatcher'           => $this->base . '/src/Dispatcher/Dispatcher.php',
             'DmarcReports helper'  => $this->base . '/src/Helper/DmarcReportsHelper.php',
+            'Summary field'        => $this->base . '/src/Field/SummaryField.php',
+            'Editor layout style'  => '/var/www/html/media/mod_dmarcreports/css/admin.css',
             'Default layout'       => $this->base . '/tmpl/default.php',
             'LICENSE.txt'          => $this->base . '/LICENSE.txt',
             'Language en-GB (.ini)'     => $lang . '/en-GB/mod_dmarcreports.ini',
@@ -38,6 +40,17 @@ class StructureTest
         foreach ($files as $label => $path) {
             $this->test("{$label} is installed", function () use ($path) {
                 return file_exists($path);
+            });
+        }
+
+        foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+            $this->test("$tag: module editor description is available without the system catalogue", function () use ($lang, $tag) {
+                $main = parse_ini_file($lang . '/' . $tag . '/mod_dmarcreports.ini', false, INI_SCANNER_RAW);
+                $system = parse_ini_file($lang . '/' . $tag . '/mod_dmarcreports.sys.ini', false, INI_SCANNER_RAW);
+                $key = 'MOD_DMARCREPORTS_XML_DESCRIPTION';
+
+                return is_array($main) && is_array($system)
+                    && !empty($main[$key]) && $main[$key] === ($system[$key] ?? null);
             });
         }
 

@@ -7,6 +7,7 @@ on:
     paths:
       - 'j2commerce/com_j2commerce_importexport/**'
       - 'shared/build/**'
+      - 'shared/installer/**'
       - 'shared/tests/run-tests.sh'
       - 'shared/tests/lang-lint.php'
       - 'shared/tests/requirements-check.php'
@@ -22,6 +23,7 @@ on:
     paths:
       - 'j2commerce/com_j2commerce_importexport/**'
       - 'shared/build/**'
+      - 'shared/installer/**'
       - 'shared/tests/run-tests.sh'
       - 'shared/tests/lang-lint.php'
       - 'shared/tests/requirements-check.php'

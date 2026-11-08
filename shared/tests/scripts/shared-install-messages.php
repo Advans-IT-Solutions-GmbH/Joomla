@@ -17,6 +17,9 @@
  *   - PHP warnings, notices or fatal errors
  *   - a non-zero exit code
  *
+ * The de-DE update also runs with legacy de-CH directories already present.
+ * These are upgrade fixtures, not a supported or generated language pack.
+ *
  * The package is read from /tmp/extension.zip (INSTALL_MESSAGES_PACKAGE
  * overrides it). The suite leaves the extension installed.
  */
@@ -158,7 +161,7 @@ foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
             $checkOutput("$tag uninstall", $code, $out, $uninstallWarnings);
         }
 
-        [$code, $out] = sh_cli_install(JOOMLA_ROOT, $package);
+        [$code, $out] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, $package);
         echo $out . "\n";
         $checkOutput("$tag install", $code, $out);
         $checkTranslated($tag, "$tag install", $out);
@@ -206,7 +209,7 @@ $runUpdate = static function (string $tag, string $label) use ($updatePackage, $
     $restore = sh_use_cli_language(JOOMLA_ROOT, $tag);
 
     try {
-        [$code, $out] = sh_cli_install(JOOMLA_ROOT, $updatePackage);
+        [$code, $out] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, $updatePackage);
     } finally {
         $restore();
     }
@@ -357,8 +360,60 @@ if ($extensionId <= 0) {
 
         foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
             $label = "$tag update" . ($isPlugin ? ' (plugin enabled)' : '');
-            $checkUpdate($tag, $label, $runUpdate($tag, $label), false);
-            $checkRegistration($label, $extensionId);
+            $legacyFixtures = [];
+            $legacyDirectories = [];
+
+            try {
+                if ($tag === 'de-DE') {
+                    $roots = [JOOMLA_ROOT . '/language', JOOMLA_ROOT . '/administrator/language'];
+
+                    if ($isPlugin) {
+                        $pluginLanguages = JOOMLA_ROOT . '/plugins/' . $manifest['folder'] . '/'
+                            . $manifest['element'] . '/language';
+
+                        if (is_dir($pluginLanguages)) {
+                            $roots[] = $pluginLanguages;
+                        }
+                    }
+
+                    foreach ($roots as $root) {
+                        $directory = $root . '/de-CH';
+
+                        if (!is_dir($directory)) {
+                            if (!mkdir($directory, 0755, true)) {
+                                throw new RuntimeException("Cannot create legacy language fixture $directory");
+                            }
+
+                            $legacyDirectories[] = $directory;
+                        }
+
+                        $fixture = $directory . '/upgrade-fixture-' . bin2hex(random_bytes(6)) . '.ini';
+                        $legacyFixtures[] = $fixture;
+
+                        if (file_put_contents($fixture, "; Legacy language upgrade fixture\n") === false) {
+                            throw new RuntimeException("Cannot write legacy language fixture $fixture");
+                        }
+                    }
+
+                    $label .= ' over existing de-CH directories';
+                    im_pass("$label: legacy directories and files exist before the update");
+                }
+
+                $checkUpdate($tag, $label, $runUpdate($tag, $label), false);
+                $checkRegistration($label, $extensionId);
+            } finally {
+                foreach ($legacyFixtures as $fixture) {
+                    if (is_file($fixture) && !unlink($fixture)) {
+                        im_fail("cannot remove legacy language fixture $fixture");
+                    }
+                }
+
+                foreach (array_reverse($legacyDirectories) as $directory) {
+                    if (is_dir($directory) && !rmdir($directory)) {
+                        im_fail("cannot remove test-created legacy language directory $directory");
+                    }
+                }
+            }
         }
 
         if ($isPlugin) {

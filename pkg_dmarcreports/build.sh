@@ -117,6 +117,8 @@ cp index.html "$BUILD_DIR/"
 cp index.html "$STAGE_PACKAGES/"
 rsync -a --exclude=".*" language "$BUILD_DIR/"
 
+php ../shared/build/prepare-installer.php "$BUILD_DIR"
+
 echo "Creating installation package..."
 (
     cd "$BUILD_DIR"

@@ -3,11 +3,12 @@
 <form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
     <fieldset name="details">
         <field name="id" type="hidden" filter="integer" />
+        <field name="asset_id" type="hidden" filter="unset" />
         <field name="title" type="text" label="JGLOBAL_TITLE" required="true" maxlength="255" />
         <field name="alias" type="text" label="JFIELD_ALIAS_LABEL" maxlength="255" />
         <field name="description" type="editor" label="JGLOBAL_DESCRIPTION" filter="safehtml" />
         <field name="schedule_id" type="schedulelist" label="COM_APPOINTMENTS_EVENTTYPE_SCHEDULE" required="true" filter="integer">
-            <option value="">JOPTION_SELECT</option>
+            <option value="">JSELECT</option>
         </field>
         <field name="host_user_id" type="user" label="COM_APPOINTMENTS_EVENTTYPE_HOST" required="true" filter="integer" />
         <field name="duration_minutes" type="number" label="COM_APPOINTMENTS_EVENTTYPE_DURATION" min="1" max="65535" default="30" required="true" filter="integer" />
@@ -74,6 +75,8 @@
         <field name="access" type="accesslevel" label="JFIELD_ACCESS_LABEL" default="1" filter="integer" />
         <field name="language" type="contentlanguage" label="JFIELD_LANGUAGE_LABEL" default="*"><option value="*">JALL</option></field>
         <field name="ordering" type="number" label="JFIELD_ORDERING_LABEL" default="0" filter="integer" />
+    </fieldset>
+    <fieldset name="permissions" label="JCONFIG_PERMISSIONS_LABEL">
         <field name="rules" type="rules" label="JCONFIG_PERMISSIONS_LABEL" filter="rules" validate="rules" component="com_appointments" section="eventtype" />
     </fieldset>
 </form>

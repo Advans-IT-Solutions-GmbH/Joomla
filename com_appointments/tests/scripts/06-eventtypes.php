@@ -18,6 +18,21 @@ $check = static function (bool $ok, string $label) use (&$failed): void {
 
 try {
     $http->login();
+    foreach (['eventtype' => ['jform_schedule_id'], 'field' => ['jform_eventtype_id'], 'template' => ['jform_eventtype_id', 'jform_purpose']] as $view => $selectIds) {
+        $html = $http->request('/administrator/index.php?option=com_appointments&view=' . $view . '&layout=edit');
+        $document = new DOMDocument();
+        $previousErrors = libxml_use_internal_errors(true);
+        $document->loadHTML($html);
+        libxml_clear_errors();
+        libxml_use_internal_errors($previousErrors);
+        $xpath = new DOMXPath($document);
+
+        foreach ($selectIds as $selectId) {
+            $placeholder = $xpath->query('//select[@id="' . $selectId . '"]/option[@value=""]')->item(0);
+            $check($placeholder !== null && trim($placeholder->textContent) === 'Select',
+                $view . ': empty selection uses the translated Joomla core placeholder');
+        }
+    }
     $hostName = $db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin');
     $host = (int) $db->query("SELECT id FROM {$prefix}users WHERE username='{$hostName}'")->fetch_assoc()['id'];
     $schedule = [
@@ -119,6 +134,17 @@ try {
     $public = new AppointmentsHttp('http://localhost', 'events-public');
     $html = $public->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventId);
     $check($public->status === 200 && str_contains($html, $tag . '-edited'), 'Single event menu target renders publicly');
+    $document = new DOMDocument();
+    @$document->loadHTML($html);
+    $overview = (new DOMXPath($document))->query(
+        '(//div[contains(concat(" ", normalize-space(@class), " "), " com-appointments-eventtype ")]//a)[1]'
+    )->item(0);
+    $check($overview instanceof DOMElement && trim($overview->textContent) === 'Back to appointments',
+        'The booking branch has a translated return to its public overview');
+    if ($overview instanceof DOMElement) {
+        $public->request('/' . ltrim($overview->getAttribute('href'), '/'));
+        $check($public->status === 200, 'The public overview return link is usable without administrator permission');
+    }
     $check(str_contains($html, 'Fixture &amp; &quot;host&quot;') && str_contains($html, 'com-appointments-host-photo')
         && str_contains($html, 'Fixture role'), 'The booking page shows the saved person layout, escaped');
     if ($public->status !== 200 || !str_contains($html, $tag . '-edited')) {

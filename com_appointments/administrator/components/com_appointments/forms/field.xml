@@ -3,7 +3,7 @@
 <form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
     <fieldset name="details">
         <field name="id" type="hidden" filter="integer" />
-        <field name="eventtype_id" type="Eventscope" label="COM_APPOINTMENTS_FIELD_EVENTTYPE" required="true" filter="integer"><option value="">JOPTION_SELECT</option></field>
+        <field name="eventtype_id" type="Eventscope" label="COM_APPOINTMENTS_FIELD_EVENTTYPE" required="true" filter="integer"><option value="">JSELECT</option></field>
         <field name="label" type="text" label="COM_APPOINTMENTS_FIELD_LABEL" required="true" maxlength="255" />
         <field name="description" type="textarea" label="JGLOBAL_DESCRIPTION" />
         <field name="type" type="list" label="COM_APPOINTMENTS_FIELD_TYPE">

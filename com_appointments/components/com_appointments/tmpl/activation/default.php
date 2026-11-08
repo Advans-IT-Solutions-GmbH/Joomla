@@ -64,5 +64,6 @@ $error = fn (string $key): string => isset($errors[$key])
                 </div>
             </form>
         <?php endif; ?>
+        <p><a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtypes'); ?>"><?php echo Text::_('JCANCEL'); ?></a></p>
     </div>
 </div>

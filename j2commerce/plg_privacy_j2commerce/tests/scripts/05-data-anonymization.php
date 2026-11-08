@@ -33,6 +33,16 @@ if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class))
         public ?RecordingMailerFactory $mailerFactory = null;
         public string $mailState = 'sent';
         public bool $realMail = false;
+        public bool $failMailLanguage = false;
+
+        protected function pluginLanguage(string $tag): \Joomla\CMS\Language\Language
+        {
+            if ($this->failMailLanguage) {
+                throw new \RuntimeException('Injected notification language failure');
+            }
+
+            return parent::pluginLanguage($tag);
+        }
 
         protected function lifetimeOrderIds(array $orderIds): array
         {
@@ -1064,6 +1074,15 @@ class DataAnonymizationTest
         $this->test('real mail path: invalid request address is reported as invalid, no mailer created',
             $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, 'not-an-address', 'de-DE') === 'invalid' && $factory->last === null);
 
+        $plugin->failMailLanguage = true;
+        try {
+            $this->test('A customer language-loading failure is reported as failed without sending mail',
+                $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE') === 'failed'
+                && $factory->last === null);
+        } finally {
+            $plugin->failMailLanguage = false;
+        }
+
         $state  = $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
         $mailer = $factory->last;
         $this->test('real mail path: sent to the request address', $state === 'sent' && $mailer && $mailer->to === [$email], $state);
@@ -1072,6 +1091,70 @@ class DataAnonymizationTest
             && str_contains($mailer->body, 'Aufbewahrungsfrist') && str_contains($mailer->body, 'Unbefristete Lizenz')
             && str_contains($mailer->body, 'FB-1') && str_contains($mailer->body, 'FB-2') && !str_contains($mailer->body, 'PLG_PRIVACY_J2COMMERCE_'),
             $mailer ? $mailer->subject . ' | ' . mb_substr($mailer->body, 0, 300) : 'no mailer');
+
+        $guestFlag = new ReflectionProperty(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class, 'guestRequest');
+        $guestFlag->setAccessible(true);
+        $previousAddresses = $plugin->params->get('delete_addresses', 1);
+        try {
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+                $strings = $plugin->call('pluginLanguage', $tag);
+                foreach ([false, true] as $guest) {
+                    foreach ([false, true] as $newsletterKept) {
+                        foreach ([0, 1] as $deleteAddresses) {
+                            $guestFlag->setValue($plugin, $guest);
+                            $keptFlag->setValue($plugin, $newsletterKept);
+                            $plugin->params->set('delete_addresses', $deleteAddresses);
+                            $state = $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, $tag);
+                            $bodyKey = $plugin->call('customerNoticeBodyKey');
+                            $mailer = $factory->last;
+                            $this->test("$tag: customer mail guest=" . (int) $guest . ', newsletter-kept=' . (int) $newsletterKept . ', delete-addresses=' . $deleteAddresses,
+                                $state === 'sent' && $mailer->subject === sprintf($strings->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_SUBJECT'), 'Test Shop')
+                                && str_contains($mailer->body, $strings->_($bodyKey))
+                                && str_contains($mailer->body, 'FB-1') && !str_contains($mailer->body, 'PLG_PRIVACY_J2COMMERCE_'));
+                        }
+                    }
+                }
+            }
+        } finally {
+            $guestFlag->setValue($plugin, false);
+            $keptFlag->setValue($plugin, false);
+            $plugin->params->set('delete_addresses', $previousAddresses);
+        }
+
+        $adminProfile = (object) [
+            'name' => 'Mail administrator fixture', 'username' => 'privacy-admin-mail-' . bin2hex(random_bytes(6)),
+            'email' => 'privacy-admin-mail-' . bin2hex(random_bytes(6)) . '@example.test',
+            'password' => '', 'block' => 1, 'sendEmail' => 0, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+        ];
+        $this->db->insertObject('#__users', $adminProfile, 'id');
+        $previousAdminEmail = $plugin->params->get('admin_email', '');
+        $previousAdminEnabled = $plugin->params->get('admin_notifications', 0);
+        $plugin->params->set('admin_email', $adminProfile->email);
+        $plugin->params->set('admin_notifications', 1);
+        try {
+            $actor = new \Joomla\CMS\User\User();
+            $actor->username = 'Mail actor fixture';
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET params = '
+                    . $this->db->quote(json_encode(['language' => $tag])) . ' WHERE id = ' . (int) $adminProfile->id)->execute();
+                $strings = $plugin->call('pluginLanguage', $tag);
+                foreach ([
+                    'address_deleted' => 'PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_ADDRESS_DELETED',
+                    'data_deletion' => 'PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_DATA_DELETION',
+                    'guest_data_deletion' => 'PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_GUEST_DATA_DELETION',
+                ] as $action => $bodyKey) {
+                    $plugin->call('sendAdminNotification', $action, $actor);
+                    $this->test("$tag: $action mail uses the administrator recipient's account language",
+                        $factory->last->to === [$adminProfile->email]
+                        && $factory->last->subject === $strings->_('PLG_PRIVACY_J2COMMERCE_ADMIN_NOTIFICATION_SUBJECT')
+                        && $factory->last->body === sprintf($strings->_($bodyKey), $actor->username, $actor->id));
+                }
+            }
+        } finally {
+            $plugin->params->set('admin_email', $previousAdminEmail);
+            $plugin->params->set('admin_notifications', $previousAdminEnabled);
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . (int) $adminProfile->id)->execute();
+        }
 
         $factory->result = false;
         $this->test('real mail path: send() returning false is reported as failed',

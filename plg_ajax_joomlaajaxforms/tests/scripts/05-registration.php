@@ -228,7 +228,7 @@ class RegistrationTest
 
             ajaxforms_enable_html_mail();
 
-            $user = ajaxforms_create_test_user('activation');
+            $user = ajaxforms_create_test_user('activation', 'fr-FR');
             // handleRegistration() stores the plain token in activation and puts
             // it into the link of the mail.
             $user->activation = str_repeat('9f8e7d6c', 4);
@@ -291,38 +291,115 @@ class RegistrationTest
 
     private function checkAdminNotification(object $plugin, object $user): void
     {
-        ajaxforms_mailcatch_clear();
+        $app       = Factory::getApplication();
+        $mailfrom  = (string) $app->get('mailfrom');
+        $app->set('mailfrom', $user->email);
 
-        $send = new ReflectionMethod($plugin, 'sendAdminNotification');
-        $send->setAccessible(true);
-        $send->invoke($plugin, $user);
+        try {
+            $language = new ReflectionMethod($plugin, 'configuredMailLanguage');
+            $language->setAccessible(true);
 
-        $messages = ajaxforms_mailcatch_messages();
-        $this->test('Exactly one notice about the registration sent',
-            count($messages) === 1, count($messages) . ' captured');
+            $this->test(
+                'A uniquely matched mailfrom account supplies the notice language',
+                $language->invoke($plugin, $user->email) === 'fr-FR',
+                'expected the matched account language fr-FR'
+            );
 
-        if (count($messages) !== 1) {
-            return;
+            ajaxforms_create_test_user('activationaccent', 'en-GB', 'ajaxforms_activátion@example.test');
+
+            $this->test(
+                'Accent-insensitive database candidates do not override the exact lowercase address match',
+                $language->invoke($plugin, $user->email) === 'fr-FR',
+                'a collation-equivalent address was treated as the configured recipient'
+            );
+
+            $defaultLanguage = (string) \Joomla\CMS\Component\ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+            $sharpLanguage = $defaultLanguage === 'fr-FR' ? 'en-GB' : 'fr-FR';
+            ajaxforms_create_test_user('activationsharps', $sharpLanguage, " \tAJAXFORMS_STRA\u{1E9E}E@EXAMPLE.TEST\t ");
+
+            $this->test(
+                'Stored capital sharp-S and whitespace match a normalized Unicode-lowercase recipient through the database',
+                $language->invoke($plugin, 'ajaxforms_straße@example.test') === $sharpLanguage,
+                'database preselection lost the Unicode-lowercase equivalent account'
+            );
+            $this->test(
+                'Sharp-s and ss recipient addresses remain distinct despite database collation',
+                $language->invoke($plugin, 'ajaxforms_strasse@example.test') === $defaultLanguage,
+                'a distinct sharp-s address supplied the account language'
+            );
+            $this->test(
+                'Recipient address matching trims whitespace and preserves uppercase/lowercase matching',
+                $language->invoke($plugin, '  AJAXFORMS_STRAßE@EXAMPLE.TEST  ') === $sharpLanguage,
+                'the same address with uppercase letters and surrounding whitespace did not match'
+            );
+
+            $this->test(
+                'An unmatched mailfrom address uses the default site language',
+                $language->invoke($plugin, 'unmatched@example.test') === $defaultLanguage,
+                'expected the configured default site language'
+            );
+
+            ajaxforms_mailcatch_clear();
+
+            $send = new ReflectionMethod($plugin, 'sendAdminNotification');
+            $send->setAccessible(true);
+            $send->invoke($plugin, $user);
+
+            $messages = ajaxforms_mailcatch_messages();
+            $this->test(
+                'Exactly one notice about the registration sent',
+                count($messages) === 1,
+                count($messages) . ' captured'
+            );
+
+            if (count($messages) !== 1) {
+                return;
+            }
+
+            $raw  = $messages[0];
+            $text = ajaxforms_mail_text($raw);
+
+            $this->test(
+                'Notice goes to the configured mailfrom account',
+                stripos($raw, $user->email) !== false
+            );
+
+            $this->test(
+                'Notice carries an HTML part (Content-Type is not text/plain)',
+                (bool) preg_match('#^Content-Type:\s*multipart/alternative#mi', $raw),
+                'headers: ' . substr($raw, 0, 400)
+            );
+
+            $this->test(
+                'Notice is rendered through the mail layout',
+                stripos($text, '<html') !== false && stripos($text, '<table') !== false
+            );
+
+            $this->test('Notice names the new account', strpos($text, (string) $user->username) !== false);
+
+            $this->test(
+                'Notice strings are translated, not raw language keys',
+                stripos($text, 'COM_USERS_EMAIL_') === false
+            );
+
+            $this->test(
+                'Notice uses the matched recipient account language',
+                stripos($text, 'Un nouvel utilisateur') !== false,
+                'the matched account language fr-FR was not rendered'
+            );
+
+            ajaxforms_create_test_user('activationduplicate', 'en-GB', $user->email);
+            $this->test(
+                'An ambiguous mailfrom match uses the default site language',
+                $language->invoke($plugin, $user->email) === $defaultLanguage,
+                'expected the configured default site language'
+            );
+        } finally {
+            $app->set('mailfrom', $mailfrom);
+            ajaxforms_delete_test_user('activationduplicate');
+            ajaxforms_delete_test_user('activationaccent');
+            ajaxforms_delete_test_user('activationsharps');
         }
-
-        $raw  = $messages[0];
-        $text = ajaxforms_mail_text($raw);
-
-        $this->test('Notice goes to the address of the site',
-            stripos($raw, (string) Factory::getApplication()->get('mailfrom')) !== false);
-
-        $this->test('Notice carries an HTML part (Content-Type is not text/plain)',
-            (bool) preg_match('#^Content-Type:\s*multipart/alternative#mi', $raw),
-            'headers: ' . substr($raw, 0, 400));
-
-        $this->test('Notice is rendered through the mail layout',
-            stripos($text, '<html') !== false && stripos($text, '<table') !== false);
-
-        $this->test('Notice names the new account',
-            strpos($text, (string) $user->username) !== false);
-
-        $this->test('Notice strings are translated, not raw language keys',
-            stripos($text, 'COM_USERS_EMAIL_') === false);
     }
 
     /**

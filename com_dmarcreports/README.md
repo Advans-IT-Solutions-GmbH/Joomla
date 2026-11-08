@@ -1,5 +1,7 @@
 # DMARC Reports Component
 
+**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/dmarc-reports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/dmarc-reports.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-dmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-dmarcreports.yml)
 [![Joomla 5.4+](https://img.shields.io/badge/Joomla-5.4%2B-blue.svg)](https://www.joomla.org/)
@@ -251,6 +253,11 @@ Test results are saved in `tests/test-results/`.
 **Solution:** This is the point of the tool. Add the sender to the domain's SPF record or configure DKIM signing for it, then re-ingest. Only tighten the DMARC policy once the Action Center no longer flags it.
 
 ## Multi-Language Support
+
+All extensions and bundled plugins in this repository support exactly **de-DE, en-GB and fr-FR**,
+with complete key and placeholder parity. **de-DE uses Swiss High German** (`ss`, never `ß`,
+Swiss terminology and `z.B.`). No `de-CH` folders or build-generated copies are shipped.
+The shared language lint and package checks enforce this rule, including for future extensions.
 
 This extension supports the following languages:
 - **English (en-GB)** - Default

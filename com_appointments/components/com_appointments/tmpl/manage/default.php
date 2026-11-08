@@ -124,5 +124,6 @@ $error = fn (string $key): string => isset($errors[$key])
                 <p class="com-appointments-empty"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_NO_SLOTS'); ?></p>
             <?php endif; ?>
         <?php endif; ?>
+        <p><a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtypes'); ?>"><?php echo Text::_($this->completed ? 'COM_APPOINTMENTS_BACK_TO_OVERVIEW' : 'JCANCEL'); ?></a></p>
     </div>
 </div>

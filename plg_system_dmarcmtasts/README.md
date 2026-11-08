@@ -1,5 +1,7 @@
 # DMARC MTA-STS Policy System Plugin
 
+**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+
 ## Description
 
 `plg_system_dmarcmtasts` serves the MTA-STS policy (RFC 8461) for the DMARC Reports component.
@@ -137,6 +139,11 @@ plg_system_dmarcmtasts/
 ```
 
 ## Multi-Language Support
+
+All extensions and bundled plugins in this repository support exactly **de-DE, en-GB and fr-FR**,
+with complete key and placeholder parity. **de-DE uses Swiss High German** (`ss`, never `ß`,
+Swiss terminology and `z.B.`). No `de-CH` folders or build-generated copies are shipped.
+The shared language lint and package checks enforce this rule, including for future extensions.
 
 Ships with en-GB, de-DE (Swiss High German) and fr-FR, each with `.ini` and `.sys.ini`.
 

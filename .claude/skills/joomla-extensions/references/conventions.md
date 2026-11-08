@@ -54,10 +54,19 @@ bodies.
 
 ## Language Files
 
-- Three locales required: `de-DE`, `en-GB`, `fr-FR`. Sites run in `de-DE`, so `de-DE` carries the Swiss text.
-  `plg_privacy_j2commerce` additionally ships `de-CH` (all of its language folders), because sites still
-  have the `de-CH` folder an older version installed; it must equal `de-DE` key for key and value for
-  value, which the lint checks
+- Every extension, including every bundled plugin and all future extensions, ships exactly
+  `de-DE`, `en-GB` and `fr-FR`, with identical key sets and printf placeholders in each file group.
+  Sites run in `de-DE`; its text is Swiss High German, including Swiss terminology.
+  Do not ship `de-CH` folders or manifest declarations, and do not generate them during a build.
+  Language files stay checked in, matching the installation paths declared by each manifest.
+  The shared lint enforces the language set; package verification checks the delivered file set.
+- All outgoing mail defaults (subjects and bodies, including HTML where used) are complete in
+  the same three languages, even on a German-only site. Use the supported recipient account
+  language, otherwise the default **site** language, including guests; never the current request,
+  order or another recipient's language. If the site language is unsupported, use en-GB.
+  Preserve custom templates. HTML derived from translated text does not need duplicate strings.
+  Lint checks named `{placeholders}` as well as printf placeholders and rejects empty subject/body
+  strings. Sender inventory: root README, "E-mail templates".
 - `de-DE` uses Swiss High German (no `ß`, use `ss` instead, and `z.B.` without a space). The lint enforces the `ß` rule in the language
   files **and** in text the shipped PHP, JavaScript and XML hard-codes; language files, `tests…/`,
   `vendor/` and `node_modules/` are out of scope, and a line that must keep the character carries
@@ -79,6 +88,10 @@ bodies.
 
 ### Checklist: add a language
 
+The supported set is repository-wide, not per extension. Adding another locale requires a
+maintainer decision and updates to **every** extension, bundled plugin, shared lint and package
+verification. Swiss wording is maintained in `de-DE`, not in an additional `de-CH` locale.
+
 1. Copy the `en-GB` folder of every `language/` directory of the extension (plugin folder, bundled
    sub-plugins, `administrator/language` of components) to the new tag, rename the files if their
    name carries the tag, and translate every value. Keep the keys and the `printf` placeholders.
@@ -90,7 +103,7 @@ bodies.
    These stay on `<languages>` on purpose: installed sites have copies in the global
    `administrator/language/<tag>/` folder, which Joomla loads before the extension folder, and a
    switch would leave those copies behind unchanged.
-3. Run `php shared/tests/lang-lint.php <extension dir>` for every extension; it compares the new
+3. Update the shared supported-language set, then run `php shared/tests/lang-lint.php <extension dir>` for every extension; it compares the new
    files with `en-GB` (keys, placeholders) and checks the usage of every key.
 4. Add the tag to the language checks of the tests where they name languages explicitly (for example
    the installer-messages suite and the `de-DE, en-GB, fr-FR` loops) and to this list.

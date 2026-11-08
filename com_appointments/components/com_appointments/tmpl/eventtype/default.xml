@@ -5,6 +5,6 @@
         <message><![CDATA[COM_APPOINTMENTS_MENU_EVENTTYPE_DESC]]></message>
     </layout>
     <fields name="request"><fieldset name="request" addfieldprefix="Advans\Component\Appointments\Administrator\Field">
-        <field name="id" type="eventtypelist" label="COM_APPOINTMENTS_MENU_FIELD_EVENTTYPE_LABEL" description="COM_APPOINTMENTS_MENU_FIELD_EVENTTYPE_DESC" required="true" filter="integer" validate="options"><option value="">JOPTION_SELECT</option></field>
+        <field name="id" type="eventtypelist" label="COM_APPOINTMENTS_MENU_FIELD_EVENTTYPE_LABEL" description="COM_APPOINTMENTS_MENU_FIELD_EVENTTYPE_DESC" required="true" filter="integer" validate="options"><option value="">JSELECT</option></field>
     </fieldset></fields>
 </metadata>

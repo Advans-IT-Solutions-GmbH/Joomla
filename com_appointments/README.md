@@ -1,5 +1,7 @@
 # Appointments (com_appointments)
 
+**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/appointments.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/appointments.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-appointments.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-appointments.yml)
 [![Joomla 5.4+](https://img.shields.io/badge/Joomla-5.4%2B-blue.svg)](https://www.joomla.org/)
@@ -38,6 +40,18 @@ blocked.
 The component resolves its database through `DatabaseInterface`. Queries use `createQuery()` when
 the driver provides it and fall back to `getQuery(true)` on Joomla 5.4. No platform-specific
 configuration is required.
+
+The event-type editor separates **Details** and **Permissions** with Joomla's standard tabs
+(accordions on narrow screens). The permissions widget uses the full card width instead of
+the state-field sidebar, so its group navigation and permission table do not overlap the editor
+or neighbouring fields. This uses core Joomla layouts without custom colours or typography.
+A stylesheet scoped to this form wraps the permission navigation at Atum's small-screen breakpoint
+and keeps its stacked permission selectors inside their cells. It also disables smooth scrolling
+on this editor page so focus and accordion reflow cannot start competing scroll animations.
+The rules widget binds the record's ACL asset through Joomla's standard hidden, `unset`-filtered
+asset field; it does not display the component's rules instead of the saved event-type rules.
+The [backend pointer regression matrix](../shared/tests/browser/README.md) covers the editor
+and the DMARC module editor in Edge and Firefox at seven widths in light and dark mode.
 
 ## Installation
 
@@ -281,7 +295,8 @@ columns, decoded answers and their current field labels. Additional guests do no
 the primary invitee's contact details by appearing in a booking: when the request address is a
 guest of another person's booking, a separate domain (`appointments_guest_invitations`) lists only
 the booking ID, the guest address as stored, the event type title, the UTC start and end and the
-state. Guest addresses are matched exactly per line of `guest_emails` (Unicode case folding, no
+state. Guest addresses are matched exactly per line of `guest_emails` (trimmed Unicode lowercasing,
+not full case folding, and no
 substring match), so `notguest@example.com` never matches `guest@example.com`.
 
 Formal removal takes such a guest address out of the other person's guest list and leaves that
@@ -342,7 +357,22 @@ rows and rate-limit windows per invocation. Run additional batches or increase t
 an existing backlog exceeds one daily batch. Monitor Scheduler results: disabling or failing the
 task prevents both personal-data retention and metadata cleanup from being enforced.
 
+### Navigation
+
+Each administrator and site branch keeps links back to its list or overview, including empty,
+disabled and recoverable error states. Administrator edit forms leave through Save & Close or
+Cancel so their checkout is released. Authorisation and deliberate privacy-preserving 403/404
+responses take precedence over navigation; public links never grant access to another person's
+booking. Component options retain Joomla's native Close action.
+
+Adding a device checks existing account and address locks without reserving a password attempt;
+successful device creation neither consumes sign-in attempts nor clears a real sign-in lock.
+
 ### Internet calendars
+
+The administrator calendar list has an **Overview** toolbar link back to the component's existing
+navigation. Calendar and activation-link screens retain a return action even while internet calendars
+are switched off.
 
 **Implementation and verification status:** This section documents the 1.4.0 target behaviour; it
 is not evidence that the feature is available in a published release or that every behaviour has
@@ -981,10 +1011,17 @@ An update adds missing templates, including the guest and host templates on an e
 installation, and never overwrites a template you edited. If you customised the invitee templates
 of those purposes for the host as well, adapt the new host templates.
 An event-specific template takes precedence over the published site-wide template for that purpose
-and language. If neither is available, the corresponding English template is used. Updating the
-component preserves existing templates rather than overwriting operator changes. Notification
-labels are installed privately from the same shipped language files, so a stored recipient
-language does not depend on that Joomla language pack being installed.
+and language. If neither is available, the shipped default of that **same language** is used.
+Every mail, including the seven internet-calendar/device/activation/security purposes, has
+complete subject and body defaults in **de-DE, en-GB and fr-FR**. Each recipient's supported Joomla
+account language wins, otherwise the default **site** language applies. The booking person and
+each additional guest are looked up separately by their address; guests without an account do
+not inherit the booking person's or request's language. Hosts use their own account preference.
+An unsupported account preference uses the site default; an unsupported site language uses en-GB.
+Updating the component preserves existing templates rather than overwriting operator changes.
+Notification labels are installed privately from the same shipped language files, so rendering
+does not require that Joomla core language pack to be installed. The website can remain German-only.
+Configured HTML layouts render the same translated text and retain the plain-text alternative.
 
 Templates are plain text. Placeholders are written `{name}` and replaced in one pass. A detail line
 that holds only a label and one placeholder (`Location: {location}`) is left out when the value is
@@ -1000,7 +1037,7 @@ empty, so a telephone appointment shows no empty location:
 | `{guest_emails}` | All additional guests, one per line |
 | `{conference_url}` | The joining link (the host's moderator link in the host's mail) |
 | `{custom_fields.ID}` | One answer, ID being the custom field ID; `{custom_fields}` all answers as JSON |
-| `{start}`, `{end}`, `{timezone}` | The appointment in the recipient's zone, with the invitee's stored locale or the host's Joomla profile settings (a host without a profile language gets the site's default language) |
+| `{start}`, `{end}`, `{timezone}` | The appointment in the invitee's stored zone or the host's profile zone, formatted in the recipient's account language, otherwise the site default |
 | `{state_label}` | The translated status |
 | `{consent_utc}`, `{consent_version}` | The consent proof (UTC time and label version) with **Privacy notice on the booking form** *Consent checkbox*, otherwise empty |
 | `{start_utc}`, `{end_utc}`, `{state}`, `{id}`, `{uid}`, `{sequence}` and the other booking columns | Raw booking values |
@@ -1377,6 +1414,11 @@ installation.
 skipped or repeated local hour during a clock change.
 
 ## Multi-Language Support
+
+All extensions and bundled plugins in this repository support exactly **de-DE, en-GB and fr-FR**,
+with complete key and placeholder parity. **de-DE uses Swiss High German** (`ss`, never `ß`,
+Swiss terminology and `z.B.`). No `de-CH` folders or build-generated copies are shipped.
+The shared language lint and package checks enforce this rule, including for future extensions.
 
 Like every extension in this repository, the component ships **English (`en-GB`)**, **German
 (`de-DE`, Swiss High German)** and **French (`fr-FR`)**, for both the administrator and site part.

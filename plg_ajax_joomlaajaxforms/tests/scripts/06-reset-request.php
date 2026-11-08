@@ -324,8 +324,8 @@ class ResetRequestTest
     }
 
     /**
-     * The mail has to arrive in the language of the customer, so the language
-     * of the account decides, not the language the request happened to run in.
+     * The mail follows a supported account language or the configured default
+     * site language; the active request language is never a selector.
      */
     private function testMailLanguageFollowsTheAccount(): void
     {
@@ -344,41 +344,372 @@ class ResetRequestTest
         $method->setAccessible(true);
 
         $plugin    = ajaxforms_plugin_instance();
-        $requestTag = Factory::getApplication()->getLanguage()->getTag();
-        $installed  = array_keys(\Joomla\CMS\Language\LanguageHelper::getInstalledLanguages(0));
+        $configuredSiteTag = (string) \Joomla\CMS\Component\ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        $defaultTag = in_array($configuredSiteTag, ['de-DE', 'en-GB', 'fr-FR'], true)
+            ? $configuredSiteTag
+            : 'en-GB';
 
-        $this->test('Site has at least one installed language', $installed !== []);
+        foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+            $account         = new stdClass();
+            $account->params = json_encode(['language' => $tag]);
 
-        if ($installed === []) {
-            return;
+            $this->test(
+                "Supported account language $tag is selected even without its site language pack",
+                $method->invoke($plugin, $account) === $tag,
+                'got ' . var_export($method->invoke($plugin, $account), true)
+            );
         }
 
-        // Note: the test container has one site language, which is also the
-        // language of the request, so the precedence of the account language
-        // over the request language cannot be told apart here. What can be told
-        // apart is that an unusable tag is refused, which is what this decides.
-
-        // A mail template stores subject and body as language keys. Without the
-        // matching language pack the recipient would read those keys, so a tag
-        // the site does not have must never be used.
-        $missing         = new stdClass();
-        $missing->params = json_encode(['language' => 'zz-ZZ']);
-        $fallback        = (string) $method->invoke($plugin, $missing);
+        $unsupported         = new stdClass();
+        $unsupported->params = json_encode(['language' => 'zz-ZZ']);
 
         $this->test(
-            'A language the site does not have is not used',
-            $fallback !== 'zz-ZZ' && in_array($fallback, $installed, true),
-            'got ' . var_export($fallback, true)
+            'An unsupported account language falls back to a supported site language',
+            $method->invoke($plugin, $unsupported) === $defaultTag,
+            'expected ' . $defaultTag . ', got ' . var_export($method->invoke($plugin, $unsupported), true)
         );
 
         $none         = new stdClass();
         $none->params = '{}';
 
         $this->test(
-            'Without a choice the language of the request is used',
-            $method->invoke($plugin, $none) === $requestTag,
-            'expected ' . $requestTag . ', got ' . var_export($method->invoke($plugin, $none), true)
+            'A guest or account without a language uses the configured site language, not the request language',
+            $method->invoke($plugin, $none) === $defaultTag,
+            'expected ' . $defaultTag . ', got ' . var_export($method->invoke($plugin, $none), true)
         );
+
+        $siteParams = \Joomla\CMS\Component\ComponentHelper::getParams('com_languages');
+        $originalSiteLanguage = (string) $siteParams->get('site', 'en-GB');
+
+        try {
+            $siteParams->set('site', 'de-CH');
+
+            $this->test(
+                'An unsupported configured site language falls back to en-GB',
+                $method->invoke($plugin, $none) === 'en-GB',
+                'got ' . var_export($method->invoke($plugin, $none), true)
+            );
+        } finally {
+            $siteParams->set('site', $originalSiteLanguage);
+        }
+    }
+
+    /**
+     * The plugin supplies translated com_users defaults when only the site
+     * language pack is installed. MailTemplate must still send the core
+     * template, plain-text alternative and configured HTML layout in each
+     * supported recipient language.
+     */
+    private function testCoreTemplateMailsSupportAllLocales(): void
+    {
+        echo "\n--- Core mail templates render in every shipped language ---\n";
+
+        $reason = ajaxforms_mailcatch_install();
+
+        try {
+            $this->test('Mail capture in place', $reason === null, (string) $reason);
+
+            if ($reason !== null) {
+                return;
+            }
+
+            $selfTest = ajaxforms_mailcatch_selftest();
+            $this->test('Mail capture works', $selfTest === null, (string) $selfTest);
+
+            if ($selfTest !== null) {
+                return;
+            }
+
+            ajaxforms_enable_html_mail();
+            $this->test(
+                'CLI bootstrap registers the core mail helper namespace',
+                class_exists(\Joomla\Component\Mails\Administrator\Helper\MailsHelper::class)
+            );
+
+            $plugin = ajaxforms_plugin_instance();
+            $send   = new ReflectionMethod($plugin, 'sendResetEmail');
+            $send->setAccessible(true);
+            $expected = [
+                'de-DE' => 'Guten Tag',
+                'en-GB' => 'A request has been made',
+                'fr-FR' => 'Une demande de réinitialisation',
+            ];
+
+            foreach ($expected as $tag => $phrase) {
+                $suffix = 'mail_' . strtolower(substr($tag, 0, 2));
+                $user   = ajaxforms_create_test_user($suffix, $tag);
+
+                try {
+                    ajaxforms_mailcatch_clear();
+                    $requestLanguage = Factory::getApplication()->getLanguage();
+                    $send->invoke($plugin, $user, str_repeat('a1b2c3d4', 4));
+                    $this->test("$tag core mail preserves the request language object", Factory::getApplication()->getLanguage() === $requestLanguage);
+
+                    $messages = ajaxforms_mailcatch_messages();
+                    $this->test("$tag reset template sends exactly one mail", count($messages) === 1, count($messages) . ' captured');
+
+                    if (count($messages) !== 1) {
+                        continue;
+                    }
+
+                    $raw  = $messages[0];
+                    $text = ajaxforms_mail_text($raw);
+                    preg_match_all('/COM_USERS_EMAIL_[A-Z0-9_]+/i', $text, $untranslatedKeys);
+                    $this->test(
+                        "$tag template keys are translated",
+                        stripos($text, 'COM_USERS_EMAIL_') === false,
+                        'untranslated language keys: ' . implode(', ', array_unique($untranslatedKeys[0]))
+                    );
+                    $installed = array_keys(\Joomla\CMS\Language\LanguageHelper::getInstalledLanguages(0));
+                    $this->test(
+                        "$tag rendered mail contains translated core wording",
+                        in_array($tag, $installed, true) || stripos($text, $phrase) !== false,
+                        'expected shipped wording was not found for a language without a site language pack'
+                    );
+                    $this->test(
+                        "$tag mail keeps the HTML layout and plain-text alternative",
+                        stripos($text, '<html') !== false
+                            && stripos($text, '<table') !== false
+                            && stripos($raw, 'text/plain') !== false
+                    );
+                } finally {
+                    ajaxforms_delete_test_user($suffix);
+                }
+            }
+        } finally {
+            ajaxforms_mailcatch_remove();
+        }
+    }
+
+    private function testIncompleteCoreLanguageDefaults(): void
+    {
+        echo "\n--- Administrator-only and incomplete exact-locale packs ---\n";
+        $plugin = ajaxforms_plugin_instance();
+        $load = new ReflectionMethod($plugin, 'loadCoreMailFallbackStrings');
+        $load->setAccessible(true);
+        $fixture = __DIR__ . '/ajaxforms-language-fixture-' . getmypid();
+        $admin = $fixture . '/admin/language/fr-FR';
+        $site = $fixture . '/site/language/fr-FR';
+        $english = $fixture . '/site/language/en-GB';
+        mkdir($admin, 0755, true);
+        mkdir($site, 0755, true);
+        mkdir($english, 0755, true);
+
+        try {
+            file_put_contents($admin . '/com_users.ini', "COM_USERS=\"Administration des utilisateurs\"\n");
+            file_put_contents($english . '/com_users.ini', "COM_USERS_EMAIL_PASSWORD_RESET_BODY=\"English fallback {TOKEN}\"\n");
+            $language = new class ('fr-FR') extends \Joomla\CMS\Language\Language {
+                public string $fixture;
+
+                public function load($extension = 'joomla', $basePath = JPATH_BASE, $lang = null, $reload = false, $default = true)
+                {
+                    // Language::load() recursively calls this override for its
+                    // English fallback using the already-remapped base path.
+                    if ($extension === 'com_users' && !str_starts_with($basePath, $this->fixture . '/')) {
+                        $basePath = $this->fixture . ($basePath === JPATH_SITE ? '/site' : ($basePath === JPATH_ADMINISTRATOR ? '/admin' : '/empty'));
+                    }
+
+                    return parent::load($extension, $basePath, $lang, $reload, $default);
+                }
+
+                public function setFixtureOverride(string $key, string $value): void
+                {
+                    $this->override[$key] = $value;
+                }
+            };
+            $language->fixture = $fixture;
+            $language->load('com_users', JPATH_SITE, 'fr-FR', true);
+            $this->test(
+                'Fixture begins with an implicit English fallback, not an exact-locale translation',
+                $language->_('COM_USERS_EMAIL_PASSWORD_RESET_BODY') === 'English fallback {TOKEN}'
+            );
+            $load->invoke($plugin, $language, 'fr-FR');
+            $this->test(
+                'Administrator-only com_users does not suppress French reset defaults',
+                str_contains($language->_('COM_USERS_EMAIL_PASSWORD_RESET_BODY'), 'Une demande de réinitialisation')
+            );
+            $this->test(
+                'Administrator-only com_users retains its exact-locale translation',
+                $language->_('COM_USERS') === 'Administration des utilisateurs'
+            );
+
+            file_put_contents($site . '/com_users.ini', "COM_USERS_EMAIL_PASSWORD_RESET_SUBJECT=\"Sujet local {SITENAME}\"\n");
+            $load->invoke($plugin, $language, 'fr-FR');
+            $this->test(
+                'Incomplete site pack preserves its translated subject',
+                $language->_('COM_USERS_EMAIL_PASSWORD_RESET_SUBJECT') === 'Sujet local {SITENAME}'
+            );
+            $this->test(
+                'Incomplete site pack fills missing reminder and activation keys in French',
+                str_contains($language->_('COM_USERS_EMAIL_USERNAME_REMINDER_BODY'), 'Bonjour')
+                    && str_contains($language->_('COM_USERS_EMAIL_REGISTERED_WITH_ACTIVATION_BODY_NOPW'), 'Bonjour')
+            );
+            $language->setFixtureOverride('COM_USERS_EMAIL_PASSWORD_RESET_BODY', 'Texte personnalisé {TOKEN}');
+            $load->invoke($plugin, $language, 'fr-FR');
+            $this->test(
+                'Exact-locale language override keeps precedence over shipped defaults',
+                $language->_('COM_USERS_EMAIL_PASSWORD_RESET_BODY') === 'Texte personnalisé {TOKEN}'
+            );
+        } finally {
+            unlink($english . '/com_users.ini');
+            rmdir($english);
+            foreach ([$admin, $site] as $path) {
+                if (is_file($path . '/com_users.ini')) {
+                    unlink($path . '/com_users.ini');
+                }
+                rmdir($path);
+                rmdir(dirname($path));
+                rmdir(dirname($path, 2));
+            }
+            rmdir($fixture);
+        }
+    }
+
+    private function testLegacyLocalizedRendering(): void
+    {
+        echo "\n--- Legacy MailTemplate rendering hook ---\n";
+        $plugin = ajaxforms_plugin_instance();
+        $factoryMethod = new ReflectionMethod($plugin, 'mailTemplateLanguageFactory');
+        $factoryMethod->setAccessible(true);
+        $factory = $factoryMethod->invoke($plugin);
+        $language = $factory->createLanguage('fr-FR');
+        $template = (object) [
+            'subject' => 'Operator subject {NAME}',
+            'body' => 'COM_USERS_EMAIL_PASSWORD_RESET_BODY',
+            'htmlbody' => '<p>Operator HTML {NAME}</p>',
+        ];
+        $original = clone $template;
+        $container = Factory::getContainer();
+        $create = new ReflectionMethod($plugin, 'createLocalizedMailTemplate');
+        $create->setAccessible(true);
+        $arguments = [
+            'com_users.password_reset',
+            'fr-FR',
+            $container->get(\Joomla\CMS\Mail\MailerFactoryInterface::class)->createMailer(),
+            $factory,
+            $container->get(DatabaseInterface::class),
+        ];
+        $mailer = $create->invoke($plugin, $arguments, $template);
+        $constructor = new ReflectionMethod(\Joomla\CMS\Mail\MailTemplate::class, '__construct');
+        if ($constructor->getNumberOfParameters() >= 4) {
+            $factoryProperty = new ReflectionProperty(\Joomla\CMS\Mail\MailTemplate::class, 'languageFactory');
+            $factoryProperty->setAccessible(true);
+            $this->test(
+                'Factory-injection cores, including four-argument 5.4 backports, receive the recipient language factory',
+                $factoryProperty->getValue($mailer) === $factory
+            );
+        }
+        // Exercise the compatibility branch even on factory-injection cores.
+        $mailer->localizeLegacy($language, $template);
+        $mailer->addUnsafeTags(['NAME']);
+        $replace = new ReflectionMethod($mailer, 'replaceTags');
+        $replace->setAccessible(true);
+        $data = ['NAME' => '<img src=x onerror=alert(1)>', 'TOKEN' => 'test-code'];
+        $requestLanguage = Factory::getApplication()->getLanguage();
+
+        $subject = $replace->invoke($mailer, 'wrong request-language subject', $data);
+        $plain = $replace->invoke($mailer, 'wrong request-language body', $data);
+        $html = $replace->invoke($mailer, '<html><table>' . $template->htmlbody . '</table></html>', $data);
+        $this->test('Legacy adapter preserves the operator subject', $subject === 'Operator subject ' . $data['NAME']);
+        $this->test('Legacy adapter renders recipient-locale plain text', $plain === str_replace('{TOKEN}', 'test-code', $language->_($template->body)));
+        $this->test(
+            'Legacy adapter preserves operator HTML and layout while escaping unsafe tags',
+            str_contains($html, '<html><table><p>Operator HTML &lt;img')
+                && !str_contains($html, '<img')
+        );
+        $this->test('Legacy adapter leaves stored template data untouched', $template == $original);
+        $this->test('Legacy adapter does not replace the request language object', Factory::getApplication()->getLanguage() === $requestLanguage);
+
+        $htmlOnly = (object) [
+            'subject' => 'Operator subject',
+            'body' => '',
+            'htmlbody' => '<p>Bonjour {NAME}<br>Suite</p>',
+        ];
+        $mailer = $create->invoke($plugin, $arguments, $htmlOnly);
+        $mailer->localizeLegacy($language, $htmlOnly);
+        $replace = new ReflectionMethod($mailer, 'replaceTags');
+        $replace->setAccessible(true);
+        $replace->invoke($mailer, $htmlOnly->subject, ['NAME' => 'Recipient']);
+        $plain = $replace->invoke($mailer, '', ['NAME' => 'Recipient']);
+        $this->test(
+            'Legacy HTML-only operator template supplies a translated plain alternative with replaced tags',
+            $plain === "Bonjour Recipient\nSuite"
+        );
+    }
+
+    private function testLegacyAttachmentNamesThroughSend(): void
+    {
+        echo "\n--- Legacy attachment names through the real send path ---\n";
+        $reason = ajaxforms_mailcatch_install();
+        $this->test('Attachment regression mail capture in place', $reason === null, (string) $reason);
+
+        if ($reason !== null) {
+            return;
+        }
+
+        $config = \Joomla\CMS\Component\ComponentHelper::getParams('com_mails');
+        $originalStyle = $config->get('mail_style', 'plaintext');
+        $file = __DIR__ . '/ajaxforms-attachment-fixture-' . getmypid() . '.pdf';
+
+        try {
+            file_put_contents($file, "%PDF-1.4\nAJAX Forms attachment fixture\n");
+            $plugin = ajaxforms_plugin_instance();
+            $getTemplate = new ReflectionMethod($plugin, 'getMailTemplate');
+            $getTemplate->setAccessible(true);
+            $template = $getTemplate->invoke($plugin, 'com_users.password_reset', 'fr-FR');
+            $this->test('Core reset template exists for attachment send regression', $template !== null);
+
+            if ($template === null) {
+                return;
+            }
+
+            $factoryMethod = new ReflectionMethod($plugin, 'mailTemplateLanguageFactory');
+            $factoryMethod->setAccessible(true);
+            $factory = $factoryMethod->invoke($plugin);
+            $create = new ReflectionMethod($plugin, 'createLocalizedMailTemplate');
+            $create->setAccessible(true);
+            $container = Factory::getContainer();
+
+            foreach (['plaintext', 'both'] as $style) {
+                $config->set('mail_style', $style);
+                ajaxforms_mailcatch_clear();
+                $mailer = $create->invoke($plugin, [
+                    'com_users.password_reset',
+                    'fr-FR',
+                    $container->get(\Joomla\CMS\Mail\MailerFactoryInterface::class)->createMailer(),
+                    $factory,
+                    $container->get(DatabaseInterface::class),
+                ], $template);
+                // Force the legacy adapter even when CI uses an injection-capable core.
+                $mailer->localizeLegacy($factory->createLanguage('fr-FR'), $template);
+                $mailer->addTemplateData([
+                    'NAME' => 'A&B',
+                    'SITENAME' => 'Test site',
+                    'TOKEN' => 'test-code',
+                    'LINK_TEXT' => 'index.php',
+                ]);
+                $mailer->addUnsafeTags(['NAME']);
+                $mailer->addRecipient('attachment@example.test');
+                $mailer->addAttachment('{NAME}.pdf', $file);
+                $this->test("$style attachment mail sends through MailTemplate", $mailer->send() === true);
+                $messages = ajaxforms_mailcatch_messages();
+                $this->test("$style attachment mail captured exactly once", count($messages) === 1);
+                $raw = $messages[0] ?? '';
+                preg_match('/\bfilename=(?:"([^"\r\n]*)"|([^;\s\r\n]+))/i', $raw, $filename);
+                $attachmentName = ($filename[1] ?? '') !== '' ? $filename[1] : ($filename[2] ?? '');
+                $this->test(
+                    "$style attachment filename keeps an unescaped ampersand",
+                    $attachmentName === 'A&B.pdf',
+                    'attachment filename: ' . json_encode($attachmentName)
+                );
+            }
+        } finally {
+            $config->set('mail_style', $originalStyle);
+            if (is_file($file)) {
+                unlink($file);
+            }
+            ajaxforms_mailcatch_remove();
+        }
     }
 
     /**
@@ -721,6 +1052,10 @@ class ResetRequestTest
         $this->testFormDetection();
         $this->testResetMailCarriesTheSiteDesign();
         $this->testMailLanguageFollowsTheAccount();
+        $this->testCoreTemplateMailsSupportAllLocales();
+        $this->testIncompleteCoreLanguageDefaults();
+        $this->testLegacyLocalizedRendering();
+        $this->testLegacyAttachmentNamesThroughSend();
         $this->testFallbackMailLanguageIsIsolated();
         $this->testEverySenderFallbackStaysIsolated();
         $this->testAnswerDoesNotRevealAccounts();

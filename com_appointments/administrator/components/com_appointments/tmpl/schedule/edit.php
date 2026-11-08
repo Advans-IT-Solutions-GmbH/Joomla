@@ -12,6 +12,7 @@ use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
+$this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScript('keepalive');
 ?>
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=schedule&layout=edit&id=' . (int) $this->item->id); ?>"
       method="post" name="adminForm" id="schedule-form" class="form-validate">

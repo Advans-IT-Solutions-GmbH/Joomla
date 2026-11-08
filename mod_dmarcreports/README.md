@@ -1,5 +1,7 @@
 # DMARC Reports Dashboard Module
 
+**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/moddmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/moddmarcreports.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-moddmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-moddmarcreports.yml)
 [![Joomla 5.4+](https://img.shields.io/badge/Joomla-5.4%2B-blue.svg)](https://www.joomla.org/)
@@ -66,6 +68,12 @@ Edit the module instance (**System → Manage → Administrator Modules → DMAR
 
 The **Advanced** fieldset offers the standard Joomla module layout and module-class-suffix fields.
 
+The summary switcher uses Joomla's standard radio-field implementation and layout, with an
+extension field subclass loading editor-only layout CSS. This prevents competing smooth
+scrolls during accordion/focus changes and keeps permission panes and selectors within the
+available width. The styles are scoped to this module's editor; no core files, colours or
+typography are changed. See the [real-pointer regression matrix](../shared/tests/browser).
+
 ## Usage
 
 Once published to the `cpanel` position, the module appears on the backend home dashboard (`administrator/index.php`). It shows:
@@ -95,10 +103,13 @@ mod_dmarcreports/
 ├── src/
 │   ├── Dispatcher/
 │   │   └── Dispatcher.php         # Wires the helper payload into the layout
+│   ├── Field/
+│   │   └── SummaryField.php        # Core switcher with editor-only layout assets
 │   └── Helper/
 │       └── DmarcReportsHelper.php # Reads com_dmarcreports Dashboard model + ActionPresenter
 ├── tmpl/
 │   └── default.php               # Layout (summary cards + action list, or a notice)
+├── media/css/admin.css            # Scoped editor scrolling and permission layout
 ├── language/
 │   ├── en-GB/
 │   ├── de-DE/
@@ -192,6 +203,11 @@ Test results are saved in `tests/test-results/`.
 **Solution:** Either there are no outstanding recommendations (nothing to do), or *Action items to show* is set to `0`. Raise the limit, or open the component dashboard to confirm there are no active items.
 
 ## Multi-Language Support
+
+All extensions and bundled plugins in this repository support exactly **de-DE, en-GB and fr-FR**,
+with complete key and placeholder parity. **de-DE uses Swiss High German** (`ss`, never `ß`,
+Swiss terminology and `z.B.`). No `de-CH` folders or build-generated copies are shipped.
+The shared language lint and package checks enforce this rule, including for future extensions.
 
 This extension supports the following languages:
 - **English (en-GB)** - Default

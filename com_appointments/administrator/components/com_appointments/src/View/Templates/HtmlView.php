@@ -44,6 +44,7 @@ class HtmlView extends BaseHtmlView
         $toolbar->unpublish('templates.unpublish')->listCheck(true);
         $toolbar->delete('templates.delete')->message('JGLOBAL_CONFIRM_DELETE')->listCheck(true);
         $toolbar->linkButton('events')->url('index.php?option=com_appointments&view=eventtypes')->text(Text::_('COM_APPOINTMENTS_EVENTTYPES_TITLE'));
+        $toolbar->linkButton('dashboard')->url('index.php?option=com_appointments')->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'));
 
         return parent::display($tpl);
     }

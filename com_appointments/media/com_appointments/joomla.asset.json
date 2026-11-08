@@ -6,6 +6,14 @@
     "license": "GPL-3.0-or-later",
     "assets": [
         {
+            "name": "com_appointments.admin",
+            "type": "style",
+            "uri": "com_appointments/admin.css",
+            "dependencies": [
+                "webcomponent.joomla-tab"
+            ]
+        },
+        {
             "name": "com_appointments.site",
             "type": "style",
             "uri": "com_appointments/appointments.css",

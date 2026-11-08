@@ -28,7 +28,7 @@ Joomla/
 │   ├── plg_osmap_j2commerce/
 │   ├── plg_j2commerce_productcompare/
 │   └── plg_privacy_j2commerce/
-├── shared/                   # Shared build and test scripts
+├── shared/                   # Shared installer support, build and test scripts
 └── .github/                  # CI/CD workflows
 ```
 
@@ -56,6 +56,83 @@ Joomla/
 | [Product Compare](j2commerce/plg_j2commerce_productcompare/) | Compare products side-by-side |
 | [Privacy](j2commerce/plg_privacy_j2commerce/) | GDPR compliance for J2Commerce |
 
+## Installation safety and repeatable system checks
+
+Every distributable uses the same installer support from `shared/installer/`, staged into its
+ZIP by `shared/build/prepare-installer.php` (builds require PHP CLI 8.1+ as well as Bash,
+rsync and zip/unzip). Each extension keeps its own lifecycle work, but
+the common installer adds a live prerequisite report after installation and update. **Passed
+checks, blockers and warnings are separate.** A disabled plugin is not a missing PHP extension,
+and an unverified cron trigger or mail delivery is never reported as a successful end-to-end test.
+The report is translated into en-GB, de-DE and fr-FR; shipped de-CH files use the de-DE text.
+
+The **System check** tab is read-only and can be reopened and refreshed without reinstalling:
+
+| Extension type | Administrator menu path |
+|---|---|
+| Component | **System → Setup → Global Configuration → extension → System check** (also through **Options** where the component offers it, or the configuration link in the installation report) |
+| Plugin, including bundled plugins | **System → Manage → Plugins → plugin → System check** |
+| Administrator module | **System → Manage → Administrator Modules → module → System check** |
+| DMARC package | **Components → DMARC Reports → Options → System check**, which also repeats the installed package's child checks; open the children's individual tabs for details |
+
+These are local checks of the running platform, required PHP extensions, database driver where
+applicable, installed/enabled dependencies, enabled shop tables and writable extension directory.
+Optional archive support and disabled plugins are warnings. The report names the next menu path
+for configuration, scheduler history and mail testing. It also checks the current administrator
+request's HTTPS scheme (unknown during CLI installation) and reads the root `.htaccess` for
+known component/option redirect or deny patterns, using the same analyzer as AJAX Forms.
+Missing or unreadable rules, possible routing blocks and unverified HTTP routing are warnings:
+neither an HTTPS administrator request nor the absence of known rewrite patterns proves that
+public endpoints work. It sends no HTTP probes and never changes web-server configuration.
+Keep using DMARC Reports' existing
+**System Check** view for its deeper IMAP/DNS/MTA-STS diagnostics; the common tab does not contact
+external systems or replace that view.
+
+**Existing files are not permission to overwrite them.** Before Joomla copies files, the
+installer compares every declared destination, including media, languages, bundled plugins,
+the Joomla 5 Product Compare mirror and the known installer-managed external changes.
+Identical files and absent destinations need no approval. Differing existing files are backed
+up byte-for-byte, the installation stops, and a review plan identifies each destination, its
+old/new SHA-256 hashes, backup and operation. This intentionally applies to ordinary upgrades
+as well as customised or foreign files: a previous release's changed file is still an existing file.
+Obsolete declared paths and known legacy-file retirement actions also require approval.
+Unrelated files in the Product Compare mirror are retained rather than deleting the whole tree.
+Existing template overrides that are not being retired are left untouched.
+
+Backups and guarded JSON state are stored in **`administrator/advans-installer-state/`**, outside
+Joomla's disposable cache and extension directories. Backup containers are non-executable PHP
+envelopes containing the original bytes as base64, their hash and destination binding. Opening
+one over HTTP does not disclose its contents. No automatic cleanup removes these backups;
+the server administrator must retain them securely for the required rollback period.
+
+Joomla's installer is not interactive. After an installation stops, the server administrator must:
+
+1. Unpack the intended ZIP privately and review its incoming files against the review plan and
+   decoded backup contents. A `remove` or retirement operation is not an ordinary file update;
+   its incoming hash represents the named operation marker, not replacement content.
+2. Verify the review plan's SHA-256 against the fingerprint printed in the installer error,
+   then explicitly approve that exact plan using the support shipped in the unpacked ZIP:
+
+   ```text
+   php /path/to/unpacked/advansinstaller/approve.php --approve /path/to/site/administrator/advans-installer-state/EXTENSION/plan.php REVIEWED_PLAN_SHA256
+   ```
+
+   Run this command as the same filesystem user that performs the Joomla install, so that
+   Joomla can read the protected approval file. The server administrator must arrange that
+   user context; do not make the state directory or approval files publicly readable.
+
+3. Retry the same ZIP under **System → Install → Extensions** (or repeat the CLI install).
+   Different incoming or existing bytes require a new backup and approval. A package inspects
+   all child archives first; its exact-hash approval also applies when those children install.
+
+Approval requires filesystem-administrator access; there is no public approval endpoint and no
+query-string bypass. Backups must verify before approval is accepted. An unreadable destination,
+symbolic link, invalid manifest or failed backup stops the install rather than claiming success.
+Do not run concurrent installs or edit destination files between review and retry.
+For a first-install conflict, no extension options need to exist yet: use the CLI support in the
+unpacked package. Review plans/approvals do not grant permission to overwrite different bytes
+later, and do not authorise unrelated files or uninstall data deletion.
+
 ## Testing
 
 Each extension has automated tests that run via GitHub Actions on pushes and pull requests to `main` that change the extension directory, one of the files under `shared/` that the extension uses, or the extension's own workflow file. Every workflow can also be started manually. Every suite keeps its own job on every lane, so a red check names the suite and the lane straight away.
@@ -79,7 +156,8 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 
 | File under `shared/` | Starts |
 |---|---|
-| `build/build.sh`, `build/verify-package.sh` | every extension workflow (the DMARC package also verifies its assembled bundle) |
+| `build/**`, `installer/**` | every extension workflow (the DMARC package also stages the support and verifies its assembled bundle) |
+| `tests/installer-*.php` | Infrastructure Tests: offline destination, translation, backup and approval regressions |
 | `tests/run-tests.sh` | every extension workflow (the local runners delegate here) |
 | `tests/lang-lint.php`, `tests/requirements-check.php`, `tests/deprecated-api-scan.php` | every extension workflow (job `Language Files`) |
 | `tests/scripts/shared-test-helpers.php` | every extension workflow (loaded by the shared suites) |
@@ -103,11 +181,38 @@ Local test prerequisites and commands: [`.claude/skills/joomla-extensions/refere
 
 ## Languages
 
-All extensions ship de-DE (Swiss High German), en-GB and fr-FR. No text is written into the code: PHP, layouts and JavaScript show language keys only, so a further language needs language files and, for extensions using `<languages>`, one manifest line per file.
+Every extension and bundled plugin ships exactly **de-DE, en-GB and fr-FR**, with complete key
+and placeholder parity per language file. This also applies to future extensions. Sites run in
+de-DE, whose wording is **Swiss High German** (`ss`, never `ß`, Swiss terminology, `z.B.`).
+No de-CH language folders or manifest declarations are shipped or generated at build time.
+The source language files remain checked in. The shared lint enforces this rule across all
+extensions, while package verification checks that the ZIP contains the same supported file set.
+No text is written into the code: PHP, layouts and JavaScript show language keys only.
+
+### E-mail templates
+
+Every extension that sends mail ships complete, equivalent subjects and message texts in
+**de-DE, en-GB and fr-FR**, even when only German is active on the website. HTML generated from
+translated text uses that same language; there is no second, untranslated HTML default.
+The recipient's supported account language wins, otherwise the **default site language** applies,
+including recipients without an account. A request, administrator session, order or another
+recipient must not choose the mail language. An unsupported site language falls back to en-GB.
+Operator-customised templates remain operator content and are not overwritten on update.
+
+| Extension | Outgoing templates |
+|---|---|
+| Appointments | 18 booking/invitee/guest/host purposes and 7 internet-calendar/device/activation/security purposes; subject and text in each locale, with HTML rendered through the configured Joomla mail layout |
+| AJAX Forms | Password reset, username reminder, self/admin activation and new-registration notice; Joomla `com_mails` templates with translated plugin fallbacks |
+| J2Commerce Privacy | Customer retention/removal notice (8 account/guest, address and newsletter variants) and 3 administrator action notices, including translated order details; plain-text mail |
+| Other extensions and bundled plugins | No outgoing message bodies of their own. DMARC ingestion receives reports, it does not send notifications. The Privacy system plugin changes confirmation URLs in Joomla-owned `com_privacy` mail without replacing its text or language selection |
 
 To add a language:
 
-1. Copy the `en-GB` folder of every `language/` directory of the extension (bundled sub-plugins and `administrator/language` of components included) to the new tag and translate every value. Keep keys and `printf` placeholders.
+The supported language set is a repository-wide decision. A new locale requires maintainer
+approval and must be added to all extensions, bundled plugins, the shared lint and package checks,
+not just to a single extension. Swiss wording is maintained in de-DE, not a separate de-CH locale.
+
+1. Copy the `en-GB` folder of every `language/` directory of the extension (bundled sub-plugins and `administrator/language` of components included) to the new tag and translate every value. Keep keys and `printf` placeholders. Also translate `shared/installer/language/en-GB/advans_installer.ini` under the new tag; staging fails if a shipped language lacks this shared translation.
 2. Import/Export, Cleanup, DMARC Reports, DMARC Reports Dashboard Module, DMARC Reports Package, Appointments and AJAX Forms list their files in the manifest (`<languages>`): add one `<language tag="xx-XX">` line per file. Appointments has two such blocks, one for the administrator files and one for the site files. The other extensions load their whole `language/` folder.
 3. Run `php shared/tests/lang-lint.php <extension dir>` for every extension.
 4. Add the tag where tests name the languages explicitly (installer-messages suite, `de-DE, en-GB, fr-FR` loops).

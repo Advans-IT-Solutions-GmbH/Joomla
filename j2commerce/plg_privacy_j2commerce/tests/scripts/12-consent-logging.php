@@ -35,6 +35,7 @@ require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
+require_once __DIR__ . '/shared-test-helpers.php';
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
 use Advans\Plugin\System\J2CommercePrivacy\Extension\J2CommercePrivacy;
@@ -46,6 +47,7 @@ use Joomla\Event\Dispatcher;
 use Joomla\Event\Event;
 use Joomla\Input\Input;
 use Joomla\Registry\Registry;
+use J2Commerce\Component\J2commerce\Administrator\Helper\OrderStatusHelper;
 
 if (!class_exists(ConsentRepository::class)) {
     require_once JPATH_PLUGINS . '/privacy/j2commerce/src/Consent/ConsentRepository.php';
@@ -668,10 +670,21 @@ class ConsentLoggingTest
             $controller = JPATH_SITE . '/components/com_j2commerce/src/Controller/CheckoutController.php';
 
             if (is_file($controller)) {
+                JLoader::registerNamespace(
+                    'J2Commerce\\Component\\J2commerce\\Administrator',
+                    JPATH_ADMINISTRATOR . '/components/com_j2commerce/src',
+                    false,
+                    false,
+                    'psr4'
+                );
                 $source = (string) file_get_contents($controller);
                 $this->test('J2Commerce keeps the order number in the user state j2commerce.order_id',
                     str_contains($source, "setUserState('j2commerce.order_id'") && str_contains($source, "getUserState('j2commerce.order_id'"));
-                $this->test('J2Commerce marks an unplaced order with order_state_id 5', (bool) preg_match('/order_state_id\s*\?\?\s*0\)\s*===\s*5/', $source));
+                $incompleteState = method_exists(OrderStatusHelper::class, 'getType')
+                    ? OrderStatusHelper::getType(5) === OrderStatusHelper::TYPE_NEW
+                    : (bool) preg_match('/order_state_id\s*\?\?\s*0\)\s*===\s*5/', $source);
+                $this->test('J2Commerce classifies the unplaced fixture state 5 as incomplete', $incompleteState,
+                    'Lifecycle API available: ' . (method_exists(OrderStatusHelper::class, 'getType') ? 'yes' : 'no'));
             }
         } catch (\Throwable $e) {
             $this->test('Placed-order recording runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
@@ -2052,16 +2065,8 @@ class ConsentLoggingTest
      */
     private function runCliUpdate(string $package): array
     {
-        $command = sprintf(
-            'COLUMNS=10000 HTTP_HOST=localhost %s %s extension:install --path=%s 2>&1',
-            escapeshellarg(PHP_BINARY),
-            escapeshellarg(JPATH_BASE . '/cli/joomla.php'),
-            escapeshellarg($package)
-        );
-        $output = [];
-        exec($command, $output, $exitCode);
-
-        $readable = trim(preg_replace('/\s+/', ' ', implode(' ', $output)));
+        [$exitCode, $output] = sh_cli_install_reviewed_fixture(JPATH_BASE, $package);
+        $readable = trim(preg_replace('/\s+/', ' ', $output));
 
         return [$exitCode, preg_replace('/\s+/', '', $readable), $readable];
     }
