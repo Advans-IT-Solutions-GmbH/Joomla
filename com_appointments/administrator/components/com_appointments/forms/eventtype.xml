@@ -8,7 +8,7 @@
         <field name="alias" type="text" label="JFIELD_ALIAS_LABEL" maxlength="255" />
         <field name="description" type="editor" label="JGLOBAL_DESCRIPTION" filter="safehtml" />
         <field name="schedule_id" type="schedulelist" label="COM_APPOINTMENTS_EVENTTYPE_SCHEDULE" required="true" filter="integer">
-            <option value="">JOPTION_SELECT</option>
+            <option value="">JSELECT</option>
         </field>
         <field name="host_user_id" type="user" label="COM_APPOINTMENTS_EVENTTYPE_HOST" required="true" filter="integer" />
         <field name="duration_minutes" type="number" label="COM_APPOINTMENTS_EVENTTYPE_DURATION" min="1" max="65535" default="30" required="true" filter="integer" />

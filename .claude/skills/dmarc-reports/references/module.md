@@ -54,6 +54,8 @@ The module's own test environment installs **only the module** (component absent
 key leaks, and no summary cards (`mod-dmarcreports__summary`) appear. See the module's
 `tests/scripts/` and `references/testing.md` in the `joomla-extensions` skill for the shared
 harness contract.
+The structure suite keeps the manifest description identical in each main and system language
+catalogue: Joomla's module editor loads the main catalogue, not the system catalogue.
 
 ## Keep in sync with the component
 

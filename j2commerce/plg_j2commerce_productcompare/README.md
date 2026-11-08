@@ -387,6 +387,11 @@ Additional rows can be added via a `table.php` template override.
 
 ## Multi-Language Support
 
+All extensions and bundled plugins in this repository support exactly **de-DE, en-GB and fr-FR**,
+with complete key and placeholder parity. **de-DE uses Swiss High German** (`ss`, never `ß`,
+Swiss terminology and `z.B.`). No `de-CH` folders or build-generated copies are shipped.
+The shared language lint and package checks enforce this rule, including for future extensions.
+
 This extension supports the following languages:
 - **English (en-GB)** - Default
 - **German (de-DE)**

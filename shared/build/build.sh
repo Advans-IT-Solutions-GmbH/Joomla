@@ -96,6 +96,7 @@ cd ..
 # Get package size
 PACKAGE_SIZE=$(du -h "$PACKAGE_NAME" | cut -f1)
 
+# Verification enforces the supported language set in the archive.
 VERIFY_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-package.sh"
 bash "$VERIFY_SCRIPT"
 

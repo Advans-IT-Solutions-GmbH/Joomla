@@ -561,7 +561,7 @@ A removal request is not refused by this plugin for retention reasons (see [Data
 - **Flexible Retention Frameworks:** Configurable retention periods (1-30 years) supporting multiple jurisdictions
 - **Multi-Jurisdictional Support:** Configurable legal basis documentation for international operations
 - **Automated Compliance Processing:** Scheduled task execution for expired data handling
-- **Internationalization:** Multi-language interface support (German de-DE, English en-GB, French fr-FR; de-CH is shipped identical to de-DE)
+- **Internationalization:** Multi-language interface support (Swiss High German de-DE, English en-GB, French fr-FR)
 - **Platform Integration:** Optional Joomla core user data inclusion in privacy exports
 
 ### Limitations
@@ -821,7 +821,17 @@ The administrator message and the customer e-mail list the lifetime-license orde
 - Appears at top of screen after clicking "Delete Data", after the customer e-mail was attempted
 - Lists the orders kept until the end of their retention period and the lifetime-license orders that keep their e-mail address
 - Green: the list was sent to the request address. Warning: the request address is not a valid e-mail address, or sending failed (see the log); inform the customer yourself
-- The customer e-mail is written in the customer's language (`customer_language` of the newest order, else the default site language)
+- Customer and administrator e-mails use the recipient's supported account language, otherwise
+  the default **site** language (including guests without an account), never an order or request
+  language. The customer's preference is captured before other privacy plugins pseudonymise the
+  account. Unsupported preferences use the site default; an unsupported site language uses en-GB.
+  Notification language-loading failures are logged without interrupting cleanup or reporting a
+  completed address deletion as failed. Disabled administrator notifications do not load mail
+  translations; failed customer notifications keep the existing warning/manual-follow-up path.
+  All subjects, eight customer-body variants, three administrator actions and order-detail labels
+  ship in **de-DE, en-GB and fr-FR**, even on a German-only site. These are plain-text mails, not
+  separate HTML templates. The bundled system plugin only changes confirmation URLs in Joomla's
+  `com_privacy` templates; their content and language selection remain owned by Joomla.
 
 **Location 2: Action Log (Permanent)**
 - Visible in request detail view
@@ -1140,6 +1150,11 @@ These options are evaluated by the deployed MyProfile overrides; see [Profile Pr
 
 ## Multi-Language Support
 
+All extensions and bundled plugins in this repository support exactly **de-DE, en-GB and fr-FR**,
+with complete key and placeholder parity. **de-DE uses Swiss High German** (`ss`, never `ß`,
+Swiss terminology and `z.B.`). No `de-CH` folders or build-generated copies are shipped.
+The shared language lint and package checks enforce this rule, including for future extensions.
+
 ### Supported Languages
 
 - • **German** - `de-DE`
@@ -1148,26 +1163,9 @@ These options are evaluated by the deployed MyProfile overrides; see [Profile Pr
 
 ### Adding New Languages
 
-**Step 1: Create language folder**
-```bash
-mkdir -p language/it-CH
-```
-
-**Step 2: Copy files**
-```bash
-cp language/en-GB/plg_privacy_j2commerce.ini language/it-CH/
-cp language/en-GB/plg_privacy_j2commerce.sys.ini language/it-CH/
-cp language/en-GB/index.html language/it-CH/
-```
-
-**Step 3: Translate**
-Open `language/it-CH/plg_privacy_j2commerce.ini` and translate all strings.
-
-**Step 4: Reinstall plugin**
-```bash
-./build.sh
-# Install ZIP in Joomla
-```
+The supported language set is repository-wide. A new locale requires a maintainer decision
+and updates to every extension and bundled plugin, the shared lint, manifests and package checks.
+See [the language conventions](../../.claude/skills/joomla-extensions/references/conventions.md#language-files).
 
 ---
 

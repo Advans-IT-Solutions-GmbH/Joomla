@@ -42,7 +42,6 @@ $stageManifest = static function (string $path) use ($shared, $copyTree, &$stage
     $source = dirname($path);
     $type = (string) $xml['type'];
     $copyTree($shared, $source . '/advansinstaller');
-    $copyTree($shared . '/language/de-DE', $source . '/advansinstaller/language/de-CH');
 
     if ($type === 'package') {
         return;
@@ -56,7 +55,6 @@ $stageManifest = static function (string $path) use ($shared, $copyTree, &$stage
 
     $targetSource = $source . '/' . (string) $files['folder'];
     $copyTree($shared, rtrim($targetSource, '/') . '/advansinstaller');
-    $copyTree($shared . '/language/de-DE', rtrim($targetSource, '/') . '/advansinstaller/language/de-CH');
     $files->addChild('folder', 'advansinstaller');
 
     switch ($type) {
@@ -151,7 +149,7 @@ $stageManifest = static function (string $path) use ($shared, $copyTree, &$stage
         }
 
         $ini = file_get_contents($entry->getPathname());
-        $translationFile = $shared . '/language/' . ($match[1] === 'de-CH' ? 'de-DE' : $match[1]) . '/advans_installer.ini';
+        $translationFile = $shared . '/language/' . $match[1] . '/advans_installer.ini';
 
         if (!is_file($translationFile)) {
             throw new RuntimeException('Shared installer translation missing for ' . $match[1]);

@@ -2,7 +2,8 @@
 /**
  * Language file lint for Joomla extensions.
  *
- * Usage: php shared/tests/lang-lint.php <extension-directory> [<extension-directory> ...]
+ * Usage: php shared/tests/lang-lint.php [--package] <extension-directory> [...]
+ * --package validates extracted delivery without key-usage allowlists, which are not shipped.
  *
  * Checks every *.ini below a `language/<tag>/` directory of the given extension:
  *   - every line is empty, a comment, or KEY="value"
@@ -12,7 +13,8 @@
  *   - the same printf placeholders are used as in the en-GB counterpart
  *   - de-DE: no "ß" (Swiss High German), no ae/oe/ue spellings of common words
  *     and "z.B." without a space (house style)
- *   - de-CH, where an extension still ships it: the same keys and values as de-DE
+ *   - exactly de-DE, en-GB and fr-FR for every language file, including bundled plugins
+ *   - no de-CH folders or manifest declarations (Swiss text belongs in de-DE)
  *   - fr-FR: no unaccented spellings of common French words
  *
  * And the usage of the keys by the extension's own code (PHP, JavaScript, XML
@@ -32,12 +34,20 @@
  * Exits with 1 when any problem is found.
  */
 
-if ($argc < 2) {
-    fwrite(STDERR, "Usage: php lang-lint.php <extension-directory> [...]\n");
+$directories = array_slice($argv, 1);
+$packageMode = ($directories[0] ?? null) === '--package';
+
+if ($packageMode) {
+    array_shift($directories);
+}
+
+if (!$directories) {
+    fwrite(STDERR, "Usage: php lang-lint.php [--package] <extension-directory> [...]\n");
     exit(2);
 }
 
 const REFERENCE_TAG = 'en-GB';
+const SUPPORTED_TAGS = ['de-DE', 'en-GB', 'fr-FR'];
 
 // Word lists are deliberately limited to words that are unambiguous in their
 // replacement spelling. Matching is case-insensitive and on whole words.
@@ -469,7 +479,16 @@ function lint_placeholders(string $value): array
     return $list;
 }
 
-foreach (array_slice($argv, 1) as $extensionDir) {
+function lint_named_placeholders(string $value): array
+{
+    preg_match_all('/\{[a-z][a-z0-9_.]*\}/i', $value, $matches);
+    $tokens = array_values(array_unique($matches[0]));
+    sort($tokens);
+
+    return $tokens;
+}
+
+foreach ($directories as $extensionDir) {
     $extensionDir = rtrim($extensionDir, '/\\');
 
     if (!is_dir($extensionDir)) {
@@ -479,11 +498,22 @@ foreach (array_slice($argv, 1) as $extensionDir) {
 
     $groups   = [];
     $iterator = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator($extensionDir, FilesystemIterator::SKIP_DOTS)
+        new RecursiveDirectoryIterator($extensionDir, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
     );
 
     foreach ($iterator as $fileInfo) {
         $path = str_replace('\\', '/', $fileInfo->getPathname());
+
+        if (preg_match('#/(vendor|node_modules|tests[^/]*)/#', $path)) {
+            continue;
+        }
+
+        if ($fileInfo->isDir() && preg_match('#/language/([^/]+)$#', $path, $tag)
+            && !in_array($tag[1], SUPPORTED_TAGS, true)
+        ) {
+            $addError($path, 0, 'unsupported language folder (only de-DE, en-GB and fr-FR; Swiss High German belongs in de-DE)');
+        }
 
         if (!str_ends_with($path, '.ini') || preg_match('#/(vendor|node_modules|tests[^/]*)/#', $path)) {
             continue;
@@ -498,11 +528,136 @@ foreach (array_slice($argv, 1) as $extensionDir) {
 
     ksort($groups);
 
+    if (!$groups) {
+        $addError($extensionDir, 0, 'no language files found (de-DE, en-GB and fr-FR are required)');
+    }
+
+    $installationPaths = [];
+    $manifestPaths = [];
+
+    foreach (lint_code_files($extensionDir) as $manifest) {
+        if (!str_ends_with($manifest, '.xml')
+            || !str_contains((string) file_get_contents($manifest), '<extension')
+        ) {
+            continue;
+        }
+
+        $xml = simplexml_load_file($manifest);
+
+        if ($xml === false) {
+            $addError($manifest, 0, 'cannot parse extension manifest');
+            continue;
+        }
+
+        $root = str_replace('\\', '/', realpath(dirname($manifest)));
+        $manifestPaths[$root] = $manifest;
+        $installationPaths[$root] ??= ['files' => [], 'folders' => []];
+
+        foreach ($xml->xpath('//languages') as $block) {
+            $declared = [];
+
+            foreach ($block->language as $language) {
+                $tag = (string) $language['tag'];
+                $file = (string) $language;
+
+                if (!in_array($tag, SUPPORTED_TAGS, true)) {
+                    $addError($manifest, 0, "unsupported manifest language tag $tag");
+                }
+
+                $family = str_replace($tag, '{tag}', $file);
+                $declared[$family][$tag] = true;
+                $source = dirname($manifest) . '/'
+                    . ((string) $block['folder'] !== '' ? (string) $block['folder'] . '/' : '') . $file;
+
+                if (!is_file($source)) {
+                    $addError($manifest, 0, "declared language file does not exist: $source");
+                } else {
+                    $installationPaths[$root]['files'][] = str_replace('\\', '/', realpath($source));
+                }
+            }
+
+            foreach ($declared as $family => $tags) {
+                foreach (SUPPORTED_TAGS as $requiredTag) {
+                    if (!isset($tags[$requiredTag])) {
+                        $addError($manifest, 0, "missing manifest language $requiredTag for $family");
+                    }
+                }
+            }
+        }
+
+        foreach ($xml->xpath('//files') as $block) {
+            $source = dirname($manifest) . '/'
+                . ((string) $block['folder'] !== '' ? (string) $block['folder'] . '/' : '');
+
+            foreach ($block->folder as $folder) {
+                if (is_dir($source . $folder)) {
+                    $installationPaths[$root]['folders'][] = str_replace('\\', '/', realpath($source . $folder)) . '/';
+                }
+            }
+
+            foreach ($block->filename as $filename) {
+                if (is_file($source . $filename)) {
+                    $installationPaths[$root]['files'][] = str_replace('\\', '/', realpath($source . $filename));
+                }
+            }
+        }
+    }
+
+    // A bundled plugin's own manifest must install its languages, even when the
+    // parent also copies the plugin's source folder for the installer script.
+    uksort($installationPaths, static fn (string $a, string $b): int => strlen($b) <=> strlen($a));
+    $languageOwners = array_fill_keys(array_keys($installationPaths), false);
+
+    foreach ($groups as $files) {
+        foreach ($files as $file) {
+            $path = str_replace('\\', '/', realpath($file));
+            $installed = false;
+            $installerSupport = $packageMode && str_contains($path, '/advansinstaller/language/');
+
+            foreach ($installationPaths as $root => $paths) {
+                if (!str_starts_with($path, $root . '/')) {
+                    continue;
+                }
+
+                $languageOwners[$root] = $languageOwners[$root] || !$installerSupport;
+                $installed = in_array($path, $paths['files'], true);
+
+                foreach ($paths['folders'] as $folder) {
+                    $installed = $installed || str_starts_with($path, $folder);
+                }
+
+                break;
+            }
+
+            // Staged root installer support is used before installation; its translated
+            // copies cannot satisfy the extension's own language requirement.
+            if (!$installed && !$installerSupport) {
+                $addError($file, 0, 'language file is not installed by its extension manifest');
+            }
+        }
+    }
+
+    foreach ($languageOwners as $root => $hasLanguages) {
+        if (!$hasLanguages) {
+            $addError($manifestPaths[$root], 0, 'no language files found for extension manifest (de-DE, en-GB and fr-FR are required)');
+        }
+    }
+
     $definedByTag = [];   // tag => key => [path, line], over all files of the extension
     $fileNames    = [];
 
     foreach ($groups as $group => $files) {
         $parsed = [];
+
+        foreach (SUPPORTED_TAGS as $requiredTag) {
+            if (!isset($files[$requiredTag])) {
+                $addError(reset($files), 0, "missing $requiredTag counterpart for this language file");
+            }
+        }
+
+        foreach (array_diff(array_keys($files), SUPPORTED_TAGS) as $unsupportedTag) {
+            $addError($files[$unsupportedTag], 0, "unsupported language $unsupportedTag (only de-DE, en-GB and fr-FR are supported)");
+        }
 
         foreach ($files as $tag => $path) {
             $parsed[$tag] = lint_parse_file($path, $addError);
@@ -521,22 +676,6 @@ foreach (array_slice($argv, 1) as $extensionDir) {
 
         $reference = $parsed[REFERENCE_TAG];
 
-        // Sites run in de-DE, which carries the Swiss High German text. A de-CH file
-        // kept next to it for sites that still have one must say exactly the same.
-        if (isset($parsed['de-CH'], $parsed['de-DE'])) {
-            foreach ($parsed['de-CH'] as $key => $entry) {
-                if (isset($parsed['de-DE'][$key]) && $parsed['de-DE'][$key]['value'] !== $entry['value']) {
-                    $addError($files['de-CH'], $entry['line'], "$key differs from de-DE (de-CH must equal de-DE)");
-                }
-            }
-
-            foreach (array_diff_key($parsed['de-DE'], $parsed['de-CH']) as $key => $entry) {
-                $addError($files['de-CH'], 0, "missing key $key (present in de-DE)");
-            }
-        } elseif (isset($parsed['de-CH'])) {
-            $addError($files['de-CH'], 0, 'de-CH without a de-DE counterpart (de-DE carries the Swiss text)');
-        }
-
         foreach ($parsed as $tag => $entries) {
             $path = $files[$tag];
 
@@ -553,11 +692,19 @@ foreach (array_slice($argv, 1) as $extensionDir) {
                     if (lint_placeholders($entry['value']) !== lint_placeholders($reference[$key]['value'])) {
                         $addError($path, $entry['line'], "placeholders of $key differ from en-GB");
                     }
+
+                    if (lint_named_placeholders($entry['value']) !== lint_named_placeholders($reference[$key]['value'])) {
+                        $addError($path, $entry['line'], "named placeholders of $key differ from en-GB");
+                    }
                 }
             }
 
             foreach ($entries as $key => $entry) {
                 $value = $entry['value'];
+
+                if (preg_match('/_(?:SUBJECT|BODY)(?:_|$)/', $key) && trim($value) === '') {
+                    $addError($path, $entry['line'], "empty subject/body template $key");
+                }
 
                 if ($tag === 'de-DE') {
                     if (str_contains($value, 'ß')) {
@@ -586,7 +733,9 @@ foreach (array_slice($argv, 1) as $extensionDir) {
         }
     }
 
-    lint_usage($extensionDir, $definedByTag, array_unique($fileNames), $addError);
+    if (!$packageMode) {
+        lint_usage($extensionDir, $definedByTag, array_unique($fileNames), $addError);
+    }
     lint_swiss_spelling($extensionDir, $addError);
 }
 

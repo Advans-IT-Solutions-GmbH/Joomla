@@ -89,6 +89,11 @@ repository root README and the `joomla-extensions` skill for how the suites are 
 
 ## Multi-Language Support
 
+All extensions and bundled plugins in this repository support exactly **de-DE, en-GB and fr-FR**,
+with complete key and placeholder parity. **de-DE uses Swiss High German** (`ss`, never `ß`,
+Swiss terminology and `z.B.`). No `de-CH` folders or build-generated copies are shipped.
+The shared language lint and package checks enforce this rule, including for future extensions.
+
 Ships with en-GB, de-DE (Swiss High German) and fr-FR, each with `.ini` and `.sys.ini`.
 
 ## Support & Contact

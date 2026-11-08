@@ -46,6 +46,11 @@ preference — see `references/architecture.md`, section "Self-hosted by design"
 
 ## Non-negotiable constraints
 
+Mail defaults for every booking and internet-calendar purpose ship in de-DE, en-GB and fr-FR.
+Use each recipient's account language, otherwise the site default, including additional guests
+without an account; never inherit a booking/request language. HTML uses the same translated text.
+See the component README, "Email templates", and the repository-wide language conventions.
+
 1. **No external service calls for the core booking flow.** No cloud calendar API, no hosted
    scheduling backend, no analytics, no remote font or script. The component must work on a server
    with all outbound traffic blocked, except for the optional conferencing adapters that are

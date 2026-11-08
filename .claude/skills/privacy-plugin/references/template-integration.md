@@ -49,9 +49,9 @@ The tab is rendered while the plugin is enabled and `show_privacy_section` is on
 in its `myprofile/default_privacy.php` override (request list, data overview, process steps,
 retention notice). Each of them must exist in `de-DE`, `en-GB` and `fr-FR` of the plugin and is listed
 in `tests/language-keys-for-template-overrides.txt`, otherwise the tab shows raw keys and the lint
-would drop the key as unused. Sites run in `de-DE`. The plugin also ships `de-CH`, identical to `de-DE`,
-because a `de-CH` folder installed by an older version is never deleted and lacks every key added
-since. Shipping it lets the update replace that copy. A site language override (`language/overrides/*.override.ini`) that defines these keys
+would drop the key as unused. Sites run in `de-DE`, with Swiss High German wording. Like every
+extension in this repository, the plugin and its bundled plugins ship exactly `de-DE`, `en-GB`
+and `fr-FR`; no `de-CH` files are shipped or generated. A site language override (`language/overrides/*.override.ini`) that defines these keys
 wins over the plugin file; define them there only to change the wording on purpose.
 
 ## Checkout Consent

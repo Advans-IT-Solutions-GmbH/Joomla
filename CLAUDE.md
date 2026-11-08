@@ -20,6 +20,12 @@ Monorepo mehrerer eigenständiger Joomla-/J2Commerce-Extensions von Advans IT So
 
 Bevor du an einer Extension arbeitest, den passenden Skill in `.claude/skills/` lesen — Inhalt dort, nicht hier:
 
+Sprachregel für alle Erweiterungen und Unter-Plugins: genau `de-DE`, `en-GB`, `fr-FR`;
+Schweizer Hochdeutsch in `de-DE`, keine `de-CH`-Ordner. Massgeblich: `AGENTS.md` und
+`joomla-extensions/references/conventions.md`, „Language Files“.
+Das gilt auch für E-Mail-Vorlagen; Sprachwahl über das Empfängerkonto, sonst die
+Site-Standardsprache (auch Gäste). Sender-Inventar und Details: `README.md`, „E-mail templates“.
+
 - `joomla-extensions` — Repo-Struktur, Test- und Release-Workflow, `update.xml`-Anforderungen, Sprachdateien-Konventionen.
 - `privacy-plugin` — Domänenwissen zu `plg_privacy_j2commerce` (GDPR/DSGVO, Retention, Consent, MyProfile-Tab, Events).
 - `dmarc-reports` — Domänenwissen zu `com_dmarcreports` (RFC 7489 Parser, IMAP-/Datei-Ingestion, Datenmodell, Action Center), zum Dashboard-Modul `mod_dmarcreports`, zum Auto-Ingestion-Task-Plugin `plg_task_dmarcreports`, zum MTA-STS-/TLS-RPT-System-Plugin `plg_system_dmarcmtasts` und zum Paket `pkg_dmarcreports`.

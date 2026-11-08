@@ -14,6 +14,7 @@ use Advans\Component\Appointments\Administrator\Helper\IcsWriter;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\MailComposer;
 use Advans\Component\Appointments\Administrator\Helper\MailHtml;
+use Advans\Component\Appointments\Administrator\Helper\MailLanguage;
 use Advans\Component\Appointments\Administrator\Helper\MailPresentation;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
@@ -90,12 +91,9 @@ final class NotificationService
 
         $event = $this->event((int) $booking['eventtype_id']);
         $hostParams = json_decode((string) $event['host_params'], true) ?: [];
-        // The host's profile language, else the site's default language, else English.
+        // Every recipient uses their own account language, else the site's default.
         $siteLanguage = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
-        $hostLanguage = (string) (($hostParams['language'] ?? '') !== '' ? $hostParams['language'] : $siteLanguage);
-        $hostLanguage = in_array($hostLanguage, ['en-GB', 'de-DE', 'fr-FR'], true) ? $hostLanguage
-            : (in_array($siteLanguage, ['en-GB', 'de-DE', 'fr-FR'], true) ? $siteLanguage : 'en-GB');
-        $inviteeLanguage = (string) ($booking['invitee_language'] ?? 'en-GB');
+        $hostLanguage = MailLanguage::resolve((string) ($hostParams['language'] ?? ''), $siteLanguage);
         $recipients = [];
         // The guests of the stored booking now, not of the copy the caller loaded earlier: a guest
         // who removed their address in the meantime gets no further mail and is no attendee of the
@@ -113,13 +111,13 @@ final class NotificationService
             $booking['guest_emails'] = $this->currentGuests((int) $booking['id'], $booking['guest_emails'] ?? null);
 
             if (!$hostOnly && !empty($booking['invitee_email'])) {
-                $recipients[] = [$booking['invitee_email'], $inviteeLanguage, false, true, false];
+                $guests = isset(DefaultTemplates::GUEST[$purpose]) ? PrivacyAddress::guestList($booking['guest_emails'] ?? null) : [];
+                $languages = MailLanguage::forAddresses($this->db, [$booking['invitee_email'], ...$guests], $siteLanguage);
+                $recipients[] = [$booking['invitee_email'], $languages[$booking['invitee_email']], false, true, false];
                 // A guest gets the guest template of the purpose, with a neutral salutation and the
                 // link that removes only their own address. A purpose without one is not sent to guests.
-                if (isset(DefaultTemplates::GUEST[$purpose])) {
-                    foreach (PrivacyAddress::guestList($booking['guest_emails'] ?? null) as $guest) {
-                        $recipients[] = [$guest, $inviteeLanguage, false, false, true];
-                    }
+                foreach ($guests as $guest) {
+                    $recipients[] = [$guest, $languages[$guest], false, false, true];
                 }
             }
             $recipients[] = [$event['host_email'], $hostLanguage, true, false, false];
@@ -248,21 +246,24 @@ final class NotificationService
     public function template(int $eventId, string $purpose, string $language): array
     {
         $db = $this->db;
-        foreach (array_unique([$language, 'en-GB']) as $tag) {
-            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-            $query->select($db->quoteName(['subject', 'body']))->from($db->quoteName('#__appointments_templates'))
-                ->where($db->quoteName('eventtype_id') . ' IN (0,' . $eventId . ')')
-                ->where($db->quoteName('purpose') . ' = ' . $db->quote($purpose))
-                ->where($db->quoteName('language') . ' = ' . $db->quote($tag))
-                ->where($db->quoteName('published') . ' = 1')
-                ->order($db->quoteName('eventtype_id') . ' DESC')->setLimit(1);
-            $row = $db->setQuery($query)->loadAssoc();
-            if ($row) {
-                return $row;
-            }
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName(['subject', 'body']))->from($db->quoteName('#__appointments_templates'))
+            ->where($db->quoteName('eventtype_id') . ' IN (0,' . $eventId . ')')
+            ->where($db->quoteName('purpose') . ' = ' . $db->quote($purpose))
+            ->where($db->quoteName('language') . ' = ' . $db->quote($language))
+            ->where($db->quoteName('published') . ' = 1')
+            ->order($db->quoteName('eventtype_id') . ' DESC')->setLimit(1);
+        $row = $db->setQuery($query)->loadAssoc();
+        if ($row) {
+            return $row;
         }
 
-        throw new NotificationException('No published template is available for this notification.');
+        [$subject, $body] = DefaultTemplates::all()[$purpose]
+            ?? throw new NotificationException('No template is available for this notification.');
+        $strings = new Language($language);
+        $strings->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments', $language, true);
+
+        return ['subject' => $strings->_($subject), 'body' => str_replace('\n', "\n", $strings->_($body))];
     }
 
     /**

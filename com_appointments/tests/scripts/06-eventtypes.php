@@ -18,6 +18,21 @@ $check = static function (bool $ok, string $label) use (&$failed): void {
 
 try {
     $http->login();
+    foreach (['eventtype' => ['jform_schedule_id'], 'field' => ['jform_eventtype_id'], 'template' => ['jform_eventtype_id', 'jform_purpose']] as $view => $selectIds) {
+        $html = $http->request('/administrator/index.php?option=com_appointments&view=' . $view . '&layout=edit');
+        $document = new DOMDocument();
+        $previousErrors = libxml_use_internal_errors(true);
+        $document->loadHTML($html);
+        libxml_clear_errors();
+        libxml_use_internal_errors($previousErrors);
+        $xpath = new DOMXPath($document);
+
+        foreach ($selectIds as $selectId) {
+            $placeholder = $xpath->query('//select[@id="' . $selectId . '"]/option[@value=""]')->item(0);
+            $check($placeholder !== null && trim($placeholder->textContent) === 'Select',
+                $view . ': empty selection uses the translated Joomla core placeholder');
+        }
+    }
     $hostName = $db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin');
     $host = (int) $db->query("SELECT id FROM {$prefix}users WHERE username='{$hostName}'")->fetch_assoc()['id'];
     $schedule = [

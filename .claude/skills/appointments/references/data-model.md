@@ -141,7 +141,7 @@ Index `(user_id, start_utc, end_utc)`.
 | `invitee_email` | `VARCHAR(255)` | |
 | `invitee_phone` | `VARCHAR(64)` | |
 | `invitee_timezone` | `VARCHAR(64)` | what they saw, for the e-mail |
-| `invitee_language` | `CHAR(7)` | which language to write to them in |
+| `invitee_language` | `CHAR(7)` | language captured with the booking; mail delivery independently resolves each recipient's account language, else the site default |
 | `guest_emails` | `TEXT` | newline separated, at most the component option `max_guests` (0–50, default 10) addresses; a guest is matched exactly per line, never by substring |
 | `custom_fields` | `JSON` | answers, keyed by field id |
 | `consent_utc` | `DATETIME NULL` | set only in the consent mode of the booking form (`consent_mode = consent`): when the person consented; kept on anonymisation (proof, no data of the person) |

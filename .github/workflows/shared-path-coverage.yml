@@ -18,12 +18,14 @@ on:
       - 'shared/**'
       - '.github/workflows/**'
       - '.github/scripts/check-shared-path-coverage.sh'
+      - '.github/scripts/test-language-delivery.py'
   pull_request:
     branches: [main]
     paths:
       - 'shared/**'
       - '.github/workflows/**'
       - '.github/scripts/check-shared-path-coverage.sh'
+      - '.github/scripts/test-language-delivery.py'
 
 permissions: {}
 
@@ -46,3 +48,9 @@ jobs:
           persist-credentials: false
       - name: Check that every shared file is matched by at least one workflow
         run: bash .github/scripts/check-shared-path-coverage.sh
+      - name: Setup PHP for language delivery regressions
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
+        with:
+          php-version: '8.1'
+      - name: Check supported locales, Swiss spelling and bundled language files
+        run: python .github/scripts/test-language-delivery.py
