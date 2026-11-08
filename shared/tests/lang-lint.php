@@ -525,6 +525,7 @@ foreach (array_slice($argv, 1) as $extensionDir) {
     }
 
     $installationPaths = [];
+    $manifestPaths = [];
 
     foreach (lint_code_files($extensionDir) as $manifest) {
         if (!str_ends_with($manifest, '.xml')
@@ -541,6 +542,7 @@ foreach (array_slice($argv, 1) as $extensionDir) {
         }
 
         $root = str_replace('\\', '/', realpath(dirname($manifest)));
+        $manifestPaths[$root] = $manifest;
         $installationPaths[$root] ??= ['files' => [], 'folders' => []];
 
         foreach ($xml->xpath('//languages') as $block) {
@@ -596,6 +598,7 @@ foreach (array_slice($argv, 1) as $extensionDir) {
     // A bundled plugin's own manifest must install its languages, even when the
     // parent also copies the plugin's source folder for the installer script.
     uksort($installationPaths, static fn (string $a, string $b): int => strlen($b) <=> strlen($a));
+    $languageOwners = array_fill_keys(array_keys($installationPaths), false);
 
     foreach ($groups as $files) {
         foreach ($files as $file) {
@@ -607,6 +610,7 @@ foreach (array_slice($argv, 1) as $extensionDir) {
                     continue;
                 }
 
+                $languageOwners[$root] = true;
                 $installed = in_array($path, $paths['files'], true);
 
                 foreach ($paths['folders'] as $folder) {
@@ -619,6 +623,12 @@ foreach (array_slice($argv, 1) as $extensionDir) {
             if (!$installed) {
                 $addError($file, 0, 'language file is not installed by its extension manifest');
             }
+        }
+    }
+
+    foreach ($languageOwners as $root => $hasLanguages) {
+        if (!$hasLanguages) {
+            $addError($manifestPaths[$root], 0, 'no language files found for extension manifest (de-DE, en-GB and fr-FR are required)');
         }
     }
 

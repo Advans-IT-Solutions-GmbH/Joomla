@@ -129,6 +129,18 @@ with tempfile.TemporaryDirectory(prefix="joomla-language-") as directory:
     manifest.write_text(xml, encoding="utf-8")
     (nested.parent / "example.xml").write_text(xml, encoding="utf-8")
 
+    nested_xml = xml.replace(
+        f'<languages folder="language">{declarations}</languages>',
+        '<files><folder>language</folder></files>',
+    )
+    (nested.parent / "example.xml").write_text(nested_xml, encoding="utf-8")
+    manifest.write_text(xml.replace("</extension>", "<files><folder>plugins</folder></files></extension>"), encoding="utf-8")
+    check(command, ROOT, True, "Language files OK")
+    shutil.rmtree(nested)
+    check(command, ROOT, False, "no language files found for extension manifest")
+    shutil.copytree(fixture / "language", nested)
+    check(command, ROOT, True, "Language files OK")
+
     (fixture / "build.env").write_text(
         'EXTENSION_NAME="example"\nVERSION="1.0.0"\n', encoding="utf-8"
     )
