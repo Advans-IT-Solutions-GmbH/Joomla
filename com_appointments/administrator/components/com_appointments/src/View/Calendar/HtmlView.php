@@ -96,13 +96,15 @@ class HtmlView extends BaseHtmlView
             throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
         }
 
+        $app->getInput()->set('hidemainmenu', true);
+
         if (!$this->enabled) {
             ToolbarHelper::title(Text::_('COM_APPOINTMENTS_TEAM_CALENDARS_TITLE'), 'calendar');
+            Toolbar::getInstance('toolbar')->cancel('calendars.cancel', 'JTOOLBAR_CLOSE');
 
             return parent::display($tpl);
         }
 
-        $app->getInput()->set('hidemainmenu', true);
         $data = (array) $app->getUserState('com_appointments.edit.calendar.data', []);
 
         try {

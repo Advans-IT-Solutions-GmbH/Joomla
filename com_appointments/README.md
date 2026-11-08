@@ -356,7 +356,22 @@ rows and rate-limit windows per invocation. Run additional batches or increase t
 an existing backlog exceeds one daily batch. Monitor Scheduler results: disabling or failing the
 task prevents both personal-data retention and metadata cleanup from being enforced.
 
+### Navigation
+
+Each administrator and site branch keeps links back to its list or overview, including empty,
+disabled and recoverable error states. Administrator edit forms leave through Save & Close or
+Cancel so their checkout is released. Authorisation and deliberate privacy-preserving 403/404
+responses take precedence over navigation; public links never grant access to another person's
+booking. Component options retain Joomla's native Close action.
+
+Adding a device checks existing account and address locks without reserving a password attempt;
+successful device creation neither consumes sign-in attempts nor clears a real sign-in lock.
+
 ### Internet calendars
+
+The administrator calendar list has an **Overview** toolbar link back to the component's existing
+navigation. Calendar and activation-link screens retain a return action even while internet calendars
+are switched off.
 
 **Implementation and verification status:** This section documents the 1.4.0 target behaviour; it
 is not evidence that the feature is available in a published release or that every behaviour has

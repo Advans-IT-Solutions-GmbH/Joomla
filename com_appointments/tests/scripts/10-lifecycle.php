@@ -19,6 +19,13 @@ try {
     $cancel = $fixture->link($booking, 'cancel');
     $html = $client->request($reschedule);
     $check($client->status === 200 && str_contains($html, 'name="start"'), 'Signed reschedule page works without login or JavaScript');
+    $document = new DOMDocument();
+    @$document->loadHTML($html);
+    $cancelExit = (new DOMXPath($document))->query(
+        '//div[contains(concat(" ", normalize-space(@class), " "), " com-appointments-manage ")]//a'
+    )->item(0);
+    $check($cancelExit instanceof DOMElement && trim($cancelExit->textContent) === 'Cancel',
+        'A signed management form has a non-mutating Cancel exit to the public overview');
     $token = $client->token($html);
     $client->request('/index.php?option=com_appointments&task=booking.manage', [
         'id' => $booking['id'], 'action' => 'erase', 'signature' => str_repeat('0', 64), 'confirm' => 1, $token => 1,

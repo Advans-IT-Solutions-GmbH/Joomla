@@ -74,9 +74,14 @@ class HtmlView extends BaseHtmlView
             } catch (TeamException) {
                 $this->available = false;
             }
+        }
 
-            Toolbar::getInstance('toolbar')->linkButton('calendars')->url('index.php?option=com_appointments&view=calendars')
-                ->text(Text::_('COM_APPOINTMENTS_TEAM_C_NAV_CALENDARS'))->icon('icon-calendar');
+        Toolbar::getInstance('toolbar')->linkButton('calendars')->url('index.php?option=com_appointments&view=calendars')
+            ->text(Text::_('COM_APPOINTMENTS_TEAM_C_NAV_CALENDARS'))->icon('icon-calendar');
+
+        if ($revoke) {
+            Toolbar::getInstance('toolbar')->linkButton('invitations')->url('index.php?option=com_appointments&view=invitations')
+                ->text(Text::_('COM_APPOINTMENTS_TEAM_C_BACK_TO_LIST'))->icon('icon-arrow-left');
         }
 
         return parent::display($tpl);
