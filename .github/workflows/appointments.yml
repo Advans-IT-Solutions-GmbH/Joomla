@@ -586,6 +586,7 @@ jobs:
       - name: Resolve the retained v1.3.0 source asset
         id: source
         env:
+          GH_TOKEN: ${{ github.token }}
           CANDIDATE_PACKAGE_SHA256: ${{ steps.candidate.outputs.sha256 }}
           CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           WORKFLOW_SHA: ${{ github.sha }}
@@ -597,6 +598,7 @@ jobs:
           api='https://api.github.com/repos/Advans-IT-Solutions-GmbH/Joomla/releases/tags/appointments-v1.3.0'
           response="$(mktemp)"
           status="$(curl --silent --show-error --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60 \
+            --header "Authorization: Bearer $GH_TOKEN" \
             --output "$response" --write-out '%{http_code}' "$api")"
 
           if [ "$status" = '404' ]; then

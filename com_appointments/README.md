@@ -41,6 +41,18 @@ The component resolves its database through `DatabaseInterface`. Queries use `cr
 the driver provides it and fall back to `getQuery(true)` on Joomla 5.4. No platform-specific
 configuration is required.
 
+The event-type editor separates **Details** and **Permissions** with Joomla's standard tabs
+(accordions on narrow screens). The permissions widget uses the full card width instead of
+the state-field sidebar, so its group navigation and permission table do not overlap the editor
+or neighbouring fields. This uses core Joomla layouts without custom colours or typography.
+A stylesheet scoped to this form wraps the permission navigation at Atum's small-screen breakpoint
+and keeps its stacked permission selectors inside their cells. It also disables smooth scrolling
+on this editor page so focus and accordion reflow cannot start competing scroll animations.
+The rules widget binds the record's ACL asset through Joomla's standard hidden, `unset`-filtered
+asset field; it does not display the component's rules instead of the saved event-type rules.
+The [backend pointer regression matrix](../shared/tests/browser/README.md) covers the editor
+and the DMARC module editor in Edge and Firefox at seven widths in light and dark mode.
+
 ## Installation
 
 ### Currently: build from source
