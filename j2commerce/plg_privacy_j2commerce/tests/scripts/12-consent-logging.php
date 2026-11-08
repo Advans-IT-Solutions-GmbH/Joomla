@@ -47,6 +47,7 @@ use Joomla\Event\Dispatcher;
 use Joomla\Event\Event;
 use Joomla\Input\Input;
 use Joomla\Registry\Registry;
+use J2Commerce\Component\J2commerce\Administrator\Helper\OrderStatusHelper;
 
 if (!class_exists(ConsentRepository::class)) {
     require_once JPATH_PLUGINS . '/privacy/j2commerce/src/Consent/ConsentRepository.php';
@@ -672,7 +673,10 @@ class ConsentLoggingTest
                 $source = (string) file_get_contents($controller);
                 $this->test('J2Commerce keeps the order number in the user state j2commerce.order_id',
                     str_contains($source, "setUserState('j2commerce.order_id'") && str_contains($source, "getUserState('j2commerce.order_id'"));
-                $this->test('J2Commerce marks an unplaced order with order_state_id 5', (bool) preg_match('/order_state_id\s*\?\?\s*0\)\s*===\s*5/', $source));
+                $incompleteState = method_exists(OrderStatusHelper::class, 'getType')
+                    ? OrderStatusHelper::getType(5) === OrderStatusHelper::TYPE_NEW
+                    : (bool) preg_match('/order_state_id\s*\?\?\s*0\)\s*===\s*5/', $source);
+                $this->test('J2Commerce classifies the unplaced fixture state 5 as incomplete', $incompleteState);
             }
         } catch (\Throwable $e) {
             $this->test('Placed-order recording runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
