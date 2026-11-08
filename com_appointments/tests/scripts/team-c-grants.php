@@ -105,7 +105,7 @@ return static function (TeamSuite $suite): void {
     // This part runs as another system user than the web server: an epoch
     // anchor it creates is removed again, one it changes is handed back to
     // the web server's user, so later web requests can still update it.
-    $anchorFile = '/var/www/html/administrator/components/com_appointments/data/epochs.php';
+    $anchorFile = '/var/www/html/administrator/components/com_appointments-data/epochs.php';
     $anchorExisted = is_file($anchorFile);
     $anchorDir = is_dir(\dirname($anchorFile));
     $setOptions = static function (array $changes) use ($db, $p, $params): void {

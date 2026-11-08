@@ -230,6 +230,103 @@ function sh_cli_install(string $root, string $package): array
 }
 
 /**
+ * Explicitly approve file changes in a trusted, disposable test fixture.
+ * The first install must stop without changing any conflicting original.
+ * Production installs never call this helper.
+ *
+ * @return array{0:int, 1:string}
+ */
+function sh_cli_install_reviewed_fixture(string $root, string $package): array
+{
+    $started = time();
+    [$code, $output] = sh_cli_install($root, $package);
+
+    if ($code === 0) {
+        return [$code, $output];
+    }
+
+    $manifest = sh_read_package_manifest($package);
+
+    if ($manifest === null) {
+        return [$code, $output];
+    }
+
+    $id = $manifest['type'] === 'plugin'
+        ? 'plg_' . $manifest['folder'] . '_' . $manifest['element']
+        : $manifest['element'];
+    $plan = $root . '/administrator/advans-installer-state/' . $id . '/plan.php';
+    clearstatcache(true, $plan);
+
+    if (!is_file($plan) || filemtime($plan) < $started) {
+        return [$code, $output];
+    }
+
+    $work = sys_get_temp_dir() . '/reviewed-fixture-' . bin2hex(random_bytes(8));
+
+    if (!mkdir($work, 0700, true)) {
+        throw new RuntimeException('Cannot stage fixture approval command.');
+    }
+
+    $zip = new ZipArchive();
+
+    if ($zip->open($package) !== true) {
+        throw new RuntimeException('Cannot open trusted fixture package.');
+    }
+
+    try {
+        foreach (['approve.php', 'FileGuard.php', 'State.php'] as $name) {
+            $bytes = $zip->getFromName('advansinstaller/' . $name);
+
+            if ($bytes === false || file_put_contents($work . '/' . $name, $bytes) !== strlen($bytes)) {
+                throw new RuntimeException('Missing fixture approval support.');
+            }
+        }
+
+        foreach (['State', 'FileGuard'] as $class) {
+            if (!class_exists('Advans\\Installer\\' . $class, false)) {
+                require_once $work . '/' . $class . '.php';
+            }
+        }
+        $entries = \Advans\Installer\State::read($plan);
+
+        if ($entries === []) {
+            throw new RuntimeException('The failed install did not produce file conflicts.');
+        }
+
+        foreach ($entries as $entry) {
+            if (!is_file($entry['destination']) || hash_file('sha256', $entry['destination']) !== $entry['existing']) {
+                throw new RuntimeException('A blocked install modified a conflicting original.');
+            }
+
+            \Advans\Installer\FileGuard::verifyBackup($entry['backup'], $entry['destination'], $entry['existing']);
+        }
+
+        $approvalOutput = [];
+        $approvalCode = 0;
+        exec('php ' . escapeshellarg($work . '/approve.php') . ' --approve ' . escapeshellarg($plan)
+            . ' ' . escapeshellarg(hash_file('sha256', $plan)) . ' 2>&1', $approvalOutput, $approvalCode);
+
+        if ($approvalCode !== 0) {
+            return [$approvalCode, $output . "\n" . implode("\n", $approvalOutput)];
+        }
+
+        echo 'PASS fixture: ' . count($entries) . " conflicting originals preserved, backups verified, exact replacements explicitly approved\n";
+    } finally {
+        $zip->close();
+
+        foreach (['approve.php', 'FileGuard.php', 'State.php'] as $name) {
+            if (is_file($work . '/' . $name)) {
+                unlink($work . '/' . $name);
+            }
+        }
+
+        rmdir($work);
+    }
+
+    return sh_cli_install($root, $package);
+}
+
+/**
  * Switch the language the Joomla CLI application uses (configuration.php
  * `$language`). Languages without an installed core pack get a minimal
  * metadata file so Joomla accepts the tag; the extension's own language files

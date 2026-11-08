@@ -8,8 +8,13 @@
  */
 defined('_JEXEC') or die;
 
+require_once is_file(__DIR__ . '/advansinstaller/load.php')
+    ? __DIR__ . '/advansinstaller/load.php'
+    : dirname(__DIR__, 2) . '/shared/installer/load.php';
+
 use Joomla\CMS\Factory;
-use Joomla\CMS\Installer\InstallerScript;
+use Advans\Installer\InstallerScript;
+use Advans\Installer\Destinations;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -24,7 +29,7 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         return parent::preflight($type, $parent);
     }
 
-    public function postflight($type, $parent)
+    protected function extensionPostflight($type, $parent)
     {
         $isJ6 = (int) \Joomla\CMS\Version::MAJOR_VERSION >= 6;
 
@@ -52,7 +57,8 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
                 $this->reportExtensionId($parent, $keptId);
             }
 
-            $this->setGroupForInstalledStack();
+            $this->installOptionsManifest($parent);
+            $this->setGroupForInstalledStack($parent);
             $this->ensureUpdateSite();
 
             $app = Factory::getApplication();
@@ -126,7 +132,7 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         $tmp    = $mirror . '.tmp-' . getmypid();
 
         if ($target !== false && is_dir($target)) {
-            $this->copyDir($target, $tmp);
+            $this->copyLegacyTree($target, $tmp);
         } else {
             @mkdir($tmp, 0755, true);
         }
@@ -272,6 +278,17 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         $setId($adapter, $extensionId);
     }
 
+    private function installOptionsManifest($parent): void
+    {
+        // Joomla's plugin options load {element}.xml, not the package manifest name.
+        $source = (string) $parent->getParent()->getPath('manifest');
+        $target = JPATH_PLUGINS . '/j2commerce/productcompare/productcompare.xml';
+
+        if (!copy($source, $target)) {
+            throw new \RuntimeException('The plugin options manifest could not be installed.');
+        }
+    }
+
     /**
      * Copy plugin files to plugins/j2store/productcompare/ on Joomla 5 installs.
      *
@@ -285,7 +302,7 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
      *
      * On J6 (no com_j2store): nothing to do, folder stays j2commerce.
      */
-    private function setGroupForInstalledStack(): void
+    private function setGroupForInstalledStack($parent): void
     {
         // Detect Joomla major version. Joomla 6+ ships with J2Commerce 6 which
         // imports the j2commerce plugin group. Joomla 5 uses J2Store 4 which
@@ -299,23 +316,13 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             return;
         }
 
-        $src  = JPATH_PLUGINS . '/j2commerce/productcompare';
         $dest = JPATH_PLUGINS . '/j2store/productcompare';
-
-        if (!is_dir($src) || is_link($src)) {
-            return;
-        }
-
-        // Ensure the parent directory exists (plugins/j2store/ may not exist if no
-        // j2store plugin has been installed yet).
-        $destParent = dirname($dest);
-        if (!is_dir($destParent)) {
-            mkdir($destParent, 0755, true);
-        }
-
-        // Replace the previous copy (or a symlink from older versions).
-        $this->removePath($dest);
-        $this->copyDir($src, $dest);
+        $files = Destinations::files(
+            $parent->getManifest(),
+            (string) $parent->getParent()->getPath('source'),
+            (string) $parent->getParent()->getPath('manifest')
+        );
+        $this->copyMirrorFiles($files, $dest);
 
         // Update #__extensions so Joomla's plugin loader resolves the correct path.
         $db = Factory::getContainer()->get(DatabaseInterface::class);
@@ -342,20 +349,51 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
     }
 
     /**
-     * Recursively copy a directory tree.
+     * Copy only incoming files inventoried for the mirror during preflight.
      */
-    private function copyDir(string $src, string $dest): void
+    private function copyMirrorFiles(array $files, string $dest): void
     {
-        if (!is_dir($dest)) {
-            mkdir($dest, 0755, true);
+        $root = str_replace('\\', '/', $dest) . '/';
+
+        foreach ($files as $target => $source) {
+            if (!str_starts_with($target, $root)) {
+                continue;
+            }
+
+            $directory = dirname($target);
+
+            if (!is_dir($directory) && !mkdir($directory, 0755, true)) {
+                throw new \RuntimeException('The mirrored plugin directory could not be created.');
+            }
+
+            if (!copy($source, $target)) {
+                throw new \RuntimeException('The mirrored plugin file could not be copied.');
+            }
         }
-        $iter = new \RecursiveIteratorIterator(
+    }
+
+    /** Only the temporary legacy-uninstall copy; installs use the guarded inventory. */
+    private function copyLegacyTree(string $src, string $dest): void
+    {
+        if (!is_dir($dest) && !mkdir($dest, 0755, true)) {
+            throw new \RuntimeException('The temporary uninstall directory could not be created.');
+        }
+
+        $iterator = new \RecursiveIteratorIterator(
             new \RecursiveDirectoryIterator($src, \RecursiveDirectoryIterator::SKIP_DOTS),
             \RecursiveIteratorIterator::SELF_FIRST
         );
-        foreach ($iter as $item) {
-            $target = $dest . '/' . $iter->getSubPathname();
-            $item->isDir() ? mkdir($target, 0755, true) : copy($item->getRealPath(), $target);
+
+        foreach ($iterator as $item) {
+            $target = $dest . '/' . $iterator->getSubPathname();
+
+            if ($item->isDir()) {
+                if (!is_dir($target) && !mkdir($target, 0755, true)) {
+                    throw new \RuntimeException('The temporary uninstall directory could not be created.');
+                }
+            } elseif (!copy($item->getRealPath(), $target)) {
+                throw new \RuntimeException('The temporary uninstall file could not be copied.');
+            }
         }
     }
 

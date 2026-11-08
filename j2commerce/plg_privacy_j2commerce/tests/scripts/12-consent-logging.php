@@ -35,6 +35,7 @@ require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
+require_once __DIR__ . '/shared-test-helpers.php';
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
 use Advans\Plugin\System\J2CommercePrivacy\Extension\J2CommercePrivacy;
@@ -2052,16 +2053,8 @@ class ConsentLoggingTest
      */
     private function runCliUpdate(string $package): array
     {
-        $command = sprintf(
-            'COLUMNS=10000 HTTP_HOST=localhost %s %s extension:install --path=%s 2>&1',
-            escapeshellarg(PHP_BINARY),
-            escapeshellarg(JPATH_BASE . '/cli/joomla.php'),
-            escapeshellarg($package)
-        );
-        $output = [];
-        exec($command, $output, $exitCode);
-
-        $readable = trim(preg_replace('/\s+/', ' ', implode(' ', $output)));
+        [$exitCode, $output] = sh_cli_install_reviewed_fixture(JPATH_BASE, $package);
+        $readable = trim(preg_replace('/\s+/', ' ', $output));
 
         return [$exitCode, preg_replace('/\s+/', '', $readable), $readable];
     }

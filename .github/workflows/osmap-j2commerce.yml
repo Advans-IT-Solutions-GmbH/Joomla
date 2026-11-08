@@ -12,6 +12,7 @@ on:
     paths:
       - 'j2commerce/plg_osmap_j2commerce/**'
       - 'shared/build/**'
+      - 'shared/installer/**'
       - 'shared/tests/run-tests.sh'
       - 'shared/tests/lang-lint.php'
       - 'shared/tests/requirements-check.php'
@@ -29,6 +30,7 @@ on:
     paths:
       - 'j2commerce/plg_osmap_j2commerce/**'
       - 'shared/build/**'
+      - 'shared/installer/**'
       - 'shared/tests/run-tests.sh'
       - 'shared/tests/lang-lint.php'
       - 'shared/tests/requirements-check.php'

@@ -8,8 +8,12 @@
 
 defined('_JEXEC') or die;
 
+require_once is_file(__DIR__ . '/advansinstaller/load.php')
+    ? __DIR__ . '/advansinstaller/load.php'
+    : dirname(__DIR__) . '/shared/installer/load.php';
+
 use Joomla\CMS\Factory;
-use Joomla\CMS\Installer\InstallerScript;
+use Advans\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
 
 class PlgSystemDmarcmtastsInstallerScript extends InstallerScript
@@ -33,7 +37,7 @@ class PlgSystemDmarcmtastsInstallerScript extends InstallerScript
         return parent::preflight($type, $parent);
     }
 
-    public function postflight(string $type, object $parent): void
+    protected function extensionPostflight(string $type, object $parent): void
     {
         if ($type !== 'install' && $type !== 'update') {
             return;

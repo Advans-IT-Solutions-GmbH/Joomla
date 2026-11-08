@@ -79,7 +79,7 @@ PHP;
     // ---- Log chain, on a copy of the log ------------------------------------
     // The file anchor of the log (work package B) only rises; this part works
     // on a copy of the log, so it sets the anchor file aside as well.
-    $anchorFile = '/var/www/html/administrator/components/com_appointments/data/epochs.php';
+    $anchorFile = '/var/www/html/administrator/components/com_appointments-data/epochs.php';
     $anchorCopy = is_file($anchorFile) ? (string) file_get_contents($anchorFile) : null;
     $earlier = $run('$v = $services->audit()->verify(); return ["intact" => $v->intact, "rows" => $v->checkedRows];');
     $db->query("DROP TABLE IF EXISTS {$p}{$tag}_log");

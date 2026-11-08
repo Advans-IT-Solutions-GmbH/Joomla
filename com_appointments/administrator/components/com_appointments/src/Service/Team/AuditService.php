@@ -752,7 +752,7 @@ final class AuditService implements AuditServiceInterface
      * database writer raising `last_id` must not move the anchor (that would
      * be a permanent false alarm). A database restored without its files then
      * shows as broken; deleting the anchor file
-     * (`administrator/components/com_appointments/data/epochs.php`) after such
+     * (`administrator/components/com_appointments-data/epochs.php`) after such
      * a deliberate restore resets it.
      */
     private function anchorLastId(int $lastId): void
