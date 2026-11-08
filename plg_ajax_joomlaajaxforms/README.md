@@ -453,7 +453,8 @@ used. The notice to the
 configured `mailfrom` address uses that address's account language only when
 exactly one Joomla account matches it; otherwise it uses the default site
 language (or en-GB when the site language is unsupported). Address candidates
-returned by the database are compared again using Unicode case-folding, so a
+returned by the database are compared again using trimmed Unicode lowercase equality,
+not full case-folding (the sharp s remains distinct from `ss`), so a
 case- or accent-insensitive database collation cannot select another account's
 language. Each fallback is rendered in its own `Language` instance, so it does
 not change the request language or leak one recipient's language into another
