@@ -85,6 +85,8 @@ if [ "$LANGUAGE_COUNT" -eq 0 ]; then
     exit 1
 fi
 
+php "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../tests/lang-lint.php" --package "$LANGUAGE_WORK"
+
 echo "Verified de-DE/en-GB/fr-FR counterparts for $LANGUAGE_COUNT language files"
 
 echo ""

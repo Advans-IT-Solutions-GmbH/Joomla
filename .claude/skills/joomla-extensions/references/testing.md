@@ -263,8 +263,11 @@ Every extension and bundled plugin ships exactly `de-DE`, `en-GB` and `fr-FR`; `
 Swiss High German. `de-CH` folders and manifest entries are not supported or generated.
 Run `php shared/tests/lang-lint.php <extension>` for every extension. It checks the complete
 file/key/printf/named-placeholder set, non-empty subjects/bodies and manifest installation coverage
-(explicit entries or whole-folder installs). `verify-package.sh` additionally
-rejects unsupported or missing language counterparts in the archive, including bundled plugins.
+(explicit entries or whole-folder installs). Every owning extension manifest needs its own language
+files, even when a parent retains translations. `verify-package.sh` additionally runs the same
+delivery checks on the extracted archive using `lang-lint.php --package`; only source key-usage
+checks are omitted because their template allowlists are not shipped. Installer-support translations
+cannot satisfy a bundled plugin's own language requirement.
 `.github/scripts/test-language-delivery.py` exercises valid delivery and negative cases (missing
 locale, extra key, German `ß`, empty/unsupported locale directories including non-two-letter tags,
 missing named mail placeholders, empty bodies, omitted entire manifest file families and

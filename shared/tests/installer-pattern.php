@@ -83,6 +83,13 @@ namespace {
             fclose($pipes[2]);
             $assert(proc_close($process) === 0, 'Staging failed for ' . $id . ': ' . $stdout . $stderr);
 
+            $process = proc_open([PHP_BINARY, $root . '/shared/tests/lang-lint.php', '--package', $stage], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            $stdout = stream_get_contents($pipes[1]);
+            $stderr = stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            $assert(proc_close($process) === 0, 'Staged language delivery failed for ' . $id . ': ' . $stdout . $stderr);
+
             foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($stage, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::SELF_FIRST) as $entry) {
                 if (!$entry->isDir() || basename(dirname($entry->getPathname())) !== 'language') {
                     continue;

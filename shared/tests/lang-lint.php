@@ -2,7 +2,8 @@
 /**
  * Language file lint for Joomla extensions.
  *
- * Usage: php shared/tests/lang-lint.php <extension-directory> [<extension-directory> ...]
+ * Usage: php shared/tests/lang-lint.php [--package] <extension-directory> [...]
+ * --package validates extracted delivery without key-usage allowlists, which are not shipped.
  *
  * Checks every *.ini below a `language/<tag>/` directory of the given extension:
  *   - every line is empty, a comment, or KEY="value"
@@ -33,8 +34,15 @@
  * Exits with 1 when any problem is found.
  */
 
-if ($argc < 2) {
-    fwrite(STDERR, "Usage: php lang-lint.php <extension-directory> [...]\n");
+$directories = array_slice($argv, 1);
+$packageMode = ($directories[0] ?? null) === '--package';
+
+if ($packageMode) {
+    array_shift($directories);
+}
+
+if (!$directories) {
+    fwrite(STDERR, "Usage: php lang-lint.php [--package] <extension-directory> [...]\n");
     exit(2);
 }
 
@@ -480,7 +488,7 @@ function lint_named_placeholders(string $value): array
     return $tokens;
 }
 
-foreach (array_slice($argv, 1) as $extensionDir) {
+foreach ($directories as $extensionDir) {
     $extensionDir = rtrim($extensionDir, '/\\');
 
     if (!is_dir($extensionDir)) {
@@ -604,13 +612,14 @@ foreach (array_slice($argv, 1) as $extensionDir) {
         foreach ($files as $file) {
             $path = str_replace('\\', '/', realpath($file));
             $installed = false;
+            $installerSupport = $packageMode && str_contains($path, '/advansinstaller/language/');
 
             foreach ($installationPaths as $root => $paths) {
                 if (!str_starts_with($path, $root . '/')) {
                     continue;
                 }
 
-                $languageOwners[$root] = true;
+                $languageOwners[$root] = $languageOwners[$root] || !$installerSupport;
                 $installed = in_array($path, $paths['files'], true);
 
                 foreach ($paths['folders'] as $folder) {
@@ -620,7 +629,9 @@ foreach (array_slice($argv, 1) as $extensionDir) {
                 break;
             }
 
-            if (!$installed) {
+            // Staged root installer support is used before installation; its translated
+            // copies cannot satisfy the extension's own language requirement.
+            if (!$installed && !$installerSupport) {
                 $addError($file, 0, 'language file is not installed by its extension manifest');
             }
         }
@@ -722,7 +733,9 @@ foreach (array_slice($argv, 1) as $extensionDir) {
         }
     }
 
-    lint_usage($extensionDir, $definedByTag, array_unique($fileNames), $addError);
+    if (!$packageMode) {
+        lint_usage($extensionDir, $definedByTag, array_unique($fileNames), $addError);
+    }
     lint_swiss_spelling($extensionDir, $addError);
 }
 

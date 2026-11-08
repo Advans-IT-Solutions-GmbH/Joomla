@@ -138,8 +138,16 @@ with tempfile.TemporaryDirectory(prefix="joomla-language-") as directory:
     check(command, ROOT, True, "Language files OK")
     shutil.rmtree(nested)
     check(command, ROOT, False, "no language files found for extension manifest")
+    check(["php", str(LINT), "--package", str(fixture)], ROOT, False,
+          "no language files found for extension manifest")
+    support = nested.parent / "advansinstaller" / "language"
+    shutil.copytree(fixture / "language", support)
+    check(["php", str(LINT), "--package", str(fixture)], ROOT, False,
+          "no language files found for extension manifest")
+    shutil.rmtree(support.parent)
     shutil.copytree(fixture / "language", nested)
     check(command, ROOT, True, "Language files OK")
+    check(["php", str(LINT), "--package", str(fixture)], ROOT, True, "Language files OK")
 
     (fixture / "build.env").write_text(
         'EXTENSION_NAME="example"\nVERSION="1.0.0"\n', encoding="utf-8"
@@ -147,10 +155,13 @@ with tempfile.TemporaryDirectory(prefix="joomla-language-") as directory:
     archive = fixture / "example_1.0.0.zip"
     # Git Bash understands drive-letter paths with forward slashes too.
     verify_command = ["bash", str(VERIFY).replace(os.sep, "/")]
-    for kind in ("valid", "missing", "swiss", "unsupported", "three-letter", "nested", "empty"):
+    for kind in ("valid", "missing", "swiss", "unsupported", "three-letter", "nested", "empty", "bundled", "bundled-missing"):
         with zipfile.ZipFile(archive, "w") as package:
             package.writestr("index.html", b"")
             if kind != "empty":
+                package.writestr("example.xml", xml.replace(
+                    "</extension>", "<files><folder>plugins</folder></files></extension>"
+                ) if kind.startswith("bundled") else xml)
                 package.writestr("language/de-DE/plg_example.ini", original)
                 package.writestr("language/en-GB/plg_example.ini", original)
                 if kind != "missing":
@@ -166,11 +177,20 @@ with tempfile.TemporaryDirectory(prefix="joomla-language-") as directory:
                         "plugins/system/example/language/de-DE/plg_example.ini",
                         original,
                     )
+                if kind.startswith("bundled"):
+                    package.writestr("plugins/system/example/example.xml", nested_xml)
+                    if kind == "bundled":
+                        for tag in TAGS:
+                            package.writestr(
+                                f"plugins/system/example/language/{tag}/plg_example.ini",
+                                original,
+                            )
         check(
             verify_command,
             fixture,
-            kind == "valid",
-            "Verified de-DE/en-GB/fr-FR counterparts" if kind == "valid" else
+            kind in ("valid", "bundled"),
+            "Verified de-DE/en-GB/fr-FR counterparts" if kind in ("valid", "bundled") else
+            "no language files found for extension manifest" if kind == "bundled-missing" else
             "contains no language files" if kind == "empty" else
             "contains an unsupported language folder" if kind in ("swiss", "unsupported", "three-letter") else
             "missing en-GB counterpart" if kind == "nested" else
