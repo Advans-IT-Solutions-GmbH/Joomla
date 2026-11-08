@@ -45,7 +45,7 @@ final class PrivacyAddress
     }
 
     /**
-     * Whether $address is one of the guests: exact per line after Unicode case folding, like
+     * Whether $address is one of the guests: exact per line after trimmed Unicode lowercasing, like
      * the invitee address, never a substring of another address.
      */
     public static function isGuest(?string $stored, string $address): bool

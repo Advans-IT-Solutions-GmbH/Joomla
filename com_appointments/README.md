@@ -295,7 +295,8 @@ columns, decoded answers and their current field labels. Additional guests do no
 the primary invitee's contact details by appearing in a booking: when the request address is a
 guest of another person's booking, a separate domain (`appointments_guest_invitations`) lists only
 the booking ID, the guest address as stored, the event type title, the UTC start and end and the
-state. Guest addresses are matched exactly per line of `guest_emails` (Unicode case folding, no
+state. Guest addresses are matched exactly per line of `guest_emails` (trimmed Unicode lowercasing,
+not full case folding, and no
 substring match), so `notguest@example.com` never matches `guest@example.com`.
 
 Formal removal takes such a guest address out of the other person's guest list and leaves that
