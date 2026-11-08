@@ -670,13 +670,21 @@ class ConsentLoggingTest
             $controller = JPATH_SITE . '/components/com_j2commerce/src/Controller/CheckoutController.php';
 
             if (is_file($controller)) {
+                JLoader::registerNamespace(
+                    'J2Commerce\\Component\\J2commerce\\Administrator',
+                    JPATH_ADMINISTRATOR . '/components/com_j2commerce/src',
+                    false,
+                    false,
+                    'psr4'
+                );
                 $source = (string) file_get_contents($controller);
                 $this->test('J2Commerce keeps the order number in the user state j2commerce.order_id',
                     str_contains($source, "setUserState('j2commerce.order_id'") && str_contains($source, "getUserState('j2commerce.order_id'"));
                 $incompleteState = method_exists(OrderStatusHelper::class, 'getType')
                     ? OrderStatusHelper::getType(5) === OrderStatusHelper::TYPE_NEW
                     : (bool) preg_match('/order_state_id\s*\?\?\s*0\)\s*===\s*5/', $source);
-                $this->test('J2Commerce classifies the unplaced fixture state 5 as incomplete', $incompleteState);
+                $this->test('J2Commerce classifies the unplaced fixture state 5 as incomplete', $incompleteState,
+                    'Lifecycle API available: ' . (method_exists(OrderStatusHelper::class, 'getType') ? 'yes' : 'no'));
             }
         } catch (\Throwable $e) {
             $this->test('Placed-order recording runs without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
