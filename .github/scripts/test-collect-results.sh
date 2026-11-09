@@ -85,11 +85,17 @@ set_extension_run() {
     export RUNS="$(run_json_with_extension)"
 }
 check() {
-    local name="$1" expected="$2" result=0
+    local name="$1" expected="$2" expected_message="${3:-}" result=0
     bash "$SCRIPT" >"$FIXTURE/output" 2>&1 || result=$?
     if { [ "$expected" = pass ] && [ "$result" -ne 0 ]; } ||
        { [ "$expected" = fail ] && [ "$result" -eq 0 ]; }; then
         echo "FAIL: $name (exit $result)"
+        cat "$FIXTURE/output"
+        exit 1
+    fi
+    if [ "$expected" = fail ] && [ "$result" -ne 0 ] && [ -n "$expected_message" ] &&
+       ! grep -Fq -- "$expected_message" "$FIXTURE/output"; then
+        echo "FAIL: $name did not report '$expected_message'"
         cat "$FIXTURE/output"
         exit 1
     fi
@@ -251,18 +257,18 @@ echo 'PASS: base, head and tested merge provenance is reported'
 
 SAVED_BASE_REF="$BASE_REF"
 unset BASE_REF
-check 'missing BASE_REF fails closed' fail
+check 'missing BASE_REF fails closed' fail 'BASE_REF is required'
 export BASE_REF=''
-check 'empty BASE_REF fails closed' fail
+check 'empty BASE_REF fails closed' fail 'BASE_REF is required'
 export BASE_REF="$SAVED_BASE_REF"
 for sha_name in BASE_SHA HEAD_SHA MERGE_SHA; do
     original_sha="${!sha_name}"
     export "$sha_name=invalid"
-    check "invalid $sha_name fails closed" fail
+    check "invalid $sha_name fails closed" fail "$sha_name must be a 40-character commit SHA"
     export "$sha_name=$original_sha"
 done
 export BASE_REF=unsupported
-check 'unsupported pull request base fails closed' fail
+check 'unsupported pull request base fails closed' fail "Unsupported pull request base 'unsupported'"
 export BASE_REF=main
 cp "$WORKFLOW_DIR/security.yml" "$FIXTURE/security.yml"
 cat >"$WORKFLOW_DIR/security.yml" <<'EOF'
@@ -271,14 +277,14 @@ on:
   pull_request:
     paths: ['**']
 EOF
-check 'missing pull_request.branches filter fails closed' fail
+check 'missing pull_request.branches filter fails closed' fail 'must explicitly allow only main and the two temporary dependent-PR bases'
 cat >"$WORKFLOW_DIR/security.yml" <<'EOF'
 run-name: "${{ github.event_name == 'pull_request' && format('PR #{0} base={1} base-sha={2} head-sha={3} merge-sha={4}', github.event.pull_request.number, github.event.pull_request.base.ref, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha) || (github.event_name == 'push' && github.event.head_commit.message) || github.workflow }}"
 on:
   pull_request:
     branches: [main, '*']
 EOF
-check 'wildcard pull_request.branches filter fails closed' fail
+check 'wildcard pull_request.branches filter fails closed' fail 'must explicitly allow only main and the two temporary dependent-PR bases'
 cat >"$WORKFLOW_DIR/security.yml" <<'EOF'
 run-name: "${{ github.event_name == 'pull_request' && format('PR #{0} base={1} base-sha={2} head-sha={3} merge-sha={4}', github.event.pull_request.number, github.event.pull_request.base.ref, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha) || (github.event_name == 'push' && github.event.head_commit.message) || github.workflow }}"
 on:
@@ -286,9 +292,9 @@ on:
     branches: [main]
 EOF
 export BASE_REF=advansit-guest-privacy-requests
-check 'filter omitting the actual dependent base fails closed' fail
+check 'filter omitting the actual dependent base fails closed' fail 'must explicitly allow only main and the two temporary dependent-PR bases'
 write_security_workflow 'main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests'
 sed -i '1d' "$WORKFLOW_DIR/security.yml"
-check 'missing event-derived run-name stamp fails closed' fail
+check 'missing event-derived run-name stamp fails closed' fail 'must stamp pull-request run titles with the exact PR/base/head/merge event context'
 export BASE_REF=main
 cp "$FIXTURE/security.yml" "$WORKFLOW_DIR/security.yml"
