@@ -402,10 +402,15 @@ BLOCKED, never PASS. A source lint, a package check or an HTTP render is not a s
   even on documentation-only PRs. Every PR workflow must explicitly use the exact three-branch
   allowlist; an absent, malformed, wildcard or otherwise changed branch filter fails closed rather
   than silently omitting an expected check. The collector uses the event's actual base ref and
-  requires runs associated with the exact PR number, base ref/SHA and head SHA. `pull_request`
-  workflows test GitHub's synthetic merge commit by default; the collector looks up checks on that
-  merge SHA and reports the base, head and tested merge SHAs in its job summary. It requires
-  `success`; missing, failed, cancelled and skipped runs fail closed.
+  requires the exact PR/base ref/SHA/head SHA/merge SHA in each run's event-derived `display_title`.
+  If GitHub supplies non-empty PR associations, they must also identify that exact PR/base/head;
+  a foreign association cannot be overridden by a matching title. This title fallback is limited to
+  an explicitly empty `pull_requests` array, as can occur for fork-origin PR runs; missing or
+  malformed association data fails closed. Check-run discovery uses the source `HEAD_SHA`, where
+  GitHub associates PR check suites, not the synthetic merge SHA. The default `actions/checkout`
+  uses the pull request's synthetic merge ref; the job summary reports the event's base, head and
+  merge SHAs without claiming that the check-suite SHA independently proves the tested tree.
+  It requires `success`; missing, failed, cancelled and skipped runs fail closed.
   Security Scan must also have successfully executed its expected scanner jobs.
   **After re-running a failed workflow,
   re-run `Collect Results` as well.** `.github/scripts/collect-results.sh` hands run lists to `jq`

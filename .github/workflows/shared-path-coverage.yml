@@ -1,5 +1,7 @@
 name: Shared Path Coverage
 
+run-name: "${{ github.event_name == 'pull_request' && format('PR #{0} base={1} base-sha={2} head-sha={3} merge-sha={4}', github.event.pull_request.number, github.event.pull_request.base.ref, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha) || (github.event_name == 'push' && github.event.head_commit.message) || github.workflow }}"
+
 # The extension workflows list the individual files under `shared/` they use
 # instead of `shared/**`, so a change to a shared file starts only the workflows
 # that really consume it. This check makes sure that narrowing never loses a

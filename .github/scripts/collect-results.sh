@@ -12,14 +12,15 @@
 #      unconditional workflows such as Security Scan.
 #   2. Match those patterns against the files changed by the pull request.
 #   3. Wait for every matching workflow run belonging to this pull request and
-#      its exact base/head commits, and verify checks on the tested merge commit.
-#      A run counts as present as soon as the run list or the merge commit's check
-#      runs show it, queued or not.
+#      its exact base/head/merge commits. GitHub associates pull-request check
+#      suites with the source head SHA, so check-run discovery uses HEAD_SHA.
+#      Run titles bind each workflow run to its event-derived PR/base/head/merge
+#      context when the API omits pull_requests for a fork-origin PR.
 #
 # Documentation-only pull requests still have to pass unconditional workflows.
 #
 # Required environment: GH_TOKEN, REPO, PR_NUMBER, BASE_REF, BASE_SHA, HEAD_SHA,
-#                       MERGE_SHA (the synthetic merge commit tested by pull_request).
+#                       MERGE_SHA (the pull_request event's synthetic merge SHA).
 # Optional: POLL_SECONDS (default 60), MISSING_RUN_GRACE_MINUTES (default 20),
 #           MAX_WAIT_MINUTES (default 330), WORKFLOW_DIR (default .github/workflows).
 
@@ -53,13 +54,13 @@ for sha_name in BASE_SHA HEAD_SHA MERGE_SHA; do
     fi
 done
 
-echo "Pull request #${PR_NUMBER}: base ${BASE_REF} (${BASE_SHA}), head ${HEAD_SHA}, tested merge ${MERGE_SHA}"
+echo "Pull request #${PR_NUMBER}: base ${BASE_REF} (${BASE_SHA}), head ${HEAD_SHA}, event merge ${MERGE_SHA}"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     {
         echo "### Pull request test provenance"
         echo "- Base: \`${BASE_REF}\` (\`${BASE_SHA}\`)"
         echo "- Head: \`${HEAD_SHA}\`"
-        echo "- Tested pull-request merge commit: \`${MERGE_SHA}\`"
+        echo "- Event merge SHA (default checkout target): \`${MERGE_SHA}\`"
     } >>"$GITHUB_STEP_SUMMARY"
 fi
 
@@ -68,6 +69,7 @@ MISSING_RUN_GRACE_MINUTES="${MISSING_RUN_GRACE_MINUTES:-20}"
 MAX_WAIT_MINUTES="${MAX_WAIT_MINUTES:-330}"
 WORKFLOW_DIR="${WORKFLOW_DIR:-.github/workflows}"
 SELF_WORKFLOW="${SELF_WORKFLOW:-collect-results.yml}"
+EXPECTED_RUN_NAME="\${{ github.event_name == 'pull_request' && format('PR #{0} base={1} base-sha={2} head-sha={3} merge-sha={4}', github.event.pull_request.number, github.event.pull_request.base.ref, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha) || (github.event_name == 'push' && github.event.head_commit.message) || github.workflow }}"
 
 if ! command -v yq >/dev/null 2>&1; then
     echo "::error::yq is required to read workflow triggers but is not installed"
@@ -174,7 +176,6 @@ declare -a OPTIONAL=()
 for wf in "$WORKFLOW_DIR"/*.yml "$WORKFLOW_DIR"/*.yaml; do
     [ -f "$wf" ] || continue
     name="$(basename "$wf")"
-    [ "$name" = "$SELF_WORKFLOW" ] && continue
 
     # Workflows without a pull_request trigger are not part of this gate.
     on_tag="$(yq -r '.on | tag' "$wf")"
@@ -185,6 +186,12 @@ for wf in "$WORKFLOW_DIR"/*.yml "$WORKFLOW_DIR"/*.yaml; do
     pr_tag="$(yq -r '.on.pull_request | tag' "$wf")"
     if [ "$pr_tag" != "!!map" ]; then
         echo "::error::${name} uses an unsupported pull_request trigger form"
+        exit 2
+    fi
+
+    run_name="$(yq -r '."run-name" // ""' "$wf")"
+    if [ "$run_name" != "$EXPECTED_RUN_NAME" ]; then
+        echo "::error::${name} must stamp pull-request run titles with the exact PR/base/head/merge event context"
         exit 2
     fi
 
@@ -213,6 +220,8 @@ for wf in "$WORKFLOW_DIR"/*.yml "$WORKFLOW_DIR"/*.yaml; do
         echo "::error::${name} must explicitly allow only main and the two temporary dependent-PR bases"
         exit 2
     fi
+
+    [ "$name" = "$SELF_WORKFLOW" ] && continue
 
     if [ -z "$paths" ] || any_file_matches "$paths" "${CHANGED[@]}"; then
         REQUIRED+=("$name")
@@ -244,18 +253,17 @@ latest_run() {
 }
 
 fetch_runs() {
-    # The run list is eventually consistent. While the runners are congested it can
-    # omit a queued or even running run on HEAD_SHA for longer than the grace period,
-    # which used to fail this check with "no run exists". The check runs of the tested
-    # merge commit are current, so every run they reference and the list lacks is read directly by
-    # its id. A queued or in-progress run therefore counts as present and is awaited.
+    # GitHub associates pull-request check suites with the source HEAD_SHA, not
+    # the synthetic merge SHA checked out by the workflow. The Actions run list
+    # is eventually consistent, so fetch missing run IDs from HEAD_SHA's checks.
+    # A queued or in-progress run therefore counts as present and is awaited.
     # The function runs in a command substitution, where errexit does not apply, so
     # every lookup returns its failure explicitly: if the check runs could not be read,
     # an older success in the lagging list must not stand in for a newer run.
     local listed run_ids run_id extra='[]'
     listed="$(gh api --paginate --slurp "repos/${REPO}/actions/runs?event=pull_request&head_sha=${HEAD_SHA}&per_page=100" \
         | jq -c '[.[].workflow_runs[]]')" || return 1
-    run_ids="$(gh api --paginate --slurp "repos/${REPO}/commits/${MERGE_SHA}/check-runs?per_page=100" \
+    run_ids="$(gh api --paginate --slurp "repos/${REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" \
         | jq -r '[.[].check_runs[].details_url // empty | select(test("/actions/runs/[0-9]+"))
             | capture("/actions/runs/(?<id>[0-9]+)").id] | unique | .[]')" || return 1
     # The run lists travel through stdin, never as a jq argument: a pull request that runs
@@ -266,23 +274,37 @@ fetch_runs() {
         if ! jq -e --argjson id "$run_id" 'any(.[]; .id == $id)' <<<"$listed" >/dev/null; then
             run="$(gh api "repos/${REPO}/actions/runs/${run_id}")" || return 1
             extra="$(printf '%s\n%s\n' "$extra" "$run" \
-                | jq -c -s --arg pr "$PR_NUMBER" \
+                | jq -c -s \
                     '.[0] as $extra | .[1] | if .event == "pull_request"
-                        and any(.pull_requests[]?; (.number | tostring) == $pr)
                         then $extra + [.] else $extra end')" || return 1
         fi
     done
+    local expected_title
+    expected_title="PR #${PR_NUMBER} base=${BASE_REF} base-sha=${BASE_SHA} head-sha=${HEAD_SHA} merge-sha=${MERGE_SHA}"
     printf '%s\n%s\n' "$listed" "$extra" \
         | jq -c -s '{workflow_runs: (.[0] + .[1])}' \
-        | jq -c --arg pr "$PR_NUMBER" --arg base "$BASE_REF" --arg base_sha "$BASE_SHA" --arg head_sha "$HEAD_SHA" '
+        | jq -c --arg pr "$PR_NUMBER" --arg base "$BASE_REF" --arg base_sha "$BASE_SHA" \
+            --arg head_sha "$HEAD_SHA" --arg merge_sha "$MERGE_SHA" --arg expected_title "$expected_title" '
             {workflow_runs: [
                 .workflow_runs[]
                 | select(.event == "pull_request")
-                | select(any(.pull_requests[]?;
-                    (.number | tostring) == $pr
-                    and .base.ref == $base
-                    and .base.sha == $base_sha
-                    and .head.sha == $head_sha))
+                | select(.head_sha == $head_sha)
+                | select(.display_title == $expected_title)
+                | select(
+                    if (.pull_requests | type) == "array" then
+                        if (.pull_requests | length) == 0 then
+                            true
+                        else
+                            any(.pull_requests[]?;
+                                (.number | tostring) == $pr
+                                and .base.ref == $base
+                                and .base.sha == $base_sha
+                                and .head.sha == $head_sha)
+                        end
+                    else
+                        false
+                    end
+                )
             ]}' || return 1
 }
 
