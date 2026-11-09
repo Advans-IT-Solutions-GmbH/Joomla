@@ -183,6 +183,31 @@ The same page also works for customers with an account, so the request mail can 
 
 **Requirement:** the bundled system plugin **System - J2Commerce Privacy Consent** must be enabled (the installer enables it on the first installation), otherwise the mail keeps Joomla's links.
 
+### Coexistence with the standalone Core privacy adapter
+
+The optional [Core privacy requests system plugin](../../plg_system_privacyrequests/)
+adds public account-free removal-request creation without replacing this shop
+plugin or its guest confirmation. Its
+[three-package upgrade and rollback procedure](../../plg_system_privacyrequests/#existing-site-three-package-upgrade-and-rollback-boundary)
+applies when upgrading an existing coupled test installation: generic plugin ZIP,
+Appointments component ZIP, then this existing shop plugin ZIP; keep the generic
+adapter disabled until its operator contact route and captured test delivery are
+verified. Do not install a shop solely to use the standalone adapter.
+
+Keep this plugin, the existing **Guest Request Confirmation** setting and its
+bundled consent system plugin in their verified states. Administrator-created
+export/removal mail keeps this plugin's existing guest route; the generic adapter
+uses the distinct native `com_privacy.notification.remove` template and its own
+route. Already-sent shop links are not rewritten or migrated. Registered Core
+requests, legal blockers, anonymization and retention responsibilities remain in
+place. No request statuses or accounts are manufactured during the handover.
+
+The coupled upgrade checks preserved disabled task/mail states; that is not a
+claim about a fresh shop installation, whose existing installer enables its
+bundled task plugin. Do not activate real mail or Scheduler work as part of this
+handover. While the generic adapter is disabled, hold processing of its managed
+requests rather than bypassing its additional completion guard.
+
 ---
 
 ## Checkout and Profile Behavior
