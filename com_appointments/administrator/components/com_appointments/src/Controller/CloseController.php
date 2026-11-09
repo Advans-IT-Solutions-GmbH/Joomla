@@ -28,7 +28,7 @@ final class CloseController extends BaseController
         try {
             $result = $this->queue()->run(20, true);
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CLOSE_RETRY_RESULT'),
-                $result['failed'] > 0 || $result['disabled'] > 0 ? 'warning' : 'message');
+                $result['failed'] > 0 || $result['disabled'] > 0 || !empty($result['cooldown']) ? 'warning' : 'message');
             return $result['failed'] === 0 && $result['disabled'] === 0;
         } catch (\Throwable $e) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CLOSE_FAILED'), 'error');

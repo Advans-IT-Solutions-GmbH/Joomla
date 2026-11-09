@@ -25,11 +25,13 @@ $save = static function () use ($db, $prefix, &$params): void {
 $requests = [];
 $activity = [];
 $timeout = false;
+$foreignOrg = false;
 $requestId = random_int(1000000000, 2000000000);
-$transport = static function (string $method, string $path, ?array $payload) use (&$requests, &$activity, &$timeout): array {
+$transport = static function (string $method, string $path, ?array $payload) use (&$requests, &$activity, &$timeout, &$foreignOrg): array {
     $requests[] = [$method, $path, $payload];
-    if ($method === 'GET' && str_starts_with($path, '/api/v1/custom_field/activity/')) {
-        return ['code' => 200, 'data' => ['data' => array_map(static fn ($name) => [
+    if ($method === 'GET' && $path === '/api/v1/custom_activity/actitype_fixture/') {
+        return ['code' => 200, 'data' => ['id' => 'actitype_fixture', 'organization_id' => $foreignOrg ? 'orga_other' : 'orga_fixture',
+            'fields' => array_map(static fn ($name) => [
             'id' => 'cf_' . $name, 'type' => 'text', 'custom_activity_type_id' => 'actitype_fixture',
         ], ['uid', 'seq', 'start', 'end', 'state', 'source'])]];
     }
@@ -101,7 +103,12 @@ try {
         'Disabled existing CRM obligation survives canonical hard deletion');
     $params['close_enabled'] = 1;
     $save();
+    $foreignOrg = true;
     $queue->run();
+    $check($activity !== [] && $queue->hasPendingErasure($id),
+        'Credential organization change cannot clear cleanup against a different organization');
+    $foreignOrg = false;
+    $queue->run(20, true);
     $check($activity === [] && !$queue->hasPendingErasure($id), 'Mock cleanup resolves own Activity after booking deletion');
 
     $booking = $fixture->booking($event, $day . ' 14:00:00')['booking'];
@@ -136,7 +143,7 @@ try {
     $check(count(array_filter($requests, static fn ($request) => $request[0] === 'POST' && $request[1] === '/api/v1/activity/custom/')) === 2,
         'Exactly one Activity create per synthetic booking despite changes and retries');
 } catch (Throwable $e) {
-    $check(false, 'Installed Close mock failed: ' . get_class($e) . ' at line ' . $e->getLine());
+    $check(false, 'Installed Close mock failed: ' . get_class($e) . ' in ' . basename($e->getFile()) . ' at line ' . $e->getLine());
 } finally {
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($original) . "' WHERE element='com_appointments' AND type='component'");
     if ($ids) {

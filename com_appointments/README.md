@@ -69,13 +69,18 @@ Contact (name, email and existing phone only), using the account's default Lead 
 answers live on the booking Activity, not in existing contact master data. Later changes update
 the saved remote Activity ID. No existing calendar integration is required.
 
-**Failures and recovery:** the administrator dashboard shows the latest 100 delivery records,
+**Failures and recovery:** the administrator dashboard paginates all delivery records, 100 per page,
 including hard-deleted bookings, with diagnostic codes but no payloads or credentials. Scheduled
-safe retries respect `Retry-After`; authentication, mapping and ambiguous-contact errors block
+safe retries stop the batch on `429` and persist a shared `Retry-After` cooldown, including for
+new bookings. Failed rechecks rotate behind other due records; authentication, mapping and ambiguous-contact errors block
 visibly. The dashboard's safe retry action rechecks blocked records, never uncertain creations.
 The HTTPS transport uses verified TLS, no redirect, a bounded response, five-second timeouts and
 **no transport-level retry**. A database advisory lock serializes workers on this installation;
-booking row locks serialize each send against erasure and rescheduling.
+booking row locks serialize each send against erasure and rescheduling. The authenticated organization
+ID is obtained from the configured Custom Activity type and saved before transferring data.
+Delivery, reconciliation and cleanup verify it again on each run; rotating a key to another
+organization cannot turn a missing object there into successful cleanup. Keep the configured type
+available until outstanding cleanup is resolved.
 
 Before a non-idempotent POST, the worker commits an uncertain intent. A timeout, server error,
 invalid create response, process crash or local persistence failure after remote success leaves
@@ -91,7 +96,10 @@ Erasure stops unsent enrollment locally without an external obligation. Existing
 activities or uncertain writes retain actionable metadata even when the booking is hard deleted.
 Turning transfer off pauses delivery, not those obligations. Native privacy Remove retries only
 its own request's cleanup; both its removal result and the Complete gate remain incomplete until
-cleanup actually finishes. This does not auto-confirm or auto-complete a privacy request.
+cleanup actually finishes. If an operator manually removes an integration-created Contact or
+Activity, safe retry verifies its absence read-only in the bound organization before resolving
+the corresponding obligation. It never removes CRM master records automatically.
+This does not auto-confirm or auto-complete a privacy request.
 
 Synthetic coverage without a network or credential: `php tests/close-mock.php` (PDO SQLite
 required). The installed `close` integration suite exercises canonical booking mutations with

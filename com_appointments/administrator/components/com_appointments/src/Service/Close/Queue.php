@@ -38,16 +38,26 @@ final class Queue
             operation VARCHAR(24) NOT NULL DEFAULT \'\',
             reason VARCHAR(48) NOT NULL DEFAULT \'\',
             binding CHAR(64) NOT NULL DEFAULT \'\',
+            organization_id VARCHAR(110) NOT NULL DEFAULT \'\',
             lead_id VARCHAR(110) NOT NULL DEFAULT \'\',
             contact_id VARCHAR(110) NOT NULL DEFAULT \'\',
             contact_created TINYINT NOT NULL DEFAULT 0,
             activity_id VARCHAR(110) NOT NULL DEFAULT \'\',
             attempts INT UNSIGNED NOT NULL DEFAULT 0,
             next_attempt BIGINT NOT NULL DEFAULT 0,
+            last_attempt BIGINT NOT NULL DEFAULT 0,
+            rate_limit_until BIGINT NOT NULL DEFAULT 0,
             mac CHAR(64) NOT NULL,
             INDEX delivery_due (state, next_attempt),
             INDEX privacy_request (request_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+        $columns = $db->getTableColumns($db->replacePrefix(self::TABLE));
+        foreach (['organization_id' => "VARCHAR(110) NOT NULL DEFAULT ''",
+            'last_attempt' => 'BIGINT NOT NULL DEFAULT 0', 'rate_limit_until' => 'BIGINT NOT NULL DEFAULT 0'] as $name => $type) {
+            if (!isset($columns[$name])) {
+                $db->setQuery('ALTER TABLE ' . $db->quoteName(self::TABLE) . ' ADD ' . $db->quoteName($name) . ' ' . $type)->execute();
+            }
+        }
     }
 
     /** Called inside the canonical write transaction. No network and no historical backfill. */
@@ -63,7 +73,8 @@ final class Queue
         if (!$old) {
             $values = ['booking_id' => $id, 'uid' => (string) $booking['uid'], 'target_sequence' => (int) $booking['sequence'],
                 'erased' => 0, 'request_id' => 0, 'state' => 'pending', 'operation' => '', 'reason' => '', 'binding' => '',
-                'lead_id' => '', 'contact_id' => '', 'contact_created' => 0, 'activity_id' => '', 'attempts' => 0, 'next_attempt' => 0];
+                'organization_id' => '', 'lead_id' => '', 'contact_id' => '', 'contact_created' => 0, 'activity_id' => '',
+                'attempts' => 0, 'next_attempt' => 0, 'last_attempt' => 0, 'rate_limit_until' => 0];
             $row = (object) ($values + ['mac' => self::mac($values)]);
             if (!$db->insertObject(self::TABLE, $row)) {
                 throw new \RuntimeException('Close delivery could not be queued.');
@@ -91,15 +102,24 @@ final class Queue
             $change->lead_id = '';
             $change->contact_id = '';
         }
+        if ((int) $old['erased'] === 1 && $old['state'] === 'done') {
+            $change->state = 'done';
+        }
         $change->mac = self::mac(array_replace($old, (array) $change));
         if (!$db->updateObject(self::TABLE, $change, 'booking_id')) {
             throw new \RuntimeException('Close delivery change could not be queued.');
         }
     }
 
-    public function rows(): array
+    public function count(): int
     {
-        $rows = $this->db->setQuery('SELECT * FROM ' . $this->table() . ' ORDER BY booking_id DESC LIMIT 100')->loadAssocList();
+        return (int) $this->db->setQuery('SELECT COUNT(*) FROM ' . $this->table())->loadResult();
+    }
+
+    public function rows(int $offset = 0): array
+    {
+        $rows = $this->db->setQuery('SELECT * FROM ' . $this->table() . ' ORDER BY booking_id DESC LIMIT 100 OFFSET '
+            . max(0, $offset))->loadAssocList();
         foreach ($rows as $row) {
             self::verify($row);
         }
@@ -153,6 +173,10 @@ final class Queue
                     || ($booking && !hash_equals($row['uid'], (string) $booking['uid']))) {
                     throw new \RuntimeException('This transfer cannot be reconciled.');
                 }
+                if ($this->cooldown() > time()) {
+                    throw new \RuntimeException('Close delivery is waiting for its rate limit.');
+                }
+                $this->assertOrganization($row, $client);
                 if ($row['operation'] === 'create_activity') {
                     $remoteId = Settings::id($remoteId, 'acti');
                     $remote = $client->request('GET', '/api/v1/activity/custom/' . $remoteId . '/');
@@ -185,6 +209,10 @@ final class Queue
                 $this->db->transactionCommit();
             } catch (\Throwable $e) {
                 $this->db->transactionRollback();
+                if ($e instanceof DeliveryException && $e->reason === 'rate_limit') {
+                    $this->failure($id, ['reason' => 'rate_limit', 'rate_limit_until' => time() + $e->delay,
+                        'next_attempt' => time() + $e->delay]);
+                }
                 throw $e;
             }
         } finally {
@@ -206,13 +234,17 @@ final class Queue
         }
         try {
             $settings = new Settings($this->params);
+            if (($until = $this->cooldown()) > time()) {
+                return $counts + ['cooldown' => $until];
+            }
             $client = new Client($settings, $this->transport ?? Transport::forSettings($settings));
             $states = $retryBlocked ? "'pending','retry','blocked'" : "'pending','retry'";
             $rows = $this->db->setQuery('SELECT * FROM ' . $this->table() . ' WHERE state IN (' . $states . ')'
                 . ($requestId > 0 ? ' AND request_id = ' . $requestId : '')
                 . ' AND (next_attempt <= ' . time() . ($retryBlocked ? " OR state = 'blocked'" : '') . ')'
-                . ' ORDER BY booking_id ASC LIMIT ' . max(1, min(100, $limit)))->loadAssocList();
+                . ' ORDER BY last_attempt ASC, booking_id ASC LIMIT ' . max(1, min(100, $limit)))->loadAssocList();
             foreach ($rows as $row) {
+                $counts['processed']++;
                 // A contact creation and its activity are separate crash-safe checkpoints.
                 for ($step = 0; $step < 3; $step++) {
                     try {
@@ -220,9 +252,15 @@ final class Queue
                             break;
                         }
                     } catch (DeliveryException $e) {
-                        $this->failure((int) $row['booking_id'], ['state' => $e->state, 'reason' => $e->reason,
-                            'next_attempt' => time() + $e->delay]);
+                        $change = ['state' => $e->state, 'reason' => $e->reason, 'next_attempt' => time() + $e->delay];
+                        if ($e->reason === 'rate_limit') {
+                            $change['rate_limit_until'] = time() + $e->delay;
+                        }
+                        $this->failure((int) $row['booking_id'], $change);
                         $counts['failed']++;
+                        if ($e->reason === 'rate_limit') {
+                            break 2;
+                        }
                         break;
                     } catch (\Throwable $e) {
                         // Do not turn a persisted uncertain write intent into a retry.
@@ -233,7 +271,6 @@ final class Queue
                         break;
                     }
                 }
-                $counts['processed']++;
             }
         } finally {
             $this->db->setQuery('SELECT RELEASE_LOCK(' . $this->db->quote($lock) . ')')->loadResult();
@@ -261,8 +298,11 @@ final class Queue
                 throw new DeliveryException('blocked', 'mapping_changed');
             }
             $erased = (int) $row['erased'] === 1 || !$booking || $booking['anonymised_utc'] !== null;
+            if (!$erased || $row['activity_id'] !== '' || (int) $row['contact_created'] === 1) {
+                $this->assertOrganization($row, $client);
+            }
             if ($erased && $row['activity_id'] === '') {
-                if ((int) $row['contact_created'] === 1 && (int) $settings->params->get('close_retain_contact', 0) !== 1) {
+                if (!$this->contactCleanupComplete($row, $settings, $client)) {
                     throw new DeliveryException('blocked', 'contact_retention_review');
                 }
                 // A completed contact is retained; CRM master records are never erased here.
@@ -271,11 +311,16 @@ final class Queue
                 return true;
             }
             if ($erased) {
+                $path = '/api/v1/activity/custom/' . Settings::id($row['activity_id'], 'acti') . '/';
                 if ((int) $settings->params->get('close_delete_activity', 0) !== 1) {
+                    if ($client->absent($path)) {
+                        $this->save($id, ['activity_id' => '', 'state' => 'pending', 'reason' => '', 'operation' => '']);
+                        $db->transactionCommit();
+                        return false;
+                    }
                     throw new DeliveryException('blocked', 'erasure_review');
                 }
                 $method = 'DELETE';
-                $path = '/api/v1/activity/custom/' . Settings::id($row['activity_id'], 'acti') . '/';
                 $payload = null;
                 $operation = 'delete_activity';
             } else {
@@ -356,7 +401,7 @@ final class Queue
                 }
             } elseif ($erased) {
                 $change['activity_id'] = '';
-                if ((int) $row['contact_created'] === 1 && (int) $settings->params->get('close_retain_contact', 0) !== 1) {
+                if (!$this->contactCleanupComplete($row, $settings, $client)) {
                     $change['state'] = 'blocked';
                     $change['reason'] = 'contact_retention_review';
                 } else {
@@ -392,7 +437,8 @@ final class Queue
     private function save(int $id, array $fields): void
     {
         $fields['mac'] = self::mac(array_replace($this->row($id), $fields));
-        if (!$this->db->updateObject(self::TABLE, (object) (['booking_id' => $id] + $fields), 'booking_id')) {
+        $object = (object) (['booking_id' => $id] + $fields);
+        if (!$this->db->updateObject(self::TABLE, $object, 'booking_id')) {
             throw new \RuntimeException('Close delivery metadata could not be saved.');
         }
     }
@@ -402,6 +448,7 @@ final class Queue
         $this->db->transactionStart();
         try {
             $this->row($id, true);
+            $fields['last_attempt'] = (int) $this->db->setQuery('SELECT COALESCE(MAX(last_attempt), 0) FROM ' . $this->table())->loadResult() + 1;
             $this->save($id, $fields);
             $this->db->transactionCommit();
         } catch (\Throwable $e) {
@@ -421,9 +468,48 @@ final class Queue
 
     private static function verify(array $row): void
     {
-        if (!hash_equals(self::mac($row), (string) ($row['mac'] ?? ''))) {
-            throw new \RuntimeException('Close delivery metadata is not authentic.');
+        if (hash_equals(self::mac($row), (string) ($row['mac'] ?? ''))) {
+            return;
         }
+        // Earlier evaluation builds had no account binding. Never assign remote IDs from those builds to an account implicitly.
+        if (($row['organization_id'] ?? '') === '' && (int) ($row['last_attempt'] ?? 0) === 0 && (int) ($row['rate_limit_until'] ?? 0) === 0) {
+            unset($row['organization_id'], $row['last_attempt'], $row['rate_limit_until']);
+            if (hash_equals(self::mac($row), (string) ($row['mac'] ?? ''))) {
+                return;
+            }
+        }
+        throw new \RuntimeException('Close delivery metadata is not authentic.');
+    }
+
+    private function assertOrganization(array $row, Client $client): void
+    {
+        $organization = $client->organization();
+        if ($row['organization_id'] !== '' && !hash_equals($row['organization_id'], $organization)) {
+            throw new DeliveryException('blocked', 'organization_changed');
+        }
+        if ($row['organization_id'] === '') {
+            if ($row['activity_id'] !== '' || $row['contact_id'] !== '' || $row['state'] === 'uncertain') {
+                throw new DeliveryException('blocked', 'organization_unbound');
+            }
+            $this->save((int) $row['booking_id'], ['organization_id' => $organization]);
+        }
+    }
+
+    private function cooldown(): int
+    {
+        $rows = $this->db->setQuery('SELECT * FROM ' . $this->table() . ' WHERE rate_limit_until > ' . time())->loadAssocList();
+        $until = 0;
+        foreach ($rows as $row) {
+            self::verify($row);
+            $until = max($until, (int) $row['rate_limit_until']);
+        }
+        return $until;
+    }
+
+    private function contactCleanupComplete(array $row, Settings $settings, Client $client): bool
+    {
+        return (int) $row['contact_created'] !== 1 || (int) $settings->params->get('close_retain_contact', 0) === 1
+            || $client->absent('/api/v1/contact/' . Settings::id($row['contact_id'], 'cont') . '/');
     }
 
     private function table(): string
@@ -433,6 +519,7 @@ final class Queue
 
     private function lockName(): string
     {
-        return 'appointments-close-' . substr(hash('sha256', $this->db->getPrefix()), 0, 32);
+        $database = (string) $this->db->setQuery('SELECT DATABASE()')->loadResult();
+        return 'appointments-close-' . substr(hash('sha256', $database . '|' . $this->db->getPrefix()), 0, 32);
     }
 }

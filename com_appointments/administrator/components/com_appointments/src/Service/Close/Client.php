@@ -13,6 +13,8 @@ defined('_JEXEC') or die;
 /** Transport receives only relative paths; the production transport never follows redirects. */
 final class Client
 {
+    private ?array $typeData = null;
+
     public function __construct(private Settings $settings, private \Closure $transport)
     {
     }
@@ -83,19 +85,43 @@ final class Client
         throw new DeliveryException('blocked', 'inexact_contact');
     }
 
+    public function organization(): string
+    {
+        if ($this->typeData === null) {
+            $type = $this->request('GET', '/api/v1/custom_activity/' . $this->settings->type . '/');
+            if (($type['id'] ?? '') !== $this->settings->type) {
+                throw new DeliveryException('blocked', 'type_identity');
+            }
+            Settings::id((string) ($type['organization_id'] ?? ''), 'orga');
+            $this->typeData = $type;
+        }
+        return $this->typeData['organization_id'];
+    }
+
+    public function absent(string $path): bool
+    {
+        try {
+            $this->request('GET', $path);
+            return false;
+        } catch (DeliveryException $e) {
+            if ($e->reason === 'http_404') {
+                return true;
+            }
+            throw $e;
+        }
+    }
+
     /** All mapped activity fields are deliberately single-valued text fields. */
     public function validateFields(): void
     {
-        $fields = $this->request('GET', '/api/v1/custom_field/activity/?_limit=1000');
-        if (!isset($fields['data']) || !is_array($fields['data']) || !empty($fields['has_more'])) {
+        $this->organization();
+        $fields = $this->typeData['fields'] ?? null;
+        if (!is_array($fields)) {
             throw new DeliveryException('blocked', 'field_catalog');
         }
         $mapped = array_merge(array_values($this->settings->fields), array_values($this->settings->questions));
         $found = [];
-        foreach ($fields['data'] as $field) {
-            if (($field['custom_activity_type_id'] ?? null) !== $this->settings->type) {
-                continue;
-            }
+        foreach ($fields as $field) {
             $id = $field['id'] ?? '';
             if (!empty($field['required']) && !in_array($id, $mapped, true)) {
                 throw new DeliveryException('blocked', 'unmapped_required_field');

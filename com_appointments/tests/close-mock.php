@@ -29,6 +29,10 @@ namespace Joomla\CMS\Component {
         public static function getParams(string $name): object { return self::$params; }
     }
 }
+namespace Advans\Component\Appointments\Administrator\Service\Close {
+    function time(): int { return $GLOBALS['close_mock_time'] ?? \time(); }
+}
+
 namespace {
     define('_JEXEC', 1);
     $src = dirname(__DIR__) . '/administrator/components/com_appointments/src/';
@@ -58,6 +62,8 @@ namespace {
         private string $sql = '';
         public bool $locked = false;
         public bool $failWrite = false;
+        public string $database = 'synthetic_database';
+        public array $lockNames = [];
         public ?\Closure $afterCommit = null;
         public function __construct()
         {
@@ -65,7 +71,8 @@ namespace {
             $this->pdo->exec('CREATE TABLE test_appointments_close (
                 booking_id INTEGER PRIMARY KEY, uid TEXT, target_sequence INTEGER, erased INTEGER, request_id INTEGER,
                 state TEXT, operation TEXT, reason TEXT, binding TEXT, lead_id TEXT, contact_id TEXT,
-                contact_created INTEGER, activity_id TEXT, attempts INTEGER, next_attempt INTEGER, mac TEXT)');
+                contact_created INTEGER, activity_id TEXT, attempts INTEGER, next_attempt INTEGER, mac TEXT,
+                organization_id TEXT, last_attempt INTEGER, rate_limit_until INTEGER)');
             $this->pdo->exec('CREATE TABLE test_appointments_bookings (
                 id INTEGER PRIMARY KEY, uid TEXT, sequence INTEGER, anonymised_utc TEXT,
                 invitee_name TEXT, invitee_email TEXT, invitee_phone TEXT, start_utc TEXT, end_utc TEXT,
@@ -87,7 +94,9 @@ namespace {
         public function execute(): bool { $this->pdo->exec($this->sql); return true; }
         public function loadResult(): mixed
         {
+            if ($this->sql === 'SELECT DATABASE()') { return $this->database; }
             if (str_contains($this->sql, 'GET_LOCK')) {
+                $this->lockNames[] = $this->sql;
                 return $this->locked ? 0 : ($this->locked = true);
             }
             if (str_contains($this->sql, 'RELEASE_LOCK')) {
@@ -105,14 +114,14 @@ namespace {
             }
         }
         public function transactionRollback(): void { if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); } }
-        public function insertObject(string $table, object $row): bool
+        public function insertObject(string $table, object &$row): bool
         {
             $values = (array) $row;
             $query = $this->pdo->prepare('INSERT INTO ' . $this->quoteName($table) . ' (`'
                 . implode('`,`', array_keys($values)) . '`) VALUES (' . implode(',', array_fill(0, count($values), '?')) . ')');
             return $query->execute(array_values($values));
         }
-        public function updateObject(string $table, object $row, string $key): bool
+        public function updateObject(string $table, object &$row, string $key): bool
         {
             if ($this->failWrite && str_contains($table, 'close') && ($row->state ?? '') === 'done') {
                 $this->failWrite = false;
@@ -145,9 +154,10 @@ namespace {
     $activity = [];
     $transport = static function (string $method, string $path, ?array $payload) use (&$requests, &$mode, &$activity, $db): array {
         $requests[] = [$method, $path, $payload];
-        if ($path === '/api/v1/custom_field/activity/?_limit=1000') {
+        if ($path === '/api/v1/custom_activity/actitype_fixture/') {
             $ids = ['uid', 'seq', 'start', 'end', 'state', 'source', 'question'];
-            return ['code' => 200, 'data' => ['data' => array_map(static fn ($name) => [
+            return ['code' => 200, 'data' => ['id' => 'actitype_fixture',
+                'organization_id' => $mode === 'foreignorg' ? 'orga_other' : 'orga_fixture', 'fields' => array_map(static fn ($name) => [
                 'id' => 'cf_' . $name, 'type' => 'text', 'custom_activity_type_id' => 'actitype_fixture',
             ], $ids)]];
         }
@@ -158,6 +168,9 @@ namespace {
         if ($path === '/api/v1/lead/') {
             return ['code' => 200, 'data' => ['id' => 'lead_fixture', 'contacts' => [['id' => 'cont_fixture']]]];
         }
+        if ($method === 'GET' && $path === '/api/v1/contact/cont_fixture/') {
+            return $mode === 'manually_cleaned' ? ['code' => 404] : ['code' => 200, 'data' => ['id' => 'cont_fixture']];
+        }
         if ($method === 'POST' && $path === '/api/v1/activity/custom/') {
             $activity = $payload + ['id' => 'acti_fixture'];
             if ($mode === 'timeout') { throw new \RuntimeException('Synthetic timeout after remote write.'); }
@@ -166,7 +179,7 @@ namespace {
             return ['code' => 200, 'data' => $activity];
         }
         if ($method === 'GET' && $path === '/api/v1/activity/custom/acti_fixture/') {
-            return ['code' => 200, 'data' => $activity];
+            return $mode === 'manually_cleaned' ? ['code' => 404] : ['code' => 200, 'data' => $activity];
         }
         if ($method === 'PUT') {
             $activity = array_replace($activity, $payload ?? []);
@@ -186,7 +199,8 @@ namespace {
         'guest_emails' => 'NEVER_GUEST', 'conference_url' => 'NEVER_CAPABILITY'];
     $enrol = static function (int $id) use ($db, $booking): array {
         $row = $booking($id);
-        $db->insertObject('#__appointments_bookings', (object) $row);
+        $object = (object) $row;
+        $db->insertObject('#__appointments_bookings', $object);
         $db->transactionStart();
         Queue::changed($db, $row, created: true);
         $db->transactionCommit();
@@ -196,7 +210,8 @@ namespace {
     $mutate = static function (array $row, array $fields, bool $erase = false, int $request = 0) use ($db): array {
         $row = array_replace($row, $fields);
         $db->transactionStart();
-        $db->updateObject('#__appointments_bookings', (object) $row, 'id');
+        $object = (object) $row;
+        $db->updateObject('#__appointments_bookings', $object, 'id');
         Queue::changed($db, $row, $erase, $request);
         $db->transactionCommit();
         return $row;
@@ -239,7 +254,14 @@ namespace {
     $row = $mutate($row, ['sequence' => 4, 'anonymised_utc' => '2027-01-01 00:00:00', 'invitee_email' => null], true, 77);
     $check($queue->pendingPrivacy(77) === 1, 'formal request retains erasure provenance');
     $db->pdo->exec('DELETE FROM test_appointments_bookings WHERE id = 2');
+    $mode = 'foreignorg';
+    $before = count(array_filter($requests, static fn ($request) => $request[0] === 'DELETE'));
     $queue->run();
+    $check($queue->pendingPrivacy(77) === 1 && $state(2)['reason'] === 'organization_changed'
+        && count(array_filter($requests, static fn ($request) => $request[0] === 'DELETE')) === $before,
+        'credential organization change cannot delete elsewhere or clear original privacy obligation');
+    $mode = 'existing';
+    $queue->run(20, true, 77);
     $check($activity === [] && $queue->pendingPrivacy(77) === 0, 'remote activity cleanup survives hard-deleted canonical booking');
 
     $row = $enrol(3);
@@ -258,6 +280,9 @@ namespace {
     $before = count($requests);
     $queue->run(20, true);
     $check(count($requests) === $before, 'manual safe retry does not replay uncertain create');
+    $mode = 'foreignorg';
+    try { $queue->reconcile(4, 'acti_fixture'); $check(false, 'foreign organization reconciliation rejected'); }
+    catch (DeliveryException $e) { $check($state(4)['state'] === 'uncertain', 'foreign organization cannot reconcile an uncertain Activity'); }
     $mode = 'existing';
     $queue->reconcile(4, 'acti_fixture');
     $queue->run();
@@ -268,11 +293,16 @@ namespace {
     $check(PrivacyOutcome::incomplete($db, 89), 'native Complete gate rejects a success flag while own remote cleanup is pending');
     $db->pdo->exec('UPDATE test_appointments_privacy_outcomes SET complete=1 WHERE request_id=89');
     $check(PrivacyOutcome::incomplete($db, 89), 'stale successful formal outcome does not hide durable remote obligation');
-    $params->values['close_delete_activity'] = 1;
+    $mode = 'manually_cleaned';
+    $activity = [];
+    $before = $posts() + count(array_filter($requests, static fn ($request) => in_array($request[0], ['PUT', 'DELETE'], true)));
     $queue->run(20, true, 89);
+    $check($posts() + count(array_filter($requests, static fn ($request) => in_array($request[0], ['PUT', 'DELETE'], true))) === $before,
+        'manually erased own Activity is verified without automated deletion approval or any writes');
     PrivacyOutcome::record($db, 89, true);
     $check(!PrivacyOutcome::incomplete($db, 89), 'native outcome can complete only after verified own cleanup');
 
+    $params->values['close_delete_activity'] = 1;
     $mode = 'new';
     $row = $enrol(5);
     $queue->run();
@@ -285,6 +315,20 @@ namespace {
     $check($queue->pendingPrivacy(78) === 0, 'explicit separate contact retention policy resolves only own outstanding review');
     $check(count(array_filter($requests, static fn ($request): bool => $request[0] === 'DELETE' && !str_contains($request[1], '/activity/custom/'))) === 0,
         'never delete CRM contact or lead');
+    $params->values['close_retain_contact'] = 0;
+    $mode = 'new';
+    $manual = $enrol(12);
+    $queue->run();
+    $mutate($manual, ['sequence' => 1, 'anonymised_utc' => '2027-01-01 00:00:00'], true, 90);
+    $queue->run();
+    $check($queue->pendingPrivacy(90) === 1, 'existing own Contact still requires retention or proven manual cleanup');
+    $mode = 'manually_cleaned';
+    $before = count($requests);
+    $queue->run(20, true, 90);
+    $newRequests = array_slice($requests, $before);
+    $check($queue->pendingPrivacy(90) === 0 && $params->get('close_retain_contact') === 0
+        && count(array_filter($newRequests, static fn ($request) => $request[0] !== 'GET')) === 0,
+        'read-only proof of manual own Contact cleanup resolves without enabling global retention');
 
     $mode = '429';
     $rateLimited = $enrol(6);
@@ -298,6 +342,14 @@ namespace {
     $queue->run();
     $check(count($requests) === $before && $state(6)['next_attempt'] === $retryAt,
         'canonical mutation preserves outstanding Retry-After');
+    $duringCooldown = $enrol(11);
+    $queue->run();
+    $check(count($requests) === $before, 'shared cooldown blocks newly enrolled bookings before any network call');
+    $mutate($rateLimited, ['sequence' => 2, 'anonymised_utc' => '2027-01-01 00:00:00'], true);
+    $mutate($duringCooldown, ['sequence' => 1, 'anonymised_utc' => '2027-01-01 00:00:00'], true);
+    $queue->run();
+    $check(count($requests) === $before, 'shared cooldown survives local erasure of rate-limited booking');
+    $GLOBALS['close_mock_time'] = time() + 61;
 
     $mode = '503';
     $enrol(7);
@@ -324,9 +376,39 @@ namespace {
     $db->failWrite = true;
     $queue->run();
     $check($state(8)['state'] === 'uncertain', 'persistence failure after remote create retains precommitted intent');
+    $otherDb = new MemoryDatabase();
+    $otherDb->database = 'synthetic_other_database';
+    $otherQueue = new Queue($otherDb, $params, $transport, static fn (array $row): array => $row);
+    $seed = static function (int $id, bool $inexact = false) use ($otherDb, $booking): void {
+        $row = $booking($id);
+        if ($inexact) { $row['invitee_email'] = 'blocked@example.test'; }
+        $object = (object) $row;
+        $otherDb->insertObject('#__appointments_bookings', $object);
+        $otherDb->transactionStart();
+        Queue::changed($otherDb, $row, created: true);
+        $otherDb->transactionCommit();
+    };
+    $mode = 'timeout';
+    $seed(1);
+    $otherQueue->run();
+    $check($db->lockNames[0] !== $otherDb->lockNames[0], 'same-prefix installations in different databases use distinct named locks');
+    $mode = 'ambiguous';
+    for ($id = 2; $id <= 36; $id++) { $seed($id, $id <= 26); }
+    $otherQueue->run(100);
+    $mode = 'existing';
+    $otherQueue->run(20, true);
+    $otherQueue->run(20, true);
+    $check((int) $otherDb->pdo->query("SELECT COUNT(*) FROM test_appointments_close WHERE booking_id>=27 AND state='done'")->fetchColumn() === 10,
+        'failed blocked rechecks rotate so later repaired deliveries are reachable');
+    for ($id = 37; $id <= 140; $id++) { $seed($id); }
+    $oldPage = $otherQueue->rows(100);
+    $check($otherQueue->count() === 140 && count($otherQueue->rows()) === 100
+        && count(array_filter($oldPage, static fn ($item) => (int) $item['booking_id'] === 1 && $item['state'] === 'uncertain')) === 1,
+        'pagination keeps old uncertain delivery reachable beyond one hundred newer records');
     $row = $enrol(9);
     $db->transactionStart();
-    $db->updateObject('#__appointments_bookings', (object) ['id' => 9, 'sequence' => 1], 'id');
+    $object = (object) ['id' => 9, 'sequence' => 1];
+    $db->updateObject('#__appointments_bookings', $object, 'id');
     Queue::changed($db, array_replace($row, ['sequence' => 1]));
     $db->transactionRollback();
     $check((int) $state(9)['target_sequence'] === 0, 'booking rollback also rolls back enqueue');
@@ -352,7 +434,9 @@ namespace {
             $catalog[] = ['id' => 'cf_missing', 'custom_activity_type_id' => 'actitype_fixture', 'type' => 'text', 'required' => true];
         }
         $client = new \Advans\Component\Appointments\Administrator\Service\Close\Client(new Settings($params),
-            static fn () => ['code' => 200, 'data' => ['data' => $catalog]]);
+            static fn () => ['code' => 200, 'data' => [
+                'id' => $fault === 'foreign_type' ? 'actitype_other' : 'actitype_fixture',
+                'organization_id' => 'orga_fixture', 'fields' => $catalog]]);
         try { $client->validateFields(); $check(false, 'invalid catalog blocked'); }
         catch (\Advans\Component\Appointments\Administrator\Service\Close\DeliveryException $e) {
             $check($e->state === 'blocked', 'field catalog rejects ' . $fault);

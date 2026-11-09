@@ -112,6 +112,16 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
                         </td>
                     </tr><?php endforeach; ?></tbody>
                 </table></div>
+                <nav aria-label="<?php echo Text::_('COM_APPOINTMENTS_CLOSE_PAGES'); ?>">
+                    <p><?php echo Text::sprintf('COM_APPOINTMENTS_CLOSE_PAGE', intdiv($this->closeStart, 100) + 1,
+                        max(1, (int) ceil($this->closeTotal / 100))); ?></p>
+                    <?php if ($this->closeStart > 0) : ?>
+                        <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=dashboard&close_start=' . ($this->closeStart - 100)); ?>"><?php echo Text::_('JPREV'); ?></a>
+                    <?php endif; ?>
+                    <?php if ($this->closeStart + 100 < $this->closeTotal) : ?>
+                        <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=dashboard&close_start=' . ($this->closeStart + 100)); ?>"><?php echo Text::_('JNEXT'); ?></a>
+                    <?php endif; ?>
+                </nav>
             <?php endif; ?>
         </section>
     <?php endif; ?>
