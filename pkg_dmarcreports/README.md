@@ -1,5 +1,14 @@
 # DMARC Reports Package
 
+<a href="https://www.swissmadesoftware.org/en/about/swiss-made-software.html">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../.github/assets/labels/sms-logo-1v-300dpi-rgb-on-white.png">
+    <img src="../.github/assets/labels/sms-logo-1v-300dpi-rgb.png" width="110" alt="swiss made software">
+  </picture>
+</a>
+
+This extension carries the swiss made software label.
+
 **Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/pkg-dmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/pkg-dmarcreports.yml)
@@ -14,7 +23,7 @@ Joomla package that bundles the whole DMARC Reports solution — the component, 
 
 The DMARC Reports solution is made of four extensions that work together. Installed separately they are four entries in the extension manager with four update streams; as a package they are **one install and one update stream** for the administrator. Joomla installs each bundled extension in dependency order and removes them together on uninstall.
 
-The package itself holds no code and no database tables: it is a manifest (`type="package"`) that carries the four sub-extension archives plus its own language and update files. Each bundled extension ships its own installer script that creates and migrates its own tables, so installing or updating the package never loses collected report data.
+The package has no report-processing runtime or report tables of its own. Its manifest (`type="package"`) carries four sub-extension archives, language/update files and an installer script that manages the package update channel and license installation. Each child runs its own lifecycle and schema migrations; normal updates preserve existing report data.
 
 | Bundled extension | Type | Role |
 |-------------------|------|------|
@@ -38,6 +47,7 @@ Report parsing and storage run on your own server; report contents are not uploa
 
 - [Joomla](https://github.com/joomla/joomla-cms) 5.4 or later (5.4.x, 6.x)
 - PHP 8.1 or higher
+- MySQL or MariaDB, as required by the bundled component's schema
 - Administrator access
 - For automatic, continuous ingestion: a scheduler trigger for Joomla's Scheduled Tasks (the lazy scheduler is enabled by default; a real system or web cron is recommended for unattended operation — see [`plg_task_dmarcreports`](../plg_task_dmarcreports))
 - For MTA-STS policy hosting: the DNS/host steps the extension cannot perform for you (publish `mta-sts.<domain>` with valid TLS, and let the web server pass `/.well-known/mta-sts.txt` to Joomla — see [`plg_system_dmarcmtasts`](../plg_system_dmarcmtasts/README.md#web-server-rule))
@@ -61,7 +71,24 @@ The manifest registers this repository's `updates/update.xml` as update server (
 
 ## Uninstall
 
-Uninstall the package via **System → Manage → Extensions**. Joomla removes the component, the module and both plugins together. As with any Joomla component, the component's tables and collected reports are removed by its own uninstall script; uninstall the package only when you no longer need the collected data.
+Uninstall the package via **System → Manage → Extensions**. Joomla removes the component, the module and both plugins together. The manifest's `blockChildUninstall` prevents uninstalling a child separately while it belongs to the package. The component's uninstall SQL drops all eight DMARC/TLS-RPT tables, including sources and stored credentials. Export what you need and take a matching files/database backup before uninstalling; uninstall is not an update or a rollback.
+
+## Configuration and Usage
+
+The package has no separate operational settings or Scheduler routine. Configure the installed children:
+
+| Surface | Setup and permissions |
+|---|---|
+| Reports, sources, diagnostics and data handling | [Component configuration](../com_dmarcreports/README.md#configuration); administrator access and the component's operation-specific ACL |
+| Backend dashboard tile | [Module configuration](../mod_dmarcreports/README.md#configuration); publish an administrator instance at `cpanel`, with component `core.manage` access for its readers |
+| Automatic ingestion | [Task setup](../plg_task_dmarcreports/README.md#configuration); create/publish a task and configure a working Scheduler trigger |
+| Public MTA-STS policy | [System plugin setup](../plg_system_dmarcmtasts/README.md#configuration); published monitored domain, enabled feature, DNS, valid TLS and the exact web-server route |
+
+Installing the bundle does not prove that the configured mailbox, Scheduler trigger, public policy host or live diagnostics work.
+
+## Troubleshooting
+
+If installation stops for existing files, use the shared backup/approval procedure linked above; do not bypass the guard by copying child files manually. If an update is missing, check the **package** update site, not a child's standalone feed. If reports or policy delivery are missing, use the relevant child README's troubleshooting steps and component System Check. The package does not configure DNS, web-server rules or a cron trigger.
 
 ## Development
 
@@ -163,7 +190,7 @@ This extension supports the following languages:
 - **German (de-DE)**
 - **French (fr-FR)**
 
-The package ships only its own installer-visible strings; each bundled extension carries its own language files. The package lists its system language files in the manifest (`<languages>`), so a further language needs one `<language>` line per file (see [Languages](../README.md#languages)):
+The package ships only its own installer-visible strings; each bundled extension carries its own language files. The package lists its languages in the manifest (`<languages>`). Shipped paths follow this layout; a further locale needs a repository-wide maintainer decision (see [Languages](../README.md#languages)):
 
 ```
 language/{language-tag}/pkg_dmarcreports.sys.ini
