@@ -22,6 +22,7 @@ Joomla/
 ├── plg_system_dmarcmtasts/   # DMARC Reports MTA-STS Policy System Plugin
 ├── pkg_dmarcreports/         # DMARC Reports Package (bundles the four extensions above)
 ├── com_appointments/         # Appointments Component
+├── plg_system_privacyrequests/ # Account-free native Core privacy request adapter
 ├── j2commerce/               # J2Commerce Extensions
 │   ├── com_j2commerce_importexport/
 │   ├── com_j2store_cleanup/

@@ -87,29 +87,28 @@ Components do not need this — they have no `client_id` conflict.
 
 The release process is **two-stage** (see `release-workflow.md`): a `release-*.yml` workflow bumps the version on a `release/…` branch and opens a release PR — it never pushes to `main`. On merge of that PR, the matching `publish-*.yml` workflow builds the package, creates the tag, and publishes the GitHub Release.
 
-Build & Test workflows trigger on push and pull request to `main` for the extension path
-(`<path>/**`), `shared/**` and their own workflow file, and on manual dispatch.
+Build & Test workflows trigger on push and pull request to main for their extension path, explicitly listed shared files they consume, and their own workflow files, plus manual dispatch. No Build & Test workflow watches shared/** wholesale; shared-path-coverage.yml checks that every shared file is covered by a consuming workflow. PR suite/platform matrices remain unchanged.
 
 | Workflow file | Trigger | Purpose |
 |---|---|---|
-| `collect-results.yml` | every PR to `main` | Sole producer of the required check `Collect Results`: matches the `pull_request.paths` of all workflows against the PR's changed files, waits for those runs on the head commit, fails unless all succeeded; passes immediately if none is triggered |
+| `collect-results.yml` | every PR to `main` | Sole producer of the required Collect Results check: derives required runs from the changed-file paths plus every unfiltered PR workflow (including Security Scan), waits for matching current-head runs, and fails unless they succeed. After rerunning a failed extension workflow, rerun Collect Results too. |
 | `security.yml` | push/PR to `main`, manual | Security Scan (Gitleaks blocking; Semgrep/zizmor report-only) |
-| `j2commerce-privacy.yml` | push/PR to `main` (`j2commerce/plg_privacy_j2commerce/**`, `shared/**`, workflow file), manual | Build & Test |
+| `j2commerce-privacy.yml` | push/PR to `main` (`j2commerce/plg_privacy_j2commerce/**`, consumed shared files, workflow file), manual | Build & Test |
 | `release-privacy.yml` | `workflow_dispatch` | Stage 1: bump VERSION/manifest/update.xml on `release/…` branch, open release PR (no push to `main`) |
 | `publish-privacy.yml` | release PR merged to `main` | Stage 2: build ZIP, create tag, publish GitHub Release |
-| `j2commerce-import-export.yml` | push/PR to `main` (`j2commerce/com_j2commerce_importexport/**`, `shared/**`, workflow file), manual | Build & Test |
+| `j2commerce-import-export.yml` | push/PR to `main` (`j2commerce/com_j2commerce_importexport/**`, consumed shared files, workflow file), manual | Build & Test |
 | `release-importexport.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-importexport.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
-| `j2commerce-product-compare.yml` | push/PR to `main` (`j2commerce/plg_j2commerce_productcompare/**`, `shared/**`, workflow file), manual | Build & Test |
+| `j2commerce-product-compare.yml` | push/PR to `main` (`j2commerce/plg_j2commerce_productcompare/**`, consumed shared files, workflow file), manual | Build & Test |
 | `release-productcompare.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-productcompare.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
-| `osmap-j2commerce.yml` | push/PR to `main` (`j2commerce/plg_osmap_j2commerce/**`, `shared/**`, workflow file), manual | Build & Test |
+| `osmap-j2commerce.yml` | push/PR to `main` (`j2commerce/plg_osmap_j2commerce/**`, consumed shared files, workflow file), manual | Build & Test |
 | `release-osmap-j2commerce.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-osmap-j2commerce.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
-| `j2store-cleanup.yml` | push/PR to `main` (`j2commerce/com_j2store_cleanup/**`, `shared/**`, workflow file), manual | Build & Test |
+| `j2store-cleanup.yml` | push/PR to `main` (`j2commerce/com_j2store_cleanup/**`, consumed shared files, workflow file), manual | Build & Test |
 | `release-cleanup.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-cleanup.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
-| `joomla-ajax-forms.yml` | push/PR to `main` (`plg_ajax_joomlaajaxforms/**`, `shared/**`, workflow file), manual | Build & Test |
+| `joomla-ajax-forms.yml` | push/PR to `main` (`plg_ajax_joomlaajaxforms/**`, consumed shared files, workflow file), manual | Build & Test |
 | `release-joomla-ajax-forms.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-joomla-ajax-forms.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
 | `dmarc-reports.yml` | push/PR to `main` (`com_dmarcreports/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
