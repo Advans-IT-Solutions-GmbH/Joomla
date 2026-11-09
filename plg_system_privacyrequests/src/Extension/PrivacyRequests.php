@@ -366,7 +366,8 @@ CSS;
 
     private function contactLink(): string
     {
-        $route = trim((string) $this->params->get('contact_route', ''));
+        // A booted but disabled plugin has no params registry; it then offers no contact link.
+        $route = trim((string) ($this->params?->get('contact_route', '') ?? ''));
         if ($route === '' || strlen($route) > 2048 || !preg_match('~^index\.php(?:\?[^\x00-\x20\x7f\\\\#]*)?$~D', $route)) {
             if ($route !== '') {
                 Log::add('Invalid local privacy contact route configuration.', Log::ERROR, 'plg_system_privacyrequests');
