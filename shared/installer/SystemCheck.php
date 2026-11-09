@@ -198,8 +198,9 @@ final class SystemCheck
             $query->select($db->quoteName('id'))->from($db->quoteName('#__modules'))
                 ->where($db->quoteName('module') . ' = ' . $db->quote($id))
                 ->where($db->quoteName('client_id') . ' = 1')
-                ->order($db->quoteName('id') . ' ASC');
-            $moduleId = (int) $db->setQuery($query, 0, 1)->loadResult();
+                ->order($db->quoteName('id') . ' ASC')
+                ->setLimit(1);
+            $moduleId = (int) $db->setQuery($query)->loadResult();
 
             if ($moduleId > 0) {
                 return 'index.php?option=com_modules&task=module.edit&client_id=1&id=' . $moduleId;
