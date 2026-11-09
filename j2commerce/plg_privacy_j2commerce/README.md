@@ -1,14 +1,5 @@
 # Privacy - J2Commerce Plugin
 
-<a href="https://www.swissmadesoftware.org/en/about/swiss-made-software.html">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../../.github/assets/labels/sms-logo-1v-300dpi-rgb-on-white.png">
-    <img src="../../.github/assets/labels/sms-logo-1v-300dpi-rgb.png" width="110" alt="swiss made software">
-  </picture>
-</a>
-
-This extension carries the swiss made software label.
-
 **Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../../README.md#installation-safety-and-repeatable-system-checks).
 
 
