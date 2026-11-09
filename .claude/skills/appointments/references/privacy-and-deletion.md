@@ -137,6 +137,9 @@ retries and feature switches; use native revocation/ownership teardown, and inde
 check staff obligations before accepting any success flag. Unknown older interrupted
 scope fails closed, not a fabricated guest success. See the README for retention
 and recovery limits of this still-linkable request metadata.
+Its authenticated pending-attempt marker also survives unexpected removal failures
+and missing/forged outcome flags. Log and warn instead of aborting Core's remaining
+privacy listeners; only a genuinely successful current attempt may clear the marker.
 
 `#__appointments_privacy_outcomes` plus any outstanding cleanup reference govern the
 bundled `content/appointmentsprivacy` native before-save veto for Core Complete.

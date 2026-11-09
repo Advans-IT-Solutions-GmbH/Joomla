@@ -1062,14 +1062,11 @@ sleep(3);
                     $request->email = ' . var_export($tag . 'gone@example.test', true) . ';
                     $request->status = 1;
                     $incomplete = false;
-                    try {
-                        $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance(' . $userId . ')]));
-                    } catch (\RuntimeException $error) {
-                        if ($error->getMessage() !== \Joomla\CMS\Language\Text::_("PLG_PRIVACY_APPOINTMENTS_INCOMPLETE")) { throw $error; }
-                        $incomplete = true;
-                    }
+                    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance(' . $userId . ')]));
                     $unsearched = false;
                     foreach ($application->getMessageQueue() as $message) {
+                        $incomplete = $incomplete || ($message["type"] === "warning"
+                            && $message["message"] === \Joomla\CMS\Language\Text::_("PLG_PRIVACY_APPOINTMENTS_INCOMPLETE"));
                         $unsearched = $unsearched || ($message["type"] === "warning" && str_contains($message["message"], "F removal"));
                     }
                     return ["incomplete" => $incomplete, "unsearched" => $unsearched];');

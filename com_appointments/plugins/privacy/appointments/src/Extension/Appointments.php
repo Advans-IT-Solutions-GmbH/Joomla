@@ -130,19 +130,27 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
 
     public function onPrivacyRemoveData(RemoveDataEvent $event): void
     {
+        $requestId = (int) $event->getRequest()->id;
+        try {
+            PrivacyOutcome::record($this->getDatabase(), $requestId, false);
+            $scope = $requestId > 0 ? $this->staffScope($requestId) : null;
+            $scope?->beginAttempt();
+            $this->removeData($event, $scope);
+        } catch (\Throwable $error) {
+            // A failed listener must not starve later plugins after Core has changed the account.
+            Log::add('Appointment privacy removal failed (' . get_class($error) . ').',
+                Log::ERROR, 'com_appointments');
+            $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_INCOMPLETE'), 'warning');
+        }
+    }
+
+    private function removeData(RemoveDataEvent $event, ?PrivacyStaffCleanup $staffScope): void
+    {
         // The request address remains authoritative even if a preceding core
         // plugin has already pseudonymised the event's shared User object.
         $service = $this->service();
         $requestId = (int) $event->getRequest()->id;
-        PrivacyOutcome::record($this->getDatabase(), $requestId, false);
-        try {
-            $staffScope = $requestId > 0 ? $this->staffScope($requestId) : null;
-            $staffId = $staffScope !== null ? $staffScope->userId() : (int) ($event->getUser()->id ?? 0);
-        } catch (\Throwable $error) {
-            Log::add('Appointment staff privacy scope could not be verified (' . get_class($error) . ').',
-                Log::WARNING, 'com_appointments');
-            throw new \RuntimeException(Text::_('PLG_PRIVACY_APPOINTMENTS_STAFF_SCOPE_FAILED'), 0, $error);
-        }
+        $staffId = $staffScope !== null ? $staffScope->userId() : (int) ($event->getUser()->id ?? 0);
         $result = $service->remove((string) $event->getRequest()->email,
             new \DateTimeImmutable('now', new \DateTimeZone('UTC')), $requestId);
         TeamPrivacy::unreadableBookings($service, $this->getApplication());
@@ -182,14 +190,17 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
                 }
             }
             if ($calendars > 0 || $staffRows > 0 || ($staffScope !== null && $staffId > 0
-                && PrivacyStaffCleanup::pending($db, $requestId))) {
+                && $staffScope->staffPending())) {
                 $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_DISABLED_REMAINDER'), 'warning');
                 $complete = false;
             }
         }
+        if ($complete) {
+            $staffScope?->finishAttempt();
+        }
         PrivacyOutcome::record($this->getDatabase(), $requestId, $complete);
         if (!$complete) {
-            throw new \RuntimeException(Text::_('PLG_PRIVACY_APPOINTMENTS_INCOMPLETE'));
+            $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_INCOMPLETE'), 'warning');
         }
     }
 

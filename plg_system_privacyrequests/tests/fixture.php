@@ -28,6 +28,9 @@ if (in_array($op, ['snapshot', 'expire'], true) && !str_ends_with($email, '@exam
 }
 $out = [];
 switch ($op) {
+    case 'listener-order':
+        require __DIR__ . '/listener-order.php';
+        break;
     case 'operator-admin-language-get':
     case 'operator-admin-language-set':
     case 'operator-notification':

@@ -140,7 +140,7 @@ async function main() {
             state.copies === 1 && state.cleanup.length === 1 && state.room_hashes.includes(booking.room_hash));
         check('Complete stays blocked after empty retry', await complete() === 1);
         fixture('appointments-copy-unblock');
-        state = await remove();
+        state = await remove(true);
         check('Core Remove actually retries and deletes the previously orphaned internal copy',
             state.copies === 0 && state.cleanup.length === 1 && state.room_hashes.includes(booking.room_hash));
         check('Fixing one cleanup does not waive the other failure', await complete() === 1);
@@ -148,7 +148,7 @@ async function main() {
         // the separate feature-off/unsearched calendar warning; it grants no content key.
         fixture('appointments-calendar-delete', copy.calendar_id);
         fixture('probe', 'conference-allow');
-        state = await remove();
+        state = await remove(true);
         check('Real provider cleanup uses retained encrypted reference after original room was cleared',
             state.copies === 0 && state.cleanup.length === 0 && !state.room_hashes.includes(booking.room_hash));
         check('Successful repair and retry do not complete the Core request automatically',
@@ -178,12 +178,12 @@ async function main() {
         check('No-match guest retry and acknowledgment cannot clear an actual failed internal copy',
             state.copies === 1 && state.cleanup.length === 1 && await complete(guestEmail) === 1);
         fixture('appointments-copy-unblock');
-        state = await remove();
+        state = await remove(true);
         check('Guest repair removes the old copy without deleting its owner conference or other guest',
             state.copies === 0 && state.cleanup.length === 0 && state.primary_hash === primaryHash
             && state.guests_hash === guestsHash && state.room_hashes.includes(guestBooking.room_hash));
         fixture('appointments-calendar-delete', guestCopy.calendar_id);
-        await remove();
+        await remove(true);
         check('Guest request completes separately only after real cleanup and scope review', await complete(guestEmail) === 2);
 
         const rebuildEmail = `rebuild-guest-${Date.now()}@example.test`;
@@ -205,7 +205,7 @@ async function main() {
         check('No-match guest rebuild failure cannot silently forget provenance or permit Complete',
             state.copies === 0 && state.cleanup.length === 1 && await complete(rebuildEmail) === 1);
         fixture('appointments-rebuild-unblock');
-        state = await remove();
+        state = await remove(true);
         check('Native Remove genuinely rebuilds the remaining participants copy and resolves operational provenance',
             state.copies === 1 && state.cleanup.length === 0 && state.room_hashes.includes(rebuildBooking.room_hash));
         const opened = fixture('appointments-copy-inspect', rebuildCopy.calendar_id, rebuildEmail);
@@ -215,7 +215,7 @@ async function main() {
             await complete(rebuildEmail) === 1);
         fixture('appointments-calendar-delete', rebuildCopy.calendar_id);
         fixture('appointments-rebuild-restore');
-        await remove();
+        await remove(true);
         check('Rebuild request closes only after actual repair and separate remaining-scope resolution',
             await complete(rebuildEmail) === 2);
     } finally {

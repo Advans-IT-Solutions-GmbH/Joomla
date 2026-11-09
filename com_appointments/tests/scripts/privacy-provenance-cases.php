@@ -18,14 +18,14 @@ $newPrivacyFixture = static function (string $email) use ($joomlaDb, &$privacyRe
     $privacyRequests[] = (int) $request->id;
     return $request;
 };
-$assertIncomplete = static function (callable $remove): bool {
-    try {
-        $remove();
-    } catch (RuntimeException $error) {
-        if ($error->getMessage() !== \Joomla\CMS\Language\Text::_('PLG_PRIVACY_APPOINTMENTS_INCOMPLETE')) {
-            throw $error;
+$assertIncomplete = static function (callable $remove) use ($application): bool {
+    $application->getMessageQueue(true);
+    $remove();
+    foreach ($application->getMessageQueue() as $message) {
+        if ($message['type'] === 'warning'
+            && $message['message'] === \Joomla\CMS\Language\Text::_('PLG_PRIVACY_APPOINTMENTS_INCOMPLETE')) {
+            return true;
         }
-        return true;
     }
     return false;
 };
@@ -98,6 +98,28 @@ try {
     $check($emptyCheck->getArgument('result')[0]->canRemove
         && !\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $empty->id),
         'A registered subject with no staff records acquires no invented cleanup obligation while calendars are disabled');
+
+    $interrupted = $newPrivacyFixture('interrupted-' . bin2hex(random_bytes(6)) . '@example.test');
+    $firstAttempt = new \Advans\Component\Appointments\Administrator\Service\PrivacyStaffCleanup($joomlaDb, $keys, (int) $interrupted->id);
+    $firstAttempt->remember((string) $interrupted->email, null);
+    $firstAttempt->beginAttempt();
+    \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, (int) $interrupted->id, true);
+    $joomlaDb->setQuery('DELETE FROM #__appointments_privacy_outcomes WHERE request_id=' . (int) $interrupted->id)->execute();
+    $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
+        'An authenticated interrupted attempt remains incomplete even with no staff rows and a missing outcome flag');
+    $secondAttempt = new \Advans\Component\Appointments\Administrator\Service\PrivacyStaffCleanup($joomlaDb, $keys, (int) $interrupted->id);
+    $secondAttempt->beginAttempt();
+    try {
+        $firstAttempt->finishAttempt();
+        $check(false, 'A superseded attempt cannot clear a newer pending attempt');
+    } catch (RuntimeException $error) {
+        $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
+            'A superseded attempt cannot clear a newer pending attempt');
+    }
+    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
+        ['subject' => $interrupted, 'user' => null]));
+    $check(!\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
+        'A genuinely successful current native retry clears the interrupted-attempt obligation');
 
     $original = $joomlaDb->setQuery('SELECT payload FROM #__appointments_privacy_staff WHERE request_id=' . $id)->loadResult();
     $foreign = $newPrivacyFixture('foreign-' . bin2hex(random_bytes(6)) . '@example.test');

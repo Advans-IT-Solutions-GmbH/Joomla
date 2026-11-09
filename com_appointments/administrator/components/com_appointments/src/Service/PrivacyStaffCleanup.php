@@ -19,6 +19,9 @@ defined('_JEXEC') or die;
 /** Minimal authenticated staff scope, captured before Core mutates the shared User. */
 final class PrivacyStaffCleanup
 {
+    private ?string $observedPayload = null;
+    private ?string $attempt = null;
+
     public function __construct(private DatabaseInterface $db, private KeyProvider $keys, private int $requestId)
     {
         if ($requestId < 1) {
@@ -72,9 +75,53 @@ final class PrivacyStaffCleanup
             throw new \RuntimeException('Staff cleanup left outstanding access records or calendar ownership.');
         }
         $scope['complete'] = true;
+        $this->write($scope);
+    }
+
+    public function beginAttempt(): void
+    {
+        $scope = $this->read();
+        if ($scope === null) {
+            throw new \UnexpectedValueException('Removal scope is missing.');
+        }
+        $this->attempt = bin2hex(random_bytes(16));
+        $scope['attempt'] = $this->attempt;
+        $scope['attempt_pending'] = true;
+        $this->write($scope);
+    }
+
+    public function finishAttempt(): void
+    {
+        $scope = $this->read();
+        if ($scope === null || $this->attempt === null || $scope['attempt'] !== $this->attempt
+            || !$scope['complete'] || $this->hasRows($scope['user_id'])) {
+            throw new \RuntimeException('The removal attempt is no longer current or staff cleanup remains incomplete.');
+        }
+        $scope['attempt_pending'] = false;
+        $this->write($scope);
+    }
+
+    public function staffPending(): bool
+    {
+        $scope = $this->read();
+        if ($scope === null) {
+            throw new \UnexpectedValueException('Staff cleanup scope is missing.');
+        }
+        return !$scope['complete'] || $this->hasRows($scope['user_id']);
+    }
+
+    private function write(array $scope): void
+    {
+        if ($this->observedPayload === null) {
+            throw new \LogicException('An authenticated cleanup scope must be read before updating it.');
+        }
         $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__appointments_privacy_staff')
             . ' SET payload = ' . $this->db->quote($this->seal($scope))
-            . ' WHERE request_id = ' . $this->requestId)->execute();
+            . ' WHERE request_id = ' . $this->requestId . ' AND BINARY payload = '
+            . $this->db->quote($this->observedPayload))->execute();
+        if ((int) $this->db->getAffectedRows() !== 1) {
+            throw new \RuntimeException('The cleanup scope changed concurrently; a new removal attempt is required.');
+        }
     }
 
     private function hasRows(int $userId): bool
@@ -96,7 +143,8 @@ final class PrivacyStaffCleanup
     {
         $service = new self($db, new KeyProvider((string) Factory::getApplication()->get('secret')), $requestId);
         $scope = $service->read();
-        return $scope === null ? $required : !$scope['complete'] || $service->hasRows($scope['user_id']);
+        return $scope === null ? $required
+            : $scope['attempt_pending'] || !$scope['complete'] || $service->hasRows($scope['user_id']);
     }
 
     private function read(): ?array
@@ -104,8 +152,10 @@ final class PrivacyStaffCleanup
         $payload = $this->db->setQuery('SELECT payload FROM ' . $this->db->quoteName('#__appointments_privacy_staff')
             . ' WHERE request_id = ' . $this->requestId)->loadResult();
         if ($payload === null) {
+            $this->observedPayload = null;
             return null;
         }
+        $this->observedPayload = (string) $payload;
         $packed = base64_decode((string) $payload, true);
         $size = SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES;
         $plain = $packed === false || strlen($packed) <= $size ? false
@@ -117,10 +167,15 @@ final class PrivacyStaffCleanup
         $scope = json_decode($plain, true, 8, JSON_THROW_ON_ERROR);
         if (!is_array($scope) || !is_int($scope['user_id'] ?? null) || $scope['user_id'] < 0
             || !is_string($scope['address'] ?? null) || !preg_match('/^[a-f0-9]{64}$/D', $scope['address'])
-            || !is_bool($scope['complete'] ?? null)) {
+            || !is_bool($scope['complete'] ?? null)
+            || (array_key_exists('attempt_pending', $scope) && !is_bool($scope['attempt_pending']))
+            || (array_key_exists('attempt', $scope)
+                && $scope['attempt'] !== null
+                && (!is_string($scope['attempt']) || !preg_match('/^[a-f0-9]{32}$/D', $scope['attempt'])))
+            || (!empty($scope['attempt_pending']) && !is_string($scope['attempt'] ?? null))) {
             throw new \UnexpectedValueException('Invalid staff cleanup provenance.');
         }
-        return $scope;
+        return $scope + ['attempt_pending' => false, 'attempt' => null];
     }
 
     private function seal(array $scope): string
