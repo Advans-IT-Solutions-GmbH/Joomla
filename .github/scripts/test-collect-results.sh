@@ -60,6 +60,14 @@ run_json_with_extension() {
         .path=".github/workflows/extension.yml" | .html_url="https://example.invalid/run/2")]' \
         <<<"$(run_json success)"
 }
+set_security_run() {
+    export BASE_REF="$1"
+    export RUNS="$(run_json "${2-success}" "${3-completed}")"
+}
+set_extension_run() {
+    export BASE_REF="$1"
+    export RUNS="$(run_json_with_extension)"
+}
 check() {
     local name="$1" expected="$2" result=0
     bash "$SCRIPT" >"$FIXTURE/output" 2>&1 || result=$?
@@ -73,20 +81,19 @@ check() {
 }
 
 for base in main advansit-superuser-calendar-administration advansit-guest-privacy-requests; do
-    export BASE_REF="$base"
-    export RUNS="$(run_json success)"
+    set_security_run "$base"
     check "documentation requires Security Scan for base $base" pass
 done
-export BASE_REF=main
 for conclusion in failure cancelled skipped neutral timed_out action_required; do
-    export RUNS="$(run_json "$conclusion")"
+    set_security_run main "$conclusion"
     check "security conclusion $conclusion fails closed" fail
 done
+export BASE_REF=main
 export RUNS='[{"workflow_runs":[]}]'
 check 'missing unconditional workflow fails closed' fail
-export RUNS="$(run_json '' queued)"
+set_security_run main '' queued
 check 'unfinished unconditional workflow cannot pass' fail
-export RUNS="$(run_json success)"
+set_security_run main
 SAVED_JOBS="$JOBS"
 export JOBS='[{"jobs":[]}]'
 check 'missing actual security jobs fails closed' fail
@@ -94,42 +101,49 @@ export JOBS="$(jq '.[0].jobs[0].conclusion = "skipped"' <<<"$SAVED_JOBS")"
 check 'workflow success with skipped Gitleaks fails closed' fail
 export JOBS="$SAVED_JOBS"
 export FILES='{"filename":"extension/src.php","previous_filename":null}'
+set_security_run main
 check 'matching extension run is also required' fail
 for base in main advansit-superuser-calendar-administration advansit-guest-privacy-requests; do
-    export BASE_REF="$base"
-    export RUNS="$(run_json_with_extension)"
+    set_extension_run "$base"
     check "matching extension run succeeds for base $base" pass
 done
-export BASE_REF=main
 for conclusion in failure cancelled skipped; do
-    export RUNS="$(run_json_with_extension | jq --arg conclusion "$conclusion" \
-        '.[0].workflow_runs[1].conclusion = $conclusion')"
+    set_extension_run main
+    export RUNS="$(jq --arg conclusion "$conclusion" \
+        '.[0].workflow_runs[1].conclusion = $conclusion' <<<"$RUNS")"
     check "required extension conclusion $conclusion fails closed" fail
 done
-export RUNS="$(run_json success | jq '.[0].workflow_runs += [ (.[0].workflow_runs[0] | .id=2 | .run_number=2 |
-    .path=".github/workflows/extension.yml" | .pull_requests[0].number=2)]')"
+set_security_run main
+export RUNS="$(jq '.[0].workflow_runs += [ (.[0].workflow_runs[0] | .id=2 | .run_number=2 |
+    .path=".github/workflows/extension.yml" | .pull_requests[0].number=2)]' <<<"$RUNS")"
 check 'same head on another pull request cannot satisfy this pull request' fail
-export RUNS="$(run_json success | jq '.[0].workflow_runs += [ (.[0].workflow_runs[0] | .id=2 | .run_number=2 |
-    .path=".github/workflows/extension.yml" | .pull_requests[0].base.sha="4444444444444444444444444444444444444444")]')"
+set_security_run main
+export RUNS="$(jq '.[0].workflow_runs += [ (.[0].workflow_runs[0] | .id=2 | .run_number=2 |
+    .path=".github/workflows/extension.yml" | .pull_requests[0].base.sha="4444444444444444444444444444444444444444")]' <<<"$RUNS")"
 check 'success on an older base commit cannot satisfy this merge' fail
+set_security_run main
 export FILES='{"filename":"README.md","previous_filename":"extension/old.php"}'
 check 'missing rename-source-only extension remains optional' pass
 export FILES=''
 check 'empty changed-file response fails closed' fail
 export FILES='{"filename":"README.md","previous_filename":null}'
-export RUNS="$(jq '.[0].workflow_runs += [.[0].workflow_runs[0] | .run_number=2 | .conclusion="failure"]' <<<"$(run_json success)")"
+set_security_run main
+export RUNS="$(jq '.[0].workflow_runs += [.[0].workflow_runs[0] | .run_number=2 | .conclusion="failure"]' <<<"$RUNS")"
 check 'newest failed run wins over older success' fail
-export RUNS="$(jq '.[0].workflow_runs += [.[0].workflow_runs[0] | .run_attempt=2 | .conclusion="success"] | .[0].workflow_runs[0].conclusion="failure"' <<<"$(run_json success)")"
+set_security_run main
+export RUNS="$(jq '.[0].workflow_runs += [.[0].workflow_runs[0] | .run_attempt=2 | .conclusion="success"] | .[0].workflow_runs[0].conclusion="failure"' <<<"$RUNS")"
 check 'latest successful attempt supersedes previous failure' pass
 
 # A pull request that runs every workflow lists more than the 128 KiB Linux allows for one
 # argument. The list comes from a file here, because an environment variable has that limit too.
-jq -c '.[0].workflow_runs[0].padding = ("x" * 200000)' <<<"$(run_json success)" >"$FIXTURE/runs.json"
+set_security_run main
+jq -c '.[0].workflow_runs[0].padding = ("x" * 200000)' <<<"$RUNS" >"$FIXTURE/runs.json"
 export RUNS_FILE="$FIXTURE/runs.json"
 check 'a run list above the 128 KiB argument limit is read' pass
 unset RUNS_FILE
 
 # The run list lags behind under congested runners; the commit's check runs do not.
+export BASE_REF=main
 export RUNS='[{"workflow_runs":[]}]'
 export CHECK_RUNS='[{"check_runs":[{"details_url":"https://github.com/owner/repo/actions/runs/7/job/70"},
   {"details_url":"https://example.invalid/other-app"},{"details_url":null}]}]'
