@@ -21,6 +21,10 @@ foreach (['privacy_guest_subjects', 'privacy_guest_attempts', 'privacy_guest_out
 $expiryIndexes = array_filter($db->getTableKeys('#__privacy_guest_attempts'),
     static fn (object $key): bool => ($key->Key_name ?? $key->idxName ?? '') === $db->replacePrefix('#__privacy_guest_expiry'));
 privacyAssert($expiryIndexes !== [], 'The native installer creates the indexed expiry path, also on upgrades');
+$requestIndexes = array_filter($db->getTableKeys('#__privacy_guest_subjects'),
+    static fn (object $key): bool => ($key->Key_name ?? $key->idxName ?? '') === $db->replacePrefix('#__privacy_guest_request')
+        && ($key->Column_name ?? 'request_id') === 'request_id');
+privacyAssert($requestIndexes !== [], 'The native installer indexes subject mappings by request, also on upgrades');
 privacyAssert((int) $db->setQuery("SELECT COUNT(*) FROM #__scheduler_tasks"
     . " WHERE type LIKE '%privacyrequests%'")->loadResult() === 0, 'Installation creates no active or inactive Scheduler tasks');
 privacyAssert((int) $db->setQuery("SELECT COUNT(*) FROM #__extensions WHERE type='plugin'"

@@ -46,14 +46,19 @@ class PlgSystemPrivacyrequestsInstallerScript extends InstallerScript
             $db->setQuery('ALTER TABLE ' . $db->quoteName('#__privacy_guest_subjects')
                 . ' ADD COLUMN delivery_failed INTEGER NOT NULL DEFAULT 0')->execute();
         }
-        $index = $db->replacePrefix('#__privacy_guest_expiry');
-        $exists = false;
-        foreach ($db->getTableKeys('#__privacy_guest_attempts') as $key) {
-            $exists = $exists || ($key->Key_name ?? $key->idxName ?? '') === $index;
-        }
-        if (!$exists) {
-            $db->setQuery('CREATE INDEX ' . $db->quoteName($index) . ' ON '
-                . $db->quoteName('#__privacy_guest_attempts') . ' (' . implode(',', $db->quoteName(['window_start', 'subject_hash'])) . ')')->execute();
+        foreach ([
+            ['#__privacy_guest_expiry', '#__privacy_guest_attempts', ['window_start', 'subject_hash']],
+            ['#__privacy_guest_request', '#__privacy_guest_subjects', ['request_id']],
+        ] as [$name, $table, $columns]) {
+            $index = $db->replacePrefix($name);
+            $exists = false;
+            foreach ($db->getTableKeys($table) as $key) {
+                $exists = $exists || ($key->Key_name ?? $key->idxName ?? '') === $index;
+            }
+            if (!$exists) {
+                $db->setQuery('CREATE INDEX ' . $db->quoteName($index) . ' ON '
+                    . $db->quoteName($table) . ' (' . implode(',', $db->quoteName($columns)) . ')')->execute();
+            }
         }
         // Publishing and mail configuration are deliberately left to the operator.
     }
