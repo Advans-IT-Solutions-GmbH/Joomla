@@ -16,6 +16,11 @@ body.com_appointments #header .header-title > .d-flex:has(.logo) {
     flex-shrink: 0;
 }
 
+/* Core's fixed-width switchers must fit the calendar settings column. */
+#calendar-form .switcher {
+    max-inline-size: 100%;
+}
+
 /* Focus and accordion reflow must not start competing smooth-scroll animations. */
 html:has(#eventtype-form) {
     scroll-behavior: auto;

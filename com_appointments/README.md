@@ -713,7 +713,10 @@ personal keys and changes no setting. It supplements, rather than replaces, cont
 On narrow administrator screens, the access table scrolls horizontally within its calendar card
 so every grant action remains reachable without widening the page. Long page headings use the
 administrator template's native ellipsis; the complete heading remains available to assistive
-technology.
+technology. Native calendar switches also fit their settings column when labels and controls
+share a row, without clipping the control or widening the page. Long calling-code choices in
+Options use Joomla's normal in-flow radio labels, keeping their description below the complete
+choice text rather than overlapping it.
 
 #### Replacing the token feeds
 
