@@ -619,7 +619,8 @@ possible with CalDAV clients.
   and obey the configured audience and external-role limits. A key-holding grant without genuine
   wraps remains pending: only a real key holder or authorised use of the offline recovery key can
   complete it. Administrative privilege never decrypts contents. Each grant is logged and mailed
-  to the owner and managers.
+  to the owner and managers. Revocation preserves the pre-change owner and effective managers
+  as notification recipients, including a removed sole owner; the actor receives no copy.
 
 - **Not protected:** anybody who executes code on the server, which includes a compromised
   extension, the hosting provider and anybody with access to the files: while a key holder's request

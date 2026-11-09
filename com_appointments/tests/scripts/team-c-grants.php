@@ -182,7 +182,7 @@ return static function (TeamSuite $suite): void {
             return $admin->status === 403 && $countCalendars() === $before;
         });
 
-        foreach (['grant', 'revoke', 'rotate', 'delete', 'apply'] as $task) {
+        foreach (['grant', 'revoke', 'assignOwner', 'rotate', 'delete', 'apply'] as $task) {
             $suite->test("calendars.{$task} for a calendar whose edit id is not held is refused", static function () use ($suite, $admin, $base, $task, $foreign, $countGrants) {
                 $token = $admin->token($admin->request($base . '&view=calendars'));
                 $before = $countGrants();
@@ -736,6 +736,38 @@ return static function (TeamSuite $suite): void {
                 && (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendars WHERE id={$third}")->fetch_row()[0] === 0
                 && (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendar_grants WHERE calendar_id={$third}")->fetch_row()[0] === 0;
         });
+
+        foreach ([true, false] as $revokeOwner) {
+            $noticeCalendar = $services->calendars()->create($super, [
+                'title' => $tag . '-revocation-notice', 'owner_user_id' => $owner,
+            ]);
+            $calendars[] = $noticeCalendar;
+            $subject = $owner;
+            $expectedAddresses = [$tag . 'owner@example.test'];
+            if (!$revokeOwner) {
+                $subject = $user('notice-manager', [$teamGroup], true);
+                $keys->createUserKey($subject, 'Fixture-Password-1!')->wipe();
+                $grants->grant($owner, $noticeCalendar, $subject, CalendarRole::Manage, $ownerKeys);
+                $expectedAddresses[] = $tag . 'notice-manager@example.test';
+            }
+            $suite->test($revokeOwner
+                ? 'Revoking the sole owner preserves their security notification after ownership is cleared'
+                : 'Revoking a manager notifies both the owner and the removed manager',
+                static function () use ($grants, $super, $noticeCalendar, $subject, $expectedAddresses, $db, $p, $revokeOwner): bool {
+                    $before = AppointmentsMail::snapshot();
+                    $grants->revoke($super, $noticeCalendar, $subject, null);
+                    $messages = AppointmentsMail::messagesSince($before);
+                    foreach ($expectedAddresses as $address) {
+                        if (!array_filter($messages, static fn (string $mime): bool =>
+                            preg_match('/^To:[^\r\n]*' . preg_quote($address, '/') . '/mi', $mime) === 1)) {
+                            return false;
+                        }
+                    }
+                    return count($messages) === count($expectedAddresses)
+                        && (!$revokeOwner || (int) $db->query("SELECT owner_user_id FROM {$p}appointments_calendars WHERE id={$noticeCalendar}")->fetch_row()[0] === 0)
+                        && (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_calendar_grants WHERE calendar_id={$noticeCalendar} AND user_id={$subject}")->fetch_row()[0] === 0;
+                });
+        }
     } finally {
         $json = $db->real_escape_string($originalParams);
         $db->query("UPDATE {$p}extensions SET params='{$json}' WHERE type='component' AND element='com_appointments'");
