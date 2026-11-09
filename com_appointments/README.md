@@ -659,6 +659,13 @@ already ended bookings on the next task run, unlike calendar `0`. The configurab
 Calendar list/edit pages also explain administrative control versus real content keys and the
 password-and-approved-MFA gate for creating one's own first key on backend Save.
 
+**Components → Appointments → Help & tips** provides the complete generic setup guide, also
+linked from the dashboard and component Options. It covers the first calendar, schedules and
+booking menus, administrative rights versus content keys, grants/ownership/recovery, devices,
+the separate retention lifecycles, privacy, mail and troubleshooting. The page remains accessible
+to users with component management permission when internet calendars are disabled, releases no
+personal keys and changes no setting. It supplements, rather than replaces, contextual field help.
+
 #### Replacing the token feeds
 
 The internet calendars replace the token feeds of the next section, whose secret addresses

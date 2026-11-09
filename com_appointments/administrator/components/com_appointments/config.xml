@@ -82,6 +82,9 @@
             <option value="0">JNO</option><option value="1">JYES</option>
         </field>
     </fieldset>
+    <fieldset name="help" label="COM_APPOINTMENTS_HELP_TITLE">
+        <field name="help_note" type="note" description="COM_APPOINTMENTS_HELP_CONFIG_DESC" class="alert alert-info" filter="unset" />
+    </fieldset>
     <fieldset name="permissions" label="JCONFIG_PERMISSIONS_LABEL" description="JCONFIG_PERMISSIONS_DESC">
         <field name="rules" type="rules" label="JCONFIG_PERMISSIONS_LABEL" class="inputbox" validate="rules" filter="rules" component="com_appointments" section="component" />
     </fieldset>

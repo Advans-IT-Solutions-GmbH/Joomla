@@ -53,6 +53,10 @@ package; a deviation is a change to this file in the same pull request, agreed w
   cutoff; future, endless or indeterminate series stay. Booking retention and erasure audits are
   separate (booking `0` means the next run after the end, not unlimited). Backend field help explains
   these distinctions and the required tasks; the calendar log records the count, never content.
+- **Backend Help & tips:** a native administrator page, linked from the manifest menu, dashboard
+  and Options, explains generic setup and troubleshooting. It reuses the field-retention texts,
+  requires component management permission, remains available while internet calendars are disabled
+  and never initialises keys. It supplements contextual field help.
 - **Privacy requests through Joomla's own privacy component** (com_privacy, export and removal
   requests) via `plg_privacy_appointments` (section 9.1). No separate search in the administrator and no
   blind index of e-mail addresses (whoever holds the server key could test known addresses against it).

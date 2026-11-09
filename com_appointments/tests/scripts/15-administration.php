@@ -137,6 +137,19 @@ try {
             $params['teamcal_enabled'] = $enabled;
             $encoded = $db->real_escape_string(json_encode($params, JSON_THROW_ON_ERROR));
             $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
+            $keyRows = (int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_user_keys")->fetch_row()[0];
+            $help = $admin->request('/administrator/index.php?option=com_appointments&view=help');
+            $document = new DOMDocument();
+            @$document->loadHTML($help);
+            $helpXpath = new DOMXPath($document);
+            $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 8
+                && $helpXpath->query('//a[@id="toolbar-back"]')->length === 1,
+                'Central help has all generic topics and a real overview return, enabled=' . $enabled);
+            $check(str_contains($help, 'THISANDFUTURE') && str_contains($help, 'does not mean unlimited retention')
+                && str_contains($help, 'fixed 12-month period') && !str_contains($help, 'COM_APPOINTMENTS_HELP_'),
+                'Central help renders the separate translated retention contracts, enabled=' . $enabled);
+            $check((int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_user_keys")->fetch_row()[0] === $keyRows,
+                'Reading central help never initialises personal keys, enabled=' . $enabled);
             $calendars = $admin->request('/administrator/index.php?option=com_appointments&view=calendars');
             $document = new DOMDocument();
             @$document->loadHTML($calendars);
@@ -177,6 +190,9 @@ try {
         $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
     }
     $options = $admin->request('/administrator/index.php?option=com_config&view=component&component=com_appointments');
+    $check(str_contains($dashboard, 'view=help') && str_contains($options, 'view=help')
+        && (int) $db->query("SELECT COUNT(*) FROM {$prefix}menu WHERE client_id=1 AND link='index.php?option=com_appointments&view=help'")->fetch_row()[0] === 1,
+        'Dashboard, native component options and installed administrator menu expose central help');
     $check($admin->status === 200 && preg_match('/>\\s*General\\s*</', $options) === 1
         && !str_contains($options, 'COM_CONFIG_basic_FIELDSET_LABEL'),
         'Component options resolve the first fieldset label');

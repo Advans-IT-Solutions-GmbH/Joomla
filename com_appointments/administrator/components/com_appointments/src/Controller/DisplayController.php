@@ -37,11 +37,8 @@ class DisplayController extends BaseController
     {
         $user = $this->app->getIdentity();
 
-        // Every view of this component shows booking data: who booked what and
-        // when, with the name, e-mail address and telephone number the invitee
-        // gave. Hiding the administrator menu entry is not an authorisation
-        // boundary, because option=com_appointments can be requested directly,
-        // so reaching any view requires the component management permission.
+        // All administrator views, including the help page, require component
+        // management permission. Hiding a menu entry is not an access boundary.
         if (!$user->authorise('core.manage', 'com_appointments')) {
             throw new \Exception(Text::_('JERROR_ALERTNOAUTHOR'), 403);
         }
