@@ -253,6 +253,7 @@ final class PrivacyRequests extends CMSPlugin implements SubscriberInterface
         table-layout: fixed;
         inline-size: 100%;
     }
+    {$scope} joomla-alert.js-pstats-alert th:first-child { inline-size: 45% !important; }
     {$scope} joomla-alert.js-pstats-alert th,
     {$scope} joomla-alert.js-pstats-alert td,
     {$scope} #item-form th,

@@ -92,8 +92,10 @@ try {
         if ($expected) {
             $css = $styles['plg_system_privacyrequests.native-review']->getOption('content');
             privacyAssert(str_contains($css, '@media (max-width: 991.98px)')
-                && substr_count($css, 'body.com_privacy.view-request:has([data-privacyrequests-review])') === 17,
+                && substr_count($css, 'body.com_privacy.view-request:has([data-privacyrequests-review])') === 18,
                 'Every responsive selector requires the adapter marker, including the measured 768px boundary');
+            privacyAssert(str_contains($css, 'th:first-child { inline-size: 45% !important; }'),
+                'Narrow Statistics columns override the native 15% width instead of stacking labels letter by letter');
             privacyAssert(!preg_match('/overflow(?:-x)?\s*:\s*hidden|display\s*:\s*none|visibility\s*:\s*hidden/i', $css),
                 'Responsive containment does not hide native content or controls');
             $plain = '<form id="item-form"><button type="submit">Native control</button></form>';
