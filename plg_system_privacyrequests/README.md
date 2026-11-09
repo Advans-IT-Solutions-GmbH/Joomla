@@ -38,6 +38,26 @@ The public page is:
 index.php?option=com_ajax&plugin=privacyrequests&group=system&format=html
 ```
 
+### Distribution and updates
+
+The approved update channel uses this repository's GitHub raw update feed and
+version-specific GitHub Release ZIPs, not an external privacy-processing service.
+The manifest registers
+`https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_system_privacyrequests/updates/update.xml`.
+Joomla's updater therefore discloses the fetching server's public IP address and
+normal HTTP metadata to GitHub; privacy requests and mailbox contents are not
+uploaded through this channel.
+
+`release-system-privacyrequests.yml` prepares a human-reviewed release PR and
+generates the version files and update feed. The first feed is created by that
+workflow, not hand-written for an unpublished development version; until the first
+release is prepared and published, the registered feed is not yet available.
+`publish-system-privacyrequests.yml` publishes only the verified merged release
+commit, using `system-privacyrequests-v*` tags and the shared publication safeguards.
+Defining these workflows does not run them. The pre-release candidate remains a
+manual-install development artifact, not a published release or completed
+installation/UI acceptance.
+
 For addresses supported by native Joomla mail, visitors submit an email address,
 then confirm possession using the code delivered to that exact address. Native
 Unicode-local-part delivery is unsupported on the tested stock platforms; the

@@ -22,6 +22,9 @@ mail, Playwright and native administrator authorization; they must never target
 a live site. CI also arms and checks the shared production-like deprecation gate.
 
 The compatibility/release requirements checker remains unchanged and mandatory.
-Release preparation is blocked until a real distribution/update channel is
-approved. No placeholder release workflow or fabricated update endpoint is
-provided, and the development artifact is not a published release.
+The approved distribution channel uses this repository's GitHub raw update feed
+and version-specific GitHub Release ZIPs. The real release-preparation workflow
+owns all version changes and creates the first update feed in its release PR;
+the publish workflow builds only the verified merged release source. Neither
+workflow is dispatched by these tests. A development artifact is not a published
+release or evidence of Docker/browser acceptance.

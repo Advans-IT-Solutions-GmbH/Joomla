@@ -14,6 +14,8 @@ on:
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-*.php'
       - '.github/workflows/system-privacyrequests.yml'
+      - '.github/workflows/release-system-privacyrequests.yml'
+      - '.github/workflows/publish-system-privacyrequests.yml'
   pull_request:
     branches: [main]
     paths:
@@ -26,6 +28,8 @@ on:
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-*.php'
       - '.github/workflows/system-privacyrequests.yml'
+      - '.github/workflows/release-system-privacyrequests.yml'
+      - '.github/workflows/publish-system-privacyrequests.yml'
 
 permissions: {}
 
