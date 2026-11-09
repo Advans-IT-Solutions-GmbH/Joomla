@@ -115,6 +115,13 @@ removal and until the administrator reviews scope. A prior incomplete attempt re
 remediation review and another Remove; checking a box is not evidence that a known
 component-specific remainder has gone.
 
+On this authorized native request view, the adapter's own review/warning marker
+scopes a small-screen layout adjustment: the header can wrap, the untouched
+Statistics prompt stacks, and long table values wrap. No Core file, consent state,
+content visibility or completion authorization is changed. Other native views and
+the public template are not restyled; a dark OS preference does not make stock
+Cassiopeia a dark-rendering template.
+
 ## Scope and safeguards
 
 Email possession proves access to that mailbox, not every identity or entitlement to
