@@ -112,6 +112,11 @@ namespace {
         public array $messages = [];
         public bool $cli = true;
 
+        public function get(string $key, mixed $default = null): mixed
+        {
+            return $default;
+        }
+
         public function isClient(string $client): bool
         {
             return $client === ($this->cli ? 'cli' : 'administrator');
@@ -273,6 +278,19 @@ namespace {
             $privacy = \Advans\Installer\SystemCheck::results('plg_privacy_j2commerce');
             $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($privacy['warnings'], 1), true), 'Privacy AJAX route exclusion was ignored.');
         }
+        foreach (['format=html', 'format=json&task=capabilities'] as $parameters) {
+            $conditions = "RewriteCond %{QUERY_STRING} plugin=privacyrequests [NC]\nRewriteCond %{QUERY_STRING} group=system [NC]\nRewriteCond %{QUERY_STRING} " . $parameters . " [NC]\n";
+            $rule = $conditions . "RewriteRule ^index\\.php$ - [F,L]\n";
+            file_put_contents(JPATH_ROOT . '/.htaccess', $rule);
+            $privacy = \Advans\Installer\SystemCheck::results('plg_system_privacyrequests');
+            $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_BLOCKED'), array_column($privacy['warnings'], 1), true), 'Generic privacy form/capability route blocking was missed.');
+            file_put_contents(JPATH_ROOT . '/.htaccess', "RewriteCond %{QUERY_STRING} !plugin=privacyrequests [NC]\n" . $rule);
+            $privacy = \Advans\Installer\SystemCheck::results('plg_system_privacyrequests');
+            $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($privacy['warnings'], 1), true), 'Generic privacy route exclusion was ignored.');
+        }
+        file_put_contents(JPATH_ROOT . '/.htaccess', "RewriteCond %{QUERY_STRING} plugin=joomlaajaxforms [NC]\nRewriteRule ^index\\.php$ - [F,L]\n");
+        $privacy = \Advans\Installer\SystemCheck::results('plg_system_privacyrequests');
+        $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($privacy['warnings'], 1), true), 'Generic privacy check incorrectly targeted another AJAX plugin.');
         $mixedShops = \Advans\Installer\SystemCheck::results('plg_osmap_j2commerce');
         $shopRows = array_values(array_filter($mixedShops['passed'], static fn(array $row): bool => $row[0] === \Joomla\CMS\Language\Text::_('ADVANS_CHECK_SHOP')));
         $assert(count($shopRows) === 1 && $shopRows[0][1] === 'com_j2commerce, com_j2store', 'Mixed-shop check hid an enabled shop or implied a shared routing priority.');

@@ -94,6 +94,7 @@ async function main() {
             && JSON.stringify(fixture('account-snapshot', account.user_id)) === JSON.stringify(originalAccount));
         fixture('probe', 'allow');
         await admin.goto(reviewUrl);
+        await admin.locator('input[name="jform[privacy_remediation_reviewed]"]').check();
         await action(admin, 'request.remove');
         const removed = fixture('snapshot', email);
         const changedAccount = fixture('account-snapshot', account.user_id);

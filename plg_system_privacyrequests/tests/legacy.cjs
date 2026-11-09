@@ -111,6 +111,7 @@ async function main() {
             Number(fixture('snapshot', email).requests[0].status) === 1 && fixture('acy-state').unavailable_rows === 1);
         fixture('acy-restore');
         await admin.goto(reviewUrl);
+        await admin.locator('input[name="jform[privacy_remediation_reviewed]"]').check();
         await action(admin, 'request.remove');
         check('Restoring the actual subscriber lookup permits native retry and real subscriber deletion',
             fixture('acy-state').active_rows === 0

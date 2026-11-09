@@ -119,6 +119,12 @@ async function main() {
         check('Blocked operation is not a successful removal', Number(state.outcomes[0]?.reviewed_result) === 0);
         fixture('probe', 'throw');
         await admin.goto(requestUrl);
+        const unreviewed = fixture('snapshot', email);
+        await action(admin, 'request.remove');
+        check('Unchecked remediation retry cannot reach removal callbacks or mutate the failed receipt',
+            JSON.stringify(fixture('snapshot', email)) === JSON.stringify(unreviewed));
+        await admin.goto(requestUrl);
+        await admin.locator('input[name="jform[privacy_remediation_reviewed]"]').check();
         await action(admin, 'request.remove');
         state = fixture('snapshot', email);
         check('Thrown real callback cannot make removal or completion successful',
@@ -126,11 +132,13 @@ async function main() {
             && Number(state.outcomes[0]?.reviewed_result) === 0 && Number(state.requests[0].status) === 1);
         fixture('probe', 'warning');
         await admin.goto(requestUrl);
+        await admin.locator('input[name="jform[privacy_remediation_reviewed]"]').check();
         await action(admin, 'request.remove');
         state = fixture('snapshot', email);
         check('Returned warning remains incomplete despite Core dispatch success', Number(state.outcomes[0]?.reviewed_result) === 0);
         fixture('probe', 'allow');
         await admin.goto(requestUrl);
+        await admin.locator('input[name="jform[privacy_remediation_reviewed]"]').check();
         await action(admin, 'request.remove');
         state = fixture('snapshot', email);
         check('Native authorized Remove dispatches real plugins without automatically completing',
