@@ -644,8 +644,20 @@ addresses against it.
   recovery key).
 - Searches, exports and removals are logged with counts only, never the address or content.
 
-Each calendar has its own **retention**; the Scheduler deletes older entries and logs only their
-number.
+Each calendar has its own **retention** in days (0–65535). Its default `0` disables only age-based
+object deletion; it does not inherit booking retention or prevent separate removal of cancelled,
+erased or orphan booking copies. With internet calendars enabled, the calendar-retention task
+deletes an entire object or finite series after its last safely determined occurrence ends before
+the UTC cutoff. Future, endless or indeterminate series remain. The same rule covers imported,
+CalDAV-written and booking objects, but not booking rows or erasure audits. A later upload or
+booking change can recreate an object. The log records only the count.
+
+The backend fields explain these separate lifecycles, UTC cutoffs, ranges and Scheduler prerequisites.
+An empty event-type booking-retention value inherits the component setting; booking `0` processes
+already ended bookings on the next task run, unlike calendar `0`. The configurable erasure audit
+(default three calendar years) is separate from the fixed twelve-month internet-calendar log.
+Calendar list/edit pages also explain administrative control versus real content keys and the
+password-and-approved-MFA gate for creating one's own first key on backend Save.
 
 #### Replacing the token feeds
 

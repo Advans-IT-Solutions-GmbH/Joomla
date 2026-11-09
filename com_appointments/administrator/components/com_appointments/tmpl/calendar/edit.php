@@ -55,6 +55,10 @@ $roleSelect = function (string $id, ?int $selected, bool $external): string {
 };
 $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScript('keepalive');
 ?>
+<div class="alert alert-info" id="calendar-administration-help" role="note">
+    <p class="mb-2"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_ADMINISTRATION_HELP'); ?></p>
+    <p class="mb-0"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_KEY_SETUP_HELP'); ?></p>
+</div>
 <form action="<?php echo $action; ?>" method="post" name="adminForm" id="calendar-form" class="form-validate">
     <div class="row">
         <div class="col-lg-8">

@@ -48,8 +48,11 @@ package; a deviation is a change to this file in the same pull request, agreed w
 - **Encryption B:** calendar contents are encrypted on the server so that only authorised users can
   decrypt them. One recovery key for the whole site, kept offline by the owner as two printouts in
   separate places. After a password reset a manager grants again, or the recovery key is used.
-- **Retention per calendar:** entries older than the calendar's retention are deleted by the
-  Scheduler; the log records the count, never content.
+- **Retention per calendar:** `0` disables only age-based object deletion, not booking-copy cleanup.
+  Scheduler deletes whole objects after their last safely determined occurrence ends before the UTC
+  cutoff; future, endless or indeterminate series stay. Booking retention and erasure audits are
+  separate (booking `0` means the next run after the end, not unlimited). Backend field help explains
+  these distinctions and the required tasks; the calendar log records the count, never content.
 - **Privacy requests through Joomla's own privacy component** (com_privacy, export and removal
   requests) via `plg_privacy_appointments` (section 9.1). No separate search in the administrator and no
   blind index of e-mail addresses (whoever holds the server key could test known addresses against it).
