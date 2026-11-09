@@ -113,6 +113,11 @@ Synthetic coverage without a network or credential: `php tests/close-mock.php` (
 required). The installed `close` integration suite exercises canonical booking mutations with
 encrypted data and a mock transport on Joomla/MySQL/MariaDB. SQLite tests do not prove MySQL
 lock concurrency or replace installed/browser acceptance and the later authorized account setup.
+The installed PHP harness defaults to `/var/www/html` and `http://localhost`. An exclusive native
+test lane may set `APPOINTMENTS_TEST_ROOT` to its absolute Joomla root and
+`APPOINTMENTS_TEST_BASE_URL` to its loopback HTTP(S) origin, including its port. Explicit invalid
+values fail instead of falling back. The race child inherits these variables and uses the same
+installation/database; no Joomla files or server ports need remapping.
 
 ## Requirements
 
