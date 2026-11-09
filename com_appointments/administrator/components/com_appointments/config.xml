@@ -36,6 +36,23 @@
         <field name="audit_retention_years" type="number" label="COM_APPOINTMENTS_CONFIG_AUDIT_RETENTION" description="COM_APPOINTMENTS_CONFIG_AUDIT_RETENTION_DESC" default="3" min="1" max="100" required="true" filter="raw" validate="range" />
         <field name="removal_block_reason" type="textarea" label="COM_APPOINTMENTS_CONFIG_REMOVAL_BLOCK" description="COM_APPOINTMENTS_CONFIG_REMOVAL_BLOCK_DESC" filter="string" />
     </fieldset>
+    <fieldset name="close" label="COM_APPOINTMENTS_CLOSE_TITLE">
+        <field name="close_note" type="note" description="COM_APPOINTMENTS_CLOSE_NOTE" filter="unset" />
+        <field name="close_enabled" type="radio" layout="joomla.form.field.radio.switcher" label="JENABLED" default="0" filter="integer" validate="options">
+            <option value="0">JNO</option><option value="1">JYES</option>
+        </field>
+        <field name="close_origin" type="url" label="COM_APPOINTMENTS_CLOSE_ORIGIN" filter="url" />
+        <field name="close_credential_env" type="text" label="COM_APPOINTMENTS_CLOSE_CREDENTIAL" filter="string" maxlength="101" />
+        <field name="close_type" type="text" label="COM_APPOINTMENTS_CLOSE_TYPE" filter="string" maxlength="110" />
+        <field name="close_fields" type="textarea" label="COM_APPOINTMENTS_CLOSE_FIELDS" description="COM_APPOINTMENTS_CLOSE_FIELDS_DESC" filter="raw" />
+        <field name="close_questions" type="textarea" label="COM_APPOINTMENTS_CLOSE_QUESTIONS" description="COM_APPOINTMENTS_CLOSE_QUESTIONS_DESC" filter="raw" />
+        <field name="close_delete_activity" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_CLOSE_DELETE" default="0" filter="integer" validate="options">
+            <option value="0">JNO</option><option value="1">JYES</option>
+        </field>
+        <field name="close_retain_contact" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_CLOSE_RETAIN" description="COM_APPOINTMENTS_CLOSE_RETAIN_DESC" default="0" filter="integer" validate="options">
+            <option value="0">JNO</option><option value="1">JYES</option>
+        </field>
+    </fieldset>
     <fieldset name="conference" label="COM_APPOINTMENTS_CONFERENCE_SETTINGS" addfieldprefix="Advans\Component\Appointments\Administrator\Field">
         <field name="conference_provider" type="Conferenceprovider" label="COM_APPOINTMENTS_EVENTTYPE_PROVIDER" default="none" filter="cmd" validate="options">
             <option value="none">JNONE</option>

@@ -133,6 +133,9 @@ class ManageModel extends BaseDatabaseModel
             $purpose = 'reschedule';
         }
         $outcome = $action === 'erase' ? $result : $messageBooking;
+        if (!empty($outcome['_crm_cleanup_error'])) {
+            Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CLOSE_ERASURE_PENDING'), 'warning');
+        }
         if (!empty($outcome['_conference_cleanup_error'])) {
             Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_CLEANUP_FAILED'), 'warning');
         }

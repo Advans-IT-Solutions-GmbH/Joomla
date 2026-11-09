@@ -29,6 +29,10 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     protected $autoloadLanguage = true;
 
     protected const TASKS_MAP = [
+        'plg_task_appointments.close' => [
+            'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_CLOSE',
+            'method' => 'closeDelivery',
+        ],
         'plg_task_appointments.reminders' => [
             'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_REMINDERS',
             'form' => 'batch',
@@ -70,6 +74,20 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     protected function reminders(ExecuteTaskEvent $event): int
     {
         return $this->execute('reminders', $event);
+    }
+
+    protected function closeDelivery(ExecuteTaskEvent $event): int
+    {
+        try {
+            $this->getApplication()->bootComponent('com_appointments');
+            $result = (new \Advans\Component\Appointments\Administrator\Service\Close\Queue(
+                $this->getDatabase(), ComponentHelper::getParams('com_appointments')))->run();
+            $this->logTask('Appointments Close delivery: ' . json_encode($result, JSON_THROW_ON_ERROR));
+            return $result['failed'] > 0 ? Status::KNOCKOUT : Status::OK;
+        } catch (\Throwable $e) {
+            $this->logTask('Appointments Close delivery failed; check component configuration and delivery status.', 'error');
+            return Status::KNOCKOUT;
+        }
     }
 
     protected function retention(ExecuteTaskEvent $event): int

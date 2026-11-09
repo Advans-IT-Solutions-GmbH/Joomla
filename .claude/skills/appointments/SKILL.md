@@ -54,7 +54,9 @@ See the component README, "Email templates", and the repository-wide language co
 1. **No external service calls for the core booking flow.** No cloud calendar API, no hosted
    scheduling backend, no analytics, no remote font or script. The component must work on a server
    with all outbound traffic blocked, except for the optional conferencing adapters that are
-   explicitly opt-in.
+   explicitly opt-in, and the optional direct CRM delivery worker described in the component
+   README, "Optional direct Close transfer". CRM delivery is off by default, has no external
+   origin/credential default, and never requires a cloud calendar or changes the booking core.
 2. **The component owns the calendar.** It does not read a user's existing mailbox or calendar to
    detect conflicts. Conflicts are prevented by the component's own availability rules, its own
    bookings and its own blocked periods. Anything else is a later, opt-in extension.

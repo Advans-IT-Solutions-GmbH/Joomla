@@ -119,7 +119,7 @@ final class SchedulerService
         foreach ($ids as $id) {
             $erasure = $store->erase((int) $id, $now, 'retention', $mode === 'delete', retentionDays: $days);
             $result['bookings'] += $erasure['changed'] ? 1 : 0;
-            $result['failed'] += !empty($erasure['_conference_cleanup_error']) ? 1 : 0;
+            $result['failed'] += !empty($erasure['_conference_cleanup_error']) || !empty($erasure['_crm_cleanup_error']) ? 1 : 0;
         }
 
         $cutoff = $now->modify('-' . $years . ' years');

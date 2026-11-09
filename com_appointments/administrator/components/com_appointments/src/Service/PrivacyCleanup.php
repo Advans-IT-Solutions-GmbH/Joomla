@@ -63,6 +63,11 @@ final class PrivacyCleanup
             . ' AND cleanup_key = ' . $this->db->quote($key))->execute();
     }
 
+    public function requestId(): int
+    {
+        return $this->requestId;
+    }
+
     /**
      * Retry only copies linked by a prior authorized removal. No email search,
      * invented calendar grants, Scheduler activation or unchecked acknowledgment.

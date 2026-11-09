@@ -215,7 +215,8 @@ final class PrivacyService
         foreach ($this->bookings($address) as $booking) {
             $erasure = $store->erase((int) $booking['id'], $now, 'privacy_request', $mode === 'delete', privacyCleanup: $cleanup);
             $result['removed'] += $erasure['changed'] ? 1 : 0;
-            $result['cleanup_failed'] += !empty($erasure['_conference_cleanup_error']) || !empty($erasure['_calendar_cleanup_error']) ? 1 : 0;
+            $result['cleanup_failed'] += !empty($erasure['_conference_cleanup_error']) || !empty($erasure['_calendar_cleanup_error'])
+                || ($requestId < 1 && !empty($erasure['_crm_cleanup_error'])) ? 1 : 0;
             if ($erasure['notification'] !== null) {
                 try {
                     $mail->send($erasure['notification'], 'erasure_notice', $now, true);
@@ -226,6 +227,18 @@ final class PrivacyService
         }
 
         $result['cleanup_failed'] = max($result['cleanup_failed'], $cleanup?->pending() ?? 0);
+        if ($requestId > 0) {
+            $crm = new Close\Queue($this->db, $this->params);
+            if ($crm->pendingPrivacy($requestId) > 0) {
+                try {
+                    $crm->run(20, true, $requestId);
+                } catch (\Throwable $e) {
+                    \Joomla\CMS\Log\Log::add('Appointment CRM erasure remains pending; check delivery configuration.',
+                        \Joomla\CMS\Log\Log::WARNING, 'com_appointments');
+                }
+            }
+            $result['cleanup_failed'] += $crm->pendingPrivacy($requestId);
+        }
 
         return $result;
     }

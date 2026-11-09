@@ -22,6 +22,7 @@ final class PrivacyOutcome
         }
         $pending = (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName('#__appointments_privacy_cleanup')
             . ' WHERE request_id = ' . $requestId)->loadResult();
+        $pending += self::pendingCrm($db, $requestId);
         $value = $complete && $pending === 0 ? 1 : 0;
         $sql = 'INSERT INTO ' . $db->quoteName('#__appointments_privacy_outcomes')
             . ' (request_id, complete) VALUES (' . $requestId . ', ' . $value . ')'
@@ -34,6 +35,12 @@ final class PrivacyOutcome
         return (string) $db->setQuery('SELECT complete FROM ' . $db->quoteName('#__appointments_privacy_outcomes')
             . ' WHERE request_id = ' . $requestId)->loadResult() === '0'
             || (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName('#__appointments_privacy_cleanup')
-                . ' WHERE request_id = ' . $requestId)->loadResult() > 0;
+                . ' WHERE request_id = ' . $requestId)->loadResult() > 0
+            || self::pendingCrm($db, $requestId) > 0;
+    }
+
+    private static function pendingCrm(DatabaseInterface $db, int $requestId): int
+    {
+        return Close\Queue::pendingForRequest($db, $requestId);
     }
 }

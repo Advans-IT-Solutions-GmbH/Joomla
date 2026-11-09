@@ -77,6 +77,44 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
         </table>
     <?php endif; ?>
 
+    <?php if ($user->authorise('core.admin', 'com_appointments')) : ?>
+        <section class="card card-body mb-3">
+            <h2><?php echo Text::_('COM_APPOINTMENTS_CLOSE_TITLE'); ?></h2>
+            <p><?php echo Text::_($this->closeEnabled ? 'COM_APPOINTMENTS_CLOSE_ENABLED' : 'COM_APPOINTMENTS_CLOSE_DISABLED'); ?></p>
+            <?php if (!$this->closeConfigured) : ?>
+                <p class="alert alert-warning"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_CONFIG_MISSING'); ?></p>
+            <?php endif; ?>
+            <p><?php echo Text::_('COM_APPOINTMENTS_CLOSE_DELIVERY_HELP'); ?></p>
+            <form action="<?php echo Route::_('index.php?option=com_appointments&task=close.retry'); ?>" method="post">
+                <button class="btn btn-secondary" type="submit"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_RETRY'); ?></button>
+                <?php echo \Joomla\CMS\HTML\HTMLHelper::_('form.token'); ?>
+            </form>
+            <?php if ($this->closeRows) :
+                $deliveryStates = ['pending' => 'COM_APPOINTMENTS_CLOSE_PENDING', 'retry' => 'COM_APPOINTMENTS_CLOSE_RETRY_STATE',
+                    'done' => 'COM_APPOINTMENTS_CLOSE_DONE', 'blocked' => 'COM_APPOINTMENTS_CLOSE_BLOCKED',
+                    'uncertain' => 'COM_APPOINTMENTS_CLOSE_UNCERTAIN']; ?>
+                <div class="table-responsive"><table class="table">
+                    <caption><?php echo Text::_('COM_APPOINTMENTS_CLOSE_RECENT'); ?></caption>
+                    <thead><tr><th><?php echo Text::_('JGRID_HEADING_ID'); ?></th><th><?php echo Text::_('JSTATUS'); ?></th><th><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REASON'); ?></th></tr></thead>
+                    <tbody><?php foreach ($this->closeRows as $delivery) : ?><tr>
+                        <td><?php echo (int) $delivery['booking_id']; ?></td>
+                        <td><?php echo Text::_($deliveryStates[$delivery['state']] ?? 'COM_APPOINTMENTS_CLOSE_BLOCKED'); ?></td>
+                        <td><code><?php echo $this->escape($delivery['reason']); ?></code>
+                            <?php if ($delivery['state'] === 'uncertain') : ?>
+                                <form action="<?php echo Route::_('index.php?option=com_appointments&task=close.reconcile'); ?>" method="post">
+                                    <label for="close-remote-<?php echo (int) $delivery['booking_id']; ?>"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REMOTE_ID'); ?></label>
+                                    <input class="form-control" id="close-remote-<?php echo (int) $delivery['booking_id']; ?>" name="remote_id" maxlength="110" required>
+                                    <input type="hidden" name="booking_id" value="<?php echo (int) $delivery['booking_id']; ?>">
+                                    <button class="btn btn-secondary" type="submit"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_RECONCILE'); ?></button>
+                                    <?php echo \Joomla\CMS\HTML\HTMLHelper::_('form.token'); ?>
+                                </form>
+                            <?php endif; ?>
+                        </td>
+                    </tr><?php endforeach; ?></tbody>
+                </table></div>
+            <?php endif; ?>
+        </section>
+    <?php endif; ?>
     <?php if ($isEmpty) : ?>
         <div class="card">
             <div class="card-header">

@@ -88,6 +88,7 @@ final class BookingStore
             if (!$db->updateObject('#__appointments_bookings', $row, 'id', true)) {
                 throw new \RuntimeException('The encrypted booking could not be stored.');
             }
+            Close\Queue::changed($db, $clear, created: true);
             $db->transactionCommit();
             $this->mirror('saved', $clear);
 
@@ -170,6 +171,7 @@ final class BookingStore
             $row = (object) $this->data()->sealChange($booking, ['id' => $bookingId, 'state' => $state,
                 'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'cancel_reason' => $booking['cancel_reason']]);
             $db->updateObject('#__appointments_bookings', $row, 'id');
+            Close\Queue::changed($db, $booking);
             $db->transactionCommit();
 
         } catch (\Throwable $e) {
@@ -233,6 +235,7 @@ final class BookingStore
                 'invitee_timezone' => $booking['invitee_timezone'], 'conference_state' => null,
                 'conference_provider' => null, 'conference_url' => null, 'conference_room' => null, 'conference_error' => null];
             $db->updateObject('#__appointments_bookings', $row, 'id', true);
+            Close\Queue::changed($db, $booking);
             $db->transactionCommit();
 
         } catch (\Throwable $e) {
@@ -319,6 +322,7 @@ final class BookingStore
             $audit = (object) ['booking_id' => $bookingId, 'action' => $delete ? 'delete' : 'anonymise',
                 'path' => $path, 'actor_user_id' => $actor, 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')];
             $db->insertObject('#__appointments_audit', $audit);
+            Close\Queue::changed($db, $erased, true, $privacyCleanup?->requestId() ?? 0);
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();
@@ -333,6 +337,7 @@ final class BookingStore
         }
 
         return ['changed' => true, 'notification' => $notification,
+            '_crm_cleanup_error' => (new Close\Queue($db, ComponentHelper::getParams('com_appointments')))->hasPendingErasure($bookingId),
             '_calendar_cleanup_error' => !$mirrored,
             '_conference_cleanup_error' => $conferenceFailed];
     }

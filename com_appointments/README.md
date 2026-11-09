@@ -24,6 +24,80 @@ blocked.
 > build a package from source as described below. Official packages and version changes will be
 > published only through the repository's reviewed release workflow.
 
+## Optional direct Close transfer
+
+Close transfer is **disabled by default**, has no API origin or credential default, and is separate
+from the booking and self-hosted CalDAV paths. Installing or updating this component does not
+configure Close, disable Calendly, subscribe anyone to marketing, connect a cloud calendar or send
+historical bookings. Keep an existing integration unchanged until the operator explicitly approves
+cutover. Native Close **Meetings** (calendar sidebar/reminders) is a different feature: a Custom
+Activity records a booking but does not emulate Google/Microsoft calendar synchronization.
+
+After cutover approval, configure **Options > Close booking transfer**:
+
+- Supply the approved HTTPS API **origin**, the existing booking Custom Activity type ID and
+  the **name** of a server environment variable containing the API key. Never paste the key into
+  component options, screenshots, source or support reports. PHP cURL is needed only for delivery.
+- Supply a JSON object mapping exactly `uid`, `sequence`, `start`, `end`, `state`, `source` to
+  distinct real `cf_…` identifiers. Every destination must be a **single-valued text field** on
+  that Custom Activity type. The worker checks the field catalog before sending personal data
+  and blocks unknown/wrong-type fields or unmapped required fields. Times use UTC ISO 8601;
+  booking states are `pending`, `confirmed`, `cancelled`, separately from Activity `published`.
+  The source text is `Joomla appointments`, not Close's read-only integration-source enum.
+- Optionally whitelist individual answers using a JSON object mapping a local question ID to a
+  distinct text-field ID. Empty means no answers. No guest list, conferencing link, capability URL,
+  cancellation reason, encryption material or marketing-consent flag is copied.
+- Decide the erasure policy. Deletion can remove **only this integration's own Activity**.
+  Existing Contacts/Leads are never overwritten, anonymised or deleted. If the integration created
+  a Contact, retaining it requires an explicitly approved separate processing purpose; otherwise
+  erasure remains visibly blocked for operator review. Booking consent does not establish that
+  purpose or marketing consent.
+- Enable transfer and, separately, enable the new **Appointments: deliver approved bookings to
+  Close** scheduled task. This task is created **disabled**, including on fresh installations.
+  Missing/invalid configuration prevents delivery without interrupting local booking or CalDAV.
+
+Only bookings **created after activation** are enrolled, including pending bookings. Each canonical
+create/state change/reschedule/erasure atomically updates a small authenticated delivery record in
+the same database transaction. There is no plaintext or encrypted copy of the booking payload in
+that record. The worker reads/decrypts the current booking only when needed. Guest removal does
+not send anything to CRM because guests are never included. CalDAV continues exclusively through
+the existing Team BookingCalendarBridge; delivery never recreates bookings or replays their mail.
+
+Contacts are matched by exact email, not domain. One match reuses its Contact and Lead without
+changing their fields; multiple matches stop for manual review. No match creates a Lead with one
+Contact (name, email and existing phone only), using the account's default Lead status. Additional
+answers live on the booking Activity, not in existing contact master data. Later changes update
+the saved remote Activity ID. No existing calendar integration is required.
+
+**Failures and recovery:** the administrator dashboard shows the latest 100 delivery records,
+including hard-deleted bookings, with diagnostic codes but no payloads or credentials. Scheduled
+safe retries respect `Retry-After`; authentication, mapping and ambiguous-contact errors block
+visibly. The dashboard's safe retry action rechecks blocked records, never uncertain creations.
+The HTTPS transport uses verified TLS, no redirect, a bounded response, five-second timeouts and
+**no transport-level retry**. A database advisory lock serializes workers on this installation;
+booking row locks serialize each send against erasure and rescheduling.
+
+Before a non-idempotent POST, the worker commits an uncertain intent. A timeout, server error,
+invalid create response, process crash or local persistence failure after remote success leaves
+that intent uncertain. **UID/sequence is correlation, not a remote idempotency guarantee.**
+Do not blindly resend. After independently locating the existing remote object, a component
+administrator can enter its Contact/Activity ID on the dashboard: the reconciliation action
+only GETs and validates its email or booking UID/Contact/Lead/type before linking it. It cannot
+clear uncertainty or issue another POST on an unproven absence. If no object can be verified,
+or a contact creation became uncertain before erasure, manual privacy/CRM review is necessary.
+Duplicate prevention across independent installations is not guaranteed.
+
+Erasure stops unsent enrollment locally without an external obligation. Existing own remote
+activities or uncertain writes retain actionable metadata even when the booking is hard deleted.
+Turning transfer off pauses delivery, not those obligations. Native privacy Remove retries only
+its own request's cleanup; both its removal result and the Complete gate remain incomplete until
+cleanup actually finishes. This does not auto-confirm or auto-complete a privacy request.
+
+Synthetic coverage without a network or credential: `php tests/close-mock.php` (PDO SQLite
+required). The installed `close` integration suite exercises canonical booking mutations with
+encrypted data and a mock transport on Joomla/MySQL/MariaDB. SQLite tests do not prove MySQL
+lock concurrency or replace installed/browser acceptance and the later authorized account setup.
+
 ## Requirements
 
 - [Joomla](https://github.com/joomla/joomla-cms) 5.4 or later (5.4.x, 6.x)
