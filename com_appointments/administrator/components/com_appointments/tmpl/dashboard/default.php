@@ -101,6 +101,8 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
                         <td><?php echo Text::_($deliveryStates[$delivery['state']] ?? 'COM_APPOINTMENTS_CLOSE_BLOCKED'); ?></td>
                         <td><code><?php echo $this->escape($delivery['reason']); ?></code>
                             <?php if ($delivery['state'] === 'uncertain') : ?>
+                                <p><?php echo Text::_('COM_APPOINTMENTS_DETAIL_UID'); ?>:
+                                    <code class="text-break"><?php echo $this->escape($delivery['uid']); ?></code></p>
                                 <form action="<?php echo Route::_('index.php?option=com_appointments&task=close.reconcile'); ?>" method="post">
                                     <label for="close-remote-<?php echo (int) $delivery['booking_id']; ?>"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REMOTE_ID'); ?></label>
                                     <input class="form-control" id="close-remote-<?php echo (int) $delivery['booking_id']; ?>" name="remote_id" maxlength="110" required>
