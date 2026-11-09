@@ -11,12 +11,15 @@ namespace Advans\Plugin\Privacy\Appointments\Extension;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Service\PrivacyService;
 use Advans\Component\Appointments\Administrator\Service\PrivacyOutcome;
+use Advans\Component\Appointments\Administrator\Service\PrivacyStaffCleanup;
+use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Plugin\Privacy\Appointments\Team\TeamPrivacy;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Event\Privacy\CanRemoveDataEvent;
 use Joomla\CMS\Event\Privacy\ExportRequestEvent;
 use Joomla\CMS\Event\Privacy\RemoveDataEvent;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\Plugin\CMSPlugin;
 use Joomla\Component\Privacy\Administrator\Export\Domain;
 use Joomla\Component\Privacy\Administrator\Export\Field;
@@ -112,6 +115,16 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             $status->canRemove = false;
             $status->reason = Text::sprintf('PLG_PRIVACY_APPOINTMENTS_LEGAL_BLOCK', $service->legalReason());
         }
+        if ($status->canRemove && (int) $event->getRequest()->id > 0) {
+            try {
+                $this->staffScope((int) $event->getRequest()->id)->remember($address, $user);
+            } catch (\Throwable $error) {
+                Log::add('Appointment staff privacy scope could not be captured (' . get_class($error) . ').',
+                    Log::WARNING, 'com_appointments');
+                $status->canRemove = false;
+                $status->reason = Text::_('PLG_PRIVACY_APPOINTMENTS_STAFF_SCOPE_FAILED');
+            }
+        }
         $event->addResult($status);
     }
 
@@ -122,6 +135,14 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         $service = $this->service();
         $requestId = (int) $event->getRequest()->id;
         PrivacyOutcome::record($this->getDatabase(), $requestId, false);
+        try {
+            $staffScope = $requestId > 0 ? $this->staffScope($requestId) : null;
+            $staffId = $staffScope !== null ? $staffScope->userId() : (int) ($event->getUser()->id ?? 0);
+        } catch (\Throwable $error) {
+            Log::add('Appointment staff privacy scope could not be verified (' . get_class($error) . ').',
+                Log::WARNING, 'com_appointments');
+            throw new \RuntimeException(Text::_('PLG_PRIVACY_APPOINTMENTS_STAFF_SCOPE_FAILED'), 0, $error);
+        }
         $result = $service->remove((string) $event->getRequest()->email,
             new \DateTimeImmutable('now', new \DateTimeZone('UTC')), $requestId);
         TeamPrivacy::unreadableBookings($service, $this->getApplication());
@@ -138,11 +159,21 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         $team = TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase());
         $complete = $result['cleanup_failed'] === 0 && $service->unreadable() === 0;
         if ($team !== null) {
-            $complete = $team->remove((string) $event->getRequest()->email, $event->getUser()) && $complete;
+            $complete = $team->remove((string) $event->getRequest()->email, $event->getUser(), $staffId) && $complete;
+            if ($staffScope !== null && $staffId > 0 && $team->staffRemoved()) {
+                try {
+                    $staffScope->finish();
+                } catch (\Throwable $error) {
+                    Log::add('Appointment staff privacy cleanup could not be verified (' . get_class($error) . ').',
+                        Log::WARNING, 'com_appointments');
+                    $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_STAFF_SCOPE_FAILED'), 'warning');
+                    $complete = false;
+                }
+            }
         } else {
             $db = $this->getDatabase();
             $calendars = (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName('#__appointments_calendars'))->loadResult();
-            $userId = (int) ($event->getUser()->id ?? 0);
+            $userId = $staffId;
             $staffRows = 0;
             if ($userId > 0) {
                 foreach (['user_keys', 'devices', 'calendar_key_wraps', 'calendar_grants', 'invitations'] as $name) {
@@ -150,7 +181,8 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
                         . ' WHERE user_id = ' . $userId)->loadResult();
                 }
             }
-            if ($calendars > 0 || $staffRows > 0) {
+            if ($calendars > 0 || $staffRows > 0 || ($staffScope !== null && $staffId > 0
+                && PrivacyStaffCleanup::pending($db, $requestId))) {
                 $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_DISABLED_REMAINDER'), 'warning');
                 $complete = false;
             }
@@ -159,6 +191,12 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         if (!$complete) {
             throw new \RuntimeException(Text::_('PLG_PRIVACY_APPOINTMENTS_INCOMPLETE'));
         }
+    }
+
+    private function staffScope(int $requestId): PrivacyStaffCleanup
+    {
+        return new PrivacyStaffCleanup($this->getDatabase(),
+            new KeyProvider((string) $this->getApplication()->get('secret')), $requestId);
     }
 
     private function service(): PrivacyService

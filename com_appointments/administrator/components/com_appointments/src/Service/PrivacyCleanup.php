@@ -73,10 +73,22 @@ final class PrivacyCleanup
             ->select('*')
             ->from($this->db->quoteName('#__appointments_privacy_cleanup'))
             ->where($this->db->quoteName('request_id') . ' = ' . $this->requestId)
-            ->order($this->db->quoteName(['booking_id', 'cleanup_key']))
+            ->order($this->db->quoteName(['retry_order', 'booking_id', 'cleanup_key']))
             ->setLimit(200);
         $rows = $this->db->setQuery($query)->loadAssocList();
+        $cursor = (int) $this->db->setQuery('SELECT MAX(retry_order) FROM '
+            . $this->db->quoteName('#__appointments_privacy_cleanup') . ' WHERE request_id = ' . $this->requestId)->loadResult();
         foreach ($rows as $row) {
+            // Advance even failed/unreadable obligations. A persistent first page
+            // must not starve later rows; a competing retry must claim separately.
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__appointments_privacy_cleanup')
+                . ' SET retry_order = ' . (++$cursor) . ' WHERE request_id = ' . $this->requestId
+                . ' AND booking_id = ' . (int) $row['booking_id']
+                . ' AND cleanup_key = ' . $this->db->quote((string) $row['cleanup_key'])
+                . ' AND retry_order = ' . (int) $row['retry_order'])->execute();
+            if ($this->db->getAffectedRows() !== 1) {
+                continue;
+            }
             try {
                 $id = (int) $row['booking_id'];
                 $guest = (bool) $row['guest'];

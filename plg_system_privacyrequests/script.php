@@ -46,6 +46,15 @@ class PlgSystemPrivacyrequestsInstallerScript extends InstallerScript
             $db->setQuery('ALTER TABLE ' . $db->quoteName('#__privacy_guest_subjects')
                 . ' ADD COLUMN delivery_failed INTEGER NOT NULL DEFAULT 0')->execute();
         }
+        $index = $db->replacePrefix('#__privacy_guest_expiry');
+        $exists = false;
+        foreach ($db->getTableKeys('#__privacy_guest_attempts') as $key) {
+            $exists = $exists || ($key->Key_name ?? $key->idxName ?? '') === $index;
+        }
+        if (!$exists) {
+            $db->setQuery('CREATE INDEX ' . $db->quoteName($index) . ' ON '
+                . $db->quoteName('#__privacy_guest_attempts') . ' (' . implode(',', $db->quoteName(['window_start', 'subject_hash'])) . ')')->execute();
+        }
         // Publishing and mail configuration are deliberately left to the operator.
     }
 }

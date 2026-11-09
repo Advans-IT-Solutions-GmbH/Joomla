@@ -111,6 +111,7 @@ try {
     $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $request, 'user' => $wrongAccount]);
     $plugin->onPrivacyCanRemoveData($canRemove);
     $check(!$canRemove->getArgument('result')[0]->canRemove, 'Core account collation mismatch is explicitly blocked before another privacy plugin can remove it');
+    require __DIR__ . '/privacy-provenance-cases.php';
 } catch (Throwable $e) {
     $check(false, 'Privacy integration failed: ' . $e->getMessage());
 } finally {

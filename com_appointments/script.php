@@ -48,6 +48,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
     ];
 
     private const APPOINTMENT_TABLES = [
+        'privacy_staff',
         'privacy_cleanup',
         'privacy_outcomes',
         'eventtype_calendars',
@@ -223,6 +224,19 @@ class Com_appointmentsInstallerScript extends InstallerScript
             . ' (request_id INT UNSIGNED NOT NULL, booking_id INT UNSIGNED NOT NULL,'
             . ' cleanup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, guest TINYINT NOT NULL, payload TEXT NOT NULL,'
             . ' PRIMARY KEY (request_id, booking_id, cleanup_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+        if (!array_key_exists('retry_order', $db->getTableColumns('#__appointments_privacy_cleanup'))) {
+            $db->setQuery('ALTER TABLE ' . $db->quoteName('#__appointments_privacy_cleanup')
+                . ' ADD COLUMN retry_order BIGINT UNSIGNED NOT NULL DEFAULT 0')->execute();
+        }
+        $retryIndex = array_filter($db->getTableKeys('#__appointments_privacy_cleanup'),
+            static fn (object $key): bool => $key->Key_name === 'idx_privacy_retry');
+        if ($retryIndex === []) {
+            $db->setQuery('CREATE INDEX idx_privacy_retry ON ' . $db->quoteName('#__appointments_privacy_cleanup')
+                . ' (request_id, retry_order, booking_id, cleanup_key)')->execute();
+        }
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_privacy_staff')
+            . ' (request_id INT UNSIGNED NOT NULL PRIMARY KEY, payload TEXT NOT NULL)'
+            . ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
         $this->seedMailTemplates($parent);
         $this->installBundledPlugins($parent);
         $this->initialiseLegacyFeedSetting($type);

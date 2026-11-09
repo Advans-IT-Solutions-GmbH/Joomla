@@ -36,6 +36,7 @@ final class Admission
         if ($ip === '' || !$this->count($this->hash($operation . ':ip', $ip), 20, $now)) {
             return false;
         }
+        $this->purgeExpired($now);
 
         return $this->count($this->hash($operation . ':email', self::address($email)), 5, $now);
     }
@@ -67,8 +68,20 @@ final class Admission
             $db->transactionRollback();
             throw $e;
         }
-        $db->setQuery("DELETE FROM $table WHERE window_start < " . ($now - 1800))->execute();
-
         return $count <= $limit;
+    }
+
+    private function purgeExpired(int $now): void
+    {
+        $db = $this->db;
+        $table = $db->quoteName('#__privacy_guest_attempts');
+        $expired = $db->setQuery($db->createQuery()->select($db->quoteName('subject_hash'))->from($table)
+            ->where($db->quoteName('window_start') . ' < ' . ($now - 1800))
+            ->order($db->quoteName(['window_start', 'subject_hash']))->setLimit(100))->loadColumn();
+        if ($expired !== []) {
+            $keys = implode(',', array_map(static fn ($hash): string => $db->quote((string) $hash), $expired));
+            // A concurrent reservation may have renewed a selected bucket.
+            $db->setQuery("DELETE FROM $table WHERE subject_hash IN ($keys) AND window_start < " . ($now - 1800))->execute();
+        }
     }
 }

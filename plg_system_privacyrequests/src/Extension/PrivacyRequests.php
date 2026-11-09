@@ -288,6 +288,14 @@ CSS;
             throw new \RuntimeException(Text::_('PLG_SYSTEM_PRIVACYREQUESTS_OPERATION_BUSY'), 409, $e);
         }
         if ($remove) {
+            $previous = $this->getDatabase()->setQuery('SELECT reviewed_result FROM '
+                . $this->getDatabase()->quoteName('#__privacy_guest_outcomes') . ' WHERE request_id = ' . $id)->loadResult();
+            $form = $input->post->get('jform', [], 'array');
+            if ((string) $previous === '0' && ($form['privacy_remediation_reviewed'] ?? '') !== '1') {
+                $this->operationLock->release();
+                $this->operationLock = null;
+                throw new \RuntimeException(Text::_('PLG_SYSTEM_PRIVACYREQUESTS_REMEDIATION_REQUIRED'), 409);
+            }
             $this->removing = $id;
             $this->initialMessages = $app->getMessageQueue();
             // Written BEFORE dispatch: an exception or an interrupted callback leaves
