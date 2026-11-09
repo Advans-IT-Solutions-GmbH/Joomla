@@ -1,5 +1,14 @@
 # Joomla! AJAX Forms
 
+<a href="https://www.swissmadesoftware.org/en/about/swiss-made-software.html">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../.github/assets/labels/sms-logo-1v-300dpi-rgb-on-white.png">
+    <img src="../.github/assets/labels/sms-logo-1v-300dpi-rgb.png" width="110" alt="swiss made software">
+  </picture>
+</a>
+
+This extension carries the swiss made software label.
+
 **Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/joomla-ajax-forms.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/joomla-ajax-forms.yml)
@@ -124,6 +133,12 @@ With MFA the same target is passed as an absolute URL in the `return` parameter 
 `cartTotal` always returns `"0.00"`. Computing a correct total requires joining to the pricing engine (tier prices, customer group rules, coupons, taxes), which is not feasible in a lightweight plugin query. The frontend should suppress display of the total when `cartTotal === "0.00"` and rely on the J2Commerce cart view for the authoritative total.
 
 ## Usage
+
+### Permissions and Data Handling
+
+The endpoints perform real Joomla account, authentication, session and active-shop cart operations. They are not a separate user database or an anonymisation service. Registration/reset rules come from Users options, while profile changes and logout require the applicable authenticated session. Every task except read-only `texts` requires the form token. Plugin configuration needs administrator access.
+
+Mail uses Joomla's configured transport and templates as described under **Account Mails**. The plugin creates no own business tables or Scheduler/retention routine; operators remain responsible for Joomla account/session retention, shop records, mail logs and delivered messages. Debug output is for browser diagnostics, not a complete audit trail; avoid collecting credentials or personal form contents in support reports. Extension-update requests are separate from account mail and form processing.
 
 ### Template Integration
 
@@ -251,7 +266,7 @@ Creates: `plg_ajax_joomlaajaxforms_<version>.zip`
 
 ## Automated Testing
 
-This plugin has automated tests that run via GitHub Actions (`joomla-ajax-forms.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. The tests use the package built by `build.sh`, the same script the publish workflow uses. Besides the suites below, CI runs package validation (manifest, PHP and JavaScript syntax), the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, latest J2Commerce 6). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Details: [testing.md](../.claude/skills/joomla-extensions/references/testing.md).
+This plugin has automated tests that run via GitHub Actions (`joomla-ajax-forms.yml`) when this directory, shared files consumed by the workflow or the workflow itself change. The tests use the package built by `build.sh`, the same script the publish workflow uses. Besides the suites below, CI runs package validation (manifest, PHP and JavaScript syntax), the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, latest J2Commerce 6). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Details: [testing.md](../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 
