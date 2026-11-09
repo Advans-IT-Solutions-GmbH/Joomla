@@ -226,7 +226,7 @@ final class PrivacyRequests extends CMSPlugin implements SubscriberInterface
         // fields or delivery warning. Other Core views/templates remain unchanged.
         $scope = 'body.com_privacy.view-request:has([data-privacyrequests-review])';
         $css = <<<CSS
-@media (max-width: 767.98px) {
+@media (max-width: 991.98px) {
     {$scope} #header .header-inside,
     {$scope} #header .header-title,
     {$scope} #header .header-title > .d-flex {
