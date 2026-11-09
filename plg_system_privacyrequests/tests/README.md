@@ -16,7 +16,11 @@ service and public Core models with a supported native mail-template pre-render
 listener that deliberately throws before transport in that process.
 No transport is invoked and no mail setting is enabled or changed.
 They verify persistent pending receipts, native audit, delivery failure, renewal
-and invalid-token refusal. They are not delivered-token or browser acceptance.
+and invalid-token refusal. The last suite uninstalls the plugin natively,
+checks that exactly the three auxiliary tables are gone while existing Core
+privacy requests and action-log rows stay byte-for-byte unchanged, then
+reinstalls the same ZIP (overridable with `PRIVACY_PACKAGE`) and restores the
+earlier plugin settings. These suites are not delivered-token or browser acceptance.
 The existing CJS suites require separate synthetic fixtures, actual captured
 mail, Playwright and native administrator authorization; they must never target
 a live site. CI also arms and checks the shared production-like deprecation gate.

@@ -62,4 +62,15 @@ class PlgSystemPrivacyrequestsInstallerScript extends InstallerScript
         }
         // Publishing and mail configuration are deliberately left to the operator.
     }
+
+    public function uninstall($parent)
+    {
+        // Only the plugin's own auxiliary tables are removed; Core requests and the action log stay.
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        foreach (['#__privacy_guest_subjects', '#__privacy_guest_attempts', '#__privacy_guest_outcomes'] as $table) {
+            $db->setQuery('DROP TABLE IF EXISTS ' . $db->quoteName($table))->execute();
+        }
+
+        return true;
+    }
 }

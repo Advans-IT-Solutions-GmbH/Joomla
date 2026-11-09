@@ -193,7 +193,9 @@ and delivery failure), `#__privacy_guest_attempts` (window counters) and
 `#__privacy_guest_outcomes` (Core request removal outcome). They do not replace Core's
 request or audit records. No background retention task is installed for these records:
 include their still-linkable identifiers and the native Core records in the site's
-retention/access policy.
+retention/access policy. Uninstalling the plugin drops exactly these three tables
+and their indexes; native Core requests (`#__privacy_requests`) and action logs
+(`#__action_logs`) are left unchanged.
 
 Core success is **not website-wide proof that everything was erased**. An enabled
 privacy plugin may implement export only. Audit/retention obligations, unreadable
