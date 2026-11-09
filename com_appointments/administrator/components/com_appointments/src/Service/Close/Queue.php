@@ -145,10 +145,11 @@ final class Queue
         $subject = $address === null ? '' : self::subject((string) $address);
         // Authenticate before filtering: changing a subject/request/state must not hide a cleanup obligation.
         $pending = 0;
-        $after = 0;
+        $after = null;
         do {
             $rows = $db->setQuery('SELECT * FROM ' . $db->quoteName(self::TABLE)
-                . ' WHERE booking_id > ' . $after . ' ORDER BY booking_id LIMIT 200')->loadAssocList();
+                . ($after === null ? '' : ' WHERE booking_id > ' . $after)
+                . ' ORDER BY booking_id LIMIT 200')->loadAssocList();
             foreach ($rows as $row) {
                 self::verify($row);
                 $after = (int) $row['booking_id'];

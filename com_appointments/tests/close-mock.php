@@ -346,6 +346,12 @@ namespace {
     catch (\RuntimeException $error) { $rejected = true; }
     $check($rejected, 'subject tampering cannot filter an unauthenticated obligation out of completion checks');
     $db->updateObject(Queue::TABLE, $authenticRow, 'booking_id');
+    $db->pdo->exec('UPDATE test_appointments_close SET booking_id=0 WHERE booking_id=4');
+    $rejected = false;
+    try { $queue->pendingPrivacy(189); }
+    catch (\RuntimeException $error) { $rejected = true; }
+    $check($rejected, 'zero primary-key tampering is authenticated in the first history batch rather than skipped');
+    $db->pdo->exec('UPDATE test_appointments_close SET booking_id=4 WHERE booking_id=0');
     $check($queue->run()['disabled'] === 1 && $queue->pendingPrivacy(189) === 1,
         'disabled delivery preserves cross-request erasure obligation without network');
     $params->values['close_enabled'] = 1;
