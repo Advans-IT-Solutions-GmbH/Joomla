@@ -231,6 +231,11 @@ $check = static function (bool $ok, string $label) use (&$failed): void {
     echo ($ok ? 'PASS ' : 'FAIL ') . $label . "\n";
     $failed += $ok ? 0 : 1;
 };
+$rateKey = (new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((new JConfig())->secret))
+    ->key(\Advans\Component\Appointments\Administrator\Helper\KeyProvider::PURPOSE_RATE_LIMIT);
+$rateBuckets = implode(',', array_map(static fn (string $ip): string => "'" . hash_hmac('sha256', 'booking:' . $ip, $rateKey) . "'",
+    ['127.0.0.1', '::1']));
+$rateRows = $db->query("SELECT id,bucket,window_utc,hits FROM {$prefix}appointments_ratelimit WHERE bucket IN ({$rateBuckets})")->fetch_all(MYSQLI_ASSOC);
 $original = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
 $params = array_replace(json_decode($original, true) ?: [], [
     'close_enabled' => 0, 'close_origin' => 'https://crm.example.test',
@@ -321,6 +326,7 @@ $transport = static function (string $method, string $path, ?array $payload) use
 };
 
 try {
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit WHERE bucket IN ({$rateBuckets})");
     require __DIR__ . '/appointments-joomla.php';
     $application->bootComponent('com_appointments');
     $save();
@@ -471,6 +477,23 @@ try {
         $request[0] === 'POST' && $request[1] === '/api/v1/activity/custom/'));
     $check(!$queue->hasPendingErasure($id) && $activity === [] && $creates === 3,
         'Post-race worker deletes only the saved own Activity without another create');
+    foreach ([0, 3600] as $offset) {
+        $rateWindow = gmdate('Y-m-d H:i:s', intdiv(time(), 3600) * 3600 + $offset);
+        foreach (explode(',', $rateBuckets) as $bucket) {
+            $db->query("INSERT INTO {$prefix}appointments_ratelimit (bucket,window_utc,hits) VALUES ({$bucket},'{$rateWindow}',10)"
+                . ' ON DUPLICATE KEY UPDATE hits=10');
+        }
+    }
+    $limitedStart = $nextSlot()->format('Y-m-d H:i:s');
+    $limitedClient = new AppointmentsHttp(appointments_test_base_url(), 'close-rate-limit');
+    [$limitedBrowser, $limitedPath, $limitedForm] = $limitedClient->bookingForm($event, $limitedStart);
+    sleep(2);
+    $limitedHtml = $limitedBrowser->request($limitedPath, $limitedForm);
+    $limitedRow = $db->query("SELECT id FROM {$prefix}appointments_bookings WHERE eventtype_id={$event}"
+        . " AND start_utc='" . $db->real_escape_string($limitedStart) . "' AND state IN (0,1)")->fetch_assoc();
+    $check($limitedBrowser->status === 200 && $limitedRow === null
+        && str_contains($limitedHtml, 'Too many attempts. Please try again later.'),
+        'Booking beyond the unchanged loopback rate limit is still refused');
 } catch (Throwable $e) {
     if (str_starts_with($e->getMessage(), 'Race child exit=') || in_array($e->getMessage(), [
         'Child PHP configuration does not match the parent.',
@@ -509,6 +532,12 @@ try {
     $db->query("DELETE FROM {$prefix}appointments_privacy_cleanup WHERE request_id={$requestId}");
     $db->query("DELETE FROM {$prefix}appointments_privacy_staff WHERE request_id={$requestId}");
     $db->query("DELETE FROM {$prefix}privacy_requests WHERE id IN (" . ($requestId + 1) . ',' . ($requestId + 2) . ')');
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit WHERE bucket IN ({$rateBuckets})");
+    foreach ($rateRows as $row) {
+        $db->query("INSERT INTO {$prefix}appointments_ratelimit (id,bucket,window_utc,hits) VALUES ("
+            . (int) $row['id'] . ",'" . $db->real_escape_string($row['bucket']) . "','" . $db->real_escape_string($row['window_utc']) . "',"
+            . (int) $row['hits'] . ')');
+    }
     $fixture->cleanup();
 }
 exit($failed > 0 ? 1 : 0);

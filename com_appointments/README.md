@@ -92,6 +92,11 @@ clear uncertainty or issue another POST on an unproven absence. If no object can
 or a contact creation became uncertain before erasure, manual privacy/CRM review is necessary.
 Duplicate prevention across independent installations is not guaranteed.
 
+The dashboard's Close retry and reconciliation actions require a POST request with a valid Joomla
+form token and component `core.admin` permission. Event-management permission or `core.manage`
+alone is not sufficient. Retry processes a bounded safe batch; uncertain remote creations require
+the documented reconciliation workflow rather than another blind create request.
+
 Erasure stops unsent enrollment locally without an external obligation. Existing own remote
 activities or uncertain writes retain actionable metadata even when the booking is hard deleted.
 Turning transfer off pauses delivery, not those obligations. A keyed, authenticated hash of the
@@ -492,6 +497,26 @@ instead of deleting it. If a task cannot be created,
 the installation shows a warning and you create it by hand. Configure Joomla's Scheduler execution mechanism or
 invoke its CLI from the server's cron; a quiet website must not rely solely on visitor-triggered
 execution for timely reminders.
+
+The bundled task plugin advertises these routine IDs. An advertised routine is not automatically
+a running scheduled task.
+
+| Routine ID | Purpose | Installer-created task |
+|---|---|---|
+| `plg_task_appointments.reminders` | Due booking reminders | Five-minute rule; enabled only on a fresh component installation |
+| `plg_task_appointments.retention` | Ended-booking, booking-audit and expired rate-limit retention | Daily rule; enabled only on a fresh component installation |
+| `plg_task_appointments.teamcleanup` | Blocked-device cleanup and sign-in-counter expiry | Create/configure deliberately |
+| `plg_task_appointments.teamlog` | Internet-calendar audit retention | Create/configure deliberately |
+| `plg_task_appointments.teaminvitations` | Expired internet-calendar invitations | Create/configure deliberately |
+| `plg_task_appointments.teamretention` | Per-calendar retention plus booking-calendar upkeep | Create/configure deliberately |
+| `plg_task_appointments.close` | Queued Close delivery | Five-minute rule, **created disabled**, including on fresh install |
+
+Updates create missing seeded tasks disabled and preserve any existing task of the routine,
+including disabled/trashed tasks. Configure a real Scheduler trigger separately.
+Reminder/booking-retention `batch_size` defaults to 100 and accepts 1–1000; calendar and Close
+routines use their own service bounds, not that batch form. While internet calendars are disabled,
+`teamcleanup`, `teamlog` and `teaminvitations` do nothing, but `teamretention` still removes
+booking-calendar orphans and advances booking encryption.
 
 In the component options, set **Public site URL** to the canonical HTTP(S) site root, including a
 Joomla subdirectory if applicable. CLI reminders require this setting unless Joomla's `live_site`
