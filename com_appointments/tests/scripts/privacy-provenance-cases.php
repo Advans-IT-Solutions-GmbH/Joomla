@@ -3,6 +3,7 @@
 // Focused native plugin-event regressions, not a substitute for Core browser E2E.
 $privacyRequests = [];
 $staffUserId = 0;
+$legacyLogs = [];
 $privacyTrigger = null;
 $privacyParams = \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments');
 $savedTeamEnabled = $privacyParams->get('teamcal_enabled', 0);
@@ -99,6 +100,23 @@ try {
         && !\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $empty->id),
         'A registered subject with no staff records acquires no invented cleanup obligation while calendars are disabled');
 
+    $legacy = $newPrivacyFixture('legacy-' . bin2hex(random_bytes(6)) . '@example.test');
+    $legacy->status = 1;
+    $legacy->store();
+    $logsBefore = (int) $joomlaDb->setQuery('SELECT MAX(id) FROM #__action_logs')->loadResult();
+    $application->bootComponent('com_privacy')->getMVCFactory()
+        ->createModel('Remove', 'Administrator', ['ignore_request' => true])->logRemove($legacy);
+    $legacyLogs = $joomlaDb->setQuery('SELECT id FROM #__action_logs WHERE id>' . $logsBefore)->loadColumn();
+    $check($legacyLogs !== [], 'The upgrade regression records an actual Core removal log for the legacy request');
+    $legacyCheck = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData',
+        ['subject' => $legacy, 'user' => null]);
+    $plugin->onPrivacyCanRemoveData($legacyCheck);
+    $check(!$legacyCheck->getArgument('result')[0]->canRemove
+        && $legacyCheck->getArgument('result')[0]->reason === \Joomla\CMS\Language\Text::_('PLG_PRIVACY_APPOINTMENTS_STAFF_SCOPE_FAILED')
+        && $joomlaDb->setQuery('SELECT COUNT(*) FROM #__appointments_privacy_staff WHERE request_id=' . (int) $legacy->id)->loadResult() == 0
+        && \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $legacy->id),
+        'A legacy removal with neither provenance nor outcome rows requires operator recovery instead of a fresh guest scope');
+
     $interrupted = $newPrivacyFixture('interrupted-' . bin2hex(random_bytes(6)) . '@example.test');
     $firstAttempt = new \Advans\Component\Appointments\Administrator\Service\PrivacyStaffCleanup($joomlaDb, $keys, (int) $interrupted->id);
     $firstAttempt->remember((string) $interrupted->email, null);
@@ -181,6 +199,9 @@ try {
         $joomlaDb->setQuery('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger))->execute();
     }
     $privacyParams->set('teamcal_enabled', $savedTeamEnabled);
+    if ($legacyLogs !== []) {
+        $joomlaDb->setQuery('DELETE FROM #__action_logs WHERE id IN (' . implode(',', array_map('intval', $legacyLogs)) . ')')->execute();
+    }
     foreach ($privacyRequests as $id) {
         foreach (['appointments_privacy_cleanup', 'appointments_privacy_staff', 'appointments_privacy_outcomes', 'privacy_requests'] as $table) {
             $joomlaDb->setQuery('DELETE FROM ' . $joomlaDb->quoteName('#__' . $table)

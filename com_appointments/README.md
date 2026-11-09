@@ -362,6 +362,11 @@ retries, not anonymous booking data. Include it in the site's request-record ret
 and access policy. Earlier interrupted requests without recoverable staff provenance
 fail closed when their original account can no longer be identified; they need
 operator investigation, not an automatic scope/status migration or a success flag.
+This includes a request upgraded from a version without these tables: if Core's action
+log already records a **Remove** for it but neither a staff scope nor an outcome row
+exists, CanRemove blocks the retry and the completion guard blocks Complete. Core
+captures the scope before it writes that log entry, so a current attempt never
+matches. A site that purged or never kept that log entry cannot be detected this way.
 
 `#__appointments_privacy_outcomes` records the request's incomplete/complete callback
 outcome; outstanding cleanup references independently count as incomplete. The bundled

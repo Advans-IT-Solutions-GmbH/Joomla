@@ -40,7 +40,7 @@ final class PrivacyStaffCleanup
         if ($current === null) {
             $previous = $this->db->setQuery('SELECT complete FROM ' . $this->db->quoteName('#__appointments_privacy_outcomes')
                 . ' WHERE request_id = ' . $this->requestId)->loadResult();
-            if ($previous !== null && $userId === 0) {
+            if ($userId === 0 && ($previous !== null || $this->priorCoreRemoval())) {
                 // An older interrupted request may already have lost its original account.
                 throw new \UnexpectedValueException('The original staff scope is unavailable; operator recovery is required.');
             }
@@ -139,11 +139,35 @@ final class PrivacyStaffCleanup
             . ' WHERE owner_user_id = ' . $userId)->loadResult() > 0;
     }
 
+    /**
+     * Core dispatches onPrivacyCanRemoveData, which captures this scope, before it logs a removal.
+     * A logged Core removal without any provenance therefore predates the provenance tables
+     * (or ran without this plugin), and its account may already be pseudonymised.
+     */
+    private function priorCoreRemoval(): bool
+    {
+        $db = $this->db;
+        $id = (string) $this->requestId;
+        $messages = $db->setQuery('SELECT ' . $db->quoteName('message') . ' FROM ' . $db->quoteName('#__action_logs')
+            . ' WHERE ' . $db->quoteName('extension') . ' = ' . $db->quote('com_privacy.request')
+            . ' AND ' . $db->quoteName('message_language_key') . ' = ' . $db->quote('COM_PRIVACY_ACTION_LOG_REMOVE')
+            . ' AND (' . $db->quoteName('message') . ' LIKE ' . $db->quote('%"id":"' . $id . '"%')
+            . ' OR ' . $db->quoteName('message') . ' LIKE ' . $db->quote('%"id":' . $id . ',%')
+            . ' OR ' . $db->quoteName('message') . ' LIKE ' . $db->quote('%"id":' . $id . '}%') . ')')->loadColumn();
+        foreach ($messages as $message) {
+            $decoded = json_decode((string) $message, true);
+            if (is_array($decoded) && ($decoded['action'] ?? '') === 'remove' && (string) ($decoded['id'] ?? '') === $id) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static function pending(DatabaseInterface $db, int $requestId, bool $required = false): bool
     {
         $service = new self($db, new KeyProvider((string) Factory::getApplication()->get('secret')), $requestId);
         $scope = $service->read();
-        return $scope === null ? $required
+        return $scope === null ? $required || $service->priorCoreRemoval()
             : $scope['attempt'] === null || $scope['attempt_pending']
                 || !$scope['complete'] || $service->hasRows($scope['user_id']);
     }
