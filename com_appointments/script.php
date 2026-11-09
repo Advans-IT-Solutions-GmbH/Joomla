@@ -42,11 +42,14 @@ class Com_appointmentsInstallerScript extends InstallerScript
     private const BUNDLED_PLUGINS = [
         'task'    => ['appointments', true],
         'privacy' => ['appointments', true],
+        'content' => ['appointmentsprivacy', true],
         'system'  => ['appointmentsdav', false],
         'user'    => ['appointments', false],
     ];
 
     private const APPOINTMENT_TABLES = [
+        'privacy_cleanup',
+        'privacy_outcomes',
         'eventtype_calendars',
         'auth_failures',
         'teamlog_head',
@@ -212,6 +215,14 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $this->ensureUpdateSite();
+        $db = Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_privacy_outcomes')
+            . ' (request_id INT UNSIGNED NOT NULL PRIMARY KEY, complete TINYINT NOT NULL DEFAULT 0)'
+            . ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_privacy_cleanup')
+            . ' (request_id INT UNSIGNED NOT NULL, booking_id INT UNSIGNED NOT NULL,'
+            . ' cleanup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, guest TINYINT NOT NULL, payload TEXT NOT NULL,'
+            . ' PRIMARY KEY (request_id, booking_id, cleanup_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
         $this->seedMailTemplates($parent);
         $this->installBundledPlugins($parent);
         $this->initialiseLegacyFeedSetting($type);

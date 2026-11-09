@@ -394,14 +394,14 @@ final class TeamPrivacy
 
     /**
      * Delete the entries with this address and the staff data of the account.
-     * Never throws; messages are queued for the administrator.
+     * Messages are queued for the administrator; false means incomplete.
      */
-    public function remove(string $email, ?User $user): void
+    public function remove(string $email, ?User $user): bool
     {
         if ($this->services === null) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED'), 'warning');
 
-            return;
+            return false;
         }
 
         $deleted = 0;
@@ -470,6 +470,8 @@ final class TeamPrivacy
             'subject_user_id' => $userId > 0 ? $userId : null,
             'details'         => ['entries' => $deleted, 'failed' => $failed, 'not_searched' => \count($unsearched), 'staff' => $staff],
         ]);
+
+        return $failed === 0 && $unsearched === [];
     }
 
     /**

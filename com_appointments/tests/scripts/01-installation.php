@@ -35,6 +35,15 @@ class InstallationTest
             $row = $result ? $result->fetch_assoc() : null;
             return $row && $row['enabled'] == 1;
         });
+        $this->test('Installed shared module URLs select the lowest administrator id or the native add page', function () {
+            require __DIR__ . '/appointments-joomla.php';
+            $support = JPATH_ADMINISTRATOR . '/components/com_appointments/advansinstaller';
+            require_once $support . '/load.php';
+            $check = require __DIR__ . '/shared-installer-module-url.php';
+            $result = $check($joomlaDb, $support . '/SystemCheck.php');
+
+            return $result['rolled_back'];
+        });
         $this->test('Bundled Scheduler plugin and its license are installed', function () {
             $result = $this->db->query("SELECT enabled FROM {$this->dbPrefix}extensions WHERE element='appointments' AND type='plugin' AND folder='task'");
             $row = $result ? $result->fetch_assoc() : null;

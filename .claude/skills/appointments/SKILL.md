@@ -64,6 +64,9 @@ See the component README, "Email templates", and the repository-wide language co
    already hold, and through Joomla's own data subject request workflow. See
    `references/privacy-and-deletion.md`. This is a shipped feature, not a manual database task for
    the operator.
+   Formal Core retries retain minimal encrypted, still-linkable cleanup references
+   until actual teardown/rebuild succeeds; the bundled content guard independently
+   blocks premature Core Complete. Never equate an empty retry with completed erasure.
 5. **Joomla 5.4 and 6, like every other extension in this repository.** No platform special case,
    no change to the shared infrastructure. See `references/architecture.md`, section "Platform".
 6. **GPL-3.0-or-later**, published in this public repository, usable by any Joomla operator. No

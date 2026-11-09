@@ -45,6 +45,7 @@ Joomla/
 | [DMARC Reports MTA-STS Policy](plg_system_dmarcmtasts/) | System plugin that serves the generated MTA-STS policy (RFC 8461) at `/.well-known/mta-sts.txt` for each configured domain, so the policy stays in sync with the component options without a hand-maintained static file | 5.4 – 6.x |
 | [DMARC Reports Package](pkg_dmarcreports/) | Joomla package that bundles the DMARC Reports component, dashboard module, scheduler task plugin and MTA-STS system plugin into one install, update and uninstall for the administrator | 5.4 – 6.x |
 | [Appointments](com_appointments/) | **Pre-release.** Self-hosted scheduling with availability rules, no-JavaScript booking, approval, calendar invitations, signed reschedule/cancel/erase links, private subscriptions, reminders and retention, opt-in conferencing, Joomla privacy integration and per-event administration. See the component README for setup and limitations | 5.4 – 6.x |
+| [Core privacy requests](plg_system_privacyrequests/) | **Pre-release.** Standalone, opt-in no-account removal request and email confirmation through the native Core privacy lifecycle; administrators and active privacy plugins retain authorization, legal blocking and separate completion responsibility | 5.4 – 6.x |
 
 ### J2Commerce Extensions
 
@@ -204,6 +205,7 @@ Operator-customised templates remain operator content and are not overwritten on
 | Appointments | 18 booking/invitee/guest/host purposes and 7 internet-calendar/device/activation/security purposes; subject and text in each locale, with HTML rendered through the configured Joomla mail layout |
 | AJAX Forms | Password reset, username reminder, self/admin activation and new-registration notice; Joomla `com_mails` templates with translated plugin fallbacks |
 | J2Commerce Privacy | Customer retention/removal notice (8 account/guest, address and newsletter variants) and 3 administrator action notices, including translated order details; plain-text mail |
+| Core privacy requests | Confirmation uses Joomla-owned `com_privacy.notification.remove` in the recipient's supported account language or site default. Native administrator messages include the plugin's translated delivery-failure notice; delivery false/exception retains a real pending receipt and an operator-visible failure |
 | Other extensions and bundled plugins | No outgoing message bodies of their own. DMARC ingestion receives reports, it does not send notifications. The Privacy system plugin changes confirmation URLs in Joomla-owned `com_privacy` mail without replacing its text or language selection |
 
 To add a language:

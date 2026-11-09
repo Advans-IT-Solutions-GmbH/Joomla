@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="plugin" group="system" method="upgrade">
+    <name>PLG_SYSTEM_PRIVACYREQUESTS</name>
+    <element>privacyrequests</element>
+    <author>Advans IT Solutions GmbH</author>
+    <creationDate>2026-11</creationDate>
+    <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
+    <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
+    <version>0.1.0</version>
+    <description>PLG_SYSTEM_PRIVACYREQUESTS_XML_DESCRIPTION</description>
+    <namespace path="src">Advans\Plugin\System\PrivacyRequests</namespace>
+    <scriptfile>script.php</scriptfile>
+    <files>
+        <folder plugin="privacyrequests">services</folder>
+        <folder>src</folder>
+        <folder>language</folder>
+        <filename>LICENSE.txt</filename>
+        <filename>script.php</filename>
+    </files>
+    <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+    <php_minimum>8.1</php_minimum>
+    <config>
+        <fields name="params">
+            <fieldset name="basic">
+                <field name="contact_route" type="text" filter="string" required="true" maxlength="2048"
+                    validate="regex" validate_regex="^index\.php(?:\?[^\x00-\x20\x7f\\#]*)?$" validate_modifier="D"
+                    label="PLG_SYSTEM_PRIVACYREQUESTS_CONTACT_ROUTE"
+                    description="PLG_SYSTEM_PRIVACYREQUESTS_CONTACT_ROUTE_DESC" />
+            </fieldset>
+        </fields>
+    </config>
+</extension>

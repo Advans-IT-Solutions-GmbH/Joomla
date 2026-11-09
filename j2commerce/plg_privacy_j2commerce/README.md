@@ -331,6 +331,17 @@ The integration uses **direct DB queries** against AcyMailing's tables — no Ac
 
 The plugin detects AcyMailing by scanning the database for a table ending in `acym_configuration`. If not found, all AcyMailing code paths are bypassed.
 
+If the initial subscriber-address lookup fails while AcyMailing is detected, the
+existing privacy removal callback logs a sanitized error and displays an administrator
+warning. The removal summary and customer notice identify newsletter removal as
+unverified/kept, not deleted. Repair the lookup/storage problem and retry native Core
+**Remove** before assessing completion. This is the existing AcyMailing integration,
+not a second newsletter-erasure engine; Core's successful callback dispatch alone
+does not prove newsletter deletion. When the standalone Core guest-request adapter
+is enabled, that warning also prevents its successful removal outcome and separate
+**Complete**. Without such a completion guard, the administrator must not interpret
+Core's separate completion action as verified erasure.
+
 ### Privacy Suite: what is exported and deleted
 
 **Export (`onPrivacyExportRequest`):**

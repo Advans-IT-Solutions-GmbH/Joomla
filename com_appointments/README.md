@@ -312,6 +312,50 @@ policies consistently with their legal obligations. Accent differences never est
 and the request's email remains authoritative even if another privacy plugin has already changed
 the associated Joomla user object.
 
+Visitors without an account can use the separate
+[Core privacy request adapter](../plg_system_privacyrequests/README.md), when the
+operator has installed and enabled it. The bundled Appointments plugin supplies
+callbacks; it does not itself make Core's account-only public forms guest-accessible.
+Mailbox confirmation is not proof of every identity or entitlement, and Core success
+does not cover export-only plugins or copies outside this site's control.
+
+**Failed internal cleanup remains actionable.** For a formal Core removal,
+`#__appointments_privacy_cleanup` captures an authenticated-encrypted operational
+reference in the same transaction that clears the booking/guest address. It links the
+Core request ID and booking ID to the pending cleanup, so **Remove** can retry even
+when the cleared address no longer finds the booking. It stores no erased names,
+addresses, form answers, booking prose, joining URLs or calendar keys. Primary-invitee
+references retain the booking UID, host/event IDs, UTC times, sequence/modified time and
+provider/room identifier needed to reject stale or reused conference rooms safely;
+guest references retain only the booking identity and guest-cleanup role. These
+encrypted identifiers are still linkable operational data, **not anonymous data**.
+
+References are forgotten only after the actual calendar-copy/conference cleanup
+succeeds; an empty search, acknowledgment or failed calendar rebuild cannot clear
+them. A guest retry preserves the booking, primary invitee, remaining guests and owner
+conference, and rebuilds their copy when required. An unreadable or tampered reference
+fails closed. Resolve the reported provider/storage failure and retry native Remove;
+do not delete the reference to make the warning disappear. There is no expiry that
+silently abandons unresolved cleanup and no newly activated cleanup task.
+
+`#__appointments_privacy_outcomes` records the request's incomplete/complete callback
+outcome; outstanding cleanup references independently count as incomplete. The bundled
+**Content - Appointments privacy completion guard** vetoes native Core **Complete**
+while Appointments remains incomplete, even with the generic request adapter, DAV and
+user plugins disabled. Installation enables this guard; updates preserve its state.
+Keep it enabled while relying on the completion protection. Core's removal audit
+records an attempt, not proof of successful teardown. Complete is a separate authorized
+Core action after a clean retry and scope review, never an automatic consequence of
+callback dispatch.
+
+Disabled calendars with remaining data, unreadable booking data and calendars the
+handling session cannot unlock are explicit remaining-scope warnings, not "nothing
+found". Use genuinely authorized key-holder access or an explicitly authorized native
+calendar-management action; Superuser status does not unlock content. Inspect delivered
+email/client calendar copies, backups and CRM/provider copies separately. Existing
+booking/audit retention still applies, but it does not purge an unresolved operational
+reference merely because the source booking has been anonymised or deleted.
+
 ### Scheduler, reminders and retention
 
 The component installs and enables **Task - Appointments**. Updates preserve an existing task's

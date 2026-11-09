@@ -10,6 +10,7 @@ namespace Advans\Plugin\Privacy\Appointments\Extension;
 
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Service\PrivacyService;
+use Advans\Component\Appointments\Administrator\Service\PrivacyOutcome;
 use Advans\Plugin\Privacy\Appointments\Team\TeamPrivacy;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Event\Privacy\CanRemoveDataEvent;
@@ -119,8 +120,10 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         // The request address remains authoritative even if a preceding core
         // plugin has already pseudonymised the event's shared User object.
         $service = $this->service();
+        $requestId = (int) $event->getRequest()->id;
+        PrivacyOutcome::record($this->getDatabase(), $requestId, false);
         $result = $service->remove((string) $event->getRequest()->email,
-            new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+            new \DateTimeImmutable('now', new \DateTimeZone('UTC')), $requestId);
         TeamPrivacy::unreadableBookings($service, $this->getApplication());
         $this->getApplication()->enqueueMessage(Text::sprintf('PLG_PRIVACY_APPOINTMENTS_REMOVED', $result['removed']), 'message');
         if ($result['guest_removed']) {
@@ -132,8 +135,30 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         if ($result['cleanup_failed']) {
             $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_CLEANUP_FAILED'), 'warning');
         }
-        TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase())
-            ?->remove((string) $event->getRequest()->email, $event->getUser());
+        $team = TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase());
+        $complete = $result['cleanup_failed'] === 0 && $service->unreadable() === 0;
+        if ($team !== null) {
+            $complete = $team->remove((string) $event->getRequest()->email, $event->getUser()) && $complete;
+        } else {
+            $db = $this->getDatabase();
+            $calendars = (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName('#__appointments_calendars'))->loadResult();
+            $userId = (int) ($event->getUser()->id ?? 0);
+            $staffRows = 0;
+            if ($userId > 0) {
+                foreach (['user_keys', 'devices', 'calendar_key_wraps', 'calendar_grants', 'invitations'] as $name) {
+                    $staffRows += (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName('#__appointments_' . $name)
+                        . ' WHERE user_id = ' . $userId)->loadResult();
+                }
+            }
+            if ($calendars > 0 || $staffRows > 0) {
+                $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_DISABLED_REMAINDER'), 'warning');
+                $complete = false;
+            }
+        }
+        PrivacyOutcome::record($this->getDatabase(), $requestId, $complete);
+        if (!$complete) {
+            throw new \RuntimeException(Text::_('PLG_PRIVACY_APPOINTMENTS_INCOMPLETE'));
+        }
     }
 
     private function service(): PrivacyService
