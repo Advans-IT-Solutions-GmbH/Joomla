@@ -1,5 +1,14 @@
 # DMARC Reports Component
 
+<a href="https://www.swissmadesoftware.org/en/about/swiss-made-software.html">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../.github/assets/labels/sms-logo-1v-300dpi-rgb-on-white.png">
+    <img src="../.github/assets/labels/sms-logo-1v-300dpi-rgb.png" width="110" alt="swiss made software">
+  </picture>
+</a>
+
+This extension carries the swiss made software label.
+
 **Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/dmarc-reports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/dmarc-reports.yml)
@@ -25,6 +34,8 @@ Beyond showing the numbers, the component includes an **Action Center** that rea
 - Multi-domain, multi-tenant: monitor several domains, each with its own report source
 - On-demand IMAP ingestion (host, port, SSL/TLS, folder) with the password encrypted at rest; optional scheduled ingestion through the companion task plugin
 - Manual upload of `.xml`, `.gz` and `.zip` aggregate reports as an alternative input
+- RFC 8460 TLS-RPT JSON ingestion through the same mailbox/upload pipeline, including gzip and ZIP containers; TLS results are stored separately from DMARC reports
+- MTA-STS policy and DNS-record generation, with optional policy hosting through the companion system plugin
 - Native RFC 7489 aggregate-report XML parser (no external tools)
 - Idempotent storage: reports are de-duplicated by policy domain, reporter org, report id and report-window start date, so a reporter that reuses a report id for a later window — or for a different policy domain — still stores each report separately
 - Dashboard with per-domain volume, SPF/DKIM pass rates and would-be-rejected share
@@ -47,7 +58,7 @@ Beyond showing the numbers, the component includes an **Action Center** that rea
 
 ## Joomla 6 Compatibility
 
-On Joomla 6, `Factory::getContainer()->get('DatabaseDriver')` was removed. The component resolves the database through `DatabaseInterface` and builds queries with a small helper that calls `$db->getQuery(true)` on Joomla 5 (Joomla 5.4 has no `createQuery()` on `DatabaseInterface`) and `$db->createQuery()` on Joomla 6. No configuration required — the correct API is selected at runtime.
+The component resolves the database through `DatabaseInterface`. Queries use `createQuery()` when the driver provides it and otherwise fall back to `getQuery(true)`. The choice is based on the driver's methods, not just the Joomla major version; no configuration is required.
 
 ## Installation
 
@@ -66,7 +77,7 @@ The standalone manifest registers this repository's `updates/update.xml` as upda
 
 ## Uninstall
 
-Uninstall via **System → Manage → Extensions**. The component's uninstall SQL drops its own tables (monitored domains, report sources, reports and records) and Joomla removes the component files and language files. All collected report data is deleted with it; export anything you want to keep first.
+Uninstall via **System → Manage → Extensions**. The component's uninstall SQL drops all eight of its tables: domains, sources, DMARC reports/records, actions and TLS-RPT reports/policies/failures. Joomla removes the component files and language files. All collected report data and stored mailbox credentials are deleted with it; export what you need and take a matching files/database backup before uninstalling. A CSV export is not a complete recovery backup.
 
 ## Configuration
 
@@ -81,8 +92,32 @@ Open **Components → DMARC Reports**, then **Options** (top right) to set the d
 | Max messages per run | `200` | Upper bound of messages fetched per ingestion run |
 | Create unknown domains automatically (`auto_create_unknown_domains`) | `Off` | Lets an import create a domain that a report names but that is not yet listed. Such a domain is always created **unpublished**: anyone can send a report, so it is neither monitored nor served an MTA-STS policy until an administrator reviews and publishes it. Applies to the manual upload, the mailbox fetch (both also need `core.create`) and the scheduled task (which also needs *Allow automatic domain creation from scheduler tasks* and its own task parameter). While off, reports for unknown domains are skipped. |
 | DNS diagnostics | `Off` | Enables live DNS checks in domain detail/System Check; separately enabled MTA-STS also checks MX coverage and fetches the hosted policy over HTTPS. Queried names and connection metadata are disclosed as described above; report contents are not sent |
+| Allow automatic domain creation from scheduler tasks (`task_auto_create`) | `Off` | Additional administrator-controlled gate; the general auto-create option and the task's own auto-create parameter must also be on |
+| CSV delimiter (`csv_delimiter`) | `semicolon` | Separator for record exports: semicolon, comma or tab |
+| Enable MTA-STS (`mtasts_enable`) | `Off` | Enables generated policy/record guidance and, with the system plugin and host setup, public policy delivery |
+| MTA-STS mode (`mtasts_mode`) | `testing` | `none`, `testing` or `enforce`; validate receiving hosts and TLS before enforcing |
+| Receiving MX hosts (`mtasts_mx`) | Empty | One shared policy list for all monitored domains; see receiving-MX coverage below |
+| Policy lifetime (`mtasts_max_age`) | `604800` | Seconds; configuration range 86400–31557600 |
+| Enable TLS-RPT (`tlsrpt_enable`) | `Off` | Enables TLS reporting-record guidance; this switch does not disable JSON report ingestion |
+| TLS-RPT reporting address (`tlsrpt_rua`) | Empty | Reporting destination used to generate the DNS record; publish DNS yourself |
 
 Per-domain report sources (mailbox host, port, encryption, username, password and folder) are managed inside the component UI under **Sources**, not in the global options. The mailbox password is encrypted at rest using Joomla's secret and is never written to a log.
+
+### Permissions and data handling
+
+Configure permissions in the component's **Options → Permissions**. `core.manage` permits access to the administrator views and record export; `dmarc.ingest` permits manual mailbox ingestion and upload. Domain/source creation, editing, state changes and deletion use the corresponding `core.create`, `core.edit`, `core.edit.state` and `core.delete` permissions. Changing Action Center statuses requires `core.edit.state`. Automatic domain creation during a manual import additionally requires `core.create`; scheduler auto-creation uses the separate component/task gates above, not an interactive user's ingestion permission.
+
+Reports contain sending addresses, domains, counts and authentication results; sources include mailbox credentials. Access to these records and downloaded exports must be restricted. There is no automatic age-based report-retention task: define an operator retention/backup policy and delete data deliberately. Deleting a domain removes its related reports and actions; deleting a source removes its configuration and clears its reports' source association, rather than deleting those reports.
+
+The component itself installs no ingestion Scheduler routine. Configure the [companion task plugin](../plg_task_dmarcreports/README.md) and a Scheduler trigger for unattended ingestion.
+
+### Input and execution limits
+
+Manual report uploads are limited to **16 MiB**, subject also to PHP/web-server upload limits. The XML and JSON archive decoders limit a decoded document to **8 MiB**, total decoded archive data to **16 MiB**, extracted documents to **256** and ZIP entries to **4096**. Archive guards can reject oversized content or report dropped documents; inspect the import summary rather than treating a partly processed archive as complete.
+
+The DMARC parser accepts at most **100000 records** per report. The TLS-RPT parser accepts at most **1000 policies** and **100000 failure details** per report. Malformed reports are rejected, not repaired into successful partial reports. Gzip needs PHP zlib; ZIP needs ZipArchive.
+
+Mailbox timeout defaults to 20 seconds (bounded to 5–120) and the message limit to 200 (bounded to 10–2000) **per source per poll**, not per whole multi-source task. Mailbox/transport failures and locked sources are separate from document parse failures; check source run messages as well as the scheduler result.
 
 ## Usage
 
@@ -183,9 +218,10 @@ Order as in `tests/test.env`:
 5. **Action Center** - Recommendations are derived correctly from the parsed data
 6. **Metrics** - The `Metrics` aggregator is driven against a seeded database and returns the expected lifetime totals, rolling-window pass rates, new sources and timeline
 7. **Export** - The CSV export's keyset pagination is driven against a seeded record set and returns every record exactly once, in order, without duplicating or skipping rows as it pages; the snapshot id ceiling excludes rows ingested mid-export; and the export controller keeps its CSRF-token and `core.manage` guards
-8. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator` and really renders the component pages. It asserts HTTP 200, no PHP error and no Joomla error page, no untranslated language key, and at least one string of the component's own language file on the page
-9. **Installer Messages** - shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
-10. **Uninstall** - Component removal, table drop, verification
+8. **Configuration forms** (`config-forms:08-config-forms.php`) - Exercises configuration fields and their validation
+9. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator` and really renders the component pages. It asserts HTTP 200, no PHP error and no Joomla error page, no untranslated language key, and at least one string of the component's own language file on the page
+10. **Installer Messages** - shared suite: removes and reinstalls the component through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
+11. **Uninstall** - Component removal, table drop, verification
 
 A separate **PHPUnit (Unit)** job runs the parser, DNS-diagnostics and Action-Center unit tests from `tests/Unit/` without Docker. The database-backed `Metrics` aggregation is covered by the **Metrics** integration suite instead, because it needs a real database.
 
@@ -238,7 +274,7 @@ Test results are saved in `tests/test-results/`.
 
 ### A report file is rejected on upload
 **Problem:** Uploading an aggregate report does nothing or reports a parse error  
-**Solution:** Only RFC 7489 aggregate reports are supported, as `.xml`, `.gz` or `.zip`. Forensic/failure reports are a different format and are not parsed. Confirm the file is an aggregate report and not already corrupted.
+**Solution:** Supported inputs are RFC 7489 aggregate XML and RFC 8460 TLS-RPT JSON, raw or in supported gzip/ZIP containers. DMARC forensic/failure mail is a different format and is not parsed. Check the report format, corruption, decoder requirements and the limits above; inspect the specific reason in the upload summary.
 
 ### The same report seems to be missing after a second ingestion
 **Problem:** Re-running ingestion does not add rows  
@@ -264,7 +300,7 @@ This extension supports the following languages:
 - **German (de-DE)**
 - **French (fr-FR)**
 
-Every visible string — headings, table columns, status badges, Action Center recommendations, help text and the copyright/licence line — comes from a language key; no admin-visible text is assembled at runtime. Generic words use Joomla core keys. A further language needs these files, plus one `<language>` line per file in the manifest (see [Languages](../README.md#languages)):
+Every visible string — headings, table columns, status badges, Action Center recommendations, help text and the copyright/licence line — comes from a language key; no admin-visible text is assembled at runtime. Generic words use Joomla core keys. Shipped language paths follow this layout. A further locale needs a repository-wide maintainer decision, not just another local folder; see [Languages](../README.md#languages):
 
 ```
 administrator/language/{language-tag}/com_dmarcreports.ini
