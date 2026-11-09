@@ -5,6 +5,19 @@ $privacyRequests = [];
 $staffUserId = 0;
 $legacyLogs = [];
 $privacyTrigger = null;
+// Trigger DDL is not available in MySQL's prepared-statement protocol, so it uses the native connection.
+$triggerDdl = static function (string $sql) use ($joomlaDb): void {
+    $joomlaDb->connect();
+    $connection = $joomlaDb->getConnection();
+    if (!$connection instanceof \mysqli) {
+        $joomlaDb->setQuery($sql)->execute();
+
+        return;
+    }
+    if ($connection->query($joomlaDb->replacePrefix($sql)) !== true) {
+        throw new \RuntimeException('Trigger DDL failed: ' . $connection->error);
+    }
+};
 $privacyParams = \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments');
 $savedTeamEnabled = $privacyParams->get('teamcal_enabled', 0);
 $newPrivacyFixture = static function (string $email) use ($joomlaDb, &$privacyRequests) {
@@ -51,9 +64,9 @@ try {
     $check($canRemove->getArgument('result')[0]->canRemove && $scope->userId() === $staffUserId,
         'CanRemove captures authenticated request-bound staff scope before the Core user callback');
     $privacyTrigger = $joomlaDb->getPrefix() . 'privacy_scope_hold';
-    $joomlaDb->setQuery('CREATE TRIGGER ' . $joomlaDb->quoteName($privacyTrigger)
+    $triggerDdl('CREATE TRIGGER ' . $joomlaDb->quoteName($privacyTrigger)
         . ' BEFORE DELETE ON #__appointments_user_keys FOR EACH ROW BEGIN IF OLD.user_id = ' . $staffUserId
-        . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected staff cleanup failure'; END IF; END")->execute();
+        . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected staff cleanup failure'; END IF; END");
     $coreUser = $application->bootPlugin('user', 'privacy');
     $coreUser->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
         ['subject' => $request, 'user' => $user]));
@@ -82,7 +95,7 @@ try {
         $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $id),
             "The completion guard independently refuses a forged outcome flag, feature=$enabled");
     }
-    $joomlaDb->setQuery('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger))->execute();
+    $triggerDdl('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger));
     $privacyTrigger = null;
     $privacyParams->set('teamcal_enabled', 1);
     $remove(null);
@@ -123,9 +136,9 @@ try {
     $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
         'A captured guest scope without an authenticated removal attempt cannot permit completion');
     $privacyTrigger = $joomlaDb->getPrefix() . 'privacy_initial_outcome_hold';
-    $joomlaDb->setQuery('CREATE TRIGGER ' . $joomlaDb->quoteName($privacyTrigger)
+    $triggerDdl('CREATE TRIGGER ' . $joomlaDb->quoteName($privacyTrigger)
         . ' BEFORE INSERT ON #__appointments_privacy_outcomes FOR EACH ROW BEGIN IF NEW.request_id = ' . (int) $interrupted->id
-        . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected initial outcome write failure'; END IF; END")->execute();
+        . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected initial outcome write failure'; END IF; END");
     $check($assertIncomplete(static function () use ($plugin, $interrupted): void {
         $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
             ['subject' => $interrupted, 'user' => null]));
@@ -133,7 +146,7 @@ try {
         && $joomlaDb->setQuery('SELECT complete FROM #__appointments_privacy_outcomes WHERE request_id='
             . (int) $interrupted->id)->loadResult() === null,
         'An actual initial outcome write failure warns and leaves completion blocked without an outcome row');
-    $joomlaDb->setQuery('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger))->execute();
+    $triggerDdl('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger));
     $privacyTrigger = null;
     \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, (int) $interrupted->id, true);
     $joomlaDb->setQuery('UPDATE #__appointments_privacy_outcomes SET complete=1 WHERE request_id=' . (int) $interrupted->id)->execute();
@@ -196,7 +209,7 @@ try {
         'Fair retry progress never turns pending obligations into a success');
 } finally {
     if ($privacyTrigger !== null) {
-        $joomlaDb->setQuery('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger))->execute();
+        $triggerDdl('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger));
     }
     $privacyParams->set('teamcal_enabled', $savedTeamEnabled);
     if ($legacyLogs !== []) {
