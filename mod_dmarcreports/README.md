@@ -1,5 +1,14 @@
 # DMARC Reports Dashboard Module
 
+<a href="https://www.swissmadesoftware.org/en/about/swiss-made-software.html">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../.github/assets/labels/sms-logo-1v-300dpi-rgb-on-white.png">
+    <img src="../.github/assets/labels/sms-logo-1v-300dpi-rgb.png" width="110" alt="swiss made software">
+  </picture>
+</a>
+
+This extension carries the swiss made software label.
+
 **Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/moddmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/moddmarcreports.yml)
@@ -138,7 +147,7 @@ Order as in `tests/test.env`:
 1. **Installation** - Module registration, file deployment, administrator client id
 2. **Structure** - Namespace, service provider, dispatcher, helper and layout are present and well-formed
 3. **Graceful Degradation** - With the component absent, the helper reports `unavailable` and the layout renders a translated notice with no raw language key, no PHP error and no summary cards
-4. **Installer Messages** - shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
+4. **Installer Messages** - shared suite: removes and reinstalls the module through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 5. **Uninstall** - Module removal, instance cleanup, verification
 
 A separate **PHPUnit (Unit)** job runs the pure helper tests from `tests/Unit/` (`summariseTotals`, `rejectRate`, `limitActions`) without Docker. The database-backed figures are produced by the component and covered by the component's own suites.
@@ -186,6 +195,10 @@ Test results are saved in `tests/test-results/`.
 
 ## Troubleshooting
 
+### The module cannot read the dashboard
+
+The helper distinguishes a component/model error from an absent component or a permission refusal. Open the component dashboard with the same account and inspect its database/installation state. The module does not repair the component and must not be used as evidence that ingestion succeeded. It has no Scheduler task, sends no notification mail and stores no report data of its own.
+
 ### The module shows "DMARC Reports is not available"
 **Problem:** The module renders a notice instead of the summary  
 **Solution:** The [DMARC Reports Component](../com_dmarcreports) is not installed or is disabled. Install and enable `com_dmarcreports`; the module then shows live data automatically.
@@ -214,7 +227,7 @@ This extension supports the following languages:
 - **German (de-DE)**
 - **French (fr-FR)**
 
-Every visible string comes from a language key; no admin-visible text is assembled at runtime. The Action Center wording is rendered by the component, so it follows the component's own language files. A further language needs these files, plus one `<language>` line per file in the manifest (see [Languages](../README.md#languages)):
+Every visible string comes from a language key; no admin-visible text is assembled at runtime. The Action Center wording follows the component's language files. Shipped paths follow this layout; a further locale needs a repository-wide maintainer decision, not just another local folder (see [Languages](../README.md#languages)):
 
 ```
 language/{language-tag}/mod_dmarcreports.ini
