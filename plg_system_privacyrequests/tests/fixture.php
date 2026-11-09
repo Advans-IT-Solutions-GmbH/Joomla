@@ -502,6 +502,24 @@ switch ($op) {
         $out['calendar_id'] = $calendar;
         $out['objects'] = count($team->objects()->all($calendar));
         break;
+    case 'appointments-outcome-block':
+    case 'appointments-outcome-unblock':
+        $trigger = $db->getPrefix() . 'privacy_initial_outcome_hold';
+        if ($op === 'appointments-outcome-block') {
+            if (!ctype_digit($email) || (int) $email < 1) {
+                throw new RuntimeException('An explicit synthetic Core request id is required.');
+            }
+            $subject = $db->setQuery('SELECT email FROM #__privacy_requests WHERE id=' . (int) $email)->loadResult();
+            if (!is_string($subject) || !str_ends_with($subject, '@example.test')) {
+                throw new RuntimeException('Only a synthetic Core request may receive the failure trigger.');
+            }
+            $db->setQuery('CREATE TRIGGER ' . $db->quoteName($trigger)
+                . ' BEFORE INSERT ON #__appointments_privacy_outcomes FOR EACH ROW BEGIN IF NEW.request_id = ' . (int) $email
+                . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected initial outcome write failure'; END IF; END")->execute();
+        } else {
+            $db->setQuery('DROP TRIGGER IF EXISTS ' . $db->quoteName($trigger))->execute();
+        }
+        break;
     case 'appointments-copy-block':
     case 'appointments-copy-unblock':
         if ($op === 'appointments-copy-block') {

@@ -140,6 +140,8 @@ and recovery limits of this still-linkable request metadata.
 Its authenticated pending-attempt marker also survives unexpected removal failures
 and missing/forged outcome flags. Log and warn instead of aborting Core's remaining
 privacy listeners; only a genuinely successful current attempt may clear the marker.
+A captured scope without an authenticated attempt remains pending as well: failure of
+the initial outcome write must not permit Complete with skipped booking cleanup.
 
 `#__appointments_privacy_outcomes` plus any outstanding cleanup reference govern the
 bundled `content/appointmentsprivacy` native before-save veto for Core Complete.
