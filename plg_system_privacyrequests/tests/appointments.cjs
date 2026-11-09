@@ -105,8 +105,20 @@ async function main() {
             }
             return Number(fixture('snapshot', requestEmail).requests[0].status);
         };
-        fixture('probe', 'conference-fail');
+        fixture('appointments-outcome-block', receipt.id);
         let state = await remove();
+        check('Actual initial outcome-write failure cannot pretend the untouched booking was erased',
+            state.booking.email_cleared === 0 && state.copies === 1 && state.room_hashes.includes(booking.room_hash));
+        fixture('generic-disable');
+        try {
+            check('Bundled native guard rejects completion after initial outcome failure without the generic adapter',
+                await complete(email, false) === 1);
+        } finally {
+            fixture('generic-enable');
+            fixture('appointments-outcome-unblock');
+        }
+        fixture('probe', 'conference-fail');
+        state = await remove(true);
         check('First partial commits anonymisation but actual failed internal copy and room still exist',
             state.booking.email_cleared === 1 && state.booking.room_cleared === 1
             && state.copies === 1 && state.room_hashes.includes(booking.room_hash));
@@ -219,6 +231,7 @@ async function main() {
         check('Rebuild request closes only after actual repair and separate remaining-scope resolution',
             await complete(rebuildEmail) === 2);
     } finally {
+        fixture('appointments-outcome-unblock');
         fixture('appointments-copy-unblock');
         fixture('appointments-rebuild-restore');
         fixture('probe', 'block');

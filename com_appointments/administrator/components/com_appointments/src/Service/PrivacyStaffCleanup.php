@@ -144,7 +144,8 @@ final class PrivacyStaffCleanup
         $service = new self($db, new KeyProvider((string) Factory::getApplication()->get('secret')), $requestId);
         $scope = $service->read();
         return $scope === null ? $required
-            : $scope['attempt_pending'] || !$scope['complete'] || $service->hasRows($scope['user_id']);
+            : $scope['attempt'] === null || $scope['attempt_pending']
+                || !$scope['complete'] || $service->hasRows($scope['user_id']);
     }
 
     private function read(): ?array

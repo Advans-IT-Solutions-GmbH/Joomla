@@ -353,6 +353,10 @@ not thrown across Core's listener chain: later privacy plugins must still proces
 the original registered user in that same dispatch. The marker independently vetoes
 Complete even with a missing or forged outcome flag. Only the current genuinely
 successful attempt can clear it; a superseded attempt cannot overwrite a newer one.
+A captured scope with no authenticated removal attempt also remains pending, including
+when the first outcome write fails before booking cleanup can start. Older captured
+scopes without attempt metadata require a successful native Remove retry, not a forged
+success flag.
 The encrypted ID remains linkable request/audit metadata needed for subsequent Core
 retries, not anonymous booking data. Include it in the site's request-record retention
 and access policy. Earlier interrupted requests without recoverable staff provenance
