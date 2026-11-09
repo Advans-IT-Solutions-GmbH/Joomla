@@ -15,12 +15,31 @@ if (($argv[1] ?? '') === '--race-erase') {
         } catch (RuntimeException $error) {
             $blocked = $error->getMessage() === 'Close delivery is already running.';
         }
-        file_put_contents($argv[3], 'ready');
+        $store = new \Advans\Component\Appointments\Administrator\Service\BookingStore($joomlaDb);
+        $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $joomlaDb->setQuery('SET SESSION innodb_lock_wait_timeout=1')->execute();
+        $lockTimeout = false;
+        try {
+            $store->erase((int) $argv[2], $now, 'admin', actor: (int) $argv[4]);
+        } catch (Throwable $error) {
+            for ($cause = $error; $cause !== null; $cause = $cause->getPrevious()) {
+                if ((int) $cause->getCode() === 1205) {
+                    $lockTimeout = true;
+                    break;
+                }
+            }
+            if (!$lockTimeout) {
+                throw $error;
+            }
+        }
+        if (!$lockTimeout) {
+            throw new RuntimeException('Canonical erasure did not encounter the held database lock.');
+        }
+        file_put_contents($argv[3], 'lock-timeout');
         $joomlaDb->setQuery('SET SESSION innodb_lock_wait_timeout=15')->execute();
-        $result = (new \Advans\Component\Appointments\Administrator\Service\BookingStore($joomlaDb))->erase(
-            (int) $argv[2], new DateTimeImmutable('now', new DateTimeZone('UTC')), 'admin', actor: (int) $argv[4]);
+        $result = $store->erase((int) $argv[2], $now, 'admin', actor: (int) $argv[4]);
         echo json_encode(['blocked' => $blocked, 'calls' => $calls, 'erased' => $result['changed'],
-            'pending' => !empty($result['_crm_cleanup_error'])], JSON_THROW_ON_ERROR);
+            'lock_timeout' => $lockTimeout, 'pending' => !empty($result['_crm_cleanup_error'])], JSON_THROW_ON_ERROR);
         exit(0);
     } catch (Throwable $error) {
         echo json_encode(['error' => get_class($error)], JSON_THROW_ON_ERROR);
@@ -85,15 +104,14 @@ $transport = static function (string $method, string $path, ?array $payload) use
             $deadline = microtime(true) + 10;
             do {
                 clearstatcache(true, $raceSignal);
-                if (file_get_contents($raceSignal) === 'ready') {
+                if (file_get_contents($raceSignal) === 'lock-timeout') {
                     break;
                 }
                 usleep(20000);
             } while (microtime(true) < $deadline);
-            if (file_get_contents($raceSignal) !== 'ready') {
-                throw new RuntimeException('The canonical race process did not become ready.');
+            if (file_get_contents($raceSignal) !== 'lock-timeout') {
+                throw new RuntimeException('The canonical race process did not prove a database lock wait.');
             }
-            usleep(200000);
             if (!proc_get_status($raceProcess)['running'] || $fixture->stored($raceId)['anonymised_utc'] !== null) {
                 throw new RuntimeException('Canonical erasure was not serialized against the remote write.');
             }
@@ -223,8 +241,8 @@ try {
     $raceProcess = null;
     $check($childStatus['exitcode'] === 0 && $child['blocked'] && $child['calls'] === 0,
         'Actual second-process worker is excluded by the database advisory lock before transport');
-    $check($child['erased'] && $child['pending'] && $fixture->stored($id)['anonymised_utc'] !== null,
-        'Concurrent canonical erasure waits for remote-write commit and retains its cleanup obligation');
+    $check($child['lock_timeout'] && $child['erased'] && $child['pending'] && $fixture->stored($id)['anonymised_utc'] !== null,
+        'Canonical erasure proves a held-lock timeout then retries after remote-write commit with cleanup retained');
     $queue->run();
     $creates = count(array_filter($requests, static fn ($request) =>
         $request[0] === 'POST' && $request[1] === '/api/v1/activity/custom/'));
