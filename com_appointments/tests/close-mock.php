@@ -151,12 +151,13 @@ namespace {
         'close_questions' => '{"7":"cf_question"}', 'close_delete_activity' => 1]);
     ComponentHelper::$params = $params;
     $db = new MemoryDatabase();
-    $staffScope = static function (int $id, bool $complete) use ($db): void {
+    $staffScope = static function (int $id, bool $complete, bool $attemptPending = false) use ($db): void {
         $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider(
             (string) \Joomla\CMS\Factory::getApplication()->get('secret'));
         $nonce = random_bytes(SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES);
         $payload = base64_encode($nonce . sodium_crypto_aead_xchacha20poly1305_ietf_encrypt(
-            json_encode(['user_id' => 0, 'address' => str_repeat('a', 64), 'complete' => $complete], JSON_THROW_ON_ERROR),
+            json_encode(['user_id' => 0, 'address' => str_repeat('a', 64), 'complete' => $complete,
+                'attempt_pending' => $attemptPending, 'attempt' => $attemptPending ? str_repeat('b', 32) : null], JSON_THROW_ON_ERROR),
             'appointments-privacy-staff:' . $id, $nonce, $keys->key('privacy-staff')));
         $stmt = $db->pdo->prepare('INSERT OR REPLACE INTO test_appointments_privacy_staff VALUES (?,?)');
         $stmt->execute([$id, $payload]);
@@ -314,6 +315,11 @@ namespace {
         'manually erased own Activity is verified without automated deletion approval or any writes');
     PrivacyOutcome::record($db, 89, true);
     $check(!PrivacyOutcome::incomplete($db, 89), 'native outcome can complete only after verified own cleanup');
+    $staffScope(89, true, true);
+    PrivacyOutcome::record($db, 89, true);
+    $check(PrivacyOutcome::incomplete($db, 89), 'resolved CRM and staff rows cannot hide an unfinished authenticated removal attempt');
+    $db->pdo->exec('UPDATE test_appointments_privacy_outcomes SET complete=1 WHERE request_id=89');
+    $check(PrivacyOutcome::incomplete($db, 89), 'stale success independently checks the authenticated attempt marker after CRM cleanup');
     $staffScope(89, false);
     PrivacyOutcome::record($db, 89, true);
     $check(PrivacyOutcome::incomplete($db, 89), 'resolved CRM cleanup cannot mask pending authenticated staff cleanup');

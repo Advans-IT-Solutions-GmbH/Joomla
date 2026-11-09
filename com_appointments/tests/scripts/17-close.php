@@ -207,6 +207,7 @@ try {
     $staff = new \Advans\Component\Appointments\Administrator\Service\PrivacyStaffCleanup($joomlaDb,
         new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) (new JConfig())->secret), $requestId);
     $staff->remember('invitee@example.test', null);
+    $staff->beginAttempt();
     \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, $requestId, false);
     $erased = $store->erase($id, $now, 'privacy_request', privacyCleanup: $cleanup);
     $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $requestId)
@@ -216,6 +217,10 @@ try {
     $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $requestId),
         'Stale successful outcome cannot hide unfinished remote cleanup');
     $queue->run(20, true, $requestId);
+    \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, $requestId, true);
+    $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $requestId),
+        'Resolved CRM cleanup cannot finish an outstanding authenticated removal attempt');
+    $staff->finishAttempt();
     \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, $requestId, true);
     $check(!\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $requestId),
         'Verified own cleanup allows native Complete gate without completing Core automatically');
