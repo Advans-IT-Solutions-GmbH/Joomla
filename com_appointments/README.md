@@ -439,14 +439,20 @@ right is locked and can lift the lock in the devices view. Not covered, stated p
    the access level «Internet calendars», and add both groups to **Users → Options →
    Multi-factor Authentication → Enforce MFA for these user groups**. Never list them under the
    groups that skip MFA; the system check reports that as an error.
-4. Create the **recovery key** in **Internet calendars** as a Super User who is also a member of
-   «Internet calendars internal» (that membership gives the account a key pair; it needs no calendar
-   grant). Sign out and in again with password and second factor first: the key operations need a
-   session unlocked by the password. Its secret is shown once.
+4. Create the **recovery key** in **Internet calendars** as a Super User with an enrolled, approved
+   second factor. Administrative recovery needs neither a calendar grant nor team-group membership.
+   Sign out and in again with password and second factor first: the key operations release the
+   administrator's own key only from that authenticated session. Its secret is shown once.
    Print it **twice together with the site secret** (`$secret` in `configuration.php`) and keep the
    two printouts offline in separate places. The recovery key is never stored, and without it no
    calendar can be created.
 5. Create a calendar, name its owner (the owner gets the manage role) and grant access to users.
+   The owner must belong to a configured internal team group.
+   When selecting your own account without an existing key pair, **Save** releases your first key
+   only from the administrator session's verified password sign-in and completed second factor.
+   Opening the list or form creates no key. A passwordless, remembered or MFA-incomplete session
+   must sign in again with password and an approved second factor. Selecting another owner never
+   initializes that person's key; their own authenticated key session must create it first.
 6. Add a menu item **My calendars** with the access level «Internet calendars». There each user
    adds one device per client and receives the app password and the instructions for that client.
 
@@ -460,8 +466,9 @@ with it; Joomla enforces the second factor at the first sign-in. When the activa
 every user with the permission «Share with external users» receives a mail with a link that
 revokes the access in one step (all grants removed, account blocked, devices cleaned up).
 
-That first password sign-in also creates the user's key pair; a grant becomes usable only after
-it.
+The first password sign-in prepares the user's key pair; an authenticated key action releases it
+only after that session completes the approved second factor. A grant becomes usable only when
+the real key pair and its calendar wrap exist.
 
 #### Options
 

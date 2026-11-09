@@ -249,6 +249,9 @@ Formulas (normative):
   The key is unlocked only inside Joomla's own sign-in (`CMSApplication::login`); no page offers «enter
   your password to unlock». A sign-in without password (passkey, remember-me) leaves it locked: actions that need it answer 423
   with «please sign in with your password».
+  Saving a new administrator calendar owned by the actor releases a missing first user key through
+  this same session gate. List/form GETs do not initialize keys, and selecting another owner never
+  initializes that account's key. The existing real-owner-key requirement remains unchanged.
 - **Nowhere else.** The booking flow, the Scheduler, the privacy plugin and the system check never
   hold a user or calendar key.
 

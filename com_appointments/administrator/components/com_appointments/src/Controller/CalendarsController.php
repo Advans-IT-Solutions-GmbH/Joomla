@@ -386,6 +386,15 @@ class CalendarsController extends BaseController
                 $services->calendars()->update($this->actor(), $id, $data);
                 $saved = $id;
             } else {
+                $ownerId = $data['owner_user_id'] ?? null;
+
+                // Release only the actor's first key through the existing
+                // password and session-MFA gate, never another owner's key.
+                if ((\is_int($ownerId) || (\is_string($ownerId) && ctype_digit($ownerId)))
+                    && (int) $ownerId === $this->actor() && !$services->keys()->hasUserKey($this->actor())) {
+                    $services->keySession()->requireUnlocked()->wipe();
+                }
+
                 $saved = $services->calendars()->create($this->actor(), $data);
                 $this->holdEditId(self::CONTEXT, $saved);
             }
