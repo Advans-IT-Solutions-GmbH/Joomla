@@ -419,6 +419,21 @@ conference, and rebuilds their copy when required. An unreadable or tampered ref
 fails closed. Resolve the reported provider/storage failure and retry native Remove;
 do not delete the reference to make the warning disappear. There is no expiry that
 silently abandons unresolved cleanup and no newly activated cleanup task.
+Retries process at most 200 references, rotating attempted rows behind untouched
+ones even when they fail. An unreadable first batch cannot starve later references.
+
+Before Core pseudonymises an account, **CanRemove** captures its minimal staff scope
+in authenticated-encrypted `#__appointments_privacy_staff`, bound to the Core request
+ID and exact normalized request address. Later **Remove** attempts use that retained
+user ID, not another lookup of the now-cleared account address. Local device/key/grant/
+invitation teardown and ownership release must actually succeed; a successful staff
+teardown does not make an unsearched calendar complete. The completion guard independently
+checks the scope and remaining staff rows, even if an outcome flag says success.
+The encrypted ID remains linkable request/audit metadata needed for subsequent Core
+retries, not anonymous booking data. Include it in the site's request-record retention
+and access policy. Earlier interrupted requests without recoverable staff provenance
+fail closed when their original account can no longer be identified; they need
+operator investigation, not an automatic scope/status migration or a success flag.
 
 `#__appointments_privacy_outcomes` records the request's incomplete/complete callback
 outcome; outstanding cleanup references independently count as incomplete. The bundled
@@ -686,7 +701,8 @@ possible with CalDAV clients.
   and obey the configured audience and external-role limits. A key-holding grant without genuine
   wraps remains pending: only a real key holder or authorised use of the offline recovery key can
   complete it. Administrative privilege never decrypts contents. Each grant is logged and mailed
-  to the owner and managers.
+  to the owner and managers. Revocation preserves the pre-change owner and effective managers
+  as notification recipients, including a removed sole owner; the actor receives no copy.
 
 - **Not protected:** anybody who executes code on the server, which includes a compromised
   extension, the hosting provider and anybody with access to the files: while a key holder's request
@@ -795,7 +811,10 @@ personal keys and changes no setting. It supplements, rather than replaces, cont
 On narrow administrator screens, the access table scrolls horizontally within its calendar card
 so every grant action remains reachable without widening the page. Long page headings use the
 administrator template's native ellipsis; the complete heading remains available to assistive
-technology.
+technology. Native calendar switches also fit their settings column when labels and controls
+share a row, without clipping the control or widening the page. Long calling-code choices in
+Options use Joomla's normal in-flow radio labels, keeping their description below the complete
+choice text rather than overlapping it.
 
 #### Replacing the token feeds
 

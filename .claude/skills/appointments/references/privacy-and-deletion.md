@@ -129,6 +129,14 @@ calendar keys. These references remain linkable operational data, not anonymous 
 Forget a reference only after verified actual teardown/rebuild, never on a zero-match
 retry, acknowledgment, expired timer or unreadable/tampered payload. Do not silently
 activate a Scheduler task for them.
+Retries rotate attempted references within bounded batches, including failed ones;
+never let a permanently failing first page starve later obligations.
+`#__appointments_privacy_staff` captures an authenticated-encrypted request-bound
+staff ID during CanRemove, before Core pseudonymisation. Keep it across null-user
+retries and feature switches; use native revocation/ownership teardown, and independently
+check staff obligations before accepting any success flag. Unknown older interrupted
+scope fails closed, not a fabricated guest success. See the README for retention
+and recovery limits of this still-linkable request metadata.
 
 `#__appointments_privacy_outcomes` plus any outstanding cleanup reference govern the
 bundled `content/appointmentsprivacy` native before-save veto for Core Complete.

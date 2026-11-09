@@ -1037,6 +1037,13 @@ final class GrantService implements GrantServiceInterface
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
             }
 
+            $grant->notification_recipient_ids = [(int) $calendar->owner_user_id];
+            foreach ($this->grantsOf($calendarId) as $recipient) {
+                if ($recipient->effective && $recipient->role === CalendarRole::Manage->value) {
+                    $grant->notification_recipient_ids[] = (int) $recipient->user_id;
+                }
+            }
+
             $db = $this->services->db();
             $db->setQuery(
                 'DELETE FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE calendar_id = ' . $calendarId . ' AND user_id = ' . $granteeUserId
@@ -1068,7 +1075,7 @@ final class GrantService implements GrantServiceInterface
                 'details' => ['reason' => 'owner_revoked'],
             ]);
         }
-        $this->mailGrantChanged($calendarId, $granteeUserId, null, $actorUserId);
+        $this->mailGrantChanged($calendarId, $granteeUserId, null, $actorUserId, $grant->notification_recipient_ids);
     }
 
     public function suspendAllForUser(int $userId, string $reason): int
@@ -1408,10 +1415,10 @@ final class GrantService implements GrantServiceInterface
         }
     }
 
-    private function mailGrantChanged(int $calendarId, int $granteeUserId, ?CalendarRole $role, int $actorUserId): void
+    private function mailGrantChanged(int $calendarId, int $granteeUserId, ?CalendarRole $role, int $actorUserId, array $priorRecipientUserIds = []): void
     {
         try {
-            $this->services->mailer()->grantChanged($calendarId, $granteeUserId, self::roleLabelKey($role), $actorUserId);
+            $this->services->mailer()->grantChanged($calendarId, $granteeUserId, self::roleLabelKey($role), $actorUserId, $priorRecipientUserIds);
         } catch (\Throwable) {
             // A mail failure never undoes a grant decision; the log holds it.
         }

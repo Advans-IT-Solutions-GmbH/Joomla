@@ -51,6 +51,7 @@ defined('_JEXEC') or die;
 final class TeamPrivacy
 {
     private const LOG_ROWS = 5000;
+    private bool $staffRemoved = false;
 
     /**
      * The end of this request's time budget (microtime), shared by search and removal.
@@ -396,8 +397,9 @@ final class TeamPrivacy
      * Delete the entries with this address and the staff data of the account.
      * Messages are queued for the administrator; false means incomplete.
      */
-    public function remove(string $email, ?User $user): bool
+    public function remove(string $email, ?User $user, ?int $staffUserId = null): bool
     {
+        $this->staffRemoved = false;
         if ($this->services === null) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED'), 'warning');
 
@@ -436,7 +438,7 @@ final class TeamPrivacy
             Log::add('Team calendars: the privacy removal of calendar entries failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
         }
 
-        $userId = $user !== null ? (int) $user->id : 0;
+        $userId = $staffUserId ?? ($user !== null ? (int) $user->id : 0);
 
         if ($userId > 0) {
             try {
@@ -445,6 +447,7 @@ final class TeamPrivacy
                     ->where($db->quoteName('user_id') . ' = ' . $userId))->execute();
                 $this->services->cleanup()->onUserDeleted($userId);
                 $staff = true;
+                $this->staffRemoved = true;
             } catch (\Throwable $e) {
                 $failed++;
                 Log::add('Team calendars: the privacy removal of staff data failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
@@ -472,6 +475,11 @@ final class TeamPrivacy
         ]);
 
         return $failed === 0 && $unsearched === [];
+    }
+
+    public function staffRemoved(): bool
+    {
+        return $this->staffRemoved;
     }
 
     /**

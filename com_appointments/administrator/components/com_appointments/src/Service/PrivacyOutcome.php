@@ -23,7 +23,7 @@ final class PrivacyOutcome
         $pending = (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName('#__appointments_privacy_cleanup')
             . ' WHERE request_id = ' . $requestId)->loadResult();
         $pending += self::pendingCrm($db, $requestId);
-        $value = $complete && $pending === 0 ? 1 : 0;
+        $value = $complete && $pending === 0 && !PrivacyStaffCleanup::pending($db, $requestId, true) ? 1 : 0;
         $sql = 'INSERT INTO ' . $db->quoteName('#__appointments_privacy_outcomes')
             . ' (request_id, complete) VALUES (' . $requestId . ', ' . $value . ')'
             . ' ON DUPLICATE KEY UPDATE complete = VALUES(complete)';
@@ -32,8 +32,13 @@ final class PrivacyOutcome
 
     public static function incomplete(DatabaseInterface $db, int $requestId): bool
     {
-        return (string) $db->setQuery('SELECT complete FROM ' . $db->quoteName('#__appointments_privacy_outcomes')
-            . ' WHERE request_id = ' . $requestId)->loadResult() === '0'
+        if ($requestId < 1) {
+            return false;
+        }
+        $outcome = (string) $db->setQuery('SELECT complete FROM ' . $db->quoteName('#__appointments_privacy_outcomes')
+            . ' WHERE request_id = ' . $requestId)->loadResult();
+        return $outcome === '0'
+            || PrivacyStaffCleanup::pending($db, $requestId, $outcome !== '')
             || (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName('#__appointments_privacy_cleanup')
                 . ' WHERE request_id = ' . $requestId)->loadResult() > 0
             || self::pendingCrm($db, $requestId) > 0;

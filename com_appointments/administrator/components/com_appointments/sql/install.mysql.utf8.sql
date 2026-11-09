@@ -30,7 +30,14 @@ CREATE TABLE IF NOT EXISTS `#__appointments_privacy_cleanup` (
     `cleanup_key` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     `guest` TINYINT NOT NULL,
     `payload` TEXT NOT NULL,
-    PRIMARY KEY (`request_id`, `booking_id`, `cleanup_key`)
+    `retry_order` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (`request_id`, `booking_id`, `cleanup_key`),
+    KEY `idx_privacy_retry` (`request_id`, `retry_order`, `booking_id`, `cleanup_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `#__appointments_privacy_staff` (
+    `request_id` INT UNSIGNED NOT NULL PRIMARY KEY,
+    `payload` TEXT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `#__appointments_schedules` (

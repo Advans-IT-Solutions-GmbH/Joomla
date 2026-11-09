@@ -41,6 +41,8 @@ try {
     $check($admin->status === 200 && $heading !== null
         && trim($heading->textContent) === 'Appointments: Options',
         'Native component Options uses its translated runtime heading, not a raw generated key');
+    $check((new DOMXPath($document))->query('//fieldset[@id="jform_phone_country_choice"]//label[contains(@class,"form-check-label")]')->length === 2,
+        'Long calling-code choices use native in-flow radio labels rather than fixed-height switcher labels');
     foreach (['schedule', 'blocked'] as $formView) {
         $html = $admin->request('/administrator/index.php?option=com_appointments&task=' . $formView . '.add');
         $document = new DOMDocument();
@@ -141,6 +143,10 @@ try {
     @$document->loadHTML($dashboard);
     $check((new DOMXPath($document))->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
         'Administrator navigation loads its local responsive styles outside event-type forms too');
+    $styles = $admin->request('/media/com_appointments/css/admin.css');
+    $check($admin->status === 200
+        && preg_match('~#calendar-form\s+\.switcher\s*\{[^}]*max-inline-size:\s*100%~', $styles) === 1,
+        'The installed stylesheet bounds native calendar switchers to their settings column without clipping');
     $componentParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
     try {
         foreach ([0, 1] as $enabled) {

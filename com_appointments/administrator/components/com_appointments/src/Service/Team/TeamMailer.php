@@ -145,7 +145,7 @@ final class TeamMailer implements TeamMailerInterface
             '{revoke_url}' => $revokeUrl,
         ], [$revokeUrl => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_REVOKE']);
     }
-    public function grantChanged(int $calendarId, int $granteeUserId, string $roleLabelKey, int $actorUserId): void
+    public function grantChanged(int $calendarId, int $granteeUserId, string $roleLabelKey, int $actorUserId, array $priorRecipientUserIds = []): void
     {
         $calendar = $this->services->calendars()->get($calendarId);
 
@@ -155,7 +155,7 @@ final class TeamMailer implements TeamMailerInterface
 
         // Owner and managers, so that no grant, a self-grant of an administrator included,
         // happens unseen. The actor knows what they did and gets no copy.
-        $ids = [(int) $calendar->owner_user_id];
+        $ids = [...$priorRecipientUserIds, (int) $calendar->owner_user_id];
 
         foreach ($this->services->grants()->grantsOf($calendarId) as $grant) {
             if ((int) $grant->role === CalendarRole::Manage->value

@@ -92,8 +92,10 @@ try {
         if ($expected) {
             $css = $styles['plg_system_privacyrequests.native-review']->getOption('content');
             privacyAssert(str_contains($css, '@media (max-width: 991.98px)')
-                && substr_count($css, 'body.com_privacy.view-request:has([data-privacyrequests-review])') === 17,
+                && substr_count($css, 'body.com_privacy.view-request:has([data-privacyrequests-review])') === 18,
                 'Every responsive selector requires the adapter marker, including the measured 768px boundary');
+            privacyAssert(str_contains($css, 'th:first-child { inline-size: 45% !important; }'),
+                'Narrow Statistics columns override the native 15% width instead of stacking labels letter by letter');
             privacyAssert(!preg_match('/overflow(?:-x)?\s*:\s*hidden|display\s*:\s*none|visibility\s*:\s*hidden/i', $css),
                 'Responsive containment does not hide native content or controls');
             $plain = '<form id="item-form"><button type="submit">Native control</button></form>';
@@ -121,4 +123,84 @@ try {
         $application->getInput()->set('id', $id);
     }
     $plugin->setApplication($app);
+}
+
+// Native route admission only: do not dispatch Core Remove or alter its status.
+$savedTask = $admin->getInput()->get('task', null, 'raw');
+$savedId = $admin->getInput()->get('id', null, 'raw');
+$savedOption = $admin->getInput()->get('option', null, 'raw');
+$savedForm = $admin->getInput()->post->get('jform', [], 'array');
+$savedQueryForm = $admin->getInput()->get('jform', null, 'raw');
+$savedHeader = $app->getInput()->server->get('HTTP_X_CSRF_TOKEN', '', 'raw');
+$savedIdentity = $admin->getIdentity();
+try {
+    $app->getInput()->server->set('HTTP_X_CSRF_TOKEN', \Joomla\CMS\Session\Session::getFormToken());
+    $admin->loadIdentity($actor);
+    $admin->getInput()->set('option', 'com_privacy');
+    $admin->getInput()->set('task', 'request.remove');
+    $admin->getInput()->set('id', (int) $receipt['id']);
+    $plugin->setApplication($admin);
+    $db->setQuery('INSERT INTO #__privacy_guest_outcomes (request_id,reviewed_result) VALUES ('
+        . (int) $receipt['id'] . ',0)')->execute();
+    foreach ([[], ['privacy_remediation_reviewed' => '0']] as $form) {
+        $admin->getInput()->set('jform', ['privacy_remediation_reviewed' => '1']);
+        $admin->getInput()->post->set('jform', $form);
+        $refused = false;
+        try {
+            $plugin->onAfterRoute();
+        } catch (RuntimeException $error) {
+            $refused = $error->getCode() === 409
+                && $error->getMessage() === \Joomla\CMS\Language\Text::_('PLG_SYSTEM_PRIVACYREQUESTS_REMEDIATION_REQUIRED');
+        }
+        privacyAssert($refused, 'Missing/false POST remediation acknowledgement cannot be supplied through the query input');
+    }
+    $admin->getInput()->post->set('jform', ['privacy_remediation_reviewed' => '1']);
+    $plugin->onAfterRoute();
+    $plugin->onBeforeRespond();
+    privacyAssert((int) $db->setQuery('SELECT reviewed_result FROM #__privacy_guest_outcomes WHERE request_id='
+        . (int) $receipt['id'])->loadResult() === 0 && $read() === $renewed,
+        'Genuine POST acknowledgement admits only retry: no dispatched removal, success, or Core status transition is invented');
+} finally {
+    $plugin->onBeforeRespond();
+    $db->setQuery('DELETE FROM #__privacy_guest_outcomes WHERE request_id=' . (int) $receipt['id'])->execute();
+    $admin->loadIdentity($savedIdentity);
+    $admin->getInput()->set('task', $savedTask);
+    $admin->getInput()->set('id', $savedId);
+    $admin->getInput()->set('option', $savedOption);
+    $admin->getInput()->set('jform', $savedQueryForm);
+    $admin->getInput()->post->set('jform', $savedForm);
+    $app->getInput()->server->set('HTTP_X_CSRF_TOKEN', $savedHeader);
+    $plugin->setApplication($app);
+}
+
+$admission = new \Advans\Plugin\System\PrivacyRequests\Service\Admission($db, (string) $app->get('secret'));
+$bucketKeys = [];
+$bucketTag = bin2hex(random_bytes(8));
+$now = time();
+$db->setQuery('CREATE TEMPORARY TABLE ' . $db->quoteName('#__privacy_guest_attempts')
+    . ' (subject_hash CHAR(64) PRIMARY KEY, attempts INTEGER NOT NULL, window_start BIGINT NOT NULL)')->execute();
+try {
+    $values = [];
+    for ($i = 0; $i < 101; $i++) {
+        $bucketKeys[] = $key = $admission->hash('expiry-test', $bucketTag . ':' . $i);
+        $values[] = '(' . $db->quote($key) . ',1,' . ($now - 3600) . ')';
+    }
+    $db->setQuery('INSERT INTO #__privacy_guest_attempts (subject_hash,attempts,window_start) VALUES '
+        . implode(',', $values))->execute();
+    $expiredKeys = implode(',', array_map(static fn (string $key): string => $db->quote($key), $bucketKeys));
+    $ip = 'expiry-fixture-' . $bucketTag;
+    $address = 'expiry-' . $bucketTag . '@example.test';
+    $bucketKeys[] = $admission->hash('request:ip', $ip);
+    $bucketKeys[] = $admission->hash('request:email', $address);
+    privacyAssert($admission->reserve('request', $address, $ip, $now), 'Native atomic admission remains available with expired buckets');
+    privacyAssert((int) $db->setQuery('SELECT COUNT(*) FROM #__privacy_guest_attempts WHERE subject_hash IN ('
+        . $expiredKeys . ')')->loadResult() >= 1, 'One submission cannot purge more than the bounded 100 expired buckets');
+    $admission->reserve('request', $address, $ip, $now);
+    privacyAssert((int) $db->setQuery('SELECT COUNT(*) FROM #__privacy_guest_attempts WHERE subject_hash IN ('
+        . $expiredKeys . ')')->loadResult() === 0, 'Later submissions can finish the bounded expiry backlog');
+} finally {
+    $drop = strtolower($db->getServerType()) === 'postgresql'
+        ? 'DROP TABLE ' . $db->quoteName('pg_temp.' . $db->replacePrefix('#__privacy_guest_attempts'))
+        : 'DROP TEMPORARY TABLE ' . $db->quoteName('#__privacy_guest_attempts');
+    $db->setQuery($drop)->execute();
 }

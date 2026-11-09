@@ -162,7 +162,7 @@ final class TeamSuite
     public function run(): bool
     {
         echo "=== Team Calendar Tests ===\n\n";
-        $parts = glob(__DIR__ . '/team-*.php') ?: [];
+        $parts = glob(__DIR__ . '/team-[a-z]-*.php') ?: [];
         sort($parts);
 
         if ($parts === []) {

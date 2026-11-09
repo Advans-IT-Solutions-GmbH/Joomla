@@ -127,6 +127,9 @@ try {
     $cleanup = new \Advans\Component\Appointments\Administrator\Service\PrivacyCleanup($joomlaDb,
         new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) (new JConfig())->secret),
         $requestId, 'invitee@example.test');
+    $staff = new \Advans\Component\Appointments\Administrator\Service\PrivacyStaffCleanup($joomlaDb,
+        new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) (new JConfig())->secret), $requestId);
+    $staff->remember('invitee@example.test', null);
     \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, $requestId, false);
     $erased = $store->erase($id, $now, 'privacy_request', privacyCleanup: $cleanup);
     $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $requestId)
@@ -152,6 +155,7 @@ try {
     }
     $db->query("DELETE FROM {$prefix}appointments_privacy_outcomes WHERE request_id={$requestId}");
     $db->query("DELETE FROM {$prefix}appointments_privacy_cleanup WHERE request_id={$requestId}");
+    $db->query("DELETE FROM {$prefix}appointments_privacy_staff WHERE request_id={$requestId}");
     $fixture->cleanup();
 }
 exit($failed > 0 ? 1 : 0);

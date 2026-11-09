@@ -79,6 +79,7 @@ namespace {
                 state INTEGER, custom_fields TEXT, guest_emails TEXT, conference_url TEXT)');
             $this->pdo->exec('CREATE TABLE test_appointments_privacy_cleanup (request_id INTEGER)');
             $this->pdo->exec('CREATE TABLE test_appointments_privacy_outcomes (request_id INTEGER PRIMARY KEY, complete INTEGER)');
+            $this->pdo->exec('CREATE TABLE test_appointments_privacy_staff (request_id INTEGER PRIMARY KEY, payload TEXT)');
         }
         public function getPrefix(): string { return 'test_'; }
         public function quoteName(string $name): string { return '`' . str_replace('#__', 'test_', $name) . '`'; }
@@ -103,7 +104,8 @@ namespace {
                 $this->locked = false;
                 return 1;
             }
-            return $this->pdo->query($this->sql)->fetchColumn();
+            $value = $this->pdo->query($this->sql)->fetchColumn();
+            return $value === false ? null : $value;
         }
         public function transactionStart(): void { $this->pdo->beginTransaction(); }
         public function transactionCommit(): void
@@ -149,6 +151,16 @@ namespace {
         'close_questions' => '{"7":"cf_question"}', 'close_delete_activity' => 1]);
     ComponentHelper::$params = $params;
     $db = new MemoryDatabase();
+    $staffScope = static function (int $id, bool $complete) use ($db): void {
+        $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider(
+            (string) \Joomla\CMS\Factory::getApplication()->get('secret'));
+        $nonce = random_bytes(SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES);
+        $payload = base64_encode($nonce . sodium_crypto_aead_xchacha20poly1305_ietf_encrypt(
+            json_encode(['user_id' => 0, 'address' => str_repeat('a', 64), 'complete' => $complete], JSON_THROW_ON_ERROR),
+            'appointments-privacy-staff:' . $id, $nonce, $keys->key('privacy-staff')));
+        $stmt = $db->pdo->prepare('INSERT OR REPLACE INTO test_appointments_privacy_staff VALUES (?,?)');
+        $stmt->execute([$id, $payload]);
+    };
     $requests = [];
     $mode = 'existing';
     $activity = [];
@@ -289,6 +301,7 @@ namespace {
     $check($state(4)['activity_id'] === 'acti_fixture' && $state(4)['state'] === 'done', 'verified reconciliation resumes via PUT without POST');
     $params->values['close_delete_activity'] = 0;
     $row = $mutate($row, ['sequence' => 1, 'anonymised_utc' => '2027-01-01 00:00:00'], true, 89);
+    $staffScope(89, true);
     PrivacyOutcome::record($db, 89, true);
     $check(PrivacyOutcome::incomplete($db, 89), 'native Complete gate rejects a success flag while own remote cleanup is pending');
     $db->pdo->exec('UPDATE test_appointments_privacy_outcomes SET complete=1 WHERE request_id=89');
@@ -301,6 +314,17 @@ namespace {
         'manually erased own Activity is verified without automated deletion approval or any writes');
     PrivacyOutcome::record($db, 89, true);
     $check(!PrivacyOutcome::incomplete($db, 89), 'native outcome can complete only after verified own cleanup');
+    $staffScope(89, false);
+    PrivacyOutcome::record($db, 89, true);
+    $check(PrivacyOutcome::incomplete($db, 89), 'resolved CRM cleanup cannot mask pending authenticated staff cleanup');
+    $db->pdo->exec('UPDATE test_appointments_privacy_outcomes SET complete=1 WHERE request_id=89');
+    $check(PrivacyOutcome::incomplete($db, 89), 'stale successful outcome independently checks both CRM and staff provenance');
+    $staffScope(89, true);
+    PrivacyOutcome::record($db, 89, true);
+    $check(!PrivacyOutcome::incomplete($db, 89), 'both independently resolved scopes allow the formal outcome');
+    $db->pdo->exec('DELETE FROM test_appointments_privacy_staff WHERE request_id=89');
+    $check(PrivacyOutcome::incomplete($db, 89), 'missing required staff provenance fails closed after CRM cleanup succeeds');
+    $staffScope(89, true);
 
     $params->values['close_delete_activity'] = 1;
     $mode = 'new';

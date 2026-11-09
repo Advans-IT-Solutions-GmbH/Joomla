@@ -20,7 +20,7 @@
         <field name="privacy_anchor" type="text" label="COM_APPOINTMENTS_CONFIG_PRIVACY_ANCHOR" description="COM_APPOINTMENTS_CONFIG_PRIVACY_ANCHOR_DESC" filter="cmd" maxlength="64" showon="privacy_menuitem!:" />
         <field name="privacy_url" type="url" label="COM_APPOINTMENTS_CONFIG_PRIVACY_URL" description="COM_APPOINTMENTS_CONFIG_PRIVACY_URL_DESC" filter="url" relative="true" />
         <field name="phone_default_country" type="text" label="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY" description="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_DESC" filter="cmd" maxlength="3" pattern="[0-9]{0,3}" />
-        <field name="phone_country_choice" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE" description="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE_DESC" default="1" filter="integer" validate="options">
+        <field name="phone_country_choice" type="radio" layout="joomla.form.field.radio.buttons" label="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE" description="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE_DESC" default="1" filter="integer" validate="options">
             <option value="0">COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE_FIXED</option>
             <option value="1">COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE_FREE</option>
         </field>
