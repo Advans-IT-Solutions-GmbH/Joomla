@@ -346,7 +346,11 @@ BLOCKED, never PASS. A source lint, a package check or an HTTP render is not a s
   deliberately, nothing supersedes it, and it may carry its own inputs (OSMap's `j2commerce6_ref`).
   Release preparation has no concurrency group. Publication is serialized per extension without
   cancelling an active publication; GitHub may replace an older pending run. Every
-  suite keeps its own job on every lane, and a pull request runs the same full matrix as `main`.
+  suite keeps its own job on every lane, and a pull request to `main` or either temporarily
+  allowlisted dependent-PR base runs the same full matrix as `main`. The temporary bases are
+  `advansit-superuser-calendar-administration` and `advansit-guest-privacy-requests`; remove both
+  after that PR stack is complete to restore the normal main-only policy. Push triggers remain
+  main-only; path filters, permissions, concurrency and matrix jobs are unchanged.
 - **Jobs per extension:** `Build Package`; `PHP Syntax Check` (`php -l` on every PHP file of the
   extension on the declared minimum PHP 8.1; AJAX Forms does this in `Validate Package`); `Language Files`
   (`php shared/tests/lang-lint.php <extension dir>`: Joomla INI parsing, unescaped double quotes,
@@ -392,10 +396,21 @@ BLOCKED, never PASS. A source lint, a package check or an HTTP render is not a s
   per job and suite/platform matrices are unchanged. Intermediate package artifacts expire after
   one day, test-log artifacts after at most three days.
 - **Required check:** only `collect-results.yml` produces the required status check
-  `Collect Results`. It runs on every pull request to `main`, reads the `pull_request.paths` of every
-  workflow, matches them against the files changed by the pull request, and includes unconditional
-  PR workflows such as Security Scan even on documentation-only PRs. It waits for those runs
-  on the PR head and requires `success`; missing, cancelled and skipped runs fail closed.
+  `Collect Results`. It runs on every pull request to `main` or either temporarily allowlisted
+  dependent-PR base, reads the `pull_request.paths` of every workflow, matches them against the
+  files changed by the pull request, and includes unconditional PR workflows such as Security Scan
+  even on documentation-only PRs. Every PR workflow must explicitly use the exact three-branch
+  allowlist; an absent, malformed, wildcard or otherwise changed branch filter fails closed rather
+  than silently omitting an expected check. The collector uses the event's actual base ref and
+  requires the exact PR/base ref/SHA/head SHA/merge SHA in each run's event-derived `display_title`.
+  If GitHub supplies non-empty PR associations, they must also identify that exact PR/base/head;
+  a foreign association cannot be overridden by a matching title. This title fallback is limited to
+  an explicitly empty `pull_requests` array, as can occur for fork-origin PR runs; missing or
+  malformed association data fails closed. Check-run discovery uses the source `HEAD_SHA`, where
+  GitHub associates PR check suites, not the synthetic merge SHA. The default `actions/checkout`
+  uses the pull request's synthetic merge ref; the job summary reports the event's base, head and
+  merge SHAs without claiming that the check-suite SHA independently proves the tested tree.
+  It requires `success`; missing, failed, cancelled and skipped runs fail closed.
   Security Scan must also have successfully executed its expected scanner jobs.
   **After re-running a failed workflow,
   re-run `Collect Results` as well.** `.github/scripts/collect-results.sh` hands run lists to `jq`
@@ -410,8 +425,9 @@ BLOCKED, never PASS. A source lint, a package check or an HTTP render is not a s
   that looks like a passing CI and is none. Before stating anything about the CI of such a pull
   request, check `gh pr view <n> --json mergeable` first and rebase the branch onto `main` if it is
   `CONFLICTING`; cross-check the number of checks, not only their colour.
-- **Security Scan** (`security.yml`) runs on push and pull request to `main` and manually: Gitleaks is
-  blocking; Semgrep and zizmor are report-only.
+- **Security Scan** (`security.yml`) runs on push to `main`, pull requests to `main` and the two
+  temporary dependent-PR bases, and manually: Gitleaks is blocking; Semgrep and zizmor are
+  report-only.
 - **Infrastructure Tests:** `.github/scripts/test-publish-release.py` and
   `.github/scripts/test-collect-results.sh` run offline publication and required-gate fixtures
   without release API writes. The shell fixture runner requires Bash, jq and Mike Farah's yq.
