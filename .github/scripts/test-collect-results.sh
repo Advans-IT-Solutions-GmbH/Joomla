@@ -73,7 +73,8 @@ check() {
 }
 
 for base in main advansit-superuser-calendar-administration advansit-guest-privacy-requests; do
-    export BASE_REF="$base" RUNS="$(run_json success)"
+    export BASE_REF="$base"
+    export RUNS="$(run_json success)"
     check "documentation requires Security Scan for base $base" pass
 done
 export BASE_REF=main
@@ -95,7 +96,8 @@ export JOBS="$SAVED_JOBS"
 export FILES='{"filename":"extension/src.php","previous_filename":null}'
 check 'matching extension run is also required' fail
 for base in main advansit-superuser-calendar-administration advansit-guest-privacy-requests; do
-    export BASE_REF="$base" RUNS="$(run_json_with_extension)"
+    export BASE_REF="$base"
+    export RUNS="$(run_json_with_extension)"
     check "matching extension run succeeds for base $base" pass
 done
 export BASE_REF=main
