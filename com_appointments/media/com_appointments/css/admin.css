@@ -5,6 +5,17 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+/* Let Atum's existing title ellipsis work without shrinking its logo. */
+body.com_appointments #header .header-title,
+body.com_appointments #header .header-title > .d-flex,
+body.com_appointments #header .container-title {
+    min-inline-size: 0;
+}
+
+body.com_appointments #header .header-title > .d-flex:has(.logo) {
+    flex-shrink: 0;
+}
+
 /* Focus and accordion reflow must not start competing smooth-scroll animations. */
 html:has(#eventtype-form) {
     scroll-behavior: auto;

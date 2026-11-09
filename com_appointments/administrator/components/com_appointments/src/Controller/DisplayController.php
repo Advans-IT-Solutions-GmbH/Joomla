@@ -100,6 +100,8 @@ class DisplayController extends BaseController
             }
         }
 
+        $this->app->getDocument()->getWebAssetManager()->useStyle('com_appointments.admin');
+
         return parent::display($cachable, $urlparams);
     }
 }
