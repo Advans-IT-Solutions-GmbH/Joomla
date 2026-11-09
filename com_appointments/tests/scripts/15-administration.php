@@ -41,6 +41,8 @@ try {
     $check($admin->status === 200 && $heading !== null
         && trim($heading->textContent) === 'Appointments: Options',
         'Native component Options uses its translated runtime heading, not a raw generated key');
+    $check((new DOMXPath($document))->query('//fieldset[@id="jform_phone_country_choice"]//label[contains(@class,"form-check-label")]')->length === 2,
+        'Long calling-code choices use native in-flow radio labels rather than fixed-height switcher labels');
     foreach (['schedule', 'blocked'] as $formView) {
         $html = $admin->request('/administrator/index.php?option=com_appointments&task=' . $formView . '.add');
         $document = new DOMDocument();
