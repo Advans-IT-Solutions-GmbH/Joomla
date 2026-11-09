@@ -1,5 +1,112 @@
 <?php
 
+function closePhpReadiness(): array
+{
+    $ini = php_ini_loaded_file();
+    $scanned = php_ini_scanned_files();
+    $files = $scanned === false || trim($scanned) === '' ? [] : preg_split('/,\s*/', trim($scanned));
+    $hashes = [];
+    foreach ($files as $file) {
+        $hash = hash_file('sha256', $file);
+        if ($hash === false) {
+            throw new RuntimeException('Cannot fingerprint a scanned PHP configuration file.');
+        }
+        $hashes[$file] = $hash;
+    }
+    $loadedHash = $ini === false ? null : hash_file('sha256', $ini);
+    if ($loadedHash === false) {
+        throw new RuntimeException('Cannot fingerprint the loaded PHP configuration file.');
+    }
+    return ['version' => PHP_VERSION, 'ini' => $ini, 'ini_sha256' => $loadedHash,
+        'scanned_sha256' => hash('sha256', json_encode([$scanned, $hashes], JSON_THROW_ON_ERROR))];
+}
+
+function closePhpCommand(): array
+{
+    $ini = php_ini_loaded_file();
+    return array_merge([PHP_BINARY], $ini === false ? ['-n'] : ['-c', $ini], [__FILE__]);
+}
+
+function closeAssertChildReadiness($pipe): void
+{
+    stream_set_blocking($pipe, false);
+    $line = '';
+    $deadline = microtime(true) + 5;
+    do {
+        $part = fgetc($pipe);
+        if ($part !== false) {
+            $line .= $part;
+            if ($part === "\n") {
+                if (json_decode($line, true, 16, JSON_THROW_ON_ERROR) !== closePhpReadiness()) {
+                    throw new RuntimeException('Child PHP configuration does not match the parent.');
+                }
+                stream_set_blocking($pipe, true);
+                return;
+            }
+        } elseif (feof($pipe)) {
+            throw new RuntimeException('Child exited before PHP configuration readiness.');
+        } else {
+            usleep(10000);
+        }
+    } while (microtime(true) < $deadline && strlen($line) < 65536);
+    throw new RuntimeException('Child did not report PHP configuration readiness.');
+}
+
+function closePhpSelfCheck(): void
+{
+    $differentIni = tempnam(sys_get_temp_dir(), 'appointments-close-ini-');
+    if ($differentIni === false) {
+        throw new RuntimeException('Cannot create the negative PHP configuration fixture.');
+    }
+    try {
+        if (file_put_contents($differentIni, "; Deliberately different test configuration.\n") === false) {
+            throw new RuntimeException('Cannot write the negative PHP configuration fixture.');
+        }
+        foreach ([false, true] as $different) {
+            $command = $different ? [PHP_BINARY, '-c', $differentIni, __FILE__] : closePhpCommand();
+            $process = proc_open(array_merge($command, ['--php-readiness']),
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, getenv());
+            if (!is_resource($process)) {
+                throw new RuntimeException('PHP readiness self-check process did not start.');
+            }
+            $mismatch = false;
+            try {
+                fclose($pipes[0]);
+                try {
+                    closeAssertChildReadiness($pipes[1]);
+                } catch (RuntimeException $error) {
+                    if ($error->getMessage() !== 'Child PHP configuration does not match the parent.') {
+                        throw $error;
+                    }
+                    $mismatch = true;
+                }
+            } finally {
+                fclose($pipes[1]);
+                fclose($pipes[2]);
+                $exit = proc_close($process);
+            }
+            if ($mismatch !== $different || $exit !== 0) {
+                throw new RuntimeException('PHP readiness self-check did not detect the expected configuration.');
+            }
+        }
+    } finally {
+        unlink($differentIni);
+    }
+}
+
+if (in_array($argv[1] ?? '', ['--php-readiness', '--race-erase'], true)) {
+    echo json_encode(closePhpReadiness(), JSON_THROW_ON_ERROR) . "\n";
+    flush();
+    if ($argv[1] === '--php-readiness') {
+        exit(0);
+    }
+}
+if (($argv[1] ?? '') === '--self-check-php') {
+    closePhpSelfCheck();
+    echo "PASS pinned PHP configuration and different-ini negative control\n";
+    exit(0);
+}
+
 if (($argv[1] ?? '') === '--race-erase') {
     try {
         require __DIR__ . '/appointments-joomla.php';
@@ -47,6 +154,7 @@ if (($argv[1] ?? '') === '--race-erase') {
     }
 }
 
+closePhpSelfCheck();
 require __DIR__ . '/appointments-fixtures.php';
 $fixture = new AppointmentsFixture('close');
 $db = $fixture->db;
@@ -95,12 +203,14 @@ $transport = static function (string $method, string $path, ?array $payload) use
     if ($method === 'POST' && $path === '/api/v1/activity/custom/') {
         if ($raceId > 0) {
             $raceSignal = tempnam(sys_get_temp_dir(), 'appointments-close-race-');
-            $raceProcess = proc_open([PHP_BINARY, __FILE__, '--race-erase', (string) $raceId, $raceSignal, (string) $fixture->host],
-                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $racePipes);
+            $raceProcess = proc_open(array_merge(closePhpCommand(),
+                ['--race-erase', (string) $raceId, $raceSignal, (string) $fixture->host]),
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $racePipes, null, getenv());
             if (!is_resource($raceProcess)) {
                 throw new RuntimeException('The canonical race process did not start.');
             }
             fclose($racePipes[0]);
+            closeAssertChildReadiness($racePipes[1]);
             $deadline = microtime(true) + 10;
             do {
                 clearstatcache(true, $raceSignal);
@@ -277,6 +387,13 @@ try {
     $check(!$queue->hasPendingErasure($id) && $activity === [] && $creates === 3,
         'Post-race worker deletes only the saved own Activity without another create');
 } catch (Throwable $e) {
+    if (in_array($e->getMessage(), [
+        'Child PHP configuration does not match the parent.',
+        'Child exited before PHP configuration readiness.',
+        'Child did not report PHP configuration readiness.',
+    ], true)) {
+        echo $e->getMessage() . "\n";
+    }
     $check(false, 'Installed Close mock failed: ' . get_class($e) . ' in ' . basename($e->getFile()) . ' at line ' . $e->getLine());
 } finally {
     if (is_resource($raceProcess)) {
