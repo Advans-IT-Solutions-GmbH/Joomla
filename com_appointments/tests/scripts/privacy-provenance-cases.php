@@ -151,7 +151,7 @@ try {
     \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, (int) $interrupted->id, true);
     $joomlaDb->setQuery('UPDATE #__appointments_privacy_outcomes SET complete=1 WHERE request_id=' . (int) $interrupted->id)->execute();
     $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
-        'A forged success cannot replace the missing authenticated removal attempt');
+        'A forged success cannot replace an unfinished authenticated removal attempt');
     $firstAttempt->beginAttempt();
     \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, (int) $interrupted->id, true);
     $joomlaDb->setQuery('DELETE FROM #__appointments_privacy_outcomes WHERE request_id=' . (int) $interrupted->id)->execute();
@@ -170,6 +170,23 @@ try {
         ['subject' => $interrupted, 'user' => null]));
     $check(!\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
         'A genuinely successful current native retry clears the interrupted-attempt obligation');
+    $privacyTrigger = $joomlaDb->getPrefix() . 'privacy_retry_outcome_hold';
+    $triggerDdl('CREATE TRIGGER ' . $joomlaDb->quoteName($privacyTrigger)
+        . ' BEFORE UPDATE ON #__appointments_privacy_outcomes FOR EACH ROW BEGIN IF NEW.request_id = ' . (int) $interrupted->id
+        . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected retry outcome write failure'; END IF; END");
+    $check($assertIncomplete(static function () use ($plugin, $interrupted): void {
+        $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
+            ['subject' => $interrupted, 'user' => null]));
+    }) && (int) $joomlaDb->setQuery('SELECT complete FROM #__appointments_privacy_outcomes WHERE request_id='
+            . (int) $interrupted->id)->loadResult() === 1
+        && \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
+        'A retry whose outcome reset fails after an earlier success cannot reuse the stale success marker to permit completion');
+    $triggerDdl('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger));
+    $privacyTrigger = null;
+    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
+        ['subject' => $interrupted, 'user' => null]));
+    $check(!\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
+        'A repaired successful retry after the failed outcome reset clears the obligation again');
 
     $original = $joomlaDb->setQuery('SELECT payload FROM #__appointments_privacy_staff WHERE request_id=' . $id)->loadResult();
     $foreign = $newPrivacyFixture('foreign-' . bin2hex(random_bytes(6)) . '@example.test');
