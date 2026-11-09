@@ -28,6 +28,9 @@ if (in_array($op, ['snapshot', 'expire'], true) && !str_ends_with($email, '@exam
 }
 $out = [];
 switch ($op) {
+    case 'listener-order':
+        require __DIR__ . '/listener-order.php';
+        break;
     case 'operator-admin-language-get':
     case 'operator-admin-language-set':
     case 'operator-notification':
@@ -428,9 +431,13 @@ switch ($op) {
         $invitee = ['invitee_name' => 'Synthetic Invitee', 'invitee_email' => $guest ? 'other@example.test' : $email,
             'invitee_timezone' => 'UTC', 'invitee_language' => 'en-GB', 'guest_emails' => $guest ? $email . "\nbystander@example.test" : null,
             'conference_provider' => 'privacy-fixture', 'conference_room' => $room, 'conference_state' => 'ok'];
-        $count = (int) $db->setQuery('SELECT COUNT(*) FROM #__appointments_bookings')->loadResult();
+        $slots = (new \Advans\Component\Appointments\Administrator\Service\AvailabilityService($db))
+            ->slots($event, $now, $now->modify('+2 days')->setTime(0, 0), $now->modify('+14 days')->setTime(23, 59));
+        if ($slots === []) {
+            throw new RuntimeException('No genuine available slot remains for the synthetic booking.');
+        }
         $booking = (new \Advans\Component\Appointments\Administrator\Service\BookingStore($db))
-            ->create($event, $invitee, $now->modify('+' . (2 + $count) . ' days')->setTime(10, 0), $now, [1], 'en-GB');
+            ->create($event, $invitee, $slots[0], $now, [1], 'en-GB');
         $db->setQuery('CREATE TABLE IF NOT EXISTS #__privacy_test_rooms (room VARCHAR(255) NOT NULL PRIMARY KEY) ENGINE=InnoDB')->execute();
         $resource = (object) ['room' => $room];
         $db->insertObject('#__privacy_test_rooms', $resource);
@@ -709,13 +716,27 @@ switch ($op) {
         if ($config->get('mailer') !== 'smtp' || $config->get('smtphost') !== '127.0.0.1') {
             throw new RuntimeException('Only a synthetic loopback SMTP capture can be controlled.');
         }
-        $config->set('mailonline', $op === 'mail-on' ? 1 : 0);
         $file = JPATH_CONFIGURATION . '/configuration.php';
+        $bytes = file_get_contents($file);
+        $pattern = '/(^[\t ]*public\s+\$mailonline\s*=\s*)(true|false|[01])(\s*;)/m';
+        if ($bytes === false || preg_match($pattern, $bytes, $setting) !== 1) {
+            throw new RuntimeException('Cannot identify the isolated fixture mail setting.');
+        }
+        $value = $op === 'mail-on' ? ($email !== '' ? $email : '1') : '0';
+        if (!in_array($value, ['true', 'false', '0', '1'], true)) {
+            throw new RuntimeException('Invalid fixture mail restoration value.');
+        }
+        $out['original_mailonline'] = $setting[2];
+        $updated = preg_replace_callback($pattern,
+            static fn (array $match): string => $match[1] . $value . $match[3], $bytes, 1, $count);
+        if ($updated === null || $count !== 1) {
+            throw new RuntimeException('Cannot replace the isolated fixture mail setting.');
+        }
         if (!chmod($file, 0644)) {
             throw new RuntimeException('Cannot write the isolated fixture configuration.');
         }
         try {
-            if (!\Joomla\Filesystem\File::write($file, $config->toString('PHP', ['class' => 'JConfig', 'closingtag' => false]))) {
+            if (!\Joomla\Filesystem\File::write($file, $updated)) {
                 throw new RuntimeException('Cannot save the isolated fixture configuration.');
             }
         } finally {

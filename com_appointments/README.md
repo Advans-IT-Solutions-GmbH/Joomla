@@ -429,6 +429,12 @@ user ID, not another lookup of the now-cleared account address. Local device/key
 invitation teardown and ownership release must actually succeed; a successful staff
 teardown does not make an unsearched calendar complete. The completion guard independently
 checks the scope and remaining staff rows, even if an outcome flag says success.
+Each removal also opens an authenticated pending-attempt marker before its work.
+Expected partial failures and unexpected exceptions are logged/reported as warnings,
+not thrown across Core's listener chain: later privacy plugins must still process
+the original registered user in that same dispatch. The marker independently vetoes
+Complete even with a missing or forged outcome flag. Only the current genuinely
+successful attempt can clear it; a superseded attempt cannot overwrite a newer one.
 The encrypted ID remains linkable request/audit metadata needed for subsequent Core
 retries, not anonymous booking data. Include it in the site's request-record retention
 and access policy. Earlier interrupted requests without recoverable staff provenance

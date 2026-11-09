@@ -23,7 +23,10 @@ return [
     'mod_dmarcreports' => ['type' => 'module', 'element' => 'mod_dmarcreports', 'dependencies' => ['com_dmarcreports'], 'routes' => [['com_dmarcreports']]],
     'plg_task_dmarcreports' => ['type' => 'plugin', 'element' => 'dmarcreports', 'group' => 'task', 'dependencies' => ['com_dmarcreports'], 'scheduler' => true, 'routes' => [['com_dmarcreports']]],
     'plg_system_dmarcmtasts' => ['type' => 'plugin', 'element' => 'dmarcmtasts', 'group' => 'system', 'dependencies' => ['com_dmarcreports'], 'routes' => [['com_dmarcreports']]],
-    'plg_system_privacyrequests' => ['type' => 'plugin', 'element' => 'privacyrequests', 'group' => 'system', 'dependencies' => ['com_privacy'], 'php' => ['mbstring'], 'mail' => true, 'routes' => [['com_ajax']]],
+    'plg_system_privacyrequests' => ['type' => 'plugin', 'element' => 'privacyrequests', 'group' => 'system', 'dependencies' => ['com_privacy'], 'php' => ['mbstring'], 'mail' => true, 'routes' => [
+        ['com_ajax', 'plugin=privacyrequests&group=system&format=html'],
+        ['com_ajax', 'plugin=privacyrequests&group=system&format=json&task=capabilities'],
+    ]],
     'pkg_dmarcreports' => ['type' => 'package', 'element' => 'pkg_dmarcreports', 'dependencies' => ['com_dmarcreports', 'mod_dmarcreports', 'plg_task_dmarcreports', 'plg_system_dmarcmtasts'], 'routes' => [['com_dmarcreports']]],
     'plg_task_appointments' => ['type' => 'plugin', 'element' => 'appointments', 'group' => 'task', 'dependencies' => ['com_appointments'], 'scheduler' => true, 'routes' => [['com_appointments']]],
     'plg_privacy_appointments' => ['type' => 'plugin', 'element' => 'appointments', 'group' => 'privacy', 'dependencies' => ['com_appointments', 'com_privacy'], 'routes' => [['com_appointments']]],

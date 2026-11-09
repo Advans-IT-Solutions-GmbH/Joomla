@@ -119,6 +119,12 @@ async function main() {
         check('Blocked operation is not a successful removal', Number(state.outcomes[0]?.reviewed_result) === 0);
         fixture('probe', 'throw');
         await admin.goto(requestUrl);
+        const unreviewed = fixture('snapshot', email);
+        await action(admin, 'request.remove');
+        check('Unchecked remediation retry cannot reach removal callbacks or mutate the failed receipt',
+            JSON.stringify(fixture('snapshot', email)) === JSON.stringify(unreviewed));
+        await admin.goto(requestUrl);
+        await admin.locator('input[name="jform[privacy_remediation_reviewed]"]').check();
         await action(admin, 'request.remove');
         state = fixture('snapshot', email);
         check('Thrown real callback cannot make removal or completion successful',
@@ -126,11 +132,13 @@ async function main() {
             && Number(state.outcomes[0]?.reviewed_result) === 0 && Number(state.requests[0].status) === 1);
         fixture('probe', 'warning');
         await admin.goto(requestUrl);
+        await admin.locator('input[name="jform[privacy_remediation_reviewed]"]').check();
         await action(admin, 'request.remove');
         state = fixture('snapshot', email);
         check('Returned warning remains incomplete despite Core dispatch success', Number(state.outcomes[0]?.reviewed_result) === 0);
         fixture('probe', 'allow');
         await admin.goto(requestUrl);
+        await admin.locator('input[name="jform[privacy_remediation_reviewed]"]').check();
         await action(admin, 'request.remove');
         state = fixture('snapshot', email);
         check('Native authorized Remove dispatches real plugins without automatically completing',
@@ -165,14 +173,14 @@ async function main() {
         const unknown = `unknown-${stamp}@example.test`;
         const beforeOff = [pending, failedMail, native, unknown].map(email => fixture('snapshot', email).requests);
         const messages = [];
+        const mailState = fixture('mail-off');
         try {
-            fixture('mail-off');
             for (const address of [pending, failedMail, native, unknown]) {
                 await page.goto(route);
                 messages.push(await submit(page, address, 'request'));
             }
         } finally {
-            fixture('mail-on');
+            fixture('mail-on', mailState.original_mailonline);
         }
         check('Mail-disabled availability is identical for pending, confirmed, native and unknown addresses',
             messages.every(message => message === messages[0] && message.includes('could not finish')));

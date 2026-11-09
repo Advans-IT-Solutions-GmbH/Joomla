@@ -15,7 +15,7 @@ async function submit(page, selector) {
 }
 
 async function main() {
-    for (const file of ['registered.cjs', 'lifecycle.cjs', 'browser.cjs', 'fixture.php']) {
+    for (const file of ['registered.cjs', 'lifecycle.cjs', 'browser.cjs', 'fixture.php', 'listener-order.php']) {
         console.log('EXECUTION_BINDING', JSON.stringify({file,
             sha256: createHash('sha256').update(fs.readFileSync(path.join(__dirname, file))).digest('hex')}));
     }
@@ -94,6 +94,7 @@ async function main() {
             && JSON.stringify(fixture('account-snapshot', account.user_id)) === JSON.stringify(originalAccount));
         fixture('probe', 'allow');
         await admin.goto(reviewUrl);
+        await admin.locator('input[name="jform[privacy_remediation_reviewed]"]').check();
         await action(admin, 'request.remove');
         const removed = fixture('snapshot', email);
         const changedAccount = fixture('account-snapshot', account.user_id);
@@ -110,6 +111,10 @@ async function main() {
         await action(admin, 'request.complete');
         check('Reviewed registered request completes only through the separate native Core operation',
             Number(fixture('snapshot', email).requests[0].status) === 2);
+        const ordered = fixture('listener-order', `ordered-${new URL(root).port}-${Date.now()}@example.test`);
+        check('Listener-order checks explicitly distinguish native plugin events from Core/browser coverage',
+            ordered.coverage === 'native ordered plugin events, not a Core model/browser lifecycle');
+        for (const label of ordered.checks) check(label, true);
     } finally {
         fixture('probe', 'block');
         await browser.close();
