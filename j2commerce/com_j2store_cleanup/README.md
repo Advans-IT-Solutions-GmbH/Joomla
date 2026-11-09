@@ -1,5 +1,14 @@
 # J2Store Extension Cleanup Component
 
+<a href="https://www.swissmadesoftware.org/en/about/swiss-made-software.html">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../../.github/assets/labels/sms-logo-1v-300dpi-rgb-on-white.png">
+    <img src="../../.github/assets/labels/sms-logo-1v-300dpi-rgb.png" width="110" alt="swiss made software">
+  </picture>
+</a>
+
+This extension carries the swiss made software label.
+
 **Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2store-cleanup.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2store-cleanup.yml)
@@ -8,11 +17,11 @@
 [![Joomla 6](https://img.shields.io/badge/Joomla-6.x-blue.svg)](https://www.joomla.org/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-purple.svg)](https://www.php.net/)
 
-Safe migration tool for transitioning from J2Store to [J2Commerce](https://github.com/j2commerce/j2commerce).
+Extension scan and removal tool for transitioning from J2Store to [J2Commerce](https://github.com/j2commerce/j2commerce).
 
 ## Description
 
-Until now, there was no automated way to remove old J2Store extensions that are no longer compatible with J2Commerce. The J2Store Cleanup Component solves this problem by identifying and safely removing incompatible J2Store extensions. Scan your [Joomla](https://github.com/joomla/joomla-cms) installation, review detailed extension information, and remove outdated components with confidence. Protects your valuable data while cleaning up legacy extensions that could cause conflicts.
+The component lists J2Store/J2Commerce-related extensions, scans their PHP for selected removed APIs and lets an authorised administrator uninstall selected entries. A clean scan is not proof of runtime compatibility, and a finding is not by itself a reason to remove an extension. Review each result and take a complete files/database backup: the tool has no dependency graph, automatic backup or rollback.
 
 ## Features
 
@@ -49,6 +58,12 @@ The manifest registers this repository's `updates/update.xml` as update server (
 Uninstall via **System → Manage → Extensions**. The component has no uninstall routine of its own and creates no database tables; Joomla removes the component files and its language files. Extensions that were removed with this tool are not restored, and J2Store/J2Commerce data is not touched.
 
 ## Usage
+
+### Configuration and Data Handling
+
+There are no extension-specific behaviour options; the manifest's configuration only enables language loading. There is no Scheduler routine or notification mail. The component stores no own business tables; it reads extension metadata and local PHP files and uses Joomla's uninstaller for selected removals.
+
+An uninstalled extension's own script can delete its data. The two protected shop core components are not a guarantee that every other removal preserves orders or customer data. Restrict `core.manage` access, review the selected extensions' uninstall behaviour and verify your recovery backup before confirming.
 
 ### Access
 Navigate to: **Components → J2Store Extension Cleanup**
@@ -105,7 +120,7 @@ If Joomla's uninstaller fails (e.g. missing manifest), only the `#__extensions` 
 
 ## Automated Testing
 
-This component has automated tests that run via GitHub Actions (`j2store-cleanup.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. CI also runs a PHP syntax check and the language file lint. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
+This component has automated tests that run via GitHub Actions (`j2store-cleanup.yml`) when this directory, shared files consumed by the workflow or the workflow itself change. CI also runs a PHP syntax check and the language file lint. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
 
 The full suite runs against **two real stacks**, so the cleanup/classification
 logic is exercised with the actual core component present in each:
@@ -317,7 +332,7 @@ This extension supports the following languages:
 - **German (de-DE)**
 - **French (fr-FR)**
 
-Every text of the component page comes from a language key: headings, table columns, status badges, scan results ("JFactory (removed in Joomla 6)"), messages, the confirmation before removal (passed to the browser with `Text::script()`) and the copyright/licence line in the footer. The only literal left is the company name itself, a proper noun that is the same in every language. Generic words use Joomla core keys (`JENABLED`, `JDISABLED`, `JGLOBAL_CHECK_ALL`). A further language needs these files, plus one `<language>` line per file in the manifest (see [Languages](../../README.md#languages)):
+Every text of the component page comes from a language key: headings, table columns, status badges, scan results ("JFactory (removed in Joomla 6)"), messages, the confirmation before removal (passed to the browser with `Text::script()`) and the copyright/licence line in the footer. Generic words use Joomla core keys. The shipped files use this layout; a further locale requires the repository-wide maintainer decision described in [Languages](../../README.md#languages):
 ```
 administrator/language/{language-tag}/com_j2store_cleanup.ini
 administrator/language/{language-tag}/com_j2store_cleanup.sys.ini
