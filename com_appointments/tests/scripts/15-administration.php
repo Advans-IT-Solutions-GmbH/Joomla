@@ -34,6 +34,13 @@ $export = static function (AppointmentsHttp $client, array $filters = []) use ($
 
 try {
     $admin->login();
+    $options = $admin->request('/administrator/index.php?option=com_config&view=component&component=com_appointments');
+    $document = new DOMDocument();
+    @$document->loadHTML($options);
+    $heading = (new DOMXPath($document))->query('//h1[contains(@class,"page-title")]')->item(0);
+    $check($admin->status === 200 && $heading !== null
+        && trim($heading->textContent) === 'Appointments: Options',
+        'Native component Options uses its translated runtime heading, not a raw generated key');
     foreach (['schedule', 'blocked'] as $formView) {
         $html = $admin->request('/administrator/index.php?option=com_appointments&task=' . $formView . '.add');
         $document = new DOMDocument();
@@ -130,6 +137,10 @@ try {
     $dashboard = $admin->request('/administrator/index.php?option=com_appointments&view=dashboard');
     $check($admin->status === 200 && str_contains($dashboard, 'Upcoming active appointments')
         && str_contains($dashboard, 'Bookings by authorised event type'), 'Dashboard renders time-aware and per-event statistics');
+    $document = new DOMDocument();
+    @$document->loadHTML($dashboard);
+    $check((new DOMXPath($document))->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
+        'Administrator navigation loads its local responsive styles outside event-type forms too');
     $componentParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
     try {
         foreach ([0, 1] as $enabled) {

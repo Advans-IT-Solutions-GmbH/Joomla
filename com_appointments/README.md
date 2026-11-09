@@ -666,6 +666,11 @@ the separate retention lifecycles, privacy, mail and troubleshooting. The page r
 to users with component management permission when internet calendars are disabled, releases no
 personal keys and changes no setting. It supplements, rather than replaces, contextual field help.
 
+On narrow administrator screens, the access table scrolls horizontally within its calendar card
+so every grant action remains reachable without widening the page. Long page headings use the
+administrator template's native ellipsis; the complete heading remains available to assistive
+technology.
+
 #### Replacing the token feeds
 
 The internet calendars replace the token feeds of the next section, whose secret addresses
