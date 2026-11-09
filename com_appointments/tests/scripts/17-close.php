@@ -18,7 +18,7 @@ if (($argv[1] ?? '') === '--race-erase') {
         file_put_contents($argv[3], 'ready');
         $joomlaDb->setQuery('SET SESSION innodb_lock_wait_timeout=15')->execute();
         $result = (new \Advans\Component\Appointments\Administrator\Service\BookingStore($joomlaDb))->erase(
-            (int) $argv[2], new DateTimeImmutable('now', new DateTimeZone('UTC')), 'admin');
+            (int) $argv[2], new DateTimeImmutable('now', new DateTimeZone('UTC')), 'admin', actor: (int) $argv[4]);
         echo json_encode(['blocked' => $blocked, 'calls' => $calls, 'erased' => $result['changed'],
             'pending' => !empty($result['_crm_cleanup_error'])], JSON_THROW_ON_ERROR);
         exit(0);
@@ -76,7 +76,7 @@ $transport = static function (string $method, string $path, ?array $payload) use
     if ($method === 'POST' && $path === '/api/v1/activity/custom/') {
         if ($raceId > 0) {
             $raceSignal = tempnam(sys_get_temp_dir(), 'appointments-close-race-');
-            $raceProcess = proc_open([PHP_BINARY, __FILE__, '--race-erase', (string) $raceId, $raceSignal],
+            $raceProcess = proc_open([PHP_BINARY, __FILE__, '--race-erase', (string) $raceId, $raceSignal, (string) $fixture->host],
                 [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $racePipes);
             if (!is_resource($raceProcess)) {
                 throw new RuntimeException('The canonical race process did not start.');
@@ -226,7 +226,9 @@ try {
     $check($child['erased'] && $child['pending'] && $fixture->stored($id)['anonymised_utc'] !== null,
         'Concurrent canonical erasure waits for remote-write commit and retains its cleanup obligation');
     $queue->run();
-    $check(!$queue->hasPendingErasure($id) && $activity === [],
+    $creates = count(array_filter($requests, static fn ($request) =>
+        $request[0] === 'POST' && $request[1] === '/api/v1/activity/custom/'));
+    $check(!$queue->hasPendingErasure($id) && $activity === [] && $creates === 3,
         'Post-race worker deletes only the saved own Activity without another create');
 } catch (Throwable $e) {
     $check(false, 'Installed Close mock failed: ' . get_class($e) . ' in ' . basename($e->getFile()) . ' at line ' . $e->getLine());
