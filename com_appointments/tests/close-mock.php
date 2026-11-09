@@ -64,6 +64,7 @@ namespace {
         public bool $failWrite = false;
         public string $database = 'synthetic_database';
         public array $lockNames = [];
+        public int $largestResult = 0;
         public ?\Closure $afterCommit = null;
         public function __construct()
         {
@@ -92,7 +93,12 @@ namespace {
             return $this;
         }
         public function loadAssoc(): array|false { return $this->pdo->query($this->sql)->fetch(\PDO::FETCH_ASSOC); }
-        public function loadAssocList(): array { return $this->pdo->query($this->sql)->fetchAll(\PDO::FETCH_ASSOC); }
+        public function loadAssocList(): array
+        {
+            $rows = $this->pdo->query($this->sql)->fetchAll(\PDO::FETCH_ASSOC);
+            $this->largestResult = max($this->largestResult, count($rows));
+            return $rows;
+        }
         public function execute(): bool { $this->pdo->exec($this->sql); return true; }
         public function loadResult(): mixed
         {
@@ -286,6 +292,13 @@ namespace {
         'multiple email matches block visibly without selecting a lead');
     $mutate($row, ['sequence' => 1, 'anonymised_utc' => '2027-01-01 00:00:00'], true);
     $check(!$queue->hasPendingErasure(3), 'blocked never-sent booking purges locally without remote work');
+    $failure = new \ReflectionMethod(Queue::class, 'failure');
+    $failure->invoke($queue, 3, ['state' => 'blocked', 'reason' => 'delivery_error']);
+    $check($state(3)['state'] === 'done' && $state(3)['subject_hash'] === '',
+        'late failure recording cannot resurrect completed local erasure after its transaction acquired the row');
+    $failure->invoke($queue, 3, ['state' => 'retry', 'reason' => 'rate_limit', 'rate_limit_until' => 1]);
+    $check($state(3)['state'] === 'done' && (int) $state(3)['rate_limit_until'] === 1,
+        'late rate-limit failure preserves terminal erasure while retaining shared cooldown metadata');
 
     $mode = 'timeout';
     $row = $enrol(4);
@@ -480,6 +493,11 @@ namespace {
     $check($otherQueue->count() === 140 && count($otherQueue->rows()) === 100
         && count(array_filter($oldPage, static fn ($item) => (int) $item['booking_id'] === 1 && $item['state'] === 'uncertain')) === 1,
         'pagination keeps old uncertain delivery reachable beyond one hundred newer records');
+    for ($id = 141; $id <= 640; $id++) { $seed($id); }
+    $expectedPending = (int) $otherDb->pdo->query("SELECT COUNT(*) FROM test_appointments_close WHERE state<>'done'")->fetchColumn();
+    $otherDb->largestResult = 0;
+    $check($otherQueue->pendingPrivacy(0) === $expectedPending && $otherDb->largestResult === 200,
+        'privacy history scan authenticates all 640 records in bounded 200-row keyset batches');
     $row = $enrol(9);
     $db->transactionStart();
     $object = (object) ['id' => 9, 'sequence' => 1];

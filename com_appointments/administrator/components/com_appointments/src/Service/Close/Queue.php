@@ -144,15 +144,20 @@ final class Queue
             . ' WHERE id = ' . $requestId)->loadResult();
         $subject = $address === null ? '' : self::subject((string) $address);
         // Authenticate before filtering: changing a subject/request/state must not hide a cleanup obligation.
-        $rows = $db->setQuery('SELECT * FROM ' . $db->quoteName(self::TABLE))->loadAssocList();
         $pending = 0;
-        foreach ($rows as $row) {
-            self::verify($row);
-            $matches = (int) $row['request_id'] === $requestId
-                || ($subject !== '' && (hash_equals((string) $row['subject_hash'], $subject)
-                    || ((int) $row['erased'] === 1 && $row['subject_hash'] === '')));
-            $pending += $matches && $row['state'] !== 'done' ? 1 : 0;
-        }
+        $after = 0;
+        do {
+            $rows = $db->setQuery('SELECT * FROM ' . $db->quoteName(self::TABLE)
+                . ' WHERE booking_id > ' . $after . ' ORDER BY booking_id LIMIT 200')->loadAssocList();
+            foreach ($rows as $row) {
+                self::verify($row);
+                $after = (int) $row['booking_id'];
+                $matches = (int) $row['request_id'] === $requestId
+                    || ($subject !== '' && (hash_equals((string) $row['subject_hash'], $subject)
+                        || ((int) $row['erased'] === 1 && $row['subject_hash'] === '')));
+                $pending += $matches && $row['state'] !== 'done' ? 1 : 0;
+            }
+        } while (count($rows) === 200);
         return $pending;
     }
 
@@ -487,7 +492,15 @@ final class Queue
     {
         $this->db->transactionStart();
         try {
-            $this->row($id, true);
+            $current = $this->row($id, true);
+            // Erasure may have completed after delivery rolled back but before failure recording acquired the row.
+            if ((int) $current['erased'] === 1 && $current['state'] === 'done') {
+                if (isset($fields['rate_limit_until'])) {
+                    $this->save($id, ['rate_limit_until' => $fields['rate_limit_until']]);
+                }
+                $this->db->transactionCommit();
+                return;
+            }
             $fields['last_attempt'] = (int) $this->db->setQuery('SELECT COALESCE(MAX(last_attempt), 0) FROM ' . $this->table())->loadResult() + 1;
             $this->save($id, $fields);
             $this->db->transactionCommit();
