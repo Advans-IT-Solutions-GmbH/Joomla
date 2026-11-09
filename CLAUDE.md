@@ -40,6 +40,7 @@ Joomla/
 ├── mod_dmarcreports/           # Admin-Modul: DMARC-Dashboard (cpanel) — liest com_dmarcreports
 ├── plg_task_dmarcreports/      # Task-Plugin: automatische IMAP-/TLS-RPT-Ingestion (Scheduler)
 ├── plg_system_dmarcmtasts/     # System-Plugin: liefert die MTA-STS-Policy unter /.well-known aus
+├── plg_system_privacyrequests/ # System-Plugin: kontolose Löschanfragen im Core-Datenschutzablauf
 ├── pkg_dmarcreports/           # Paket: bündelt Komponente + Modul + Task-Plugin + System-Plugin
 ├── com_appointments/           # Komponente: selbstgehostete Terminbuchung (Admin + Website)
 ├── j2commerce/                 # J2Commerce-bezogene Extensions

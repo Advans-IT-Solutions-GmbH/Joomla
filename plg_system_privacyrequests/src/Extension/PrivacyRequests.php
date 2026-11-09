@@ -47,6 +47,7 @@ final class PrivacyRequests extends CMSPlugin implements SubscriberInterface
             'onBeforeRespond' => 'onBeforeRespond',
             'application.before_respond' => 'onBeforeRespond',
             'onAfterRender' => 'onAfterRender',
+            'onBeforeCompileHead' => 'onBeforeCompileHead',
         ];
     }
 
@@ -204,12 +205,65 @@ final class PrivacyRequests extends CMSPlugin implements SubscriberInterface
             $field = $form->renderField('privacy_scope_reviewed') . $form->renderField('privacy_remediation_reviewed');
         }
         $body = preg_replace_callback('/<form\b[^>]*\bid="item-form"[^>]*>/i',
-            static fn (array $match): string => $match[0] . '<div class="card card-body mt-3">' . $field . '</div>',
+            static fn (array $match): string => $match[0] . '<div class="card card-body mt-3" data-privacyrequests-review>' . $field . '</div>',
             $app->getBody(), 1);
         if ($body === null) {
             throw new \RuntimeException('Cannot render privacy scope review.');
         }
         $app->setBody($body);
+    }
+
+    public function onBeforeCompileHead(): void
+    {
+        $app = $this->getApplication();
+        $input = $app->getInput();
+        if (!$app->isClient('administrator') || $input->getCmd('option') !== 'com_privacy'
+            || $input->getCmd('view') !== 'request' || $app->getDocument()->getType() !== 'html'
+            || !$app->getIdentity()->authorise('core.admin', 'com_privacy')) {
+            return;
+        }
+        // The marker is added only when this adapter renders its native review
+        // fields or delivery warning. Other Core views/templates remain unchanged.
+        $scope = 'body.com_privacy.view-request:has([data-privacyrequests-review])';
+        $css = <<<CSS
+@media (max-width: 991.98px) {
+    {$scope} #header .header-inside,
+    {$scope} #header .header-title,
+    {$scope} #header .header-title > .d-flex {
+        block-size: auto;
+        min-inline-size: 0;
+    }
+    {$scope} #header .header-title { flex: 1 1 0%; }
+    {$scope} #header .header-title > .d-flex:first-child { flex-shrink: 0; }
+    {$scope} #header .container-title { min-inline-size: 0; }
+    {$scope} #header .page-title {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        line-height: 1.4;
+        padding-block: .5rem;
+    }
+    {$scope} joomla-alert.js-pstats-alert { flex-direction: column; }
+    {$scope} joomla-alert.js-pstats-alert > div {
+        inline-size: auto;
+        min-inline-size: 0;
+    }
+    {$scope} joomla-alert.js-pstats-alert .alert-heading { padding-inline-end: 2rem; }
+    {$scope} joomla-alert.js-pstats-alert table,
+    {$scope} #item-form table {
+        table-layout: fixed;
+        inline-size: 100%;
+    }
+    {$scope} joomla-alert.js-pstats-alert th,
+    {$scope} joomla-alert.js-pstats-alert td,
+    {$scope} #item-form th,
+    {$scope} #item-form td,
+    {$scope} #item-form dd {
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+}
+CSS;
+        $app->getDocument()->getWebAssetManager()->addInlineStyle($css, ['name' => 'plg_system_privacyrequests.native-review']);
     }
 
     public function onAfterRoute(): void

@@ -14,6 +14,7 @@
 | DMARC Reports Dashboard Module | `mod_dmarcreports/` | module (administrator) | Backend cpanel module showing the DMARC multi-domain summary and top Action Center items; reads `com_dmarcreports` |
 | DMARC Reports Task | `plg_task_dmarcreports/` | plugin (task) | Scheduler task for automatic, continuous IMAP/TLS-RPT ingestion; reuses the component's Ingestor and locks |
 | DMARC Reports MTA-STS | `plg_system_dmarcmtasts/` | plugin (system) | Serves the generated MTA-STS policy at `/.well-known/mta-sts.txt` from the component options |
+| Core Privacy Requests | `plg_system_privacyrequests/` | plugin (system) | Opt-in account-free removal requests through native Core privacy models, administrator actions and active privacy plugins |
 | DMARC Reports Package | `pkg_dmarcreports/` | package | Bundles the component, dashboard module, task plugin and system plugin into one install/update/uninstall |
 | Appointments | `com_appointments/` | component | Self-hosted appointment scheduling (administrator and site part, booking pages, iCalendar, calendar feeds) |
 
@@ -123,6 +124,9 @@ Build & Test workflows trigger on push and pull request to `main` for the extens
 | `system-dmarcmtasts.yml` | push/PR to `main` (`plg_system_dmarcmtasts/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
 | `release-system-dmarcmtasts.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-system-dmarcmtasts.yml` | release PR merged | Stage 2: package, tag, GitHub Release |
+| `system-privacyrequests.yml` | push/PR to `main` (own extension, consumed shared files, own build/release/publish workflows), manual | Build & Test |
+| `release-system-privacyrequests.yml` | `workflow_dispatch` on `main` | Stage 1: version changes, first update feed, release PR |
+| `publish-system-privacyrequests.yml` | release PR merged; verified recovery dispatch | Stage 2: verified source, package, tag, GitHub Release |
 | `pkg-dmarcreports.yml` | push/PR to `main` (`pkg_dmarcreports/**`, the specific `shared/build` and `shared/tests` files it uses, workflow file), manual | Build & Test |
 | `release-pkg-dmarcreports.yml` | `workflow_dispatch` | Stage 1: bump + release PR |
 | `publish-pkg-dmarcreports.yml` | release PR merged | Stage 2: package, tag, GitHub Release |

@@ -145,6 +145,7 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 | `moddmarcreports.yml` | DMARC Reports Dashboard Module | `mod_dmarcreports/**`, the shared files below, own workflow file |
 | `task-dmarcreports.yml` | DMARC Reports Scheduler Task | `plg_task_dmarcreports/**`, the shared files below, own workflow file |
 | `system-dmarcmtasts.yml` | DMARC Reports MTA-STS Policy | `plg_system_dmarcmtasts/**`, the shared files below, own workflow file |
+| `system-privacyrequests.yml` | Core Privacy Requests | `plg_system_privacyrequests/**`, consumed shared files, own build/release/publish workflows |
 | `pkg-dmarcreports.yml` | DMARC Reports Package | `pkg_dmarcreports/**`, the shared files below, own workflow file |
 | `appointments.yml` | Appointments | `com_appointments/**`, the shared files below, own workflow file |
 | `j2commerce-import-export.yml` | Import/Export | `j2commerce/com_j2commerce_importexport/**`, the shared files below, own workflow file |
@@ -264,6 +265,7 @@ Only `fix`, `feat` and `!`/`BREAKING CHANGE` trigger a bump; all other types (`d
 | `release-moddmarcreports.yml` | `moddmarcreports-v*` |
 | `release-task-dmarcreports.yml` | `task-dmarcreports-v*` |
 | `release-system-dmarcmtasts.yml` | `system-dmarcmtasts-v*` |
+| `release-system-privacyrequests.yml` | `system-privacyrequests-v*` |
 | `release-pkg-dmarcreports.yml` | `pkgdmarcreports-v*` |
 | `release-appointments.yml` | `appointments-v*` |
 | `release-importexport.yml` | `importexport-v*` |

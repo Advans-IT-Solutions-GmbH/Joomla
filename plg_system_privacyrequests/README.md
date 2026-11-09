@@ -38,6 +38,72 @@ The public page is:
 index.php?option=com_ajax&plugin=privacyrequests&group=system&format=html
 ```
 
+### Distribution and updates
+
+The approved update channel uses this repository's GitHub raw update feed and
+version-specific GitHub Release ZIPs, not an external privacy-processing service.
+The manifest registers
+`https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_system_privacyrequests/updates/update.xml`.
+Joomla's updater therefore discloses the fetching server's public IP address and
+normal HTTP metadata to GitHub; privacy requests and mailbox contents are not
+uploaded through this channel.
+
+`release-system-privacyrequests.yml` prepares a human-reviewed release PR and
+generates the version files and update feed. The first feed is created by that
+workflow, not hand-written for an unpublished development version; until the first
+release is prepared and published, the registered feed is not yet available.
+`publish-system-privacyrequests.yml` publishes only the verified merged release
+commit, using `system-privacyrequests-v*` tags and the shared publication safeguards.
+Defining these workflows does not run them. The pre-release candidate remains a
+manual-install development artifact, not a published release or completed
+installation/UI acceptance.
+
+### Existing-site three-package upgrade and rollback boundary
+
+The coupled candidate is an **upgrade of an existing Appointments/shop test
+installation**, not a requirement to install either product for this adapter.
+The installed acceptance sequence is the generic plugin ZIP, the Appointments
+component ZIP, then the existing J2Commerce privacy ZIP. Use Joomla's normal
+installer and its exact-file approval process, not manual Core/plugin copies.
+
+1. Save a matching files/database/encryption-key backup and record plugin, mail and
+   Scheduler states. Pause new adapter intake and administrator removal/completion
+   during the change. Keep the generic plugin disabled until its public local
+   operator contact route is checked; an upgrade preserves its previous state, so
+   disable it deliberately for staging if it was already enabled.
+2. Install the three ZIPs in the sequence above. Preserve the Appointments
+   anonymise/delete and legal-blocker settings, calendar keys and genuine
+   administrator authorization. Preserve the existing shop privacy plugin,
+   **Guest Request Confirmation** and bundled consent system plugin states.
+3. Check that the recorded mail/Scheduler states remain unchanged and no task was
+   activated. This upgrade evidence must not be generalized to a fresh component
+   or shop install: those existing installers enable bundled task plugins on
+   first install, and Appointments can create its initial Scheduler tasks. Do not
+   add these optional products merely to obtain the standalone adapter or start
+   their tasks without a separate deliberate setup.
+4. On the isolated test installation, verify the configured contact route, captured
+   confirmation delivery, the genuinely registered Core flow, and the existing
+   administrator-created shop guest confirmation links before enabling public
+   adapter intake. Keep mail/Scheduler activation a separate operator decision.
+   The adapter adds no task and never enables mail.
+
+No pending request, token or status is migrated. The shop system plugin rewrites
+only `com_privacy.notification.admin.export` and `.admin.remove`; the generic
+adapter sends `com_privacy.notification.remove` with its own local route. Existing
+shop links therefore remain on the existing shop confirmation route, including
+already-sent links while that feature remains enabled. Do not disable the shop
+privacy callbacks or guest confirmation as a handover step.
+
+Disabling the generic plugin can stop new adapter intake, but also disables its
+own additional processing guard. **Do not process or complete adapter-managed
+requests while it is disabled.** Keep pending requests, cleanup/outcome provenance
+and encrypted keys; uninstalling or deleting these stores is not a rollback.
+A full matched backup is a rollback boundary only before new requests or removal
+work have occurred. Afterwards, hold processing and reconcile the retained audit
+and unfinished work before any recovery; never restore statuses or discard newer
+privacy requests to make a rollback appear complete. Re-enable a verified
+compatible adapter before resuming the Core workflow.
+
 For addresses supported by native Joomla mail, visitors submit an email address,
 then confirm possession using the code delivered to that exact address. Native
 Unicode-local-part delivery is unsupported on the tested stock platforms; the
@@ -94,6 +160,13 @@ a separate native action**, blocked by an unsuccessful, warning-producing or fai
 removal and until the administrator reviews scope. A prior incomplete attempt requires
 remediation review and another Remove; checking a box is not evidence that a known
 component-specific remainder has gone.
+
+On this authorized native request view, the adapter's own review/warning marker
+scopes a small-screen layout adjustment: the header can wrap, the untouched
+Statistics prompt stacks, and long table values wrap. No Core file, consent state,
+content visibility or completion authorization is changed. Other native views and
+the public template are not restyled; a dark OS preference does not make stock
+Cassiopeia a dark-rendering template.
 
 ## Scope and safeguards
 
