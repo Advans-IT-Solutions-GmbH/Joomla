@@ -16,6 +16,11 @@ body.com_appointments #header .header-title > .d-flex:has(.logo) {
     flex-shrink: 0;
 }
 
+/* Leave room for the native toolbar, including wrapped mobile actions. */
+#appointments-help > section[id] {
+    scroll-margin-block-start: 8rem;
+}
+
 /* Core's fixed-width switchers must fit the calendar settings column. */
 #calendar-form .switcher {
     max-inline-size: 100%;
