@@ -1,11 +1,13 @@
 name: Collect Results
 
+run-name: "${{ github.event_name == 'pull_request' && format('PR #{0} base={1} base-sha={2} head-sha={3} merge-sha={4}', github.event.pull_request.number, github.event.pull_request.base.ref, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha) || (github.event_name == 'push' && github.event.head_commit.message) || github.workflow }}"
+
 # Sole producer of the required "Collect Results" status check.
 #
-# Runs on every pull request to main. It determines which extension build &
+# Runs on every pull request to the supported base branches. It determines which extension build &
 # test workflows are triggered by the changed files (from their own
-# pull_request.paths filters), waits for those runs on the pull request head
-# commit and fails unless every one of them succeeded. Workflows without path
+# pull_request.paths filters), waits for those runs on the exact pull request
+# base/head commits and tested merge commit, and fails unless every one succeeded. Workflows without path
 # filters, including Security Scan, are required even on documentation-only PRs.
 # Security Scan must also have successfully executed all expected scanner jobs.
 #
@@ -17,7 +19,7 @@ name: Collect Results
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
 
 permissions: {}
 
@@ -32,7 +34,7 @@ jobs:
     timeout-minutes: 345
     permissions:
       actions: read
-      # The commit's check runs reveal runs the eventually consistent run list still lacks.
+      # The source head's check runs reveal runs the eventually consistent run list still lacks.
       checks: read
       contents: read
       pull-requests: read
@@ -48,5 +50,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.sha }}
         run: bash .github/scripts/collect-results.sh
