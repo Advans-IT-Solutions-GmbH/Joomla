@@ -24,7 +24,7 @@ function closePhpReadiness(): array
 function closePhpCommand(): array
 {
     $ini = php_ini_loaded_file();
-    return array_merge([PHP_BINARY], $ini === false ? ['-n'] : ['-c', $ini], [__FILE__]);
+    return array_merge([PHP_BINARY], $ini === false ? [] : ['-c', $ini], [__FILE__]);
 }
 
 function closeAssertChildReadiness(string $file): void
@@ -105,6 +105,56 @@ function closePhpSelfCheck(): void
     }
 }
 
+function closeScanOnlySelfCheck(): void
+{
+    $directory = tempnam(sys_get_temp_dir(), 'appointments-close-scan-');
+    if ($directory === false) {
+        throw new RuntimeException('Cannot create scan-only PHP configuration fixture.');
+    }
+    unlink($directory);
+    if (!mkdir($directory)) {
+        throw new RuntimeException('Cannot create scan-only PHP configuration directory.');
+    }
+    $file = $directory . DIRECTORY_SEPARATOR . 'fixture.ini';
+    try {
+        if (file_put_contents($file, "; Scan-only readiness fixture.\n") === false) {
+            throw new RuntimeException('Cannot write scan-only PHP configuration fixture.');
+        }
+        $environment = getenv();
+        $environment['PHPRC'] = $directory;
+        $environment['PHP_INI_SCAN_DIR'] = $directory;
+        $process = proc_open([PHP_BINARY, '-c', $directory, __FILE__, '--self-check-scan-only', $file],
+            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $environment);
+        if (!is_resource($process)) {
+            throw new RuntimeException('Scan-only PHP configuration self-check did not start.');
+        }
+        fclose($pipes[0]);
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exit = proc_close($process);
+        if ($exit !== 0 || trim($stdout) !== 'PASS scan-only PHP configuration') {
+            throw new RuntimeException('Scan-only PHP configuration self-check failed: exit=' . $exit
+                . ', stdout=' . closeChildExcerpt($stdout) . ', stderr=' . closeChildExcerpt($stderr));
+        }
+    } finally {
+        if (is_file($file)) {
+            unlink($file);
+        }
+        rmdir($directory);
+    }
+}
+
+if (($argv[1] ?? '') === '--self-check-scan-only') {
+    if (php_ini_loaded_file() !== false || trim((string) php_ini_scanned_files()) !== $argv[2]) {
+        throw new RuntimeException('Scan-only fixture did not load exactly the expected configuration.');
+    }
+    closePhpSelfCheck();
+    echo "PASS scan-only PHP configuration\n";
+    exit(0);
+}
+
 if (in_array($argv[1] ?? '', ['--php-readiness', '--race-erase'], true)) {
     $readiness = $argv[$argv[1] === '--php-readiness' ? 2 : 5];
     if (file_put_contents($readiness . '.tmp', json_encode(closePhpReadiness(), JSON_THROW_ON_ERROR)) === false
@@ -117,6 +167,7 @@ if (in_array($argv[1] ?? '', ['--php-readiness', '--race-erase'], true)) {
 }
 if (($argv[1] ?? '') === '--self-check-php') {
     closePhpSelfCheck();
+    closeScanOnlySelfCheck();
     echo "PASS pinned PHP configuration and different-ini negative control\n";
     exit(0);
 }
@@ -169,6 +220,7 @@ if (($argv[1] ?? '') === '--race-erase') {
 }
 
 closePhpSelfCheck();
+closeScanOnlySelfCheck();
 require __DIR__ . '/appointments-fixtures.php';
 $fixture = new AppointmentsFixture('close');
 $db = $fixture->db;
