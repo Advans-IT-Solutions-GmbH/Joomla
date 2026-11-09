@@ -142,20 +142,32 @@ try {
     $application->bootComponent('com_appointments');
     $save();
     $event = $fixture->event();
-    $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+2 days')->format('Y-m-d');
     $db->query("UPDATE {$prefix}appointments_eventtypes SET requires_approval=1 WHERE id={$event}");
-    $local = $fixture->booking($event, $day . ' 09:00:00')['booking'];
+    $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    $eventRow = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$event}")->fetch_assoc();
+    $from = $now->modify('+2 days')->setTime(0, 0);
+    $until = $now->modify('+14 days')->setTime(23, 59);
+    $nextSlot = static function () use ($joomlaDb, $eventRow, $now, &$from, $until): DateTimeImmutable {
+        $slots = (new \Advans\Component\Appointments\Administrator\Service\AvailabilityService($joomlaDb))
+            ->slots($eventRow, $now, $from, $until);
+        if ($slots === []) {
+            throw new RuntimeException('No genuine available slot remains for the Close lifecycle fixture.');
+        }
+        $from = $slots[0]->modify('+' . ((int) $eventRow['duration_minutes']
+            + (int) $eventRow['buffer_after_minutes'] + (int) $eventRow['buffer_before_minutes'] + 1) . ' minutes');
+        return $slots[0];
+    };
+    $local = $fixture->booking($event, $nextSlot()->format('Y-m-d H:i:s'))['booking'];
     $ids[] = (int) $local['id'];
     $queue = new \Advans\Component\Appointments\Administrator\Service\Close\Queue(
         $joomlaDb, \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments'), $transport);
     $store = new \Advans\Component\Appointments\Administrator\Service\BookingStore($joomlaDb);
-    $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
     $check($queue->run()['disabled'] === 1 && $requests === [], 'Installed default performs no external calls');
     $erased = $store->erase((int) $local['id'], $now, 'admin', actor: $fixture->host);
     $check(empty($erased['_crm_cleanup_error']), 'Never-enrolled local erasure invents no CRM obligation');
     $params['close_enabled'] = 1;
     $save();
-    $booking = $fixture->booking($event, $day . ' 10:00:00')['booking'];
+    $booking = $fixture->booking($event, $nextSlot()->format('Y-m-d H:i:s'))['booking'];
     $id = (int) $booking['id'];
     $ids[] = $id;
     $metadata = $db->query("SELECT * FROM {$prefix}appointments_close WHERE booking_id={$id}")->fetch_assoc();
@@ -166,9 +178,10 @@ try {
     $store->changeState($id, 1, $now);
     $queue->run();
     $check($activity['custom.cf_state'] === 'confirmed', 'Canonical approval updates existing Activity');
-    $store->reschedule($id, new DateTimeImmutable($day . ' 12:00:00', new DateTimeZone('UTC')), $now);
+    $rescheduledStart = $nextSlot();
+    $store->reschedule($id, $rescheduledStart, $now);
     $queue->run();
-    $check($activity['custom.cf_start'] === $day . 'T12:00:00Z' && $activity['custom.cf_seq'] === '2',
+    $check($activity['custom.cf_start'] === $rescheduledStart->format('Y-m-d\TH:i:s\Z') && $activity['custom.cf_seq'] === '2',
         'Canonical reschedule updates current encrypted booking without another Activity');
     $store->changeState($id, 2, $now);
     $queue->run();
@@ -198,7 +211,7 @@ try {
     $check($queue->pendingPrivacy($requestId + 1) === 0 && $queue->pendingPrivacy($requestId + 2) === 0,
         'Verified own cleanup releases both later requests without creating another booking');
 
-    $booking = $fixture->booking($event, $day . ' 14:00:00')['booking'];
+    $booking = $fixture->booking($event, $nextSlot()->format('Y-m-d H:i:s'))['booking'];
     $id = (int) $booking['id'];
     $ids[] = $id;
     $timeout = true;
@@ -237,7 +250,7 @@ try {
     $check(!$queue->hasPendingErasure($id), 'Synthetic final cleanup finishes without another booking or mail action');
     $check(count(array_filter($requests, static fn ($request) => $request[0] === 'POST' && $request[1] === '/api/v1/activity/custom/')) === 2,
         'Exactly one Activity create per synthetic booking despite changes and retries');
-    $booking = $fixture->booking($event, $day . ' 15:00:00')['booking'];
+    $booking = $fixture->booking($event, $nextSlot()->format('Y-m-d H:i:s'))['booking'];
     $id = (int) $booking['id'];
     $ids[] = $id;
     $raceId = $id;
