@@ -431,9 +431,13 @@ switch ($op) {
         $invitee = ['invitee_name' => 'Synthetic Invitee', 'invitee_email' => $guest ? 'other@example.test' : $email,
             'invitee_timezone' => 'UTC', 'invitee_language' => 'en-GB', 'guest_emails' => $guest ? $email . "\nbystander@example.test" : null,
             'conference_provider' => 'privacy-fixture', 'conference_room' => $room, 'conference_state' => 'ok'];
-        $count = (int) $db->setQuery('SELECT COUNT(*) FROM #__appointments_bookings')->loadResult();
+        $slots = (new \Advans\Component\Appointments\Administrator\Service\AvailabilityService($db))
+            ->slots($event, $now, $now->modify('+2 days')->setTime(0, 0), $now->modify('+14 days')->setTime(23, 59));
+        if ($slots === []) {
+            throw new RuntimeException('No genuine available slot remains for the synthetic booking.');
+        }
         $booking = (new \Advans\Component\Appointments\Administrator\Service\BookingStore($db))
-            ->create($event, $invitee, $now->modify('+' . (2 + $count) . ' days')->setTime(10, 0), $now, [1], 'en-GB');
+            ->create($event, $invitee, $slots[0], $now, [1], 'en-GB');
         $db->setQuery('CREATE TABLE IF NOT EXISTS #__privacy_test_rooms (room VARCHAR(255) NOT NULL PRIMARY KEY) ENGINE=InnoDB')->execute();
         $resource = (object) ['room' => $room];
         $db->insertObject('#__privacy_test_rooms', $resource);
