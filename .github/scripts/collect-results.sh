@@ -11,13 +11,15 @@
 #   1. Read every pull_request workflow in .github/workflows, including
 #      unconditional workflows such as Security Scan.
 #   2. Match those patterns against the files changed by the pull request.
-#   3. Wait for every matching workflow run on the pull request head commit and
-#      fail unless each of them concluded with `success`. A run counts as present
-#      as soon as the run list or the commit's check runs show it, queued or not.
+#   3. Wait for every matching workflow run belonging to this pull request and
+#      its exact base/head commits, and verify checks on the tested merge commit.
+#      A run counts as present as soon as the run list or the merge commit's check
+#      runs show it, queued or not.
 #
 # Documentation-only pull requests still have to pass unconditional workflows.
 #
-# Required environment: GH_TOKEN, REPO, PR_NUMBER, HEAD_SHA.
+# Required environment: GH_TOKEN, REPO, PR_NUMBER, BASE_REF, BASE_SHA, HEAD_SHA,
+#                       MERGE_SHA (the synthetic merge commit tested by pull_request).
 # Optional: POLL_SECONDS (default 60), MISSING_RUN_GRACE_MINUTES (default 20),
 #           MAX_WAIT_MINUTES (default 330), WORKFLOW_DIR (default .github/workflows).
 
@@ -26,7 +28,40 @@ set -euo pipefail
 : "${GH_TOKEN:?GH_TOKEN is required}"
 : "${REPO:?REPO is required}"
 : "${PR_NUMBER:?PR_NUMBER is required}"
+: "${BASE_REF:?BASE_REF is required}"
+: "${BASE_SHA:?BASE_SHA is required}"
 : "${HEAD_SHA:?HEAD_SHA is required}"
+: "${MERGE_SHA:?MERGE_SHA is required}"
+
+if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+    echo "::error::PR_NUMBER must be a positive integer. Failing closed."
+    exit 1
+fi
+
+case "$BASE_REF" in
+    main|advansit-superuser-calendar-administration|advansit-guest-privacy-requests) ;;
+    *)
+        echo "::error::Unsupported pull request base '${BASE_REF}'. Failing closed."
+        exit 1
+        ;;
+esac
+
+for sha_name in BASE_SHA HEAD_SHA MERGE_SHA; do
+    if [[ ! "${!sha_name}" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "::error::${sha_name} must be a 40-character commit SHA. Failing closed."
+        exit 1
+    fi
+done
+
+echo "Pull request #${PR_NUMBER}: base ${BASE_REF} (${BASE_SHA}), head ${HEAD_SHA}, tested merge ${MERGE_SHA}"
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    {
+        echo "### Pull request test provenance"
+        echo "- Base: \`${BASE_REF}\` (\`${BASE_SHA}\`)"
+        echo "- Head: \`${HEAD_SHA}\`"
+        echo "- Tested pull-request merge commit: \`${MERGE_SHA}\`"
+    } >>"$GITHUB_STEP_SUMMARY"
+fi
 
 POLL_SECONDS="${POLL_SECONDS:-60}"
 MISSING_RUN_GRACE_MINUTES="${MISSING_RUN_GRACE_MINUTES:-20}"
@@ -141,21 +176,42 @@ for wf in "$WORKFLOW_DIR"/*.yml "$WORKFLOW_DIR"/*.yaml; do
     name="$(basename "$wf")"
     [ "$name" = "$SELF_WORKFLOW" ] && continue
 
-    # Only map-style `on:` blocks with a pull_request trigger are relevant.
+    # Workflows without a pull_request trigger are not part of this gate.
     on_tag="$(yq -r '.on | tag' "$wf")"
     [ "$on_tag" = "!!map" ] || continue
     has_pr="$(yq -r '.on | has("pull_request")' "$wf")"
     [ "$has_pr" = "true" ] || continue
+
+    pr_tag="$(yq -r '.on.pull_request | tag' "$wf")"
+    if [ "$pr_tag" != "!!map" ]; then
+        echo "::error::${name} uses an unsupported pull_request trigger form"
+        exit 2
+    fi
 
     if [ "$(yq -r '.on.pull_request | has("paths-ignore")' "$wf" 2>/dev/null || echo false)" = "true" ]; then
         echo "::error::${name} uses pull_request.paths-ignore, which collect-results.sh does not evaluate"
         exit 2
     fi
 
+    if [ "$(yq -r '.on.pull_request | has("branches-ignore")' "$wf")" = "true" ]; then
+        echo "::error::${name} uses pull_request.branches-ignore, which is not supported by the temporary base allowlist"
+        exit 2
+    fi
+
     paths="$(yq -r '(.on.pull_request.paths // []) | .[]' "$wf")"
-    branches="$(yq -r '(.on.pull_request.branches // []) | .[]' "$wf")"
-    if [ -n "$branches" ] && ! grep -qx 'main' <<< "$branches"; then
-        continue
+    if ! branches_json="$(yq -o=json '.on.pull_request.branches' "$wf")"; then
+        echo "::error::Could not read the pull_request.branches filter in ${name}"
+        exit 2
+    fi
+    if ! jq -e --arg base "$BASE_REF" '
+        type == "array"
+        and length == 3
+        and all(.[]; type == "string")
+        and (sort == ["advansit-guest-privacy-requests", "advansit-superuser-calendar-administration", "main"])
+        and (index($base) != null)
+    ' <<<"$branches_json" >/dev/null; then
+        echo "::error::${name} must explicitly allow only main and the two temporary dependent-PR bases"
+        exit 2
     fi
 
     if [ -z "$paths" ] || any_file_matches "$paths" "${CHANGED[@]}"; then
@@ -178,8 +234,8 @@ start_epoch="$(date +%s)"
 declare -A FINAL=()
 
 latest_run() {
-    # Prints: status<TAB>conclusion<TAB>html_url<TAB>id for the newest pull_request run
-    # of the given workflow file on HEAD_SHA, or nothing if no run exists yet.
+    # Prints: status<TAB>conclusion<TAB>html_url<TAB>id for the newest current-PR run
+    # of the given workflow file, or nothing if no run exists yet.
     local file="$1"
     printf '%s' "$RUNS_JSON" | jq -r --arg path ".github/workflows/${file}" '
         [ .workflow_runs[] | select(.path == $path) ]
@@ -190,8 +246,8 @@ latest_run() {
 fetch_runs() {
     # The run list is eventually consistent. While the runners are congested it can
     # omit a queued or even running run on HEAD_SHA for longer than the grace period,
-    # which used to fail this check with "no run exists". The check runs of the commit
-    # are current, so every run they reference and the list lacks is read directly by
+    # which used to fail this check with "no run exists". The check runs of the tested
+    # merge commit are current, so every run they reference and the list lacks is read directly by
     # its id. A queued or in-progress run therefore counts as present and is awaited.
     # The function runs in a command substitution, where errexit does not apply, so
     # every lookup returns its failure explicitly: if the check runs could not be read,
@@ -199,7 +255,7 @@ fetch_runs() {
     local listed run_ids run_id extra='[]'
     listed="$(gh api --paginate --slurp "repos/${REPO}/actions/runs?event=pull_request&head_sha=${HEAD_SHA}&per_page=100" \
         | jq -c '[.[].workflow_runs[]]')" || return 1
-    run_ids="$(gh api --paginate --slurp "repos/${REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" \
+    run_ids="$(gh api --paginate --slurp "repos/${REPO}/commits/${MERGE_SHA}/check-runs?per_page=100" \
         | jq -r '[.[].check_runs[].details_url // empty | select(test("/actions/runs/[0-9]+"))
             | capture("/actions/runs/(?<id>[0-9]+)").id] | unique | .[]')" || return 1
     # The run lists travel through stdin, never as a jq argument: a pull request that runs
@@ -210,11 +266,24 @@ fetch_runs() {
         if ! jq -e --argjson id "$run_id" 'any(.[]; .id == $id)' <<<"$listed" >/dev/null; then
             run="$(gh api "repos/${REPO}/actions/runs/${run_id}")" || return 1
             extra="$(printf '%s\n%s\n' "$extra" "$run" \
-                | jq -c -s --arg sha "$HEAD_SHA" \
-                    '.[0] as $extra | .[1] | if .event == "pull_request" and .head_sha == $sha then $extra + [.] else $extra end')" || return 1
+                | jq -c -s --arg pr "$PR_NUMBER" \
+                    '.[0] as $extra | .[1] | if .event == "pull_request"
+                        and any(.pull_requests[]?; (.number | tostring) == $pr)
+                        then $extra + [.] else $extra end')" || return 1
         fi
     done
-    printf '%s\n%s\n' "$listed" "$extra" | jq -c -s '{workflow_runs: (.[0] + .[1])}' || return 1
+    printf '%s\n%s\n' "$listed" "$extra" \
+        | jq -c -s '{workflow_runs: (.[0] + .[1])}' \
+        | jq -c --arg pr "$PR_NUMBER" --arg base "$BASE_REF" --arg base_sha "$BASE_SHA" --arg head_sha "$HEAD_SHA" '
+            {workflow_runs: [
+                .workflow_runs[]
+                | select(.event == "pull_request")
+                | select(any(.pull_requests[]?;
+                    (.number | tostring) == $pr
+                    and .base.ref == $base
+                    and .base.sha == $base_sha
+                    and .head.sha == $head_sha))
+            ]}' || return 1
 }
 
 while :; do
@@ -241,7 +310,7 @@ while :; do
                 continue
             fi
             if [ "$elapsed_min" -ge "$MISSING_RUN_GRACE_MINUTES" ]; then
-                echo "::error::${file} matches the changed files but no run exists for ${HEAD_SHA} after ${elapsed_min} minutes"
+                echo "::error::${file} matches the changed files but no run exists for PR #${PR_NUMBER} on ${BASE_REF} (${BASE_SHA}), head ${HEAD_SHA}, merge ${MERGE_SHA} after ${elapsed_min} minutes"
                 exit 1
             fi
             pending=1

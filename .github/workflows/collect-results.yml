@@ -2,10 +2,10 @@ name: Collect Results
 
 # Sole producer of the required "Collect Results" status check.
 #
-# Runs on every pull request to main. It determines which extension build &
+# Runs on every pull request to the supported base branches. It determines which extension build &
 # test workflows are triggered by the changed files (from their own
-# pull_request.paths filters), waits for those runs on the pull request head
-# commit and fails unless every one of them succeeded. Workflows without path
+# pull_request.paths filters), waits for those runs on the exact pull request
+# base/head commits and tested merge commit, and fails unless every one succeeded. Workflows without path
 # filters, including Security Scan, are required even on documentation-only PRs.
 # Security Scan must also have successfully executed all expected scanner jobs.
 #
@@ -17,7 +17,7 @@ name: Collect Results
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
 
 permissions: {}
 
@@ -48,5 +48,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.sha }}
         run: bash .github/scripts/collect-results.sh

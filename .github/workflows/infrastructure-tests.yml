@@ -12,7 +12,7 @@ on:
       - 'shared/tests/installer-pattern.php'
       - 'shared/tests/installer-lifecycle.php'
   pull_request:
-    branches: [main]
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
       - '.github/scripts/**'
       - '.github/workflows/**'

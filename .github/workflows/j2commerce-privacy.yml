@@ -22,7 +22,7 @@ on:
       - '.github/scripts/check-sql-alignment.php'
       - '.github/scripts/phpunit-bootstrap.php'
   pull_request:
-    branches: [main]
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
       - 'j2commerce/plg_privacy_j2commerce/**'
       - 'shared/build/**'

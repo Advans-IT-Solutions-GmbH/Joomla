@@ -19,7 +19,7 @@ on:
       - '.github/actions/resolve-shops/**'
       - '.github/scripts/check-sql-alignment.php'
   pull_request:
-    branches: [main]
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
       - 'j2commerce/com_j2store_cleanup/**'
       - 'shared/build/**'

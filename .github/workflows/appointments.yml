@@ -23,7 +23,7 @@ on:
       - 'shared/tests/scripts/shared-backend-views.php'
       - '.github/workflows/appointments.yml'
   pull_request:
-    branches: [main]
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
       - 'com_appointments/**'
       - 'shared/build/**'

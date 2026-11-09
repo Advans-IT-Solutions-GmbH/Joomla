@@ -20,7 +20,7 @@ on:
       - '.github/scripts/check-shared-path-coverage.sh'
       - '.github/scripts/test-language-delivery.py'
   pull_request:
-    branches: [main]
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
       - 'shared/**'
       - '.github/workflows/**'

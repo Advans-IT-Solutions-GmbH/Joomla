@@ -11,7 +11,7 @@ on:
       - 'shared/tests/browser/**'
       - '.github/workflows/backend-pointer.yml'
   pull_request:
-    branches: [main]
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
       - 'com_appointments/**'
       - 'mod_dmarcreports/**'

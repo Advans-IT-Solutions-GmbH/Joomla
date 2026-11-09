@@ -21,7 +21,7 @@ on:
       - 'shared/tests/scripts/shared-database-check-lib.php'
       - '.github/workflows/pkg-dmarcreports.yml'
   pull_request:
-    branches: [main]
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
       - 'pkg_dmarcreports/**'
       - 'com_dmarcreports/**'

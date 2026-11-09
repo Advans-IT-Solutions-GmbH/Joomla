@@ -16,7 +16,7 @@ on:
       - 'shared/tests/scripts/shared-install-messages.php'
       - '.github/workflows/moddmarcreports.yml'
   pull_request:
-    branches: [main]
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
       - 'mod_dmarcreports/**'
       - 'shared/build/**'
