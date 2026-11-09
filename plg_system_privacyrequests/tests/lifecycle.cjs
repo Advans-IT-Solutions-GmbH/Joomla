@@ -173,14 +173,14 @@ async function main() {
         const unknown = `unknown-${stamp}@example.test`;
         const beforeOff = [pending, failedMail, native, unknown].map(email => fixture('snapshot', email).requests);
         const messages = [];
+        const mailState = fixture('mail-off');
         try {
-            fixture('mail-off');
             for (const address of [pending, failedMail, native, unknown]) {
                 await page.goto(route);
                 messages.push(await submit(page, address, 'request'));
             }
         } finally {
-            fixture('mail-on');
+            fixture('mail-on', mailState.original_mailonline);
         }
         check('Mail-disabled availability is identical for pending, confirmed, native and unknown addresses',
             messages.every(message => message === messages[0] && message.includes('could not finish')));

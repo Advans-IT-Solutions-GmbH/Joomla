@@ -709,13 +709,27 @@ switch ($op) {
         if ($config->get('mailer') !== 'smtp' || $config->get('smtphost') !== '127.0.0.1') {
             throw new RuntimeException('Only a synthetic loopback SMTP capture can be controlled.');
         }
-        $config->set('mailonline', $op === 'mail-on' ? 1 : 0);
         $file = JPATH_CONFIGURATION . '/configuration.php';
+        $bytes = file_get_contents($file);
+        $pattern = '/(^[\t ]*public\s+\$mailonline\s*=\s*)(true|false|[01])(\s*;)/m';
+        if ($bytes === false || preg_match($pattern, $bytes, $setting) !== 1) {
+            throw new RuntimeException('Cannot identify the isolated fixture mail setting.');
+        }
+        $value = $op === 'mail-on' ? ($email !== '' ? $email : '1') : '0';
+        if (!in_array($value, ['true', 'false', '0', '1'], true)) {
+            throw new RuntimeException('Invalid fixture mail restoration value.');
+        }
+        $out['original_mailonline'] = $setting[2];
+        $updated = preg_replace_callback($pattern,
+            static fn (array $match): string => $match[1] . $value . $match[3], $bytes, 1, $count);
+        if ($updated === null || $count !== 1) {
+            throw new RuntimeException('Cannot replace the isolated fixture mail setting.');
+        }
         if (!chmod($file, 0644)) {
             throw new RuntimeException('Cannot write the isolated fixture configuration.');
         }
         try {
-            if (!\Joomla\Filesystem\File::write($file, $config->toString('PHP', ['class' => 'JConfig', 'closingtag' => false]))) {
+            if (!\Joomla\Filesystem\File::write($file, $updated)) {
                 throw new RuntimeException('Cannot save the isolated fixture configuration.');
             }
         } finally {
