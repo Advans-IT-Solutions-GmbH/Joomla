@@ -10,6 +10,7 @@
 
 use Advans\Component\Appointments\Administrator\Helper\Team\AppPassword;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKey;
+use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\Team\StoredObject;
@@ -289,17 +290,21 @@ PHP;
                 $accounts = [];
                 $records = [];
 
-                foreach (['own', 'silent', 'no-factor', 'foreign'] as $kind) {
+                foreach (['own', 'silent', 'no-factor', 'foreign', 'manager', 'new-owner'] as $kind) {
                     $password = 'Calendar-' . bin2hex(random_bytes(12)) . '!';
                     $id = $user('calendar-' . $kind, $password);
                     $accounts[$kind] = ['id' => $id, 'password' => $password];
                     $db->query("INSERT IGNORE INTO {$p}user_usergroup_map (user_id, group_id) VALUES ({$id}, {$teamGroup})");
 
-                    if ($kind !== 'foreign') {
+                    if (\in_array($kind, ['own', 'silent', 'no-factor'], true)) {
                         $db->query("INSERT INTO {$p}user_usergroup_map (user_id, group_id) VALUES ({$id}, 8)");
                     }
 
-                    if (\in_array($kind, ['own', 'silent'], true)) {
+                    if ($kind === 'manager') {
+                        $db->query("INSERT INTO {$p}user_usergroup_map (user_id, group_id) VALUES ({$id}, 7)");
+                    }
+
+                    if (\in_array($kind, ['own', 'silent', 'manager', 'new-owner'], true)) {
                         $db->query("INSERT INTO {$p}user_mfa (user_id, title, method, `default`, options, created_on)"
                             . " VALUES ({$id}, 'Synthetic TOTP', 'totp', 1, '{$options}', UTC_TIMESTAMP())");
                         $records[$kind] = (int) $db->insert_id;
@@ -365,6 +370,79 @@ PHP;
                         && str_contains($refused, $ownerKeyText)
                         && !str_contains($refused, 'COM_APPOINTMENTS_TEAM_C_ERROR_OWNER_KEY');
 
+                    $administration = new TeamServices(
+                        \Joomla\CMS\Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class),
+                        new KeyProvider((string) \Joomla\CMS\Factory::getApplication()->get('secret')),
+                        new \Joomla\Registry\Registry($params),
+                        static fn (): \DateTimeImmutable => new \DateTimeImmutable('now', new \DateTimeZone('UTC'))
+                    );
+                    foreach (['manager', 'new-owner'] as $kind) {
+                        $keys->createUserKey($accounts[$kind]['id'], $accounts[$kind]['password'])->wipe();
+                    }
+                    $ownKeys = $keys->unlockWithPassword($ownId, $accounts['own']['password']);
+                    try {
+                        $administration->grants()->grant($ownId, $ownCalendar, $accounts['manager']['id'], CalendarRole::Manage, $ownKeys);
+                    } finally {
+                        $ownKeys?->wipe();
+                    }
+                    $ownershipState = static function () use ($db, $p, $ownCalendar): string {
+                        return hash('sha256', serialize([
+                            $db->query("SELECT owner_user_id FROM {$p}appointments_calendars WHERE id={$ownCalendar}")->fetch_row(),
+                            $db->query("SELECT * FROM {$p}appointments_calendar_grants WHERE calendar_id={$ownCalendar} ORDER BY id")->fetch_all(MYSQLI_ASSOC),
+                            $db->query("SELECT * FROM {$p}appointments_calendar_key_wraps WHERE calendar_id={$ownCalendar} ORDER BY key_version,user_id")->fetch_all(MYSQLI_ASSOC),
+                        ]));
+                    };
+                    $ownerPath = '/administrator/index.php?option=com_appointments&task=calendars.assignOwner&id=' . $ownCalendar;
+                    $editPath = '/administrator/index.php?option=com_appointments&task=calendars.edit&id=' . $ownCalendar;
+                    $rawOwnership = static function (string $path, ?array $data = null) use ($curl, $suite): int {
+                        curl_setopt_array($curl, [CURLOPT_URL => $suite->base . $path,
+                            CURLOPT_POST => $data !== null, CURLOPT_FOLLOWLOCATION => false]);
+                        if ($data !== null) {
+                            curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($data));
+                        }
+                        try {
+                            if (curl_exec($curl) === false) {
+                                throw new \RuntimeException('Ownership HTTP regression request failed.');
+                            }
+                            return (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+                        } finally {
+                            curl_setopt($curl, CURLOPT_FOLLOWLOCATION, true);
+                        }
+                    };
+                    $newOwner = $accounts['new-owner']['id'];
+                    $state = $ownershipState();
+                    $checks['assignOwnerGetRefusedWithoutMutation'] =
+                        $rawOwnership($ownerPath . '&user_id=' . $newOwner) === 403 && $ownershipState() === $state;
+                    $edit = $request($editPath);
+                    $checks['assignOwnerMissingTokenRefusedWithoutMutation'] =
+                        $rawOwnership($ownerPath, ['id' => $ownCalendar, 'user_id' => $newOwner]) === 403
+                        && $ownershipState() === $state;
+                    $list = $request('/administrator/index.php?option=com_appointments&task=calendars.cancel', [
+                        'id' => $ownCalendar, $token($edit) => 1,
+                    ]);
+                    $checks['assignOwnerUnheldIdRefusedWithoutMutation'] =
+                        $rawOwnership($ownerPath, ['id' => $ownCalendar, 'user_id' => $newOwner, $token($list) => 1]) === 403
+                        && $ownershipState() === $state;
+                    $edit = $request($editPath);
+                    $request($ownerPath, ['id' => $ownCalendar, 'user_id' => $newOwner, $token($edit) => 1]);
+                    $checks['assignOwnerAuthenticatedPostCreatesRealManageWrap'] =
+                        (int) $db->query("SELECT owner_user_id FROM {$p}appointments_calendars WHERE id={$ownCalendar}")->fetch_row()[0] === $newOwner
+                        && $administration->grants()->accessFor($newOwner, $ownCalendar)?->role === CalendarRole::Manage;
+                    $edit = $request($editPath);
+                    $request('/administrator/index.php?option=com_appointments&task=calendars.cancel', [
+                        'id' => $ownCalendar, $token($edit) => 1,
+                    ]);
+                    $signIn('manager', true);
+                    $edit = $request($editPath);
+                    $state = $ownershipState();
+                    $checks['assignOwnerManagerWithoutCoreAdminRefusedWithoutMutation'] =
+                        $administration->grants()->accessFor($accounts['manager']['id'], $ownCalendar)?->role === CalendarRole::Manage
+                        && $rawOwnership($ownerPath, ['id' => $ownCalendar, 'user_id' => $ownId, $token($edit) => 1]) === 403
+                        && $ownershipState() === $state;
+                    $request('/administrator/index.php?option=com_appointments&task=calendars.cancel', [
+                        'id' => $ownCalendar, $token($edit) => 1,
+                    ]);
+
                     $signIn('silent', true);
                     $silent = $inspect(false, true, true);
                     $refused = $save($accounts['silent']['id'], 'Synthetic silent own calendar');
@@ -372,6 +450,15 @@ PHP;
                     $checks['silentSessionCannotCreateKeyOrCalendar'] = $noRows($accounts['silent']['id'])
                         && str_contains($refused, $lockedText)
                         && !str_contains($refused, 'COM_APPOINTMENTS_TEAM_B_ERROR_KEYS_LOCKED');
+                    $edit = $request($editPath);
+                    $state = $ownershipState();
+                    $refused = $request($ownerPath, ['id' => $ownCalendar, 'user_id' => $ownId, $token($edit) => 1]);
+                    $checks['assignOwnerLockedKeySessionRefusedWithoutMutation'] =
+                        str_contains($refused, $lockedText) && $ownershipState() === $state;
+                    $edit = $request($editPath);
+                    $request('/administrator/index.php?option=com_appointments&task=calendars.cancel', [
+                        'id' => $ownCalendar, $token($edit) => 1,
+                    ]);
                     $signIn('no-factor', false);
                     $refused = $save($accounts['no-factor']['id'], 'Synthetic no-factor own calendar');
                     $checks['missingFactorCannotCreateKeyOrCalendar'] = $noRows($accounts['no-factor']['id'])
