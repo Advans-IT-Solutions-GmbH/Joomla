@@ -68,7 +68,7 @@ $retentionLabels = [
         </section>
     <?php endforeach; ?>
     <nav class="d-flex flex-wrap gap-2 mb-3" aria-label="<?php echo $this->escape(Text::_('COM_APPOINTMENTS_HELP_TITLE')); ?>">
-        <a class="btn btn-primary" href="<?php echo Route::_('index.php?option=com_appointments'); ?>"><?php echo Text::_('COM_APPOINTMENTS_MENU_DASHBOARD'); ?></a>
+        <a class="btn btn-primary" href="<?php echo Route::_('index.php?option=com_appointments'); ?>"><?php echo Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'); ?></a>
         <?php if ($this->canOptions) : ?>
             <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_config&view=component&component=com_appointments'); ?>"><?php echo Text::_('JOPTIONS'); ?></a>
         <?php endif; ?>

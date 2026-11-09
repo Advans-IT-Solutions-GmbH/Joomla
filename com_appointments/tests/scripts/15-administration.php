@@ -145,6 +145,9 @@ try {
             $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 8
                 && $helpXpath->query('//a[@id="toolbar-back"]')->length === 1,
                 'Central help has all generic topics and a real overview return, enabled=' . $enabled);
+            $overviewButton = $helpXpath->query('//div[@id="appointments-help"]/nav/a[contains(@class,"btn-primary")]')->item(0);
+            $check($overviewButton !== null && trim($overviewButton->textContent) === 'Overview',
+                'Help overview button uses the runtime language catalogue, enabled=' . $enabled);
             $check(str_contains($help, 'THISANDFUTURE') && str_contains($help, 'does not mean unlimited retention')
                 && str_contains($help, 'fixed 12-month period') && !str_contains($help, 'COM_APPOINTMENTS_HELP_'),
                 'Central help renders the separate translated retention contracts, enabled=' . $enabled);
