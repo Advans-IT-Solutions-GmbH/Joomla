@@ -21,6 +21,7 @@ if ($app->get('sitename') !== 'Privacy Test Fixture') {
 $app->createExtensionNamespaceMap();
 $app->loadLanguage($container->get(\Joomla\CMS\Language\LanguageFactoryInterface::class)->createLanguage('en-GB'));
 $db = $container->get(\Joomla\Database\DatabaseInterface::class);
+$admin = $db->quote((string) (getenv('JOOMLA_ADMIN_USERNAME') ?: 'fixture-admin'));
 $op = $argv[1] ?? '';
 $email = $argv[2] ?? '';
 if (in_array($op, ['snapshot', 'expire'], true) && !str_ends_with($email, '@example.test')) {
@@ -34,7 +35,7 @@ switch ($op) {
     case 'operator-admin-language-get':
     case 'operator-admin-language-set':
     case 'operator-notification':
-        $id = (int) $db->setQuery("SELECT id FROM #__users WHERE username='fixture-admin'")->loadResult();
+        $id = (int) $db->setQuery("SELECT id FROM #__users WHERE username=" . $admin)->loadResult();
         $user = new \Joomla\CMS\Table\User($db);
         if (!$user->load($id) || !(new \Joomla\CMS\User\User($id))->authorise('core.admin')) {
             throw new RuntimeException('Only the genuine synthetic administrator may be controlled.');
@@ -80,7 +81,7 @@ switch ($op) {
         if (!preg_match('/^operator-\d+@example\.test$/D', $email)) {
             throw new RuntimeException('Only a uniquely marked synthetic operator contact is allowed.');
         }
-        $actor = (int) $db->setQuery("SELECT id FROM #__users WHERE username='fixture-admin'")->loadResult();
+        $actor = (int) $db->setQuery("SELECT id FROM #__users WHERE username=" . $admin)->loadResult();
         $user = new \Joomla\CMS\User\User($actor);
         if (!$user->authorise('core.admin', 'com_contact')) {
             throw new RuntimeException('A genuine authorized synthetic contact administrator is required.');
@@ -131,7 +132,7 @@ switch ($op) {
         if (!$request || (int) $request->status !== 0 || !str_ends_with($request->email, '@example.test')) {
             throw new RuntimeException('Only a pending synthetic Core request may be renewed.');
         }
-        $actor = (int) $db->setQuery("SELECT id FROM #__users WHERE username='fixture-admin'")->loadResult();
+        $actor = (int) $db->setQuery("SELECT id FROM #__users WHERE username=" . $admin)->loadResult();
         $user = new \Joomla\CMS\User\User($actor);
         if (!$user->authorise('core.admin', 'com_privacy')) {
             throw new RuntimeException('A genuine authorized synthetic administrator is required.');
@@ -200,7 +201,7 @@ switch ($op) {
         if ($op === 'legacy-enable') {
             $model = $app->bootComponent('com_plugins')->getMVCFactory()
                 ->createModel('Plugin', 'Administrator', ['ignore_request' => true]);
-            $actor = (int) $db->setQuery("SELECT id FROM #__users WHERE username='fixture-admin'")->loadResult();
+            $actor = (int) $db->setQuery("SELECT id FROM #__users WHERE username=" . $admin)->loadResult();
             $model->setCurrentUser(new \Joomla\CMS\User\User($actor));
             foreach ([['privacy', 'j2commerce', 1], ['system', 'j2commerceprivacy', 1], ['task', 'j2commerceprivacy', 0]] as [$group, $element, $enabled]) {
                 $id = (int) $db->setQuery('SELECT extension_id FROM #__extensions WHERE type=' . $db->quote('plugin')
@@ -325,7 +326,7 @@ switch ($op) {
         if ($op !== 'generic-id') {
             $model = $app->bootComponent('com_plugins')->getMVCFactory()
                 ->createModel('Plugin', 'Administrator', ['ignore_request' => true]);
-            $actor = (int) $db->setQuery("SELECT id FROM #__users WHERE username='fixture-admin'")->loadResult();
+            $actor = (int) $db->setQuery("SELECT id FROM #__users WHERE username=" . $admin)->loadResult();
             $model->setCurrentUser(new \Joomla\CMS\User\User($actor));
             $ids = array_map('intval', $db->setQuery("SELECT extension_id FROM #__extensions WHERE type='plugin'"
                 . " AND folder='system' AND element='privacyrequests'")->loadColumn());
@@ -456,13 +457,13 @@ switch ($op) {
         }
         $app->bootComponent('com_appointments');
         $params = \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments');
-        $actor = (int) $db->setQuery("SELECT id FROM #__users WHERE username='fixture-admin'")->loadResult();
+        $actor = (int) $db->setQuery("SELECT id FROM #__users WHERE username=" . $admin)->loadResult();
         $params->set('teamcal_enabled', 1);
         $params->set('team_groups', array_values((new \Joomla\CMS\User\User($actor))->groups));
         $team = \Advans\Component\Appointments\Administrator\Service\Team\TeamServices::fromApplication();
         if (in_array($op, ['appointments-empty-calendars', 'appointments-reset-calendars'], true)) {
             $ids = $db->setQuery("SELECT c.id FROM #__appointments_calendars c WHERE c.title='Synthetic privacy copy'"
-                . " AND c.owner_user_id IN (SELECT id FROM #__users WHERE username IN ('fixture-admin','privacy-fixture-host'))"
+                . " AND c.owner_user_id IN (SELECT id FROM #__users WHERE username IN (" . $admin . ",'privacy-fixture-host'))"
                 . ($op === 'appointments-empty-calendars'
                     ? ' AND NOT EXISTS (SELECT 1 FROM #__appointments_calendar_objects o WHERE o.calendar_id=c.id)' : ''))->loadColumn();
             foreach ($ids as $id) {
@@ -546,7 +547,7 @@ switch ($op) {
         $backup = (object) ['name' => 'appointments-rebuild', 'value' => $original];
         $db->insertObject('#__privacy_test_settings', $backup);
         $settings = json_decode($original, true, 512, JSON_THROW_ON_ERROR);
-        $actor = (int) $db->setQuery("SELECT id FROM #__users WHERE username='fixture-admin'")->loadResult();
+        $actor = (int) $db->setQuery("SELECT id FROM #__users WHERE username=" . $admin)->loadResult();
         $settings['teamcal_enabled'] = 1;
         $host = (int) $db->setQuery('SELECT host_user_id FROM #__appointments_bookings WHERE id=' . (int) $email)->loadResult();
         $settings['team_groups'] = array_values(array_unique(array_merge(
