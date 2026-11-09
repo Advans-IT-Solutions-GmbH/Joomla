@@ -41,3 +41,84 @@ privacyAssert(count($renewed) === 1 && $renewed[0]['id'] === $receipt['id']
     'Failed delivery renewal preserves original receipt and date while rotating its password hash');
 $service->confirm($email, '0123456789abcdef0123456789abcdef');
 privacyAssert($read() === $renewed, 'An undelivered substitute token cannot confirm or alter the pending request');
+
+privacyAssert(($plugin::getSubscribedEvents()['onBeforeCompileHead'] ?? '') === 'onBeforeCompileHead',
+    'The native responsive head hook is subscribed');
+$actor = null;
+foreach ($db->setQuery('SELECT id FROM #__users WHERE block=0 ORDER BY id')->loadColumn() as $userId) {
+    $candidate = $container->get(\Joomla\CMS\User\UserFactoryInterface::class)->loadUserById((int) $userId);
+    if ($candidate->authorise('core.admin', 'com_privacy')) {
+        $actor = $candidate;
+        break;
+    }
+}
+privacyAssert($actor !== null, 'The fixture has a genuine Core-authorized administrator');
+$admin = $container->get(\Joomla\CMS\Application\AdministratorApplication::class);
+$snapshot = static function () use ($db): string {
+    return hash('sha256', serialize([
+        hash_file('sha256', JPATH_CONFIGURATION . '/configuration.php'),
+        $db->setQuery('SELECT extension_id, enabled, params FROM #__extensions ORDER BY extension_id')->loadAssocList(),
+        $db->setQuery('SELECT id, state FROM #__scheduler_tasks ORDER BY id')->loadAssocList(),
+        $_COOKIE,
+    ]));
+};
+$before = $snapshot();
+$saved = [];
+foreach ([$app, $admin] as $application) {
+    $input = $application->getInput();
+    $saved[] = [$application, $application->getDocument(), $application->getIdentity(),
+        $application->getBody(), $input->get('option', null, 'raw'),
+        $input->get('view', null, 'raw'), $input->get('id', null, 'raw')];
+}
+try {
+    foreach ([
+        ['site', $app, $actor, 'com_privacy', 'request', false, false],
+        ['wrong component', $admin, $actor, 'com_users', 'request', false, false],
+        ['wrong view', $admin, $actor, 'com_privacy', 'requests', false, false],
+        ['unauthorized', $admin, new \Joomla\CMS\User\User(), 'com_privacy', 'request', false, false],
+        ['non-HTML', $admin, $actor, 'com_privacy', 'request', true, false],
+        ['authorized native request', $admin, $actor, 'com_privacy', 'request', false, true],
+    ] as [$label, $application, $identity, $option, $view, $raw, $expected]) {
+        $document = $raw ? new \Joomla\CMS\Document\RawDocument() : new \Joomla\CMS\Document\HtmlDocument();
+        $application->loadDocument($document);
+        $application->loadIdentity($identity);
+        $application->getInput()->set('option', $option);
+        $application->getInput()->set('view', $view);
+        $plugin->setApplication($application);
+        $plugin->onBeforeCompileHead();
+        $styles = $document->getWebAssetManager()->getAssets('style');
+        privacyAssert(isset($styles['plg_system_privacyrequests.native-review']) === $expected,
+            "Responsive inline asset guard: $label");
+        if ($expected) {
+            $css = $styles['plg_system_privacyrequests.native-review']->getOption('content');
+            privacyAssert(str_contains($css, '@media (max-width: 991.98px)')
+                && substr_count($css, 'body.com_privacy.view-request:has([data-privacyrequests-review])') === 17,
+                'Every responsive selector requires the adapter marker, including the measured 768px boundary');
+            privacyAssert(!preg_match('/overflow(?:-x)?\s*:\s*hidden|display\s*:\s*none|visibility\s*:\s*hidden/i', $css),
+                'Responsive containment does not hide native content or controls');
+            $plain = '<form id="item-form"><button type="submit">Native control</button></form>';
+            $application->getInput()->set('id', 0);
+            $application->setBody($plain);
+            $plugin->onAfterRender();
+            privacyAssert($application->getBody() === $plain,
+                'An authorized view without an eligible request receives no adapter marker');
+            $application->getInput()->set('id', (int) $receipt['id']);
+            $plugin->onAfterRender();
+            privacyAssert(str_contains($application->getBody(), 'data-privacyrequests-review')
+                && str_contains($application->getBody(), 'data-privacy-delivery="failed"')
+                && str_contains($application->getBody(), '<button type="submit">Native control</button>'),
+                'The actual pending-delivery view gains the marker without losing its native controls');
+        }
+    }
+    privacyAssert($snapshot() === $before, 'Head/render hooks leave consent, configuration, mail and Scheduler states unchanged');
+} finally {
+    foreach ($saved as [$application, $document, $identity, $body, $option, $view, $id]) {
+        $application->loadDocument($document);
+        $application->loadIdentity($identity);
+        $application->setBody($body);
+        $application->getInput()->set('option', $option);
+        $application->getInput()->set('view', $view);
+        $application->getInput()->set('id', $id);
+    }
+    $plugin->setApplication($app);
+}
