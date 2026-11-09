@@ -10,13 +10,14 @@ namespace Advans\Component\Appointments\Administrator\Service\Close;
 
 use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
 
-/** Delivery metadata only. Personal data is read from the locked canonical booking, never copied. */
+/** Delivery metadata and a keyed subject association; no copied booking payload. */
 final class Queue
 {
     public const TABLE = '#__appointments_close';
@@ -34,6 +35,7 @@ final class Queue
             target_sequence INT UNSIGNED NOT NULL,
             erased TINYINT NOT NULL DEFAULT 0,
             request_id INT UNSIGNED NOT NULL DEFAULT 0,
+            subject_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT \'\',
             state VARCHAR(16) NOT NULL DEFAULT \'pending\',
             operation VARCHAR(24) NOT NULL DEFAULT \'\',
             reason VARCHAR(48) NOT NULL DEFAULT \'\',
@@ -52,7 +54,8 @@ final class Queue
             INDEX privacy_request (request_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
         $columns = $db->getTableColumns($db->replacePrefix(self::TABLE));
-        foreach (['organization_id' => "VARCHAR(110) NOT NULL DEFAULT ''",
+        foreach (['subject_hash' => "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT ''",
+            'organization_id' => "VARCHAR(110) NOT NULL DEFAULT ''",
             'last_attempt' => 'BIGINT NOT NULL DEFAULT 0', 'rate_limit_until' => 'BIGINT NOT NULL DEFAULT 0'] as $name => $type) {
             if (!isset($columns[$name])) {
                 $db->setQuery('ALTER TABLE ' . $db->quoteName(self::TABLE) . ' ADD ' . $db->quoteName($name) . ' ' . $type)->execute();
@@ -73,6 +76,7 @@ final class Queue
         if (!$old) {
             $values = ['booking_id' => $id, 'uid' => (string) $booking['uid'], 'target_sequence' => (int) $booking['sequence'],
                 'erased' => 0, 'request_id' => 0, 'state' => 'pending', 'operation' => '', 'reason' => '', 'binding' => '',
+                'subject_hash' => self::subject((string) $booking['invitee_email']),
                 'organization_id' => '', 'lead_id' => '', 'contact_id' => '', 'contact_created' => 0, 'activity_id' => '',
                 'attempts' => 0, 'next_attempt' => 0, 'last_attempt' => 0, 'rate_limit_until' => 0];
             $row = (object) ($values + ['mac' => self::mac($values)]);
@@ -105,6 +109,9 @@ final class Queue
         if ((int) $old['erased'] === 1 && $old['state'] === 'done') {
             $change->state = 'done';
         }
+        if ($change->erased === 1 && $change->state === 'done') {
+            $change->subject_hash = '';
+        }
         $change->mac = self::mac(array_replace($old, (array) $change));
         if (!$db->updateObject(self::TABLE, $change, 'booking_id')) {
             throw new \RuntimeException('Close delivery change could not be queued.');
@@ -133,13 +140,41 @@ final class Queue
 
     public static function pendingForRequest(DatabaseInterface $db, int $requestId): int
     {
-        $rows = $db->setQuery('SELECT * FROM ' . $db->quoteName(self::TABLE) . ' WHERE request_id = ' . $requestId)->loadAssocList();
+        $address = $db->setQuery('SELECT email FROM ' . $db->quoteName('#__privacy_requests')
+            . ' WHERE id = ' . $requestId)->loadResult();
+        $subject = $address === null ? '' : self::subject((string) $address);
+        // Authenticate before filtering: changing a subject/request/state must not hide a cleanup obligation.
+        $rows = $db->setQuery('SELECT * FROM ' . $db->quoteName(self::TABLE))->loadAssocList();
         $pending = 0;
         foreach ($rows as $row) {
             self::verify($row);
-            $pending += $row['state'] !== 'done' ? 1 : 0;
+            $matches = (int) $row['request_id'] === $requestId
+                || ($subject !== '' && (hash_equals((string) $row['subject_hash'], $subject)
+                    || ((int) $row['erased'] === 1 && $row['subject_hash'] === '')));
+            $pending += $matches && $row['state'] !== 'done' ? 1 : 0;
         }
         return $pending;
+    }
+
+    public function associatePrivacy(string $address, int $requestId): void
+    {
+        if ($requestId < 1) {
+            throw new \InvalidArgumentException('A formal privacy request is required.');
+        }
+        $subject = self::subject($address);
+        $this->db->transactionStart();
+        try {
+            $rows = $this->db->setQuery('SELECT * FROM ' . $this->table()
+                . ' WHERE subject_hash = ' . $this->db->quote($subject) . " AND state <> 'done' ORDER BY booking_id FOR UPDATE")->loadAssocList();
+            foreach ($rows as $row) {
+                self::verify($row);
+                $this->save((int) $row['booking_id'], ['request_id' => $requestId]);
+            }
+            $this->db->transactionCommit();
+        } catch (\Throwable $error) {
+            $this->db->transactionRollback();
+            throw $error;
+        }
     }
 
     public function hasPendingErasure(int $id): bool
@@ -436,7 +471,12 @@ final class Queue
 
     private function save(int $id, array $fields): void
     {
-        $fields['mac'] = self::mac(array_replace($this->row($id), $fields));
+        $row = $this->row($id);
+        $updated = array_replace($row, $fields);
+        if ((int) $updated['erased'] === 1 && $updated['state'] === 'done') {
+            $fields['subject_hash'] = '';
+        }
+        $fields['mac'] = self::mac(array_replace($row, $fields));
         $object = (object) (['booking_id' => $id] + $fields);
         if (!$this->db->updateObject(self::TABLE, $object, 'booking_id')) {
             throw new \RuntimeException('Close delivery metadata could not be saved.');
@@ -471,6 +511,14 @@ final class Queue
         if (hash_equals(self::mac($row), (string) ($row['mac'] ?? ''))) {
             return;
         }
+        if (($row['subject_hash'] ?? '') === '') {
+            $previous = $row;
+            unset($previous['subject_hash']);
+            if (hash_equals(self::mac($previous), (string) ($row['mac'] ?? ''))) {
+                return;
+            }
+            $row = $previous;
+        }
         // Earlier evaluation builds had no account binding. Never assign remote IDs from those builds to an account implicitly.
         if (($row['organization_id'] ?? '') === '' && (int) ($row['last_attempt'] ?? 0) === 0 && (int) ($row['rate_limit_until'] ?? 0) === 0) {
             unset($row['organization_id'], $row['last_attempt'], $row['rate_limit_until']);
@@ -479,6 +527,12 @@ final class Queue
             }
         }
         throw new \RuntimeException('Close delivery metadata is not authentic.');
+    }
+
+    private static function subject(string $address): string
+    {
+        $key = (new KeyProvider((string) Factory::getApplication()->get('secret', '')))->key('close-privacy-subject');
+        return hash_hmac('sha256', PrivacyAddress::normalise($address), $key);
     }
 
     private function assertOrganization(array $row, Client $client): void

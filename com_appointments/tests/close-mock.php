@@ -72,7 +72,7 @@ namespace {
                 booking_id INTEGER PRIMARY KEY, uid TEXT, target_sequence INTEGER, erased INTEGER, request_id INTEGER,
                 state TEXT, operation TEXT, reason TEXT, binding TEXT, lead_id TEXT, contact_id TEXT,
                 contact_created INTEGER, activity_id TEXT, attempts INTEGER, next_attempt INTEGER, mac TEXT,
-                organization_id TEXT, last_attempt INTEGER, rate_limit_until INTEGER)');
+                organization_id TEXT, last_attempt INTEGER, rate_limit_until INTEGER, subject_hash TEXT)');
             $this->pdo->exec('CREATE TABLE test_appointments_bookings (
                 id INTEGER PRIMARY KEY, uid TEXT, sequence INTEGER, anonymised_utc TEXT,
                 invitee_name TEXT, invitee_email TEXT, invitee_phone TEXT, start_utc TEXT, end_utc TEXT,
@@ -80,6 +80,7 @@ namespace {
             $this->pdo->exec('CREATE TABLE test_appointments_privacy_cleanup (request_id INTEGER)');
             $this->pdo->exec('CREATE TABLE test_appointments_privacy_outcomes (request_id INTEGER PRIMARY KEY, complete INTEGER)');
             $this->pdo->exec('CREATE TABLE test_appointments_privacy_staff (request_id INTEGER PRIMARY KEY, payload TEXT)');
+            $this->pdo->exec('CREATE TABLE test_privacy_requests (id INTEGER PRIMARY KEY, email TEXT)');
         }
         public function getPrefix(): string { return 'test_'; }
         public function quoteName(string $name): string { return '`' . str_replace('#__', 'test_', $name) . '`'; }
@@ -301,7 +302,41 @@ namespace {
     $queue->run();
     $check($state(4)['activity_id'] === 'acti_fixture' && $state(4)['state'] === 'done', 'verified reconciliation resumes via PUT without POST');
     $params->values['close_delete_activity'] = 0;
-    $row = $mutate($row, ['sequence' => 1, 'anonymised_utc' => '2027-01-01 00:00:00'], true, 89);
+    $row = $mutate($row, ['sequence' => 1, 'anonymised_utc' => '2027-01-01 00:00:00', 'invitee_email' => null], true);
+    $db->pdo->exec('DELETE FROM test_appointments_bookings WHERE id=4');
+    $db->pdo->exec("INSERT INTO test_privacy_requests VALUES (89,'invitee@example.test'),(189,' INVITEE@example.test '),(289,'unrelated@example.test')");
+    $params->values['close_enabled'] = 0;
+    $check($state(4)['request_id'] === 0 && $queue->pendingPrivacy(89) === 1,
+        'later formal request independently discovers unassociated cleanup after canonical hard deletion');
+    $queue->associatePrivacy('invitee@example.test', 89);
+    $queue->associatePrivacy(' INVITEE@example.test ', 189);
+    $staffScope(189, true);
+    PrivacyOutcome::record($db, 189, true);
+    $check(PrivacyOutcome::incomplete($db, 189) && $queue->pendingPrivacy(89) === 1,
+        'new request cannot complete or hide first request while same-subject CRM cleanup remains pending');
+    $check($queue->pendingPrivacy(289) === 0, 'unrelated subject inherits no known CRM obligation');
+    $authentic = $state(4);
+    $legacy = $authentic;
+    unset($legacy['subject_hash']);
+    $legacy['request_id'] = 0;
+    $legacy['mac'] = (new \ReflectionMethod(Queue::class, 'mac'))->invoke(null, $legacy);
+    $legacy['subject_hash'] = '';
+    $legacyRow = (object) $legacy;
+    $db->updateObject(Queue::TABLE, $legacyRow, 'booking_id');
+    $check($queue->pendingPrivacy(289) === 1,
+        'legacy erased pending cleanup with unrecoverable subject fails closed for later requests');
+    $authenticRow = (object) $authentic;
+    $db->updateObject(Queue::TABLE, $authenticRow, 'booking_id');
+    $db->pdo->exec("UPDATE test_appointments_close SET subject_hash='" . str_repeat('f', 64) . "' WHERE booking_id=4");
+    $rejected = false;
+    try { $queue->pendingPrivacy(189); }
+    catch (\RuntimeException $error) { $rejected = true; }
+    $check($rejected, 'subject tampering cannot filter an unauthenticated obligation out of completion checks');
+    $db->updateObject(Queue::TABLE, $authenticRow, 'booking_id');
+    $check($queue->run()['disabled'] === 1 && $queue->pendingPrivacy(189) === 1,
+        'disabled delivery preserves cross-request erasure obligation without network');
+    $params->values['close_enabled'] = 1;
+    $queue->associatePrivacy('invitee@example.test', 89);
     $staffScope(89, true);
     PrivacyOutcome::record($db, 89, true);
     $check(PrivacyOutcome::incomplete($db, 89), 'native Complete gate rejects a success flag while own remote cleanup is pending');
@@ -315,6 +350,9 @@ namespace {
         'manually erased own Activity is verified without automated deletion approval or any writes');
     PrivacyOutcome::record($db, 89, true);
     $check(!PrivacyOutcome::incomplete($db, 89), 'native outcome can complete only after verified own cleanup');
+    PrivacyOutcome::record($db, 189, true);
+    $check(!PrivacyOutcome::incomplete($db, 189) && $state(4)['subject_hash'] === '',
+        'verified cleanup releases both requests and drops the no-longer-needed subject association');
     $staffScope(89, true, true);
     PrivacyOutcome::record($db, 89, true);
     $check(PrivacyOutcome::incomplete($db, 89), 'resolved CRM and staff rows cannot hide an unfinished authenticated removal attempt');

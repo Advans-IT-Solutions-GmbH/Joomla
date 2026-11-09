@@ -229,6 +229,7 @@ final class PrivacyService
         $result['cleanup_failed'] = max($result['cleanup_failed'], $cleanup?->pending() ?? 0);
         if ($requestId > 0) {
             $crm = new Close\Queue($this->db, $this->params);
+            $crm->associatePrivacy($address, $requestId);
             if ($crm->pendingPrivacy($requestId) > 0) {
                 try {
                     $crm->run(20, true, $requestId);

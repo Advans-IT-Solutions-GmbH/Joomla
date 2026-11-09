@@ -94,14 +94,22 @@ Duplicate prevention across independent installations is not guaranteed.
 
 Erasure stops unsent enrollment locally without an external obligation. Existing own remote
 activities or uncertain writes retain actionable metadata even when the booking is hard deleted.
-Turning transfer off pauses delivery, not those obligations. Native privacy Remove retries only
-its own request's cleanup; both its removal result and the Complete gate remain incomplete until
+Turning transfer off pauses delivery, not those obligations. A keyed, authenticated hash of the
+normalized primary-invitee address retains subject association without copying the address or
+booking payload. Later formal removal requests discover outstanding cleanup even after a prior
+self-service, administrator, retention or formal erasure deleted the canonical booking. Multiple
+requests for the same subject remain blocked independently; retry association does not release
+an earlier request. The hash is discarded once erased-booking cleanup is verified complete.
+Earlier evaluation rows with outstanding erased cleanup but no recoverable subject fail closed
+for formal completion until their own remote cleanup is verified; an unknown subject is never
+treated as proof of absence. Never-enrolled bookings still create no CRM obligation.
+Native privacy Remove retries the associated cleanup; both its result and the Complete gate remain incomplete until
 cleanup actually finishes. If an operator manually removes an integration-created Contact or
 Activity, safe retry verifies its absence read-only in the bound organization before resolving
 the corresponding obligation. It never removes CRM master records automatically.
 This does not auto-confirm or auto-complete a privacy request.
 
-Synthetic coverage without a network or credential: `php tests/close-mock.php` (PDO SQLite
+Synthetic coverage without a network or credential: `php tests/close-mock.php` (PDO SQLite and mbstring
 required). The installed `close` integration suite exercises canonical booking mutations with
 encrypted data and a mock transport on Joomla/MySQL/MariaDB. SQLite tests do not prove MySQL
 lock concurrency or replace installed/browser acceptance and the later authorized account setup.

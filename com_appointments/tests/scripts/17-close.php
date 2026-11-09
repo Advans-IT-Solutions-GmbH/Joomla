@@ -178,6 +178,14 @@ try {
     $erased = $store->erase($id, $now, 'admin', delete: true, actor: $fixture->host);
     $check(!empty($erased['_crm_cleanup_error']) && !$fixture->stored($id),
         'Disabled existing CRM obligation survives canonical hard deletion');
+    foreach ([$requestId + 1, $requestId + 2] as $formalId) {
+        $db->query("INSERT INTO {$prefix}privacy_requests (id,email,requested_at,status,request_type) VALUES "
+            . "({$formalId},'invitee@example.test',UTC_TIMESTAMP(),1,'remove')");
+    }
+    $queue->associatePrivacy('invitee@example.test', $requestId + 1);
+    $queue->associatePrivacy('INVITEE@example.test', $requestId + 2);
+    $check($queue->pendingPrivacy($requestId + 1) === 1 && $queue->pendingPrivacy($requestId + 2) === 1,
+        'Two later formal requests both discover disabled CRM cleanup after canonical hard deletion');
     $params['close_enabled'] = 1;
     $save();
     $foreignOrg = true;
@@ -187,6 +195,8 @@ try {
     $foreignOrg = false;
     $queue->run(20, true);
     $check($activity === [] && !$queue->hasPendingErasure($id), 'Mock cleanup resolves own Activity after booking deletion');
+    $check($queue->pendingPrivacy($requestId + 1) === 0 && $queue->pendingPrivacy($requestId + 2) === 0,
+        'Verified own cleanup releases both later requests without creating another booking');
 
     $booking = $fixture->booking($event, $day . ' 14:00:00')['booking'];
     $id = (int) $booking['id'];
@@ -276,6 +286,7 @@ try {
     $db->query("DELETE FROM {$prefix}appointments_privacy_outcomes WHERE request_id={$requestId}");
     $db->query("DELETE FROM {$prefix}appointments_privacy_cleanup WHERE request_id={$requestId}");
     $db->query("DELETE FROM {$prefix}appointments_privacy_staff WHERE request_id={$requestId}");
+    $db->query("DELETE FROM {$prefix}privacy_requests WHERE id IN (" . ($requestId + 1) . ',' . ($requestId + 2) . ')');
     $fixture->cleanup();
 }
 exit($failed > 0 ? 1 : 0);
