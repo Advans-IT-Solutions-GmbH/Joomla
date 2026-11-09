@@ -393,8 +393,10 @@ namespace {
     $db->afterCommit = null;
     $db->locked = true;
     $before = count($requests);
-    try { $queue->run(); $check(false, 'competing worker refused'); }
-    catch (\RuntimeException $e) { $check(count($requests) === $before, 'competing worker refused before network'); }
+    $refused = false;
+    try { $queue->run(); }
+    catch (\RuntimeException $e) { $refused = $e->getMessage() === 'Close delivery is already running.'; }
+    $check($refused && count($requests) === $before, 'competing worker refused before network');
     $db->locked = false;
     $enrol(8);
     $db->failWrite = true;
@@ -437,8 +439,10 @@ namespace {
     $db->transactionRollback();
     $check((int) $state(9)['target_sequence'] === 0, 'booking rollback also rolls back enqueue');
     $db->pdo->exec("UPDATE test_appointments_close SET activity_id='acti_forged' WHERE booking_id=9");
-    try { $queue->run(); $check(false, 'metadata tampering rejected'); }
-    catch (\RuntimeException $e) { $check(true, 'metadata tampering rejected'); }
+    $rejected = false;
+    try { $queue->run(); }
+    catch (\RuntimeException $e) { $rejected = true; }
+    $check($rejected, 'metadata tampering rejected');
 
     foreach (['http://crm.example.test', 'https://user@crm.example.test', 'https://crm.example.test/path'] as $origin) {
         try { new Settings(new Params(array_replace($params->values, ['close_origin' => $origin]))); $check(false, 'invalid origin rejected'); }
