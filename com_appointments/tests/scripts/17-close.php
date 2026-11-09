@@ -1,5 +1,33 @@
 <?php
 
+if (($argv[1] ?? '') === '--race-erase') {
+    try {
+        require __DIR__ . '/appointments-joomla.php';
+        $blocked = false;
+        $calls = 0;
+        $mock = static function () use (&$calls): array {
+            $calls++;
+            throw new RuntimeException('Unexpected child transport.');
+        };
+        try {
+            (new \Advans\Component\Appointments\Administrator\Service\Close\Queue($joomlaDb,
+                \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments'), $mock))->run(1);
+        } catch (RuntimeException $error) {
+            $blocked = $error->getMessage() === 'Close delivery is already running.';
+        }
+        file_put_contents($argv[3], 'ready');
+        $joomlaDb->setQuery('SET SESSION innodb_lock_wait_timeout=15')->execute();
+        $result = (new \Advans\Component\Appointments\Administrator\Service\BookingStore($joomlaDb))->erase(
+            (int) $argv[2], new DateTimeImmutable('now', new DateTimeZone('UTC')), 'admin');
+        echo json_encode(['blocked' => $blocked, 'calls' => $calls, 'erased' => $result['changed'],
+            'pending' => !empty($result['_crm_cleanup_error'])], JSON_THROW_ON_ERROR);
+        exit(0);
+    } catch (Throwable $error) {
+        echo json_encode(['error' => get_class($error)], JSON_THROW_ON_ERROR);
+        exit(1);
+    }
+}
+
 require __DIR__ . '/appointments-fixtures.php';
 $fixture = new AppointmentsFixture('close');
 $db = $fixture->db;
@@ -26,8 +54,14 @@ $requests = [];
 $activity = [];
 $timeout = false;
 $foreignOrg = false;
+$raceId = 0;
+$raceProcess = null;
+$racePipes = [];
+$raceSignal = null;
 $requestId = random_int(1000000000, 2000000000);
-$transport = static function (string $method, string $path, ?array $payload) use (&$requests, &$activity, &$timeout, &$foreignOrg): array {
+$transport = static function (string $method, string $path, ?array $payload) use (
+    &$requests, &$activity, &$timeout, &$foreignOrg, &$raceId, &$raceProcess, &$racePipes, &$raceSignal, $fixture
+): array {
     $requests[] = [$method, $path, $payload];
     if ($method === 'GET' && $path === '/api/v1/custom_activity/actitype_fixture/') {
         return ['code' => 200, 'data' => ['id' => 'actitype_fixture', 'organization_id' => $foreignOrg ? 'orga_other' : 'orga_fixture',
@@ -40,6 +74,31 @@ $transport = static function (string $method, string $path, ?array $payload) use
             'emails' => [['email' => 'invitee@example.test']]]], 'cursor' => null]];
     }
     if ($method === 'POST' && $path === '/api/v1/activity/custom/') {
+        if ($raceId > 0) {
+            $raceSignal = tempnam(sys_get_temp_dir(), 'appointments-close-race-');
+            $raceProcess = proc_open([PHP_BINARY, __FILE__, '--race-erase', (string) $raceId, $raceSignal],
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $racePipes);
+            if (!is_resource($raceProcess)) {
+                throw new RuntimeException('The canonical race process did not start.');
+            }
+            fclose($racePipes[0]);
+            $deadline = microtime(true) + 10;
+            do {
+                clearstatcache(true, $raceSignal);
+                if (file_get_contents($raceSignal) === 'ready') {
+                    break;
+                }
+                usleep(20000);
+            } while (microtime(true) < $deadline);
+            if (file_get_contents($raceSignal) !== 'ready') {
+                throw new RuntimeException('The canonical race process did not become ready.');
+            }
+            usleep(200000);
+            if (!proc_get_status($raceProcess)['running'] || $fixture->stored($raceId)['anonymised_utc'] !== null) {
+                throw new RuntimeException('Canonical erasure was not serialized against the remote write.');
+            }
+            $raceId = 0;
+        }
         $activity = $payload + ['id' => 'acti_fixture'];
         if ($timeout) {
             throw new \RuntimeException('Synthetic timeout after remote write.');
@@ -145,9 +204,45 @@ try {
     $check(!$queue->hasPendingErasure($id), 'Synthetic final cleanup finishes without another booking or mail action');
     $check(count(array_filter($requests, static fn ($request) => $request[0] === 'POST' && $request[1] === '/api/v1/activity/custom/')) === 2,
         'Exactly one Activity create per synthetic booking despite changes and retries');
+    $booking = $fixture->booking($event, $day . ' 15:00:00')['booking'];
+    $id = (int) $booking['id'];
+    $ids[] = $id;
+    $raceId = $id;
+    $queue->run();
+    $deadline = microtime(true) + 20;
+    while (($childStatus = proc_get_status($raceProcess))['running'] && microtime(true) < $deadline) {
+        usleep(20000);
+    }
+    if ($childStatus['running']) {
+        throw new RuntimeException('The canonical race process did not finish.');
+    }
+    $child = json_decode(stream_get_contents($racePipes[1]), true, 16, JSON_THROW_ON_ERROR);
+    fclose($racePipes[1]);
+    fclose($racePipes[2]);
+    proc_close($raceProcess);
+    $raceProcess = null;
+    $check($childStatus['exitcode'] === 0 && $child['blocked'] && $child['calls'] === 0,
+        'Actual second-process worker is excluded by the database advisory lock before transport');
+    $check($child['erased'] && $child['pending'] && $fixture->stored($id)['anonymised_utc'] !== null,
+        'Concurrent canonical erasure waits for remote-write commit and retains its cleanup obligation');
+    $queue->run();
+    $check(!$queue->hasPendingErasure($id) && $activity === [],
+        'Post-race worker deletes only the saved own Activity without another create');
 } catch (Throwable $e) {
     $check(false, 'Installed Close mock failed: ' . get_class($e) . ' in ' . basename($e->getFile()) . ' at line ' . $e->getLine());
 } finally {
+    if (is_resource($raceProcess)) {
+        proc_terminate($raceProcess);
+        foreach ($racePipes as $pipe) {
+            if (is_resource($pipe)) {
+                fclose($pipe);
+            }
+        }
+        proc_close($raceProcess);
+    }
+    if ($raceSignal !== null && is_file($raceSignal)) {
+        unlink($raceSignal);
+    }
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($original) . "' WHERE element='com_appointments' AND type='component'");
     if ($ids) {
         $db->query("DELETE FROM {$prefix}appointments_close WHERE booking_id IN (" . implode(',', $ids) . ')');
