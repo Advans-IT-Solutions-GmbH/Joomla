@@ -666,6 +666,8 @@ booking menus, administrative rights versus content keys, grants/ownership/recov
 the separate retention lifecycles, privacy, mail and troubleshooting. The page remains accessible
 to users with component management permission when internet calendars are disabled, releases no
 personal keys and changes no setting. It supplements, rather than replaces, contextual field help.
+Its topic fragments reserve space for the native sticky administrator toolbar, including wrapped
+mobile actions, so navigation does not hide the topic heading or the start of its text.
 
 On narrow administrator screens, the access table scrolls horizontally within its calendar card
 so every grant action remains reachable without widening the page. Long page headings use the

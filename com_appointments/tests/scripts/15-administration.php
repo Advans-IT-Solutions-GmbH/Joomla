@@ -147,6 +147,8 @@ try {
     $check($admin->status === 200
         && preg_match('~#calendar-form\s+\.switcher\s*\{[^}]*max-inline-size:\s*100%~', $styles) === 1,
         'The installed stylesheet bounds native calendar switchers to their settings column without clipping');
+    $check(preg_match('~#appointments-help\s*>\s*section\[id\]\s*\{[^}]*scroll-margin-block-start:\s*8rem~', $styles) === 1,
+        'The installed stylesheet reserves native sticky-toolbar clearance for every Help topic fragment');
     $componentParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
     try {
         foreach ([0, 1] as $enabled) {
@@ -162,6 +164,16 @@ try {
             $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 8
                 && $helpXpath->query('//a[@id="toolbar-back"]')->length === 1,
                 'Central help has all generic topics and a real overview return, enabled=' . $enabled);
+            $topicLinks = $helpXpath->query('//div[@id="appointments-help"]/nav/a[starts-with(@href,"#help-")]');
+            $topicTargetsValid = $topicLinks->length === 8;
+            foreach ($topicLinks as $topicLink) {
+                $target = substr($topicLink->getAttribute('href'), 1);
+                $topicTargetsValid = $topicTargetsValid && preg_match('/^help-[a-z]+$/D', $target) === 1
+                    && $helpXpath->query('//div[@id="appointments-help"]/section[@id="' . $target . '"]')->length === 1;
+            }
+            $check($topicTargetsValid
+                && $helpXpath->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
+                'All eight native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
             $overviewButton = $helpXpath->query('//div[@id="appointments-help"]/nav/a[contains(@class,"btn-primary")]')->item(0);
             $check($overviewButton !== null && trim($overviewButton->textContent) === 'Overview',
                 'Help overview button uses the runtime language catalogue, enabled=' . $enabled);
