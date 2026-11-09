@@ -27,44 +27,47 @@ function closePhpCommand(): array
     return array_merge([PHP_BINARY], $ini === false ? ['-n'] : ['-c', $ini], [__FILE__]);
 }
 
-function closeAssertChildReadiness($pipe): void
+function closeAssertChildReadiness(string $file): void
 {
-    stream_set_blocking($pipe, false);
-    $line = '';
     $deadline = microtime(true) + 5;
     do {
-        $part = fgetc($pipe);
-        if ($part !== false) {
-            $line .= $part;
-            if ($part === "\n") {
-                if (json_decode($line, true, 16, JSON_THROW_ON_ERROR) !== closePhpReadiness()) {
-                    throw new RuntimeException('Child PHP configuration does not match the parent.');
-                }
-                stream_set_blocking($pipe, true);
-                return;
+        clearstatcache(true, $file);
+        if (is_file($file)) {
+            if (json_decode(file_get_contents($file), true, 16, JSON_THROW_ON_ERROR) !== closePhpReadiness()) {
+                throw new RuntimeException('Child PHP configuration does not match the parent.');
             }
-        } elseif (feof($pipe)) {
-            throw new RuntimeException('Child exited before PHP configuration readiness.');
-        } else {
-            usleep(10000);
+            return;
         }
-    } while (microtime(true) < $deadline && strlen($line) < 65536);
+        usleep(10000);
+    } while (microtime(true) < $deadline);
     throw new RuntimeException('Child did not report PHP configuration readiness.');
+}
+
+function closeChildExcerpt(string $output): string
+{
+    $allowed = ['blocked', 'calls', 'erased', 'lock_timeout', 'pending', 'error',
+        'true', 'false', 'null', 'RuntimeException', 'JsonException', 'Error', 'TypeError'];
+    $output = preg_replace_callback('/[A-Za-z0-9_\\\\.\\/:@%+-]+/',
+        static fn (array $match): string => in_array($match[0], $allowed, true) ? $match[0] : '[redacted]',
+        $output);
+    return substr(preg_replace('/[^\x20-\x7E]/', ' ', $output), 0, 250);
 }
 
 function closePhpSelfCheck(): void
 {
     $differentIni = tempnam(sys_get_temp_dir(), 'appointments-close-ini-');
-    if ($differentIni === false) {
+    $readiness = tempnam(sys_get_temp_dir(), 'appointments-close-ready-');
+    if ($differentIni === false || $readiness === false) {
         throw new RuntimeException('Cannot create the negative PHP configuration fixture.');
     }
+    unlink($readiness);
     try {
         if (file_put_contents($differentIni, "; Deliberately different test configuration.\n") === false) {
             throw new RuntimeException('Cannot write the negative PHP configuration fixture.');
         }
         foreach ([false, true] as $different) {
             $command = $different ? [PHP_BINARY, '-c', $differentIni, __FILE__] : closePhpCommand();
-            $process = proc_open(array_merge($command, ['--php-readiness']),
+            $process = proc_open(array_merge($command, ['--php-readiness', $readiness]),
                 [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, getenv());
             if (!is_resource($process)) {
                 throw new RuntimeException('PHP readiness self-check process did not start.');
@@ -73,7 +76,7 @@ function closePhpSelfCheck(): void
             try {
                 fclose($pipes[0]);
                 try {
-                    closeAssertChildReadiness($pipes[1]);
+                    closeAssertChildReadiness($readiness);
                 } catch (RuntimeException $error) {
                     if ($error->getMessage() !== 'Child PHP configuration does not match the parent.') {
                         throw $error;
@@ -84,6 +87,9 @@ function closePhpSelfCheck(): void
                 fclose($pipes[1]);
                 fclose($pipes[2]);
                 $exit = proc_close($process);
+                if (is_file($readiness)) {
+                    unlink($readiness);
+                }
             }
             if ($mismatch !== $different || $exit !== 0) {
                 throw new RuntimeException('PHP readiness self-check did not detect the expected configuration.');
@@ -91,12 +97,20 @@ function closePhpSelfCheck(): void
         }
     } finally {
         unlink($differentIni);
+        foreach ([$readiness, $readiness . '.tmp'] as $file) {
+            if (is_file($file)) {
+                unlink($file);
+            }
+        }
     }
 }
 
 if (in_array($argv[1] ?? '', ['--php-readiness', '--race-erase'], true)) {
-    echo json_encode(closePhpReadiness(), JSON_THROW_ON_ERROR) . "\n";
-    flush();
+    $readiness = $argv[$argv[1] === '--php-readiness' ? 2 : 5];
+    if (file_put_contents($readiness . '.tmp', json_encode(closePhpReadiness(), JSON_THROW_ON_ERROR)) === false
+        || !rename($readiness . '.tmp', $readiness)) {
+        throw new RuntimeException('Child could not publish PHP configuration readiness.');
+    }
     if ($argv[1] === '--php-readiness') {
         exit(0);
     }
@@ -185,9 +199,11 @@ $raceId = 0;
 $raceProcess = null;
 $racePipes = [];
 $raceSignal = null;
+$raceReadiness = null;
 $requestId = random_int(1000000000, 2000000000);
 $transport = static function (string $method, string $path, ?array $payload) use (
-    &$requests, &$activity, &$timeout, &$foreignOrg, &$raceId, &$raceProcess, &$racePipes, &$raceSignal, $fixture
+    &$requests, &$activity, &$timeout, &$foreignOrg, &$raceId, &$raceProcess, &$racePipes, &$raceSignal,
+    &$raceReadiness, $fixture
 ): array {
     $requests[] = [$method, $path, $payload];
     if ($method === 'GET' && $path === '/api/v1/custom_activity/actitype_fixture/') {
@@ -203,14 +219,19 @@ $transport = static function (string $method, string $path, ?array $payload) use
     if ($method === 'POST' && $path === '/api/v1/activity/custom/') {
         if ($raceId > 0) {
             $raceSignal = tempnam(sys_get_temp_dir(), 'appointments-close-race-');
+            $raceReadiness = tempnam(sys_get_temp_dir(), 'appointments-close-ready-');
+            if ($raceReadiness === false) {
+                throw new RuntimeException('Cannot create child PHP readiness fixture.');
+            }
+            unlink($raceReadiness);
             $raceProcess = proc_open(array_merge(closePhpCommand(),
-                ['--race-erase', (string) $raceId, $raceSignal, (string) $fixture->host]),
+                ['--race-erase', (string) $raceId, $raceSignal, (string) $fixture->host, $raceReadiness]),
                 [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $racePipes, null, getenv());
             if (!is_resource($raceProcess)) {
                 throw new RuntimeException('The canonical race process did not start.');
             }
             fclose($racePipes[0]);
-            closeAssertChildReadiness($racePipes[1]);
+            closeAssertChildReadiness($raceReadiness);
             $deadline = microtime(true) + 10;
             do {
                 clearstatcache(true, $raceSignal);
@@ -372,11 +393,23 @@ try {
     if ($childStatus['running']) {
         throw new RuntimeException('The canonical race process did not finish.');
     }
-    $child = json_decode(stream_get_contents($racePipes[1]), true, 16, JSON_THROW_ON_ERROR);
+    $childStdout = stream_get_contents($racePipes[1]);
+    $childStderr = stream_get_contents($racePipes[2]);
     fclose($racePipes[1]);
     fclose($racePipes[2]);
     proc_close($raceProcess);
     $raceProcess = null;
+    $diagnostic = 'Race child exit=' . $childStatus['exitcode'] . ', stdout_bytes=' . strlen($childStdout)
+        . ', stderr_bytes=' . strlen($childStderr) . ', stdout=' . closeChildExcerpt($childStdout)
+        . ', stderr=' . closeChildExcerpt($childStderr);
+    try {
+        $child = json_decode($childStdout, true, 16, JSON_THROW_ON_ERROR);
+    } catch (JsonException $error) {
+        throw new RuntimeException($diagnostic, 0, $error);
+    }
+    if ($childStatus['exitcode'] !== 0) {
+        throw new RuntimeException($diagnostic);
+    }
     $check($childStatus['exitcode'] === 0 && $child['blocked'] && $child['calls'] === 0,
         'Actual second-process worker is excluded by the database advisory lock before transport');
     $check($child['lock_timeout'] && $child['erased'] && $child['pending'] && $fixture->stored($id)['anonymised_utc'] !== null,
@@ -387,7 +420,7 @@ try {
     $check(!$queue->hasPendingErasure($id) && $activity === [] && $creates === 3,
         'Post-race worker deletes only the saved own Activity without another create');
 } catch (Throwable $e) {
-    if (in_array($e->getMessage(), [
+    if (str_starts_with($e->getMessage(), 'Race child exit=') || in_array($e->getMessage(), [
         'Child PHP configuration does not match the parent.',
         'Child exited before PHP configuration readiness.',
         'Child did not report PHP configuration readiness.',
@@ -407,6 +440,13 @@ try {
     }
     if ($raceSignal !== null && is_file($raceSignal)) {
         unlink($raceSignal);
+    }
+    if ($raceReadiness !== null) {
+        foreach ([$raceReadiness, $raceReadiness . '.tmp'] as $file) {
+            if (is_file($file)) {
+                unlink($file);
+            }
+        }
     }
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($original) . "' WHERE element='com_appointments' AND type='component'");
     if ($ids) {
