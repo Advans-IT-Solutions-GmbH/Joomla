@@ -386,6 +386,9 @@ final class BookingStore
                 return ['changed' => false, 'guest' => null];
             }
             $cleanupKey = $privacyCleanup?->remember($booking, true);
+            if ($path === 'self_service') {
+                PrivacyCleanup::rememberCopy($db, $bookingId);
+            }
             $row = (object) $this->data()->sealChange($booking,
                 ['id' => $bookingId, 'guest_emails' => PrivacyAddress::withoutGuest($booking['guest_emails'], (string) $address)]);
             $db->updateObject('#__appointments_bookings', $row, 'id');
@@ -400,13 +403,17 @@ final class BookingStore
 
         // The calendar copy lists the guests as attendees. It is removed first, also while the
         // feature is off (a later switch-on must not bring the address back), and written again
-        // without the address when the feature is on.
-        $mirrored = $this->mirror('erased', ['id' => $bookingId]);
-        if ($mirrored) {
-            $mirrored = $this->mirror('saved', ['id' => $bookingId]);
-            if ($mirrored && $privacyCleanup !== null && $cleanupKey !== null) {
-                $privacyCleanup->forget($bookingId, $cleanupKey);
-            }
+        // without the address when the feature is on. Both are attempted even if the removal
+        // fails: the sanitised rewrite alone replaces the stale copy. A cleanup reference (formal
+        // request, or the booking-only reference of the guest link, retried by the booking upkeep
+        // task) is only forgotten when both succeed.
+        $erased = $this->mirror('erased', ['id' => $bookingId]);
+        $mirrored = $this->mirror('saved', ['id' => $bookingId]) && $erased;
+        if ($mirrored && $privacyCleanup !== null && $cleanupKey !== null) {
+            $privacyCleanup->forget($bookingId, $cleanupKey);
+        }
+        if ($mirrored && $path === 'self_service') {
+            PrivacyCleanup::forgetCopy($db, $bookingId);
         }
 
         return ['changed' => true, 'guest' => $address, '_calendar_cleanup_error' => !$mirrored];

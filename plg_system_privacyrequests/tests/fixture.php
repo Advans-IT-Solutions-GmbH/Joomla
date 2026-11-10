@@ -503,6 +503,19 @@ switch ($op) {
         $out['calendar_id'] = $calendar;
         $out['objects'] = count($team->objects()->all($calendar));
         break;
+    case 'appointments-guest-link':
+        // The signed self-service link of the guest mail, built by the component's own helper.
+        if (!str_ends_with($email, '@example.test') || !ctype_digit((string) ($argv[3] ?? ''))) {
+            throw new RuntimeException('A synthetic guest address and booking id are required.');
+        }
+        $app->bootComponent('com_appointments');
+        $modified = $db->setQuery('SELECT modified_utc FROM #__appointments_bookings WHERE id=' . (int) $argv[3])->loadResult();
+        $links = new \Advans\Component\Appointments\Administrator\Helper\SignedLink(
+            new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) $app->get('secret'))
+        );
+        $out['url'] = '/index.php?' . http_build_query(['option' => 'com_appointments', 'task' => 'guest.confirm',
+            'id' => (int) $argv[3], 'signature' => $links->signGuest((int) $argv[3], $email, (string) $modified)]);
+        break;
     case 'appointments-outcome-block':
     case 'appointments-outcome-unblock':
         $trigger = $db->getPrefix() . 'privacy_initial_outcome_hold';
@@ -533,6 +546,16 @@ switch ($op) {
         } else {
             $db->setQuery('DROP TRIGGER IF EXISTS privacy_fixture_copy_block')->execute();
         }
+        break;
+    case 'appointments-copy-retry':
+        if (!ctype_digit($email)) {
+            throw new RuntimeException('An explicit synthetic booking id is required.');
+        }
+        $app->bootComponent('com_appointments');
+        $out['retry'] = \Advans\Component\Appointments\Administrator\Service\PrivacyCleanup::retryCopies($db,
+            \Advans\Component\Appointments\Administrator\Service\Team\TeamServices::fromApplication()->bookings(), 200);
+        $out['references'] = (int) $db->setQuery('SELECT COUNT(*) FROM #__appointments_privacy_cleanup WHERE request_id=0'
+            . ' AND booking_id=' . (int) $email)->loadResult();
         break;
     case 'appointments-rebuild-setup':
         if (!ctype_digit($email)) {

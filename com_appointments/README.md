@@ -340,6 +340,19 @@ silently abandons unresolved cleanup and no newly activated cleanup task.
 Retries process at most 200 references, rotating attempted rows behind untouched
 ones even when they fail. An unreadable first batch cannot starve later references.
 
+A guest who leaves a booking through the **signed link** in their mail goes through the
+same calendar-copy steps: the copy is removed and, with internet calendars on, written
+again without the address. Both steps are always attempted. If either fails, the
+visitor sees that the removal is not complete instead of a success message, the failure
+is logged with the booking ID only, and a reference row with request ID `0`, the booking
+ID and an empty payload (no address, link or key) stays in the same table. The existing
+**Appointments: internet calendar retention** Scheduler task retries these references on
+each run (at most 200, also while internet calendars are off) and forgets one only when
+both steps succeed; its log shows `guest_copies_repaired` and `guest_copies_pending`.
+Nothing activates that task: without a configured task the reference and the stale copy
+remain until the operator resolves the failure and runs it. A formal Core request does
+not process these references, and the removed address no longer finds the booking.
+
 Before Core pseudonymises an account, **CanRemove** captures its minimal staff scope
 in authenticated-encrypted `#__appointments_privacy_staff`, bound to the Core request
 ID and exact normalized request address. Later **Remove** attempts use that retained
