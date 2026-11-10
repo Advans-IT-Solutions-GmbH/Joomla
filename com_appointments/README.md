@@ -53,6 +53,13 @@ asset field; it does not display the component's rules instead of the saved even
 The [backend pointer regression matrix](../shared/tests/browser/README.md) covers the editor
 and the DMARC module editor in Edge and Firefox at seven widths in light and dark mode.
 
+Every administrator page of the component loads `media/com_appointments/css/admin-layout.css`
+through the component dispatcher. Atum keeps the page title on one line and lets neither the
+header nor the main column beside the sidebar shrink, so a long translated title or a wide table
+widened the whole page. The stylesheet lets the title wrap (leaving room for the toolbar toggler
+on phones) and lets the main column shrink, so every list table scrolls inside its
+`.table-responsive` wrapper instead.
+
 ## Installation
 
 ### Currently: build from source

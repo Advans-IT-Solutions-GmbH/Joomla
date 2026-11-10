@@ -441,6 +441,22 @@ class StructureTest
             return $tables >= 14;
         });
 
+        // Atum keeps the page title on one line and lets neither the header nor the main column
+        // shrink, so a long title or a wide table widened the whole administrator page.
+        $this->test('Administrator layout stylesheet lets the title wrap and the main column shrink', function () {
+            $css = (string) @file_get_contents('/var/www/html/media/com_appointments/css/admin-layout.css');
+            $assets = json_decode((string) @file_get_contents('/var/www/html/media/com_appointments/joomla.asset.json'), true);
+            $names = array_column($assets['assets'] ?? [], 'uri', 'name');
+            $dispatcher = (string) @file_get_contents($this->admin . '/src/Dispatcher/Dispatcher.php');
+
+            return preg_match('/\.header-title\s*,[^{]*\.header-title\s*>\s*\.d-flex\s*,[^{]*\.container-title\s*\{[^}]*min-inline-size:\s*0/', $css)
+                && preg_match('/\.page-title\s*\{[^}]*white-space:\s*normal/', $css)
+                && preg_match('/@media\s*\(width\s*<=\s*575\.98px\)\s*\{[^}]*\.header-title\s*\{[^}]*padding-inline-end/', $css)
+                && preg_match('/\.container-main\s*\{[^}]*min-inline-size:\s*0/', $css)
+                && ($names['com_appointments.admin.layout'] ?? '') === 'com_appointments/admin-layout.css'
+                && str_contains($dispatcher, "useStyle('com_appointments.admin.layout')");
+        });
+
         echo "\n=== Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
