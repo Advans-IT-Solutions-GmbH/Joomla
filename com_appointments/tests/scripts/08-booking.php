@@ -225,7 +225,8 @@ try {
     $request[2]['consent'] = 0;
     $request[2]['booking']['first_name'] = '';
     sleep(2);
-    $xpath = $dom($request[0]->request($request[1], $request[2]));
+    $body = $request[0]->request($request[1], $request[2]);
+    $xpath = $dom($body);
     $check($fieldError($xpath, 'booking-consent', 'Please confirm your consent.')
         && $fieldError($xpath, 'booking-first_name', 'Please enter your first name.'),
         'A missing consent and an empty first name are reported together in one round trip');
