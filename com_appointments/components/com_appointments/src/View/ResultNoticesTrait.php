@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Site\View;
 
 use Joomla\CMS\Factory;
+use Joomla\Filesystem\Path;
 
 defined('_JEXEC') or die;
 
@@ -16,7 +17,8 @@ defined('_JEXEC') or die;
  * The messages of a completed form (a failed email, a missing conference link) belong to its
  * outcome. A page with a result lands at that result and focuses it, so messages the template
  * shows above the component would be out of view and never read out. The page takes them from
- * the queue and shows them in the result, which names them as its description.
+ * the queue and shows them in the result, which names them as its description. A template
+ * override may predate this and not print them, so with an override they stay in the queue.
  */
 trait ResultNoticesTrait
 {
@@ -25,6 +27,14 @@ trait ResultNoticesTrait
 
     protected function takeResultNotices(): void
     {
+        $layout = $this->getLayout();
+        $file = str_contains($layout, ':') ? '' : (string) Path::find($this->_path['template'], $layout . '.php');
+        $own = realpath(JPATH_SITE . '/components/com_appointments/tmpl/' . $this->getName() . '/' . $layout . '.php');
+
+        if ($file === '' || $own === false || realpath($file) !== $own) {
+            return;
+        }
+
         $classes = ['error' => 'danger', 'warning' => 'warning', 'notice' => 'info', 'info' => 'info'];
 
         foreach (Factory::getApplication()->getMessageQueue(true) as $message) {
