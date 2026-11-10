@@ -50,7 +50,7 @@ class GuestController extends BaseController
         $signature = $this->input->getString('signature', '');
         $completed = (bool) $this->app->getUserState($this->receiptKey($id, $signature), false);
         $data = ['completed' => $completed, 'id' => $id, 'signature' => $signature,
-            'calendar_pending' => $completed && (bool) $this->app->getUserState($this->receiptKey($id, $signature) . '.calendar', false)];
+            'calendar_pending' => $completed && (bool) $this->app->getUserState($this->receiptKey($id, $signature, 'guest_calendar_pending'), false)];
 
         if (!$completed) {
             $booking = $this->booking($id);
@@ -103,7 +103,7 @@ class GuestController extends BaseController
                 Log::add('Appointment guest self-service removal left calendar copy cleanup outstanding for booking #'
                     . $id . '.', Log::ERROR, 'com_appointments');
             }
-            $this->app->setUserState($receipt . '.calendar', !empty($result['_calendar_cleanup_error']));
+            $this->app->setUserState($this->receiptKey($id, $signature, 'guest_calendar_pending'), !empty($result['_calendar_cleanup_error']));
             $this->app->setUserState($receipt, true);
         }
 
@@ -149,9 +149,13 @@ class GuestController extends BaseController
         return new SignedLink(new KeyProvider((string) $this->app->get('secret')));
     }
 
-    private function receiptKey(int $id, string $signature): string
+    /**
+     * User state is a dotted registry: the pending flag gets its own branch, because a child of the
+     * receipt path would be overwritten when the receipt itself is set.
+     */
+    private function receiptKey(int $id, string $signature, string $branch = 'guest_removed'): string
     {
-        return 'com_appointments.guest_removed.' . hash('sha256', $id . ':' . $signature);
+        return 'com_appointments.' . $branch . '.' . hash('sha256', $id . ':' . $signature);
     }
 
     /**
