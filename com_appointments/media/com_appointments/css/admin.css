@@ -5,7 +5,29 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-/* Focus and accordion reflow must not start competing smooth-scroll animations. */
+/* Let Atum's existing title ellipsis work without shrinking its logo. */
+body.com_appointments #header .header-title,
+body.com_appointments #header .header-title > .d-flex,
+body.com_appointments #header .container-title {
+    min-inline-size: 0;
+}
+
+body.com_appointments #header .header-title > .d-flex:has(.logo) {
+    flex-shrink: 0;
+}
+
+/* Leave room for the native toolbar, including wrapped mobile actions. */
+#appointments-help > section[id] {
+    scroll-margin-block-start: 8rem;
+}
+
+/* Core's fixed-width switchers must fit the calendar settings column. */
+#calendar-form .switcher {
+    max-inline-size: 100%;
+}
+
+/* Native Help links, focus and accordion reflow must not compete with smooth scrolling. */
+html:has(#appointments-help),
 html:has(#eventtype-form) {
     scroll-behavior: auto;
 }

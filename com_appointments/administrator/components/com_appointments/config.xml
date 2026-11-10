@@ -20,7 +20,7 @@
         <field name="privacy_anchor" type="text" label="COM_APPOINTMENTS_CONFIG_PRIVACY_ANCHOR" description="COM_APPOINTMENTS_CONFIG_PRIVACY_ANCHOR_DESC" filter="cmd" maxlength="64" showon="privacy_menuitem!:" />
         <field name="privacy_url" type="url" label="COM_APPOINTMENTS_CONFIG_PRIVACY_URL" description="COM_APPOINTMENTS_CONFIG_PRIVACY_URL_DESC" filter="url" relative="true" />
         <field name="phone_default_country" type="text" label="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY" description="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_DESC" filter="cmd" maxlength="3" pattern="[0-9]{0,3}" />
-        <field name="phone_country_choice" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE" description="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE_DESC" default="1" filter="integer" validate="options">
+        <field name="phone_country_choice" type="radio" layout="joomla.form.field.radio.buttons" label="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE" description="COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE_DESC" default="1" filter="integer" validate="options">
             <option value="0">COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE_FIXED</option>
             <option value="1">COM_APPOINTMENTS_CONFIG_PHONE_COUNTRY_CHOICE_FREE</option>
         </field>
@@ -31,6 +31,7 @@
         </field>
         <field name="reminder_offsets" type="text" label="COM_APPOINTMENTS_CONFIG_REMINDER_OFFSETS" description="COM_APPOINTMENTS_CONFIG_REMINDER_OFFSETS_DESC" default="1440,60" filter="string" />
         <field name="public_site_url" type="url" label="COM_APPOINTMENTS_CONFIG_PUBLIC_SITE_URL" description="COM_APPOINTMENTS_CONFIG_PUBLIC_SITE_URL_DESC" filter="url" />
+        <field name="retention_tasks_note" type="note" description="COM_APPOINTMENTS_CONFIG_RETENTION_TASKS_DESC" class="alert alert-info" filter="unset" />
         <field name="retention_days" type="number" label="COM_APPOINTMENTS_CONFIG_RETENTION_DAYS" description="COM_APPOINTMENTS_CONFIG_RETENTION_DAYS_DESC" default="365" min="0" max="65535" required="true" filter="raw" validate="range" />
         <field name="audit_retention_years" type="number" label="COM_APPOINTMENTS_CONFIG_AUDIT_RETENTION" description="COM_APPOINTMENTS_CONFIG_AUDIT_RETENTION_DESC" default="3" min="1" max="100" required="true" filter="raw" validate="range" />
         <field name="removal_block_reason" type="textarea" label="COM_APPOINTMENTS_CONFIG_REMOVAL_BLOCK" description="COM_APPOINTMENTS_CONFIG_REMOVAL_BLOCK_DESC" filter="string" />
@@ -80,6 +81,9 @@
         <field name="legacy_feeds" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_CONFIG_LEGACY_FEEDS" description="COM_APPOINTMENTS_CONFIG_LEGACY_FEEDS_DESC" default="0" filter="integer" validate="options">
             <option value="0">JNO</option><option value="1">JYES</option>
         </field>
+    </fieldset>
+    <fieldset name="help" label="COM_APPOINTMENTS_HELP_TITLE">
+        <field name="help_note" type="note" description="COM_APPOINTMENTS_HELP_CONFIG_DESC" class="alert alert-info" filter="unset" />
     </fieldset>
     <fieldset name="permissions" label="JCONFIG_PERMISSIONS_LABEL" description="JCONFIG_PERMISSIONS_DESC">
         <field name="rules" type="rules" label="JCONFIG_PERMISSIONS_LABEL" class="inputbox" validate="rules" filter="rules" component="com_appointments" section="component" />

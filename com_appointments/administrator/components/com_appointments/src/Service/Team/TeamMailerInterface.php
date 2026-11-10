@@ -40,8 +40,11 @@ interface TeamMailerInterface
 
     /**
      * To the calendar's owner and managers: a grant was created or changed.
+     * Prior recipients preserve security notices when revocation removes their role.
+     *
+     * @param  int[]  $priorRecipientUserIds  Owner and managers captured before revocation.
      */
-    public function grantChanged(int $calendarId, int $granteeUserId, string $roleLabelKey, int $actorUserId): void;
+    public function grantChanged(int $calendarId, int $granteeUserId, string $roleLabelKey, int $actorUserId, array $priorRecipientUserIds = []): void;
 
     /**
      * To the user: access suspended after a password reset or a block; devices in clean-up.

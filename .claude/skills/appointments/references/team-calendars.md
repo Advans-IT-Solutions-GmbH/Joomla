@@ -48,8 +48,15 @@ package; a deviation is a change to this file in the same pull request, agreed w
 - **Encryption B:** calendar contents are encrypted on the server so that only authorised users can
   decrypt them. One recovery key for the whole site, kept offline by the owner as two printouts in
   separate places. After a password reset a manager grants again, or the recovery key is used.
-- **Retention per calendar:** entries older than the calendar's retention are deleted by the
-  Scheduler; the log records the count, never content.
+- **Retention per calendar:** `0` disables only age-based object deletion, not booking-copy cleanup.
+  Scheduler deletes whole objects after their last safely determined occurrence ends before the UTC
+  cutoff; future, endless or indeterminate series stay. Booking retention and erasure audits are
+  separate (booking `0` means the next run after the end, not unlimited). Backend field help explains
+  these distinctions and the required tasks; the calendar log records the count, never content.
+- **Backend Help & tips:** a native administrator page, linked from the manifest menu, dashboard
+  and Options, explains generic setup and troubleshooting. It reuses the field-retention texts,
+  requires component management permission, remains available while internet calendars are disabled
+  and never initialises keys. It supplements contextual field help.
 - **Privacy requests through Joomla's own privacy component** (com_privacy, export and removal
   requests) via `plg_privacy_appointments` (section 9.1). No separate search in the administrator and no
   blind index of e-mail addresses (whoever holds the server key could test known addresses against it).
@@ -77,9 +84,23 @@ Protected:
   carry a `row_mac` (HMAC with a server key). A row added or changed without the site secret fails
   verification and grants nothing. Without this, an attacker who can write one table could insert a
   grant, swap a user's public key and receive the calendar key with the next key completion.
-- **Administrators without a grant**: a Super User sees calendar lists and the log, never contents.
-  A Super User can still grant themselves access; every grant is logged and mailed to the calendar's
-  owner and managers, so it cannot happen silently.
+- **Administrators without a grant**: an active component `core.admin` account manages calendar
+  settings, deletion (also `core.delete`), revocation and ownership, but sees no contents.
+  Administrative grants (including self-grants) and owner assignments require `requireUnlocked()`:
+  password sign-in, an approved session second factor and the actor's own user key, not calendar keys.
+  Grants obey audience/external limits and remain ineffective for key-holding roles without genuine
+  wraps. Only a real key holder or authorised offline recovery can complete those wraps.
+  Every grant is logged and mailed to the owner and managers.
+
+Administrative owner assignment writes a Manage grant and owner metadata atomically; it never
+manufactures keys. A pending owner has no effective Manage or content access. The former owner's
+grant is retained and can be administratively revoked separately (wrap removal, epoch advance,
+rotation due). Revoking the current owner clears owner metadata too. Metadata updates, revocation
+and deletion require no keys or MFA, except external-sharing changes retain their separate permission
+and MFA requirements. All backend POST/CSRF/edit-id and Joomla ACL gates remain.
+Administrators may configure public free/busy exposure through event-type calendar links and remove
+inaccessible old links. Hosts still need genuine effective busy access and target Write; ordinary
+editors must also hold their own access. Personal calendars and CalDAV never inherit `core.admin`.
 
 Not protected, stated plainly. **In one sentence: the encryption protects when the database or a
 backup leaks, not when somebody executes code on the server.** End-to-end encryption was considered
@@ -235,6 +256,9 @@ Formulas (normative):
   The key is unlocked only inside Joomla's own sign-in (`CMSApplication::login`); no page offers «enter
   your password to unlock». A sign-in without password (passkey, remember-me) leaves it locked: actions that need it answer 423
   with «please sign in with your password».
+  Saving a new administrator calendar owned by the actor releases a missing first user key through
+  this same session gate. List/form GETs do not initialize keys, and selecting another owner never
+  initializes that account's key. The existing real-owner-key requirement remains unchanged.
 - **Nowhere else.** The booking flow, the Scheduler, the privacy plugin and the system check never
   hold a user or calendar key.
 

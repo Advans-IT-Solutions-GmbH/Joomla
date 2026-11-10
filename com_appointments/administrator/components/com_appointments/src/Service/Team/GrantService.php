@@ -186,11 +186,11 @@ final class GrantService implements GrantServiceInterface
     /**
      * Who may give whom which role on a calendar.
      *
-     * - Team members: only an effective manager of the calendar, up to manage.
+     * - Team members: an effective manager or MFA-checked administrator, up to manage.
      * - External users: only an actor with `appointments.team.external`, only on
      *   a calendar that allows externals, at most write. Being a manager does
      *   not suffice.
-     * - Nobody changes their own grant this way, and the owner's grant can only
+     * - Only administrators change their own grant; the owner's grant can only
      *   ever be (re)set to manage.
      */
     public static function mayGrant(
@@ -200,14 +200,15 @@ final class GrantService implements GrantServiceInterface
         CalendarRole $role,
         bool $calendarAllowsExternal,
         bool $granteeIsOwner,
-        bool $self
+        bool $self,
+        bool $administrator = false
     ): bool {
-        if ($self) {
+        if ($self && !$administrator) {
             return false;
         }
 
         if ($granteeAudience === TeamStates::AUDIENCE_TEAM) {
-            return $actorRole === CalendarRole::Manage && (!$granteeIsOwner || $role === CalendarRole::Manage);
+            return ($administrator || $actorRole === CalendarRole::Manage) && (!$granteeIsOwner || $role === CalendarRole::Manage);
         }
 
         if ($granteeAudience === TeamStates::AUDIENCE_EXTERNAL) {
@@ -221,6 +222,7 @@ final class GrantService implements GrantServiceInterface
     /**
      * Who may remove a grant: a manager any grant but the owner's and their own;
      * an actor with `appointments.team.external` the grants of external users.
+     * Administrators can revoke any grant, clearing ownership when necessary.
      */
     public static function mayRevoke(
         ?CalendarRole $actorRole,
@@ -228,8 +230,13 @@ final class GrantService implements GrantServiceInterface
         string $grantAudience,
         string $granteeAudience,
         bool $granteeIsOwner,
-        bool $self
+        bool $self,
+        bool $administrator = false
     ): bool {
+        if ($administrator) {
+            return true;
+        }
+
         if ($self || $granteeIsOwner) {
             return false;
         }
@@ -705,6 +712,20 @@ final class GrantService implements GrantServiceInterface
             && $services->grants()->hasSecondFactor($actorUserId);
     }
 
+    /** Administrative authority is never a content grant or a decryption key. */
+    public static function isAdministrator(int $actorUserId): bool
+    {
+        $actor = self::user($actorUserId);
+
+        return $actor !== null && !$actor->block && $actor->authorise('core.admin', 'com_appointments');
+    }
+
+    public static function mayManageCalendar(TeamServices $services, int $actorUserId, object $calendar): bool
+    {
+        return self::isAdministrator($actorUserId)
+            || self::accessUnderLock($services, $actorUserId, $calendar)?->role === CalendarRole::Manage;
+    }
+
     /**
      * Unblocked accounts that may hold grants (team groups and the external
      * group), for the selection lists of the administrator.
@@ -923,15 +944,16 @@ final class GrantService implements GrantServiceInterface
             $role,
             (int) $calendar->allow_external === 1,
             $granteeUserId === (int) $calendar->owner_user_id,
-            $granteeUserId === $actorUserId
+            $granteeUserId === $actorUserId,
+            self::isAdministrator($actorUserId) && $this->hasSecondFactor($actorUserId)
         );
     }
 
-    public function grant(int $actorUserId, int $calendarId, int $granteeUserId, CalendarRole $role, ?KeyContext $actorKeys): void
+    public function grant(int $actorUserId, int $calendarId, int $granteeUserId, CalendarRole $role, ?KeyContext $actorKeys, bool $makeOwner = false): void
     {
         $this->assertEnabled();
         $keys = $actorKeys !== null && $actorKeys->userId() === $actorUserId ? $actorKeys : null;
-        $result = $this->atomic(function () use ($actorUserId, $calendarId, $granteeUserId, $role, $keys): array {
+        $result = $this->atomic(function () use ($actorUserId, $calendarId, $granteeUserId, $role, $keys, $makeOwner): array {
             // Decided under the calendar lock, so a concurrent revoke of the
             // actor's own grant cannot slip between the check and the write.
             $locked = $this->lockCalendar($calendarId);
@@ -945,6 +967,13 @@ final class GrantService implements GrantServiceInterface
             $previousRole = $previous !== null && $this->grantMacValid($previous, (int) $locked->grant_epoch)
                 ? CalendarRole::tryFrom((int) $previous->role) : null;
             $audience = $this->audienceOf($granteeUserId);
+            if ($makeOwner && (!self::isAdministrator($actorUserId) || !$this->hasSecondFactor($actorUserId) || $role !== CalendarRole::Manage
+                || $audience !== TeamStates::AUDIENCE_TEAM)) {
+                throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
+            }
+
+            $previousOwner = (int) $locked->owner_user_id;
+            $notificationRecipients = $this->notificationRecipients($locked);
             $state = $role->holdsKey() ? TeamStates::GRANT_PENDING_KEY : TeamStates::GRANT_ACTIVE;
             self::queueEpoch($calendarId, CalendarService::bumpEpoch($this->services, $calendarId));
             self::write($this->services, $calendarId, $granteeUserId, $role, $state, $audience, $actorUserId);
@@ -956,7 +985,12 @@ final class GrantService implements GrantServiceInterface
                 self::write($this->services, $calendarId, $granteeUserId, $role, TeamStates::GRANT_ACTIVE, $audience, $actorUserId);
             }
 
-            return ['previous' => $previous !== null, 'previous_role' => $previousRole, 'audience' => $audience];
+            if ($makeOwner) {
+                CalendarService::setOwner($this->services, $calendarId, $granteeUserId);
+            }
+
+            return ['previous' => $previous !== null, 'previous_role' => $previousRole, 'audience' => $audience,
+                'previous_owner' => $previousOwner, 'notification_recipients' => $notificationRecipients];
         });
 
         if ($result['previous_role'] !== null && $result['previous_role']->holdsKey() && !$role->holdsKey() && $keys !== null) {
@@ -967,7 +1001,13 @@ final class GrantService implements GrantServiceInterface
             'actor_user_id' => $actorUserId, 'subject_user_id' => $granteeUserId, 'calendar_id' => $calendarId,
             'details' => ['role' => $role->name, 'previous_role' => $result['previous_role']?->name, 'audience' => $result['audience']],
         ]);
-        $this->mailGrantChanged($calendarId, $granteeUserId, $role, $actorUserId);
+        if ($makeOwner) {
+            $this->log(AuditEvent::CALENDAR_UPDATED, [
+                'actor_user_id' => $actorUserId, 'subject_user_id' => $granteeUserId, 'calendar_id' => $calendarId,
+                'details' => ['reason' => 'owner_assigned', 'previous_owner' => $result['previous_owner']],
+            ]);
+        }
+        $this->mailGrantChanged($calendarId, $granteeUserId, $role, $actorUserId, $result['notification_recipients']);
     }
 
     public function revoke(int $actorUserId, int $calendarId, int $granteeUserId, ?KeyContext $actorKeys): void
@@ -991,18 +1031,25 @@ final class GrantService implements GrantServiceInterface
                 $this->grantMacValid($grant, (int) $calendar->grant_epoch) ? (string) $grant->audience : $granteeAudience,
                 $granteeAudience,
                 $granteeUserId === (int) $calendar->owner_user_id,
-                $granteeUserId === $actorUserId
+                $granteeUserId === $actorUserId,
+                self::isAdministrator($actorUserId)
             );
 
             if (!$allowed) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
             }
 
+            $grant->notification_recipient_ids = $this->notificationRecipients($calendar);
+
             $db = $this->services->db();
             $db->setQuery(
                 'DELETE FROM ' . $db->quoteName('#__' . self::TABLE) . ' WHERE calendar_id = ' . $calendarId . ' AND user_id = ' . $granteeUserId
             )->execute();
             $this->dropKeyAccess($calendarId, $granteeUserId);
+            if ($granteeUserId === (int) $calendar->owner_user_id) {
+                CalendarService::setOwner($this->services, $calendarId, 0);
+            }
+            $grant->owner_user_id = (int) $calendar->owner_user_id;
             self::queueEpoch($calendarId, CalendarService::bumpEpoch($this->services, $calendarId));
 
             return $grant;
@@ -1019,7 +1066,13 @@ final class GrantService implements GrantServiceInterface
             'actor_user_id' => $actorUserId, 'subject_user_id' => $granteeUserId, 'calendar_id' => $calendarId,
             'details' => ['role' => $role?->name, 'audience' => (string) $grant->audience],
         ]);
-        $this->mailGrantChanged($calendarId, $granteeUserId, null, $actorUserId);
+        if ($granteeUserId === (int) ($grant->owner_user_id ?? 0)) {
+            $this->log(AuditEvent::CALENDAR_UPDATED, [
+                'actor_user_id' => $actorUserId, 'subject_user_id' => $granteeUserId, 'calendar_id' => $calendarId,
+                'details' => ['reason' => 'owner_revoked'],
+            ]);
+        }
+        $this->mailGrantChanged($calendarId, $granteeUserId, null, $actorUserId, $grant->notification_recipient_ids);
     }
 
     public function suspendAllForUser(int $userId, string $reason): int
@@ -1097,7 +1150,8 @@ final class GrantService implements GrantServiceInterface
         $this->assertEnabled();
         $calendarId = $keyring->calendarId();
         $audience = null;
-        $previous = $this->atomic(function () use ($actorUserId, $calendarId, $granteeUserId, $role, $keyring, $makeOwner, &$audience): bool {
+        $notificationRecipients = [];
+        $previous = $this->atomic(function () use ($actorUserId, $calendarId, $granteeUserId, $role, $keyring, $makeOwner, &$audience, &$notificationRecipients): bool {
             // Decided under the calendar lock: a concurrent switch-off of
             // external users or a second owner change cannot slip in.
             $locked = $this->lockCalendar($calendarId);
@@ -1125,6 +1179,7 @@ final class GrantService implements GrantServiceInterface
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
             }
 
+            $notificationRecipients = $this->notificationRecipients($calendar);
             $previous = $this->grantRow($calendarId, $granteeUserId, true) !== null;
             self::queueEpoch($calendarId, CalendarService::bumpEpoch($this->services, $calendarId));
 
@@ -1162,7 +1217,7 @@ final class GrantService implements GrantServiceInterface
             'actor_user_id' => $actorUserId, 'subject_user_id' => $granteeUserId, 'calendar_id' => $calendarId,
             'details' => ['role' => $role->name, 'audience' => $audience, 'recovery' => 1],
         ]);
-        $this->mailGrantChanged($calendarId, $granteeUserId, $role, $actorUserId);
+        $this->mailGrantChanged($calendarId, $granteeUserId, $role, $actorUserId, $notificationRecipients);
     }
 
     // ------------------------------------------------------------------
@@ -1359,10 +1414,23 @@ final class GrantService implements GrantServiceInterface
         }
     }
 
-    private function mailGrantChanged(int $calendarId, int $granteeUserId, ?CalendarRole $role, int $actorUserId): void
+    /** Capture before changing grants, while the calendar lock is held. */
+    private function notificationRecipients(object $calendar): array
+    {
+        $recipients = [(int) $calendar->owner_user_id];
+        foreach ($this->grantsOf((int) $calendar->id) as $grant) {
+            if ($grant->effective && $grant->role === CalendarRole::Manage->value) {
+                $recipients[] = (int) $grant->user_id;
+            }
+        }
+
+        return array_values(array_unique(array_filter($recipients)));
+    }
+
+    private function mailGrantChanged(int $calendarId, int $granteeUserId, ?CalendarRole $role, int $actorUserId, array $priorRecipientUserIds = []): void
     {
         try {
-            $this->services->mailer()->grantChanged($calendarId, $granteeUserId, self::roleLabelKey($role), $actorUserId);
+            $this->services->mailer()->grantChanged($calendarId, $granteeUserId, self::roleLabelKey($role), $actorUserId, $priorRecipientUserIds);
         } catch (\Throwable) {
             // A mail failure never undoes a grant decision; the log holds it.
         }

@@ -34,6 +34,15 @@ $export = static function (AppointmentsHttp $client, array $filters = []) use ($
 
 try {
     $admin->login();
+    $options = $admin->request('/administrator/index.php?option=com_config&view=component&component=com_appointments');
+    $document = new DOMDocument();
+    @$document->loadHTML($options);
+    $heading = (new DOMXPath($document))->query('//h1[contains(@class,"page-title")]')->item(0);
+    $check($admin->status === 200 && $heading !== null
+        && trim($heading->textContent) === 'Appointments: Options',
+        'Native component Options uses its translated runtime heading, not a raw generated key');
+    $check((new DOMXPath($document))->query('//fieldset[@id="jform_phone_country_choice"]//label[contains(@class,"form-check-label")]')->length === 2,
+        'Long calling-code choices use native in-flow radio labels rather than fixed-height switcher labels');
     foreach (['schedule', 'blocked'] as $formView) {
         $html = $admin->request('/administrator/index.php?option=com_appointments&task=' . $formView . '.add');
         $document = new DOMDocument();
@@ -130,6 +139,18 @@ try {
     $dashboard = $admin->request('/administrator/index.php?option=com_appointments&view=dashboard');
     $check($admin->status === 200 && str_contains($dashboard, 'Upcoming active appointments')
         && str_contains($dashboard, 'Bookings by authorised event type'), 'Dashboard renders time-aware and per-event statistics');
+    $document = new DOMDocument();
+    @$document->loadHTML($dashboard);
+    $check((new DOMXPath($document))->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
+        'Administrator navigation loads its local responsive styles outside event-type forms too');
+    $styles = $admin->request('/media/com_appointments/css/admin.css');
+    $check($admin->status === 200
+        && preg_match('~#calendar-form\s+\.switcher\s*\{[^}]*max-inline-size:\s*100%~', $styles) === 1,
+        'The installed stylesheet bounds native calendar switchers to their settings column without clipping');
+    $check(preg_match('~#appointments-help\s*>\s*section\[id\]\s*\{[^}]*scroll-margin-block-start:\s*8rem~', $styles) === 1,
+        'The installed stylesheet reserves native sticky-toolbar clearance for every Help topic fragment');
+    $check(preg_match('~html:has\(\#appointments-help\)[^{]*\{[^}]*scroll-behavior:\s*auto\s*;~', $styles) === 1,
+        'The installed stylesheet keeps native Help navigation from moving targets during pointer activation');
     $componentParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
     try {
         foreach ([0, 1] as $enabled) {
@@ -137,6 +158,32 @@ try {
             $params['teamcal_enabled'] = $enabled;
             $encoded = $db->real_escape_string(json_encode($params, JSON_THROW_ON_ERROR));
             $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
+            $keyRows = (int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_user_keys")->fetch_row()[0];
+            $help = $admin->request('/administrator/index.php?option=com_appointments&view=help');
+            $document = new DOMDocument();
+            @$document->loadHTML($help);
+            $helpXpath = new DOMXPath($document);
+            $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 8
+                && $helpXpath->query('//a[@id="toolbar-back"]')->length === 1,
+                'Central help has all generic topics and a real overview return, enabled=' . $enabled);
+            $topicLinks = $helpXpath->query('//div[@id="appointments-help"]/nav/a[starts-with(@href,"#help-")]');
+            $topicTargetsValid = $topicLinks->length === 8;
+            foreach ($topicLinks as $topicLink) {
+                $target = substr($topicLink->getAttribute('href'), 1);
+                $topicTargetsValid = $topicTargetsValid && preg_match('/^help-[a-z]+$/D', $target) === 1
+                    && $helpXpath->query('//div[@id="appointments-help"]/section[@id="' . $target . '"]')->length === 1;
+            }
+            $check($topicTargetsValid
+                && $helpXpath->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
+                'All eight native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
+            $overviewButton = $helpXpath->query('//div[@id="appointments-help"]/nav/a[contains(@class,"btn-primary")]')->item(0);
+            $check($overviewButton !== null && trim($overviewButton->textContent) === 'Overview',
+                'Help overview button uses the runtime language catalogue, enabled=' . $enabled);
+            $check(str_contains($help, 'THISANDFUTURE') && str_contains($help, 'does not mean unlimited retention')
+                && str_contains($help, 'fixed 12-month period') && !str_contains($help, 'COM_APPOINTMENTS_HELP_'),
+                'Central help renders the separate translated retention contracts, enabled=' . $enabled);
+            $check((int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_user_keys")->fetch_row()[0] === $keyRows,
+                'Reading central help never initialises personal keys, enabled=' . $enabled);
             $calendars = $admin->request('/administrator/index.php?option=com_appointments&view=calendars');
             $document = new DOMDocument();
             @$document->loadHTML($calendars);
@@ -177,6 +224,9 @@ try {
         $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
     }
     $options = $admin->request('/administrator/index.php?option=com_config&view=component&component=com_appointments');
+    $check(str_contains($dashboard, 'view=help') && str_contains($options, 'view=help')
+        && (int) $db->query("SELECT COUNT(*) FROM {$prefix}menu WHERE client_id=1 AND link='index.php?option=com_appointments&view=help'")->fetch_row()[0] === 1,
+        'Dashboard, native component options and installed administrator menu expose central help');
     $check($admin->status === 200 && preg_match('/>\\s*General\\s*</', $options) === 1
         && !str_contains($options, 'COM_CONFIG_basic_FIELDSET_LABEL'),
         'Component options resolve the first fieldset label');

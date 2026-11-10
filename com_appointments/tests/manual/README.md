@@ -614,12 +614,25 @@ on its own.
 |---|---|---|---|
 | UI-01 | POS | Open every backend/site view in German, English and French, including error/empty states. | No missing translations or visible `COM_APPOINTMENTS_...` keys. |
 | UI-02 | POS | Inspect German text. | Swiss High German; no `ß`; understandable, consistent terminology. |
-| UI-03 | POS | Inspect long French labels and long event titles on a smartphone. | No obscured fields or clipped actions. |
+| UI-03 | POS | Inspect long French labels and long event titles on a smartphone; execute the Help fragment regression below. | No obscured fields, topic headings or clipped actions. |
 | UI-04 | POS | Switch language between form and next page; inspect mail/meeting. | No data loss, wrong time or unusable links. |
 | UI-05 | INT | Inspect browser network activity through a complete booking. | Component assets local; no external fonts, CDNs, trackers or CAPTCHA services. |
 | UI-06 | INT | Block outbound Internet access **only for the isolated test environment**; keep local mail catcher reachable; run core flow. | Booking, rescheduling, cancellation, erasure and ICS generation work without a third-party scheduling service. |
 | UI-07 | INT | Generate Jitsi/generic room link without opening the conference; inspect network. | URL generation requires no external API call; actual conference join is a separate step. |
 | UI-08 | POS | Run Joomla in a subdirectory and with SEF/language prefixes. | Correct URLs for assets, forms, mail links and downloads. |
+
+### Help fragment regression (UI-03)
+
+In all three languages, use every one of the eight Help contents links, direct fragment URLs and
+browser Back/Forward. Repeat in Edge and Firefox, light and dark, at 375, 768, 1024, 1280, 1440,
+1600 and 1920 px, including the expanded/wrapped mobile toolbar. The complete topic heading and
+the start of its first paragraph must appear below the actual visible sticky toolbar. Record its
+measured bottom edge and native viewport screenshots; DOM visibility or a full-page screenshot
+alone does not establish that text is unobscured. Keep the original fragment and scroll position
+when reporting a failure; do not change Core styles or manually reposition the page to make it pass.
+At 375 px in both browsers and themes, also click all eight contents links consecutively without
+adding artificial delays. Each pointer activation must reach its intended fragment; the page must
+not keep scrolling between pointerdown and pointerup and redirect the click onto another element.
 
 ## 18. Complete functional acceptance scenario
 

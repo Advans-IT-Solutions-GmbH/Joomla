@@ -32,6 +32,7 @@ if (!$this->enabled || !$this->available) : ?>
 $id = (int) ($this->item->id ?? 0);
 $action = Route::_('index.php?option=com_appointments&view=calendar&layout=edit&id=' . $id);
 $manager = $this->myRole === CalendarRole::Manage;
+$administration = $manager || $this->administrator;
 $me = (int) Factory::getApplication()->getIdentity()->id;
 $stateKeys = [
     TeamStates::GRANT_ACTIVE      => 'COM_APPOINTMENTS_TEAM_C_GRANT_STATE_ACTIVE',
@@ -54,6 +55,10 @@ $roleSelect = function (string $id, ?int $selected, bool $external): string {
 };
 $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScript('keepalive');
 ?>
+<div class="alert alert-info" id="calendar-administration-help" role="note">
+    <p class="mb-2"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_ADMINISTRATION_HELP'); ?></p>
+    <p class="mb-0"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_KEY_SETUP_HELP'); ?></p>
+</div>
 <form action="<?php echo $action; ?>" method="post" name="adminForm" id="calendar-form" class="form-validate">
     <div class="row">
         <div class="col-lg-8">
@@ -89,15 +94,35 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
 </form>
 
 <?php if ($id > 0) : ?>
+    <?php if ($this->administrator) : ?>
+        <section class="card mt-4" aria-labelledby="owner-heading">
+            <div class="card-body">
+                <h2 id="owner-heading" class="h4"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_OWNER_ASSIGN'); ?></h2>
+                <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_OWNER_ASSIGN_DESC'); ?></p>
+                <form action="<?php echo $action; ?>" method="post" class="d-flex gap-2">
+                    <label class="visually-hidden" for="owner-user"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_FIELD_OWNER'); ?></label>
+                    <select class="form-select" id="owner-user" name="user_id" required>
+                        <option value=""><?php echo Text::_('JSELECT'); ?></option>
+                        <?php foreach ($this->owners as $owner) : ?>
+                            <option value="<?php echo (int) $owner->id; ?>"><?php echo $this->escape($owner->name . ' (' . $owner->username . ')'); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <button type="submit" class="btn btn-secondary" name="task" value="calendars.assignOwner"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_OWNER_ASSIGN'); ?></button>
+                    <?php echo HTMLHelper::_('form.token'); ?>
+                </form>
+            </div>
+        </section>
+    <?php endif; ?>
     <section class="card mt-4" aria-labelledby="grants-heading">
         <div class="card-body">
             <h2 id="grants-heading" class="h4"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_GRANTS_HEADING'); ?></h2>
-            <p><?php echo Text::_($manager ? 'COM_APPOINTMENTS_TEAM_C_GRANTS_INTRO' : 'COM_APPOINTMENTS_TEAM_C_GRANTS_READONLY'); ?></p>
+            <p><?php echo Text::_($administration ? 'COM_APPOINTMENTS_TEAM_C_GRANTS_INTRO' : 'COM_APPOINTMENTS_TEAM_C_GRANTS_READONLY'); ?></p>
             <?php if (!$this->showGrants) : ?>
                 <?php // Only managers and administrators see the list of grants. ?>
             <?php elseif (!$this->grants) : ?>
                 <p class="alert alert-info"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_GRANTS_EMPTY'); ?></p>
             <?php else : ?>
+                <div class="table-responsive">
                 <table class="table">
                     <caption class="visually-hidden"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_GRANTS_HEADING'); ?></caption>
                     <thead><tr>
@@ -113,10 +138,10 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
                         // service decides); removing also the stored one.
                         $external = $grant->current_audience === TeamStates::AUDIENCE_EXTERNAL;
                         $wasExternal = $grant->audience === TeamStates::AUDIENCE_EXTERNAL;
-                        $mayChange = !$grant->is_owner && (int) $grant->user_id !== $me && $grant->current_audience !== 'none'
-                            && ($external ? $this->canShareExternally : $manager);
-                        $mayRemove = !$grant->is_owner && (int) $grant->user_id !== $me
-                            && ($manager || (($external || $wasExternal) && $this->canRevokeExternal));
+                        $mayChange = !$grant->is_owner && ((int) $grant->user_id !== $me || $this->administrator) && $grant->current_audience !== 'none'
+                            && ($external ? $this->canShareExternally : $administration);
+                        $mayRemove = $this->administrator || (!$grant->is_owner && (int) $grant->user_id !== $me
+                            && ($manager || (($external || $wasExternal) && $this->canRevokeExternal)));
                         ?>
                         <tr>
                             <th scope="row">
@@ -140,7 +165,7 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
                                         <?php echo HTMLHelper::_('form.token'); ?>
                                     </form>
                                 <?php endif; ?>
-                                <?php if ($grant->is_owner && $manager && !$grant->effective && (int) $grant->user_id !== $me) : ?>
+                                <?php if ($grant->is_owner && $administration && !$grant->effective && ((int) $grant->user_id !== $me || $this->administrator)) : ?>
                                     <form action="<?php echo $action; ?>" method="post" class="mb-2">
                                         <input type="hidden" name="user_id" value="<?php echo (int) $grant->user_id; ?>">
                                         <input type="hidden" name="role" value="<?php echo CalendarRole::Manage->value; ?>">
@@ -160,6 +185,7 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
                     <?php endforeach; ?>
                     </tbody>
                 </table>
+                </div>
             <?php endif; ?>
 
             <?php if ($this->candidates) : ?>

@@ -10,6 +10,7 @@ namespace Advans\Component\Appointments\Administrator\Model;
 
 use Advans\Component\Appointments\Administrator\Service\HostStore;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
+use Advans\Component\Appointments\Administrator\Service\Team\GrantService;
 use Advans\Component\Appointments\Administrator\Helper\Conference\FixedRoomProvider;
 use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceException;
 use Joomla\CMS\Factory;
@@ -123,6 +124,10 @@ class EventtypeModel extends AdminModel
         // Removing a link changes the public free times too: comparing the page before and after
         // would show the removed calendar's busy times. Only who reaches that calendar removes it.
         $removed = array_diff(array_filter(array_merge($storedBusy, [$storedTarget])), array_merge($busy, [$target]));
+        // Component administrators configure public free/busy exposure, without acquiring content access.
+        if (GrantService::isAdministrator((int) Factory::getApplication()->getIdentity()->id)) {
+            $removed = [];
+        }
         $before = $removed === [] || $oldHost < 1 ? [[], [], [], false] : self::reachable($oldHost, (int) Factory::getApplication()->getIdentity()->id);
 
         foreach ($removed as $calendar) {
@@ -143,7 +148,8 @@ class EventtypeModel extends AdminModel
      * must have an effective access (the target calendar: both can write). So
      * nobody publishes the free times of a calendar they may not see
      * themselves, and nobody links a calendar the host may not see. A user
-     * without a grant (also a Super User) links nothing until a manager grants.
+     * with core.admin may administer the host's links without their own grant.
+     * The host's real access and target Write remain mandatory.
      *
      * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, true>, 3: bool} Visible and writable calendars
      *               (id => title), the calendars the host reaches but the actor does not, and whether the lookup failed.
@@ -171,17 +177,18 @@ class EventtypeModel extends AdminModel
                 return $byId;
             };
             $hostAccess = $index($grants->calendarsFor($host));
+            $administrator = GrantService::isAdministrator($actor);
             $actorAccess = $actor === $host ? $hostAccess : $index($grants->calendarsFor($actor));
 
             foreach ($hostAccess as $id => $access) {
-                if (!isset($actorAccess[$id])) {
+                if (!$administrator && !isset($actorAccess[$id])) {
                     $hidden[$id] = true;
                 }
 
-                if (isset($actorAccess[$id])) {
+                if ($administrator || isset($actorAccess[$id])) {
                     $visible[$id] = $access->title;
 
-                    if ($access->role->canWrite() && $actorAccess[$id]->role->canWrite()) {
+                    if ($access->role->canWrite() && ($administrator || $actorAccess[$id]->role->canWrite())) {
                         $writable[$id] = $access->title;
                     }
                 }
