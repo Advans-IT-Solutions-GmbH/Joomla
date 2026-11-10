@@ -4,7 +4,7 @@ require __DIR__ . '/appointments-fixtures.php';
 require __DIR__ . '/appointments-joomla.php';
 
 $fixture = new AppointmentsFixture('administration');
-$admin = new AppointmentsHttp('http://localhost', 'administration-admin');
+$admin = new AppointmentsHttp(appointments_test_base_url(), 'administration-admin');
 $db = $fixture->db;
 $prefix = $fixture->prefix;
 $failed = 0;
@@ -264,7 +264,7 @@ try {
         ], JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR));
         $db->query("UPDATE {$prefix}assets SET rules='{$rules}' WHERE name='com_appointments.eventtype.{$event}'");
     }
-    $restricted = new AppointmentsHttp('http://localhost', 'administration-restricted');
+    $restricted = new AppointmentsHttp(appointments_test_base_url(), 'administration-restricted');
     $oldUsername = getenv('JOOMLA_ADMIN_USERNAME');
     $oldPassword = getenv('JOOMLA_ADMIN_PASSWORD');
     try {
