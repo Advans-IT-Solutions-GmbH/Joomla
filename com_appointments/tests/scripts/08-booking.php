@@ -274,7 +274,7 @@ try {
     $row = $stored($eventIds[1], $noticeSlot);
     $check(str_contains($body, 'Appointment confirmed') && $row !== null && $row['consent_utc'] === null && $row['consent_version'] === null,
         'Notice mode: a booking without the checkbox succeeds and stores no consent');
-    $check($request[0]->landedAt($body, 'appointment-confirmation'),
+    $check($request[0]->landedAt($body, 'appointment-confirmation') && !str_contains($body, 'appointment-notices'),
         'A booking lands at #appointment-confirmation with a focusable status region the screen reader announces');
     $setParams(['consent_mode' => 'acknowledge']);
     $ackSlot = $day . ' 16:00:00';
@@ -288,7 +288,21 @@ try {
         'Acknowledge mode: without the checkbox the booking is refused at the checkbox');
     $request = $prepare($eventIds[1], $ackSlot);
     sleep(2);
-    $body = $request[0]->request($request[1], $request[2]);
+    // A failed notification: the warning is part of the announced confirmation, shown once.
+    $hostEmail = $db->query("SELECT email FROM {$prefix}users WHERE id={$host}")->fetch_assoc()['email'];
+    $db->query("UPDATE {$prefix}users SET email='not-an-address' WHERE id={$host}");
+    try {
+        $body = $request[0]->request($request[1], $request[2]);
+    } finally {
+        $db->query("UPDATE {$prefix}users SET email='" . $db->real_escape_string($hostEmail) . "' WHERE id={$host}");
+    }
+    $warning = 'Your appointment was saved, but one or more notification emails could not be delivered.';
+    $xpath = $dom($body);
+    $check($request[0]->landedAt($body, 'appointment-confirmation')
+        && $xpath->query('//p[@data-appointments-result][@aria-describedby="appointment-notices"]')->length === 1
+        && str_contains((string) $xpath->query('//*[@id="appointment-confirmation"]//*[@id="appointment-notices"]')->item(0)?->textContent, $warning)
+        && substr_count($body, $warning) === 1,
+        'A failed confirmation email is shown once, inside the confirmation, as the description of the focused status');
     $row = $stored($eventIds[1], $ackSlot);
     $check(str_contains($body, 'Appointment confirmed') && $row !== null && $row['consent_utc'] === null && $row['consent_version'] === null,
         'Acknowledge mode: with the checkbox the booking succeeds and nothing is stored');

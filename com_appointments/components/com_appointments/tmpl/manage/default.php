@@ -44,7 +44,15 @@ $error = fn (string $key): string => isset($errors[$key])
     <div class="com-appointments-container">
         <h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
         <?php if ($this->completed) : ?>
-            <p class="com-appointments-status" role="status" tabindex="-1" autofocus data-appointments-result><?php echo Text::_($results[$this->action]); ?></p>
+            <p class="com-appointments-status" role="status" tabindex="-1" autofocus data-appointments-result<?php echo $this->notices ? ' aria-describedby="appointment-notices"' : ''; ?>><?php echo Text::_($results[$this->action]); ?></p>
+                        <?php if ($this->notices) : ?>
+                            <?php // Messages of this outcome (see ResultNoticesTrait), rendered like Joomla's system messages. ?>
+                            <div id="appointment-notices" class="com-appointments-notices">
+                                <?php foreach ($this->notices as $notice) : ?>
+                                    <div class="alert alert-<?php echo $notice['type']; ?> com-appointments-alert"><?php echo $notice['message']; ?></div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
         <?php else : ?>
             <?php
             $start = UtcTimestamp::parse($this->item->start_utc)->setTimezone($this->zone);

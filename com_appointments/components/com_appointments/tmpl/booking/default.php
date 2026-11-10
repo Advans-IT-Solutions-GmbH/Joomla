@@ -38,11 +38,19 @@ $mark = match ($state) {
         <div id="appointment-confirmation" class="com-appointments-card com-appointments-confirmation-card com-appointments-state-<?php echo $state; ?>">
             <span class="com-appointments-confirmation-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><?php echo $mark; ?></svg></span>
             <h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
-            <p class="com-appointments-status" role="status" tabindex="-1" autofocus data-appointments-result><?php echo Text::_(match ($state) {
+            <p class="com-appointments-status" role="status" tabindex="-1" autofocus data-appointments-result<?php echo $this->notices ? ' aria-describedby="appointment-notices"' : ''; ?>><?php echo Text::_(match ($state) {
                 0 => 'COM_APPOINTMENTS_BOOKING_PENDING',
                 1 => 'COM_APPOINTMENTS_BOOKING_CONFIRMED',
                 2 => 'COM_APPOINTMENTS_MANAGE_CANCELLED',
             }); ?></p>
+            <?php if ($this->notices) : ?>
+                <?php // Messages of this outcome (see ResultNoticesTrait), rendered like Joomla's system messages. ?>
+                <div id="appointment-notices" class="com-appointments-notices">
+                    <?php foreach ($this->notices as $notice) : ?>
+                        <div class="alert alert-<?php echo $notice['type']; ?> com-appointments-alert"><?php echo $notice['message']; ?></div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
             <h2 class="com-appointments-title"><?php echo $this->escape($this->item->title); ?></h2>
             <dl class="com-appointments-summary">
                 <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_DATE'); ?></dt>

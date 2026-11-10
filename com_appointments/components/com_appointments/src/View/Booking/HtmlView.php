@@ -17,6 +17,7 @@ use Joomla\CMS\Router\Route;
 use Joomla\Database\DatabaseInterface;
 use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
+use Advans\Component\Appointments\Site\View\ResultNoticesTrait;
 
 defined('_JEXEC') or die;
 
@@ -24,6 +25,7 @@ class HtmlView extends BaseHtmlView
 {
     use PageTitleTrait;
     use AssetsTrait;
+    use ResultNoticesTrait;
 
     protected $item;
     /** Address of the .ics download of the appointment, or '' when there is nothing to add. */
@@ -55,6 +57,7 @@ class HtmlView extends BaseHtmlView
 
         // The script focuses the outcome after the redirect to #appointment-confirmation.
         $this->useAppointmentsAssets(true);
+        $this->takeResultNotices();
         $this->getDocument()->setMetaData('robots', 'noindex,nofollow');
         // The heading says what happened: confirmed, requested (held for the host's approval) or cancelled.
         $this->applyPageTitle('booking', Text::_(match ((int) $this->item->state) {

@@ -39,7 +39,7 @@ try {
 
     $before = AppointmentsMail::snapshot();
     $html = $fixture->apply($client, $reschedule, ['start' => $day . ' 11:00:00', 'month' => substr($day, 0, 7), 'timezone' => 'Europe/Zurich']);
-    $check($client->landedAt($html, 'appointment-result'),
+    $check($client->landedAt($html, 'appointment-result') && !str_contains($html, 'appointment-notices'),
         'A completed reschedule lands at #appointment-result with a focusable status region the screen reader announces');
     $moved = $fixture->row((int) $booking['id']);
     $check($moved && $moved['uid'] === $booking['uid'] && (int) $moved['sequence'] === 1 && $moved['start_utc'] === $day . ' 11:00:00'
@@ -130,9 +130,25 @@ try {
         'A change without the confirmation checkbox gets a real error message at the checkbox and changes nothing');
     $reason = $xpath->query('//textarea[@id="cancel-reason"]')->item(0);
     $check($reason !== null && trim($reason->textContent) === 'Kept reason', 'The entered cancellation reason is kept');
-    $html = $fixture->apply($client, $freshCancel, ['reason' => 'Fixture reason']);
+    // A failed notification is a partial success: its warning is part of the announced result,
+    // not a system message above the component, where the landing would leave it out of view.
+    $hostEmail = $fixture->db->query("SELECT email FROM {$fixture->prefix}users WHERE id={$fixture->host}")->fetch_assoc()['email'];
+    $fixture->db->query("UPDATE {$fixture->prefix}users SET email='not-an-address' WHERE id={$fixture->host}");
+    try {
+        $html = $fixture->apply($client, $freshCancel, ['reason' => 'Fixture reason']);
+    } finally {
+        $fixture->db->query("UPDATE {$fixture->prefix}users SET email='" . $fixture->db->real_escape_string($hostEmail) . "' WHERE id={$fixture->host}");
+    }
     $check($client->landedAt($html, 'appointment-result'),
         'A completed cancellation lands at #appointment-result with a focusable status region the screen reader announces');
+    $document = new DOMDocument();
+    @$document->loadHTML($html);
+    $xpath = new DOMXPath($document);
+    $warning = 'Your change was saved, but one or more notification emails could not be delivered.';
+    $check($xpath->query('//p[@data-appointments-result][@aria-describedby="appointment-notices"]')->length === 1
+        && str_contains((string) $xpath->query('//*[@id="appointment-result"]//*[@id="appointment-notices"]')->item(0)?->textContent, $warning)
+        && substr_count($html, $warning) === 1,
+        'A failed notification is shown once, inside the result, as the description of the focused status');
     $cancelled = $fixture->row((int) $booking['id']);
     $check(str_contains($html, 'Your appointment has been cancelled') && (int) $cancelled['state'] === 2
         && (int) $cancelled['sequence'] === 2 && $cancelled['uid'] === $booking['uid'] && $cancelled['cancel_reason'] === 'Fixture reason',

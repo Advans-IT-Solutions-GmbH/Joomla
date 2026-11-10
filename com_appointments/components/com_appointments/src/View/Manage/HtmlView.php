@@ -11,6 +11,7 @@ namespace Advans\Component\Appointments\Site\View\Manage;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
+use Advans\Component\Appointments\Site\View\ResultNoticesTrait;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
@@ -21,6 +22,7 @@ class HtmlView extends BaseHtmlView
 {
     use PageTitleTrait;
     use AssetsTrait;
+    use ResultNoticesTrait;
 
     protected $item;
     protected $action;
@@ -46,6 +48,10 @@ class HtmlView extends BaseHtmlView
         $this->completed = $model->completed();
         // The script only for the result, which it focuses; the forms work without it.
         $this->useAppointmentsAssets($this->completed);
+
+        if ($this->completed) {
+            $this->takeResultNotices();
+        }
         $this->item = $model->getItem();
         $this->deleteMode = $model->deleteMode();
         $this->reason = (string) $app->getUserState('com_appointments.cancel_reason', '');
