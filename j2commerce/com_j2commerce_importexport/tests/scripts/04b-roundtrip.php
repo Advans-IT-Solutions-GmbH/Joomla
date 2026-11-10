@@ -19,6 +19,7 @@ require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
+require_once __DIR__ . '/import-test-bootstrap.php';
 
 // Register component PSR-4 namespace
 spl_autoload_register(function (string $class): void {
@@ -82,6 +83,7 @@ class RoundTripTest
     {
         echo "=== Export→Import Round-Trip Tests ===\n";
         echo "Stack: " . strtoupper($this->tp) . "\n\n";
+        $testAdministrator = importExportBootAuthorizedAdministrator();
 
         $tables = $this->db->getTableList();
         $prefix = $this->db->getPrefix();
@@ -146,6 +148,7 @@ class RoundTripTest
             echo "SKIP export round-trip — import failed\n";
             echo "\n=== Round-Trip Test Summary ===\n";
             echo "Passed: {$this->passed}\nFailed: {$this->failed}\n";
+            importExportRemoveTestAdministrator($testAdministrator['user_id']);
             return $this->failed === 0;
         }
 
@@ -227,6 +230,7 @@ class RoundTripTest
         // ---- Cleanup ----
         echo "\n--- Cleanup ---\n";
         $this->cleanup($articleId, $productId);
+        importExportRemoveTestAdministrator($testAdministrator['user_id']);
 
         echo "\n=== Round-Trip Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

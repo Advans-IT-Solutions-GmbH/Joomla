@@ -11,7 +11,9 @@ require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
+require_once __DIR__ . '/import-test-bootstrap.php';
 
 // Register component PSR-4 namespace
 spl_autoload_register(function (string $class): void {
@@ -54,6 +56,7 @@ class ImportModelTest
     public function run(): bool
     {
         echo "=== Import Model Tests ===\n\n";
+        $testAdministratorId = 0;
 
         $rc = new ReflectionClass(ImportModel::class);
 
@@ -112,25 +115,50 @@ class ImportModelTest
         if (!$isJ6 && !$hasJ4) {
             $this->test('J2Commerce tables are present', fn () => false);
         } else {
-            $this->test('importProductFull() with minimal data succeeds', function () use ($model) {
-                $data = [
-                    'title'       => 'Import Test Product ' . uniqid(),
-                    'alias'       => 'import-test-' . uniqid(),
-                    'category'    => 'Import Test Category',
-                    'sku'         => 'IMP-TEST-' . uniqid(),
-                    'price'       => 19.99,
-                    'visibility'  => 1,
-                    'addtocart_text' => '',
-                    'up_sells'    => '',
-                    'cross_sells' => '',
-                    'variants'    => [],
-                    'product_images' => [],
-                    'options'     => [],
-                    'filters'     => [],
-                    'files'       => [],
-                    'tags'        => [],
-                    'custom_fields' => [],
-                ];
+            $data = [
+                'title'          => 'Import Test Product ' . uniqid(),
+                'alias'          => 'import-test-' . uniqid(),
+                'category'       => 'Import Test Category',
+                'sku'            => 'IMP-TEST-' . uniqid(),
+                'price'          => 19.99,
+                'visibility'     => 1,
+                'addtocart_text' => '',
+                'up_sells'       => '',
+                'cross_sells'    => '',
+                'variants'       => [],
+                'product_images' => [],
+                'options'        => [],
+                'filters'        => [],
+                'files'           => [],
+                'tags'            => [],
+                'custom_fields'   => [],
+            ];
+            $guestData = $data;
+            $guestData['title'] = 'Unauthorized Import ' . uniqid();
+            $guestData['alias'] = 'unauthorized-import-' . uniqid();
+            $guestData['catid'] = 2;
+            $context = importExportBootAuthorizedAdministrator();
+            $testAdministratorId = $context['user_id'];
+            $userFactory = Factory::getContainer()->get(UserFactoryInterface::class);
+            $context['application']->loadIdentity($userFactory->loadUserById(0));
+
+            $this->test('unauthorized model import is refused without article writes', function () use ($model, $db, $guestData) {
+                try {
+                    $model->importProductFull($guestData, []);
+                    return false;
+                } catch (\RuntimeException $e) {
+                    $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                    $query->select('COUNT(*)')
+                        ->from($db->quoteName('#__content'))
+                        ->where($db->quoteName('alias') . ' = ' . $db->quote($guestData['alias']));
+                    $db->setQuery($query);
+
+                    return $e->getCode() === 403 && (int) $db->loadResult() === 0;
+                }
+            });
+
+            $context['application']->loadIdentity($context['identity']);
+            $this->test('importProductFull() with minimal data succeeds', function () use ($model, $data) {
                 $result = $model->importProductFull($data, []);
                 return is_array($result)
                     && ($result['success'] ?? false) === true
@@ -143,6 +171,7 @@ class ImportModelTest
 
         $this->testTranslatedRowErrors($model);
         $this->testImportContract($model);
+        importExportRemoveTestAdministrator($testAdministratorId);
 
         echo "\n=== Import Model Summary ===\n";
         echo "Passed: {$this->passed}\n";
