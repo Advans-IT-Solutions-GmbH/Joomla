@@ -34,7 +34,7 @@ trait ResultNoticesTrait
 
         if ($file === '' || $own === false || realpath($file) !== $own) {
             if ($app->getMessageQueue() !== []) {
-                Factory::getDocument()->addScriptOptions('com_appointments.focusSystemMessage', true);
+                $app->getDocument()->addScriptOptions('com_appointments.focusSystemMessage', true);
             }
 
             return;
