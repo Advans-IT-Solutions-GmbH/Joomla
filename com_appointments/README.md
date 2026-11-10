@@ -964,8 +964,9 @@ copies, because the booking script and the server rely on them.
 | Checkboxes | `div.form-check` with `input.form-check-input` and `label.form-check-label` (no margin, centred with the box); with a checkbox mode the consent `.com-appointments-privacy > .com-appointments-consent` with the link `a.com-appointments-privacy-link` and `p.form-text.com-appointments-consent-text`, confirmation `.com-appointments-confirm` |
 | Errors | The control gets `.is-invalid`, `aria-invalid="true"` and `aria-describedby`; the message is `div.invalid-feedback.com-appointments-field-error` with the id `booking-<field>-error` or `manage-<field>-error` (the browser's check before sending: `<control id>-check`) |
 | Actions | `div.com-appointments-actions` with `button.btn.btn-primary` (cancel and erase: `btn-danger`) |
-| Confirmation | `.com-appointments-card.com-appointments-confirmation-card.com-appointments-state-<0/1/2>` with `span.com-appointments-confirmation-mark`, `h1.com-appointments-heading` ("Appointment confirmed", "Appointment received" while it awaits approval, "Appointment cancelled"), `p.com-appointments-status`, `h2.com-appointments-title`, `dl.com-appointments-summary`, `p.com-appointments-join > a.btn.btn-primary`, and `.com-appointments-confirmation-actions` with `a.com-appointments-calendar-add` (the `.ics` download), `a.com-appointments-reschedule` and `a.com-appointments-cancel`, then `p.com-appointments-confirmation-note` |
+| Confirmation | `#appointment-confirmation.com-appointments-card.com-appointments-confirmation-card.com-appointments-state-<0/1/2>` with `span.com-appointments-confirmation-mark`, `h1.com-appointments-heading` ("Appointment confirmed", "Appointment received" while it awaits approval, "Appointment cancelled"), `p.com-appointments-status` (see Result), `h2.com-appointments-title`, `dl.com-appointments-summary`, `p.com-appointments-join > a.btn.btn-primary`, and `.com-appointments-confirmation-actions` with `a.com-appointments-calendar-add` (the `.ics` download), `a.com-appointments-reschedule` and `a.com-appointments-cancel`, then `p.com-appointments-confirmation-note` |
 | Summary | `h2.com-appointments-title`, `dl.com-appointments-summary` (date, time, time zone, location or email address), `p.com-appointments-status` |
+| Result | A completed form shows its outcome as `p.com-appointments-status[role=status][tabindex=-1][autofocus][data-appointments-result]`: the confirmation, the completed manage page inside `div#appointment-result.com-appointments-manage` and the page with the app password of a new device. A successful booking redirects to `#appointment-confirmation` and a successful reschedule, cancellation or erasure to `#appointment-result`, so the outcome is in the first screen even below modules the template places above the component. A fragment keeps the browser from running `autofocus`, so the booking script focuses the status there; the device page is the answer to its form and relies on `autofocus`. A refused submission has no fragment and no result: the first invalid field keeps the focus |
 
 **Steps and addresses.** Step 1 is the event type's address plus `month` (`YYYY-MM`), and `day`
 (`YYYY-MM-DD`) once a day is chosen; step 2 adds `start`, the chosen time in UTC
@@ -979,7 +980,8 @@ only available to the browser session that made the booking. When the links cann
 invalid public site address in **Options**), only the `.ics` download is shown.
 
 **Booking script and slot endpoint.** `media/com_appointments/js/booking.js` is registered as the
-web asset `com_appointments.booking` (deferred, no dependency) and loaded by the booking page. It
+web asset `com_appointments.booking` (deferred, no dependency) and loaded by the booking page, the confirmation and a completed manage
+page, where it only moves the focus to the result. It
 adds `.com-appointments-js` to `.com-appointments`. A day or month link (`a[data-appointments-load]`)
 and the zone selection request the same address plus `format=raw` and replace `#appointment-picker`
 with the response; that response is the layout `default_picker.php` alone, so a template override

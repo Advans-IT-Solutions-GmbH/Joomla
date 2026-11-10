@@ -32,11 +32,19 @@ $error = fn (string $key): string => isset($errors[$key])
     ? '<div id="manage-' . $key . '-error" class="invalid-feedback com-appointments-field-error">' . $this->escape(Text::_($errors[$key])) . '</div>'
     : '';
 ?>
-<div class="com-appointments com-appointments-manage">
+<?php
+/*
+ * The completed state is the target of the redirect after a successful change
+ * (#appointment-result), so the outcome is in the first screen even below template modules;
+ * the status takes the focus (autofocus, or the booking script when the address has the
+ * fragment, which suppresses autofocus), so a screen reader reads it out.
+ */
+?>
+<div class="com-appointments com-appointments-manage"<?php echo $this->completed ? ' id="appointment-result"' : ''; ?>>
     <div class="com-appointments-container">
         <h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
         <?php if ($this->completed) : ?>
-            <p class="com-appointments-status"><?php echo Text::_($results[$this->action]); ?></p>
+            <p class="com-appointments-status" role="status" tabindex="-1" autofocus data-appointments-result><?php echo Text::_($results[$this->action]); ?></p>
         <?php else : ?>
             <?php
             $start = UtcTimestamp::parse($this->item->start_utc)->setTimezone($this->zone);

@@ -53,7 +53,8 @@ class HtmlView extends BaseHtmlView
             }
         }
 
-        $this->useAppointmentsAssets(false);
+        // The script focuses the outcome after the redirect to #appointment-confirmation.
+        $this->useAppointmentsAssets(true);
         $this->getDocument()->setMetaData('robots', 'noindex,nofollow');
         // The heading says what happened: confirmed, requested (held for the host's approval) or cancelled.
         $this->applyPageTitle('booking', Text::_(match ((int) $this->item->state) {

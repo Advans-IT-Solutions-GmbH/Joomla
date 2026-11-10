@@ -34,10 +34,11 @@ $mark = match ($state) {
 ?>
 <div class="com-appointments com-appointments-confirmation">
     <div class="com-appointments-container">
-        <div class="com-appointments-card com-appointments-confirmation-card com-appointments-state-<?php echo $state; ?>">
+        <?php // The redirect after the booking lands at the card; its status takes the focus. ?>
+        <div id="appointment-confirmation" class="com-appointments-card com-appointments-confirmation-card com-appointments-state-<?php echo $state; ?>">
             <span class="com-appointments-confirmation-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><?php echo $mark; ?></svg></span>
             <h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
-            <p class="com-appointments-status"><?php echo Text::_(match ($state) {
+            <p class="com-appointments-status" role="status" tabindex="-1" autofocus data-appointments-result><?php echo Text::_(match ($state) {
                 0 => 'COM_APPOINTMENTS_BOOKING_PENDING',
                 1 => 'COM_APPOINTMENTS_BOOKING_CONFIRMED',
                 2 => 'COM_APPOINTMENTS_MANAGE_CANCELLED',

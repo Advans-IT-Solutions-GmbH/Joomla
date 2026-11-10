@@ -232,6 +232,8 @@ try {
     $focused = $xpath->query('//*[@autofocus]');
     $check($focused->length === 1 && $focused->item(0)->getAttribute('id') === 'booking-first_name',
         'The first invalid control in page order receives the focus, not the consent checkbox');
+    $check($request[0]->landedAt($xpath->document->saveHTML(), null),
+        'A refused booking has no result fragment or region, so the focus stays at the first invalid field');
 
     // The component option max_guests limits the guests on the server, whatever the form sends.
     // The submissions above used the hourly booking budget of this client address.
@@ -272,6 +274,8 @@ try {
     $row = $stored($eventIds[1], $noticeSlot);
     $check(str_contains($body, 'Appointment confirmed') && $row !== null && $row['consent_utc'] === null && $row['consent_version'] === null,
         'Notice mode: a booking without the checkbox succeeds and stores no consent');
+    $check($request[0]->landedAt($body, 'appointment-confirmation'),
+        'A booking lands at #appointment-confirmation with a focusable status region the screen reader announces');
     $setParams(['consent_mode' => 'acknowledge']);
     $ackSlot = $day . ' 16:00:00';
     $check($modeForm($eventIds[1], $ackSlot)->query('//input[@name="consent"][@required]')->length === 1,

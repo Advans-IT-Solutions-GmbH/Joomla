@@ -38,7 +38,9 @@ try {
     $check($client->status === 403 && (int) $fixture->row((int) $booking['id'])['state'] === 1, 'Every lifecycle POST requires CSRF');
 
     $before = AppointmentsMail::snapshot();
-    $fixture->apply($client, $reschedule, ['start' => $day . ' 11:00:00', 'month' => substr($day, 0, 7), 'timezone' => 'Europe/Zurich']);
+    $html = $fixture->apply($client, $reschedule, ['start' => $day . ' 11:00:00', 'month' => substr($day, 0, 7), 'timezone' => 'Europe/Zurich']);
+    $check($client->landedAt($html, 'appointment-result'),
+        'A completed reschedule lands at #appointment-result with a focusable status region the screen reader announces');
     $moved = $fixture->row((int) $booking['id']);
     $check($moved && $moved['uid'] === $booking['uid'] && (int) $moved['sequence'] === 1 && $moved['start_utc'] === $day . ' 11:00:00'
         && $moved['invitee_timezone'] === 'Europe/Zurich', 'Reschedule updates the same UID/id, sequence and displayed zone');
@@ -96,6 +98,8 @@ try {
     };
     $check($confirmError($refused) && $fixture->row((int) $booking['id'])['start_utc'] === $day . ' 11:00:00',
         'Rescheduling without the confirmation checkbox shows the message at the checkbox and changes nothing');
+    $check($client->landedAt($refused, null) && preg_match('#<input[^>]*id="manage-confirm"[^>]*autofocus#', $refused) === 1,
+        'A refused reschedule has no result fragment or region and the invalid checkbox keeps the focus');
     $reloadedReschedule = $client->request($fresh . '&month=' . substr($day, 0, 7) . '&timezone=Europe%2FZurich');
     $check($confirmError($reloadedReschedule), 'The confirmation message is still at the checkbox after a reload');
     $otherEvent = $fixture->event();
@@ -127,6 +131,8 @@ try {
     $reason = $xpath->query('//textarea[@id="cancel-reason"]')->item(0);
     $check($reason !== null && trim($reason->textContent) === 'Kept reason', 'The entered cancellation reason is kept');
     $html = $fixture->apply($client, $freshCancel, ['reason' => 'Fixture reason']);
+    $check($client->landedAt($html, 'appointment-result'),
+        'A completed cancellation lands at #appointment-result with a focusable status region the screen reader announces');
     $cancelled = $fixture->row((int) $booking['id']);
     $check(str_contains($html, 'Your appointment has been cancelled') && (int) $cancelled['state'] === 2
         && (int) $cancelled['sequence'] === 2 && $cancelled['uid'] === $booking['uid'] && $cancelled['cancel_reason'] === 'Fixture reason',

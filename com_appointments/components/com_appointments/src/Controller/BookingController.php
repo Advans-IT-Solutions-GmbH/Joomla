@@ -120,7 +120,9 @@ class BookingController extends BaseController
         $this->app->setUserState('com_appointments.booking.' . $eventId, null);
         $this->app->setUserState('com_appointments.booking_errors.' . $eventId, null);
         $this->app->setUserState('com_appointments.confirmation.id', (int) $booking['id']);
-        $this->setRedirect(Route::_('index.php?option=com_appointments&view=booking', false));
+        // The confirmation lands at its card, so modules a template places above the component
+        // do not push the outcome out of the first screen; the booking script focuses its status.
+        $this->setRedirect(Route::_('index.php?option=com_appointments&view=booking', false) . '#appointment-confirmation');
 
         return true;
     }
@@ -224,6 +226,9 @@ class BookingController extends BaseController
             return false;
         }
         $this->app->setUserState('com_appointments.cancel_reason', null);
+        // Only the completed state lands at the result: on a refusal the page keeps its top, where
+        // the template shows the message, or the first invalid field takes the focus.
+        $this->setRedirect(Route::_($url, false) . '#appointment-result');
 
         return true;
     }

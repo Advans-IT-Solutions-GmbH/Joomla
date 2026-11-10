@@ -39,12 +39,13 @@ class HtmlView extends BaseHtmlView
         $app->setHeader('Referrer-Policy', 'no-referrer', true);
         $app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
         $app->setHeader('Cache-Control', 'private, no-store', true);
-        $this->useAppointmentsAssets(false);
         $model = $this->getModel();
         $this->action = $model->action();
         $this->applyPageTitle('manage', Text::_(['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL', 'erase' => 'COM_APPOINTMENTS_MANAGE_ERASE'][$this->action]));
         $this->signature = $model->signature();
         $this->completed = $model->completed();
+        // The script only for the result, which it focuses; the forms work without it.
+        $this->useAppointmentsAssets($this->completed);
         $this->item = $model->getItem();
         $this->deleteMode = $model->deleteMode();
         $this->reason = (string) $app->getUserState('com_appointments.cancel_reason', '');
