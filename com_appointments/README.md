@@ -1073,6 +1073,8 @@ Page-level refusals of signed manage actions use the same one-shot message-focus
 scoped to the booking and action. Ordinary manage GETs and field-error forms remain
 script-free. A rejected timezone is not echoed into the redirect; its validation message
 is retained and the form uses its existing known timezone.
+Booking refusals retain a valid submitted timezone even when the start is empty or malformed,
+so automatic browser-zone detection does not reload the picker and discard its error alert.
 
 **Steps and addresses.** Step 1 is the event type's address plus `month` (`YYYY-MM`), and `day`
 (`YYYY-MM-DD`) once a day is chosen; step 2 adds `start`, the chosen time in UTC

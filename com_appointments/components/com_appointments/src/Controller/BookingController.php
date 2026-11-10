@@ -263,9 +263,14 @@ class BookingController extends BaseController
         // the times of its day, refreshed, so the visitor chooses another one.
         $details = !isset($fieldErrors['start']) && $key !== 'COM_APPOINTMENTS_BOOKING_ERROR_TAKEN';
 
-        if ($start !== null && in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
+        $validZone = in_array($zone, \DateTimeZone::listIdentifiers(), true);
+        if ($validZone) {
+            $url .= '&timezone=' . urlencode($zone);
+        }
+
+        if ($start !== null && $validZone) {
             $local = $start->setTimezone(new \DateTimeZone($zone));
-            $url .= '&timezone=' . urlencode($zone) . '&month=' . $local->format('Y-m') . '&day=' . $local->format('Y-m-d')
+            $url .= '&month=' . $local->format('Y-m') . '&day=' . $local->format('Y-m-d')
                 . ($details ? '&start=' . urlencode(UtcTimestamp::toSql($start)) : '')
                 // The clock the visitor switched to stays, like the zone.
                 . (in_array($data['clock'] ?? null, ['12', '24'], true) ? '&clock=' . $data['clock'] : '');

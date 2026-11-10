@@ -349,19 +349,22 @@ try {
         $db->query("DELETE FROM {$prefix}appointments_ratelimit");
         $request = $prepare($eventIds[0], $slot);
         $request[2]['booking']['start'] = $invalidStart;
+        $request[2]['booking']['timezone'] = 'Europe/Zurich';
         sleep(2);
         $body = $request[0]->request($request[1], $request[2]);
         $xpath = $dom($body);
         $startError = $xpath->query('//*[@id="booking-start-error"]')->item(0);
         $locations = $request[0]->locations;
         $lastLocation = $locations === [] ? '' : $locations[array_key_last($locations)];
+        parse_str((string) parse_url($lastLocation, PHP_URL_QUERY), $redirectQuery);
         $check(trim((string) ($startError?->textContent ?? '')) === 'Please choose an available time.'
             && $startError instanceof DOMElement && $startError->getAttribute('role') === 'alert'
             && $startError->getAttribute('tabindex') === '-1' && $startError->hasAttribute('autofocus')
             && !str_contains($body, 'com_appointments.focusSystemMessage')
             && $lastLocation !== '' && !str_contains($lastLocation, '#')
+            && ($redirectQuery['timezone'] ?? '') === 'Europe/Zurich'
             && $xpath->query('//form[@id="appointment-details-form"]')->length === 0 && $bookings($eventIds[0]) === 1,
-            'An empty or malformed time returns to the calendar with a focusable alert and no booking');
+            'An empty or malformed time keeps its submitted timezone, focusable alert and no booking');
     }
 
     // Release test 22.10.: dates in words of the site language, times without a zone abbreviation.
