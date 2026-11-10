@@ -611,6 +611,8 @@ advances and rotation is marked due until a genuine key holder rotates. Administ
 the current owner also clears ownership. Ordinary settings, revocation and deletion do not need MFA or
 a keyring; changing external sharing retains its separate permission and MFA requirements.
 The backend still enforces Joomla ACL, POST, CSRF and held edit ids.
+Grant changes, recovery grants and revocations retain the pre-change owner and effective managers
+as security-notice recipients, including when an ownerless calendar loses its last effective manager.
 
 Component administrators may configure calendar links and remove inaccessible links on booking
 pages, deliberately controlling public free/busy exposure without obtaining contents. The host

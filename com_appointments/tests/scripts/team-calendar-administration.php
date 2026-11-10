@@ -223,6 +223,38 @@ return static function (TeamServices $services, int $creator): array {
         $check('Administrative deletion clears booking target and retains tombstone',
             $db->setQuery("SELECT calendar_id FROM #__appointments_eventtypes WHERE id=$event")->loadResult() === null
             && $services->anchor()->minimum('calendar', $foreign) > 1);
+        foreach ([
+            [CalendarRole::Read, false], [CalendarRole::FreeBusy, false],
+            [CalendarRole::Read, true], [CalendarRole::FreeBusy, true],
+        ] as [$demotedRole, $withRecovery]) {
+            $noticeCalendar = $services->calendars()->create($creator, [
+                'title' => $tag . '-demotion-notice', 'owner_user_id' => $newOwner,
+            ]);
+            $calendars[] = $noticeCalendar;
+            $services->calendars()->releaseOwner($newOwner);
+            $case = ($withRecovery ? 'Recovery grant' : 'Administrative grant') . ' to ' . $demotedRole->name;
+            $check($case . ' starts with an ownerless sole effective manager and a grantless administrator',
+                (int) $services->calendars()->get($noticeCalendar)->owner_user_id === 0
+                && $services->grants()->accessFor($newOwner, $noticeCalendar)?->role === CalendarRole::Manage
+                && $services->grants()->accessFor($admin, $noticeCalendar) === null);
+            $before = AppointmentsMail::snapshot();
+            if ($withRecovery) {
+                $keyring = $keys->openKeyring($noticeCalendar, $contexts[$newOwner]);
+                try {
+                    $services->grants()->grantWithRecovery($admin, $keyring, $newOwner, $demotedRole);
+                } finally {
+                    $keyring->wipe();
+                }
+            } else {
+                $services->grants()->grant($admin, $noticeCalendar, $newOwner, $demotedRole, null);
+            }
+            $messages = AppointmentsMail::messagesSince($before);
+            $check($case . ' preserves the demoted sole manager captured MIME security notice',
+                count($messages) === 1
+                && preg_match('/^To:[^\r\n]*' . preg_quote($tag . 'newOwner@example.test', '/') . '/mi', $messages[0]) === 1
+                && $services->grants()->accessFor($newOwner, $noticeCalendar)?->role !== CalendarRole::Manage
+                && $services->grants()->accessFor($admin, $noticeCalendar) === null);
+        }
         return $results;
     } finally {
         Factory::getApplication()->loadIdentity($originalIdentity);
