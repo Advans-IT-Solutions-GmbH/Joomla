@@ -15,6 +15,8 @@ define('JPATH_BASE', '/var/www/html');
 require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
+$_SERVER['REQUEST_METHOD'] = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$_SERVER['REQUEST_URI'] = $_SERVER['REQUEST_URI'] ?? '/administrator/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
@@ -84,159 +86,167 @@ class RoundTripTest
         echo "=== Export→Import Round-Trip Tests ===\n";
         echo "Stack: " . strtoupper($this->tp) . "\n\n";
         $testAdministrator = importExportBootAuthorizedAdministrator();
+        $articleId = 0;
+        $productId = 0;
 
-        $tables = $this->db->getTableList();
-        $prefix = $this->db->getPrefix();
-        $hasJ4  = in_array($prefix . 'j2store_products', $tables, true);
+        try {
+            $tables = $this->db->getTableList();
+            $prefix = $this->db->getPrefix();
+            $hasJ4  = in_array($prefix . 'j2store_products', $tables, true);
 
-        if (!$this->isJ6 && !$hasJ4) {
-            $this->test('J2Commerce tables are present', fn () => false);
-            echo "\n=== Round-Trip Test Summary ===\n";
-            echo "Passed: {$this->passed}\nFailed: {$this->failed}\n";
-            return false;
-        }
+            if (!$this->isJ6 && !$hasJ4) {
+                $this->test('J2Commerce tables are present', fn () => false);
+                echo "\n=== Round-Trip Test Summary ===\n";
+                echo "Passed: {$this->passed}\nFailed: {$this->failed}\n";
+                return false;
+            }
 
-        $sku   = 'RT-TEST-' . uniqid();
-        $title = 'Round-Trip Test Product ' . $sku;
-        $alias = 'round-trip-test-' . strtolower($sku);
+            $sku   = 'RT-TEST-' . uniqid();
+            $title = 'Round-Trip Test Product ' . $sku;
+            $alias = 'round-trip-test-' . strtolower($sku);
 
-        // ---- Step 1: Import ----
-        echo "--- Step 1: importProductFull() ---\n";
+            // ---- Step 1: Import ----
+            echo "--- Step 1: importProductFull() ---\n";
 
-        $importModel = $this->makeModel(ImportModel::class);
+            $importModel = $this->makeModel(ImportModel::class);
 
-        $importData = [
-            'title'          => $title,
-            'alias'          => $alias,
-            'category'       => 'Round-Trip Test Category',
-            'sku'            => $sku,
-            'price'          => 29.99,
-            'visibility'     => 1,
-            'addtocart_text' => '',
-            'up_sells'       => '',
-            'cross_sells'    => '',
-            'variants'       => [
-                [
-                    'sku' => $sku . '-V1',
-                    'price' => 29.99,
-                    'is_master' => 1,
-                    'isdefault_variant' => 1,
-                    'pricing_calculator' => 'standard',
-                    'shipping' => 1,
-                    'quantity_restriction' => 0,
-                    'allow_backorder' => 0,
+            $importData = [
+                'title'          => $title,
+                'alias'          => $alias,
+                'category'       => 'Round-Trip Test Category',
+                'sku'            => $sku,
+                'price'          => 29.99,
+                'visibility'     => 1,
+                'addtocart_text' => '',
+                'up_sells'       => '',
+                'cross_sells'    => '',
+                'variants'       => [
+                    [
+                        'sku' => $sku . '-V1',
+                        'price' => 29.99,
+                        'is_master' => 1,
+                        'isdefault_variant' => 1,
+                        'pricing_calculator' => 'standard',
+                        'shipping' => 1,
+                        'quantity_restriction' => 0,
+                        'allow_backorder' => 0,
+                    ],
                 ],
-            ],
-            'product_images' => [],
-            'options'        => [],
-            'filters'        => [],
-            'files'          => [],
-            'tags'           => [],
-            'custom_fields'  => [],
-        ];
+                'product_images' => [],
+                'options'        => [],
+                'filters'        => [],
+                'files'          => [],
+                'tags'           => [],
+                'custom_fields'  => [],
+            ];
 
-        $importResult = null;
-        $this->test('importProductFull() succeeds', function () use ($importModel, $importData, &$importResult) {
-            $importResult = $importModel->importProductFull($importData, []);
-            return is_array($importResult)
-                && ($importResult['success'] ?? false) === true
-                && (int) ($importResult['article_id'] ?? 0) > 0
-                && (int) ($importResult['product_id'] ?? 0) > 0;
-        });
+            $importResult = null;
+            $this->test('importProductFull() succeeds', function () use ($importModel, $importData, &$importResult) {
+                $importResult = $importModel->importProductFull($importData, []);
+                return is_array($importResult)
+                    && ($importResult['success'] ?? false) === true
+                    && (int) ($importResult['article_id'] ?? 0) > 0
+                    && (int) ($importResult['product_id'] ?? 0) > 0;
+            });
 
-        if (!$importResult || !($importResult['success'] ?? false)) {
-            echo "SKIP export round-trip — import failed\n";
-            echo "\n=== Round-Trip Test Summary ===\n";
-            echo "Passed: {$this->passed}\nFailed: {$this->failed}\n";
-            importExportRemoveTestAdministrator($testAdministrator['user_id']);
-            return $this->failed === 0;
-        }
+            if (!$importResult || !($importResult['success'] ?? false)) {
+                echo "SKIP export round-trip — import failed\n";
+                echo "\n=== Round-Trip Test Summary ===\n";
+                echo "Passed: {$this->passed}\nFailed: {$this->failed}\n";
+                return $this->failed === 0;
+            }
 
-        $articleId = (int) $importResult['article_id'];
-        $productId = (int) $importResult['product_id'];
+            $articleId = (int) $importResult['article_id'];
+            $productId = (int) $importResult['product_id'];
 
-        // ---- Step 2: Export ----
-        echo "\n--- Step 2: exportData('products_full') ---\n";
+            // ---- Step 2: Export ----
+            echo "\n--- Step 2: exportData('products_full') ---\n";
 
-        $exportModel = $this->makeModel(ExportModel::class);
+            $exportModel = $this->makeModel(ExportModel::class);
 
-        $exported = null;
-        $this->test("exportData('products_full') returns array", function () use ($exportModel, &$exported) {
-            $exported = $exportModel->exportData('products_full');
-            return is_array($exported);
-        });
+            $exported = null;
+            $this->test("exportData('products_full') returns array", function () use ($exportModel, &$exported) {
+                $exported = $exportModel->exportData('products_full');
+                return is_array($exported);
+            });
 
-        // Find the exported record for our product
-        $exportedProduct = null;
-        if (is_array($exported)) {
-            foreach ($exported as $row) {
-                $rowProductId = (int) ($row[$this->tp . '_product_id'] ?? $row['product_id'] ?? 0);
-                if ($rowProductId === $productId) {
-                    $exportedProduct = $row;
-                    break;
+            // Find the exported record for our product
+            $exportedProduct = null;
+            if (is_array($exported)) {
+                foreach ($exported as $row) {
+                    $rowProductId = (int) ($row[$this->tp . '_product_id'] ?? $row['product_id'] ?? 0);
+                    if ($rowProductId === $productId) {
+                        $exportedProduct = $row;
+                        break;
+                    }
                 }
             }
-        }
 
-        $this->test('Imported product appears in export', function () use ($exportedProduct) {
-            return $exportedProduct !== null;
-        });
-
-        if ($exportedProduct !== null) {
-            $this->test('Exported title matches imported title', function () use ($exportedProduct, $title) {
-                return ($exportedProduct['title'] ?? '') === $title;
+            $this->test('Imported product appears in export', function () use ($exportedProduct) {
+                return $exportedProduct !== null;
             });
 
-            $this->test('Exported alias matches imported alias', function () use ($exportedProduct, $alias) {
-                return ($exportedProduct['alias'] ?? '') === $alias;
-            });
+            if ($exportedProduct !== null) {
+                $this->test('Exported title matches imported title', function () use ($exportedProduct, $title) {
+                    return ($exportedProduct['title'] ?? '') === $title;
+                });
 
-            $this->test('Exported product has variants array', function () use ($exportedProduct) {
-                return isset($exportedProduct['variants']) && is_array($exportedProduct['variants']);
-            });
+                $this->test('Exported alias matches imported alias', function () use ($exportedProduct, $alias) {
+                    return ($exportedProduct['alias'] ?? '') === $alias;
+                });
 
-            $this->test('Exported variant has correct SKU', function () use ($exportedProduct, $sku) {
-                $variants = $exportedProduct['variants'] ?? [];
-                foreach ($variants as $v) {
-                    if (($v['sku'] ?? '') === $sku . '-V1') {
-                        return true;
+                $this->test('Exported product has variants array', function () use ($exportedProduct) {
+                    return isset($exportedProduct['variants']) && is_array($exportedProduct['variants']);
+                });
+
+                $this->test('Exported variant has correct SKU', function () use ($exportedProduct, $sku) {
+                    $variants = $exportedProduct['variants'] ?? [];
+                    foreach ($variants as $v) {
+                        if (($v['sku'] ?? '') === $sku . '-V1') {
+                            return true;
+                        }
                     }
-                }
-                return false;
-            });
+                    return false;
+                });
 
-            $this->test('Exported variant price matches', function () use ($exportedProduct) {
-                $variants = $exportedProduct['variants'] ?? [];
-                foreach ($variants as $v) {
-                    if (abs((float)($v['price'] ?? 0) - 29.99) < 0.001) {
-                        return true;
+                $this->test('Exported variant price matches', function () use ($exportedProduct) {
+                    $variants = $exportedProduct['variants'] ?? [];
+                    foreach ($variants as $v) {
+                        if (abs((float)($v['price'] ?? 0) - 29.99) < 0.001) {
+                            return true;
+                        }
                     }
-                }
-                return false;
-            });
+                    return false;
+                });
+            }
+
+            // ---- Step 3: Re-import (idempotency) ----
+            echo "\n--- Step 3: Re-import (idempotency) ---\n";
+
+            if ($exportedProduct !== null) {
+                $this->test('Re-importing exported data does not crash', function () use ($importModel, $exportedProduct) {
+                    // Re-import with update_existing option — must not throw
+                    $result = $importModel->importProductFull($exportedProduct, ['update_existing' => true]);
+                    return is_array($result) && ($result['success'] ?? false) === true;
+                });
+            }
+
+            echo "\n=== Round-Trip Test Summary ===\n";
+            echo "Passed: {$this->passed}\n";
+            echo "Failed: {$this->failed}\n";
+
+            return $this->failed === 0;
+        } finally {
+            if ($articleId > 0 && $productId > 0) {
+                $this->cleanup($articleId, $productId);
+            }
+
+            try {
+                importExportRemoveTestAdministrator((int) $testAdministrator['user_id']);
+            } finally {
+                importExportRestoreApplication($testAdministrator);
+            }
         }
-
-        // ---- Step 3: Re-import (idempotency) ----
-        echo "\n--- Step 3: Re-import (idempotency) ---\n";
-
-        if ($exportedProduct !== null) {
-            $this->test('Re-importing exported data does not crash', function () use ($importModel, $exportedProduct) {
-                // Re-import with update_existing option — must not throw
-                $result = $importModel->importProductFull($exportedProduct, ['update_existing' => true]);
-                return is_array($result) && ($result['success'] ?? false) === true;
-            });
-        }
-
-        // ---- Cleanup ----
-        echo "\n--- Cleanup ---\n";
-        $this->cleanup($articleId, $productId);
-        importExportRemoveTestAdministrator($testAdministrator['user_id']);
-
-        echo "\n=== Round-Trip Test Summary ===\n";
-        echo "Passed: {$this->passed}\n";
-        echo "Failed: {$this->failed}\n";
-
-        return $this->failed === 0;
     }
 
     private function cleanup(int $articleId, int $productId): void

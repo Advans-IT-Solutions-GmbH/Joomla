@@ -7,6 +7,8 @@ define('JPATH_BASE', '/var/www/html');
 require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
+$_SERVER['REQUEST_METHOD'] = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$_SERVER['REQUEST_URI'] = $_SERVER['REQUEST_URI'] ?? '/administrator/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
@@ -56,7 +58,7 @@ class ImportModelTest
     public function run(): bool
     {
         echo "=== Import Model Tests ===\n\n";
-        $testAdministratorId = 0;
+        $testContext = null;
 
         $rc = new ReflectionClass(ImportModel::class);
 
@@ -80,98 +82,107 @@ class ImportModelTest
             });
         }
 
-        // --- Runtime: importProductFull() with empty/minimal data does not crash ---
-        // newInstanceWithoutConstructor avoids BaseDatabaseModel::__construct() calling Factory::getApplication()
-        $db    = Factory::getContainer()->get(DatabaseInterface::class);
-        $model = $rc->newInstanceWithoutConstructor();
-        $model->setDatabase($db);
-
-        $this->test('importProductFull() without a title throws InvalidArgumentException', function () use ($model) {
-            try {
-                $model->importProductFull([]);
-            } catch (\InvalidArgumentException $e) {
-                return true;
-            }
-
-            return false;
-        });
-        $this->test('Malformed nested product data is rejected before writing', function () use ($model) {
-            try {
-                $model->importProductFull(['title' => 'Invalid nested data', 'variants' => [1]]);
-            } catch (\InvalidArgumentException $e) {
-                return true;
-            }
-            return false;
-        });
-
-        // --- Runtime: importProductFull() with minimal valid data ---
-        // Detect stack
-        $db     = Factory::getContainer()->get(DatabaseInterface::class);
-        $tables = $db->getTableList();
-        $prefix = $db->getPrefix();
-        $isJ6   = in_array($prefix . 'j2commerce_products', $tables, true);
-        $hasJ4  = in_array($prefix . 'j2store_products',    $tables, true);
-
-        if (!$isJ6 && !$hasJ4) {
-            $this->test('J2Commerce tables are present', fn () => false);
-        } else {
-            $data = [
-                'title'          => 'Import Test Product ' . uniqid(),
-                'alias'          => 'import-test-' . uniqid(),
-                'category'       => 'Import Test Category',
-                'sku'            => 'IMP-TEST-' . uniqid(),
-                'price'          => 19.99,
-                'visibility'     => 1,
-                'addtocart_text' => '',
-                'up_sells'       => '',
-                'cross_sells'    => '',
-                'variants'       => [],
-                'product_images' => [],
-                'options'        => [],
-                'filters'        => [],
-                'files'           => [],
-                'tags'            => [],
-                'custom_fields'   => [],
-            ];
-            $guestData = $data;
-            $guestData['title'] = 'Unauthorized Import ' . uniqid();
-            $guestData['alias'] = 'unauthorized-import-' . uniqid();
-            $guestData['catid'] = 2;
+        try {
+            // --- Runtime: importProductFull() with empty/minimal data does not crash ---
+            // newInstanceWithoutConstructor avoids BaseDatabaseModel::__construct() calling Factory::getApplication()
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+            $model = $rc->newInstanceWithoutConstructor();
+            $model->setDatabase($db);
             $context = importExportBootAuthorizedAdministrator();
-            $testAdministratorId = $context['user_id'];
-            $userFactory = Factory::getContainer()->get(UserFactoryInterface::class);
-            $context['application']->loadIdentity($userFactory->loadUserById(0));
+            $testContext = $context;
 
-            $this->test('unauthorized model import is refused without article writes', function () use ($model, $db, $guestData) {
+            $this->test('importProductFull() without a title throws InvalidArgumentException', function () use ($model) {
                 try {
-                    $model->importProductFull($guestData, []);
-                    return false;
-                } catch (\RuntimeException $e) {
-                    $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-                    $query->select('COUNT(*)')
-                        ->from($db->quoteName('#__content'))
-                        ->where($db->quoteName('alias') . ' = ' . $db->quote($guestData['alias']));
-                    $db->setQuery($query);
-
-                    return $e->getCode() === 403 && (int) $db->loadResult() === 0;
+                    $model->importProductFull([]);
+                } catch (\InvalidArgumentException $e) {
+                    return true;
                 }
+
+                return false;
+            });
+            $this->test('Malformed nested product data is rejected before writing', function () use ($model) {
+                try {
+                    $model->importProductFull(['title' => 'Invalid nested data', 'variants' => [1]]);
+                } catch (\InvalidArgumentException $e) {
+                    return true;
+                }
+                return false;
             });
 
-            $context['application']->loadIdentity($context['identity']);
-            $this->test('importProductFull() with minimal data succeeds', function () use ($model, $data) {
-                $result = $model->importProductFull($data, []);
-                return is_array($result)
-                    && ($result['success'] ?? false) === true
-                    && isset($result['article_id'])
-                    && isset($result['product_id'])
-                    && (int) $result['article_id'] > 0
-                    && (int) $result['product_id'] > 0;
-            });
+            // --- Runtime: importProductFull() with minimal valid data ---
+            // Detect stack
+            $db     = Factory::getContainer()->get(DatabaseInterface::class);
+            $tables = $db->getTableList();
+            $prefix = $db->getPrefix();
+            $isJ6   = in_array($prefix . 'j2commerce_products', $tables, true);
+            $hasJ4  = in_array($prefix . 'j2store_products',    $tables, true);
+
+            if (!$isJ6 && !$hasJ4) {
+                $this->test('J2Commerce tables are present', fn () => false);
+            } else {
+                $data = [
+                    'title'          => 'Import Test Product ' . uniqid(),
+                    'alias'          => 'import-test-' . uniqid(),
+                    'category'       => 'Import Test Category',
+                    'sku'            => 'IMP-TEST-' . uniqid(),
+                    'price'          => 19.99,
+                    'visibility'     => 1,
+                    'addtocart_text' => '',
+                    'up_sells'       => '',
+                    'cross_sells'    => '',
+                    'variants'       => [],
+                    'product_images' => [],
+                    'options'        => [],
+                    'filters'        => [],
+                    'files'          => [],
+                    'tags'            => [],
+                    'custom_fields'   => [],
+                ];
+                $guestData = $data;
+                $guestData['title'] = 'Unauthorized Import ' . uniqid();
+                $guestData['alias'] = 'unauthorized-import-' . uniqid();
+                $guestData['catid'] = 2;
+                $userFactory = Factory::getContainer()->get(UserFactoryInterface::class);
+                $context['application']->loadIdentity($userFactory->loadUserById(0));
+
+                $this->test('unauthorized model import is refused without article writes', function () use ($model, $db, $guestData) {
+                    try {
+                        $model->importProductFull($guestData, []);
+                        return false;
+                    } catch (\RuntimeException $e) {
+                        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                        $query->select('COUNT(*)')
+                            ->from($db->quoteName('#__content'))
+                            ->where($db->quoteName('alias') . ' = ' . $db->quote($guestData['alias']));
+                        $db->setQuery($query);
+
+                        return $e->getCode() === 403 && (int) $db->loadResult() === 0;
+                    }
+                });
+
+                $context['application']->loadIdentity($context['identity']);
+                $this->test('importProductFull() with minimal data succeeds', function () use ($model, $data) {
+                    $result = $model->importProductFull($data, []);
+                    return is_array($result)
+                        && ($result['success'] ?? false) === true
+                        && isset($result['article_id'])
+                        && isset($result['product_id'])
+                        && (int) $result['article_id'] > 0
+                        && (int) $result['product_id'] > 0;
+                });
+            }
+
+            $this->testTranslatedRowErrors($model);
+            $this->testImportContract($model);
+        } finally {
+            if ($testContext !== null) {
+                try {
+                    importExportRemoveTestAdministrator((int) $testContext['user_id']);
+                } finally {
+                    importExportRestoreApplication($testContext);
+                }
+            }
         }
-
-        $this->testTranslatedRowErrors($model);
-        $this->testImportContract($model);
-        importExportRemoveTestAdministrator($testAdministratorId);
 
         echo "\n=== Import Model Summary ===\n";
         echo "Passed: {$this->passed}\n";
