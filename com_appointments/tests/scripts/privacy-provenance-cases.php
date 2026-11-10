@@ -117,7 +117,7 @@ $overlapBooking = 0;
 
     $legacy = $newPrivacyFixture('legacy-' . bin2hex(random_bytes(6)) . '@example.test');
     $legacy->status = 1;
-    $legacy->store();
+    $check($legacy->store(false), 'The legacy fixture persists its confirmed status');
     $logsBefore = (int) $joomlaDb->setQuery('SELECT MAX(id) FROM #__action_logs')->loadResult();
     $application->bootComponent('com_privacy')->getMVCFactory()
         ->createModel('Remove', 'Administrator', ['ignore_request' => true])->logRemove($legacy);
