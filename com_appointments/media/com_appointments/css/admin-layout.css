@@ -25,6 +25,11 @@
     min-inline-size: 0;
 }
 
+.com-appointments-booking-details > dt,
+.com-appointments-booking-details > dd {
+    overflow-wrap: anywhere;
+}
+
 @media (width <= 575.98px) {
     /* Room for Atum's fixed toolbar toggler at the end of the header. */
     .header-title {

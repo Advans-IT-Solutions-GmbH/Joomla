@@ -459,6 +459,14 @@ class StructureTest
                 && str_contains($dispatcher, "useStyle('com_appointments.admin.layout')");
         });
 
+        $this->test('Booking details wrap unbroken calendar identifiers and submitted values', function () {
+            $layout = (string) file_get_contents($this->admin . '/tmpl/booking/default.php');
+            $css = (string) file_get_contents('/var/www/html/media/com_appointments/css/admin-layout.css');
+
+            return str_contains($layout, '<dl class="row com-appointments-booking-details">')
+                && preg_match('/\.com-appointments-booking-details\s*>\s*dd\s*\{[^}]*overflow-wrap:\s*anywhere/', $css);
+        });
+
         echo "\n=== Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;

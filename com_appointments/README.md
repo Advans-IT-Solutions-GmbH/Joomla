@@ -58,7 +58,8 @@ through the component dispatcher. Atum keeps the page title on one line and lets
 header nor the main column beside the sidebar shrink, so a long translated title or a wide table
 widened the whole page. The stylesheet lets the title wrap (leaving room for the toolbar toggler
 on phones) and lets the main column shrink, so every list table scrolls inside its
-`.table-responsive` wrapper instead.
+`.table-responsive` wrapper instead. Booking detail labels and values wrap unbroken text,
+including the calendar UID, inside `.com-appointments-booking-details`.
 
 ## Installation
 
