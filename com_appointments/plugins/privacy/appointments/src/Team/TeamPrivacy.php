@@ -8,6 +8,7 @@
 
 namespace Advans\Plugin\Privacy\Appointments\Team;
 
+use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKeyring;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
@@ -370,7 +371,9 @@ final class TeamPrivacy
             $counts['not_searched'] = -1;
         }
 
-        $userId = $user !== null ? (int) $user->id : 0;
+        // Core's database lookup may equate distinct accented mailbox addresses.
+        $userId = $user !== null && (int) $user->id > 0
+            && PrivacyAddress::matches((string) $user->email, $email) ? (int) $user->id : 0;
 
         if ($userId > 0) {
             try {

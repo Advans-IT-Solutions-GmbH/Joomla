@@ -1199,10 +1199,30 @@ sleep(3);
                                 }
                             }
                         }
+                        $wrongUser = \Joomla\CMS\Factory::getContainer()->get(\Joomla\CMS\User\UserFactoryInterface::class)->loadUserById(' . (int) $account['id'] . ');
+                        $beforeLog = (int) $joomlaDb->setQuery("SELECT COALESCE(MAX(id),0) FROM #__appointments_teamlog")->loadResult();
+                        $mismatch = new \Joomla\CMS\Event\Privacy\ExportRequestEvent("onPrivacyExportRequest", ["subject" => $request, "user" => $wrongUser]);
+                        $plugin->onPrivacyExportRequest($mismatch);
+                        $mismatchItems = 0; $mismatchContent = ""; $staffDomains = 0;
+                        foreach ($mismatch->getArgument("result") as $set) {
+                            foreach ($set as $domain) {
+                                if (str_starts_with($domain->name, "appointments_staff_")) { $staffDomains++; }
+                                if ($domain->name !== "appointments_calendar_entries") { continue; }
+                                foreach ($domain->getItems() as $item) {
+                                    $mismatchItems++;
+                                    foreach ($item->getFields() as $field) {
+                                        if ($field->name === "content") { $mismatchContent .= (string) $field->value; }
+                                    }
+                                }
+                            }
+                        }
+                        $subjects = $joomlaDb->setQuery("SELECT subject_user_id FROM #__appointments_teamlog WHERE id > $beforeLog AND event = \"privacy.export\"")->loadColumn();
                         $remove = new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => $user]);
                         $plugin->onPrivacyRemoveData($remove);
                         $remaining = (int) $joomlaDb->setQuery("SELECT COUNT(*) FROM #__appointments_calendar_objects WHERE calendar_id = ' . (int) $fixture->calendarId . ' AND uri = " . $joomlaDb->quote(' . var_export($uri, true) . '))->loadResult();
                         $result = ["domain" => $domainFound, "items" => $items, "content" => $content, "remaining" => $remaining,
+                            "mismatch_items" => $mismatchItems, "mismatch_content" => $mismatchContent,
+                            "mismatch_staff" => $staffDomains, "mismatch_subjects" => $subjects,
                             "actor" => (int) $application->getIdentity()->id];
                         echo "\n@@TEAMFPRIV@@".json_encode($result);';
                     token_get_all("<?php\n" . $php, TOKEN_PARSE);
@@ -1223,6 +1243,10 @@ sleep(3);
                         && $result['domain'] === true
                         && $result['items'] === 1
                         && str_contains($result['content'], $email)
+                        && $result['mismatch_items'] === 1
+                        && str_contains($result['mismatch_content'], $email)
+                        && $result['mismatch_staff'] === 0
+                        && $result['mismatch_subjects'] === [null]
                         && $result['remaining'] === 0
                         && $result['actor'] === (int) $account['id']
                         && $removed['status'] === 404;
