@@ -23,7 +23,12 @@ reinstalls the same ZIP (overridable with `PRIVACY_PACKAGE`) and restores the
 earlier plugin settings. These suites are not delivered-token or browser acceptance.
 The existing CJS suites require separate synthetic fixtures, actual captured
 mail, Playwright and native administrator authorization; they must never target
-a live site. CI also arms and checks the shared production-like deprecation gate.
+a live site. `export.cjs` covers native export requests: a registered frontend
+request and administrator-created account-free requests, confirmed with the
+delivered token, then the native administrator download and export mail. It
+checks the J2Commerce and Appointments privacy domains, with this adapter
+enabled and disabled; this adapter itself handles removal only. CI also arms
+and checks the shared production-like deprecation gate.
 
 The compatibility/release requirements checker remains unchanged and mandatory.
 The approved distribution channel uses this repository's GitHub raw update feed
