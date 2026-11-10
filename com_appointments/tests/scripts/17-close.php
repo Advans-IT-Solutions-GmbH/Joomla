@@ -388,6 +388,46 @@ try {
     $queue->associatePrivacy('INVITEE@example.test', $requestId + 2);
     $check($queue->pendingPrivacy($requestId + 1) === 1 && $queue->pendingPrivacy($requestId + 2) === 1,
         'Two later formal requests both discover disabled CRM cleanup after canonical hard deletion');
+    $generic = $db->query("SELECT extension_id,enabled FROM {$prefix}extensions"
+        . " WHERE type='plugin' AND folder='system' AND element='privacyrequests'")->fetch_assoc();
+    $operation = null;
+    try {
+        if ($generic !== null) {
+            $db->query("UPDATE {$prefix}extensions SET enabled=0 WHERE extension_id=" . (int) $generic['extension_id']);
+        }
+        $privacyAdmin = new AppointmentsHttp(appointments_test_base_url(), 'close-privacy-overlap');
+        $privacyAdmin->login();
+        $formalId = $requestId + 1;
+        $privacyHtml = $privacyAdmin->request('/administrator/index.php?option=com_privacy&view=request&id=' . $formalId);
+        $privacyToken = $privacyAdmin->token($privacyHtml);
+        $operation = \Advans\Component\Appointments\Administrator\Service\PrivacyOperationLock::acquire(
+            $joomlaDb, $formalId, (string) (new JConfig())->secret);
+        if ($operation === null) {
+            throw new RuntimeException('Cannot acquire the synthetic privacy overlap lock.');
+        }
+        $callsBeforeOverlap = count($requests);
+        $complete = static fn (): string => $privacyAdmin->request(
+            '/administrator/index.php?option=com_privacy&task=request.complete&id=' . $formalId,
+            [$privacyToken => 1, 'id' => $formalId, 'jform' => ['id' => $formalId]]);
+        $overlapHtml = $complete();
+        $formalState = static fn (): int => (int) $db->query(
+            "SELECT status FROM {$prefix}privacy_requests WHERE id={$formalId}")->fetch_row()[0];
+        $check($formalState() === 1 && str_contains($overlapHtml, 'Another privacy operation for this request is still running')
+            && count($requests) === $callsBeforeOverlap,
+            'Native Complete overlapping disabled Close cleanup is refused by the shared request lock without CRM calls');
+        $operation->release();
+        $operation = null;
+        $pendingHtml = $complete();
+        $check($formalState() === 1 && str_contains($pendingHtml, 'Appointments reported incomplete removal.')
+            && $queue->pendingPrivacy($formalId) === 1 && count($requests) === $callsBeforeOverlap,
+            'After overlap release the independent completion guard still sees pending CRM cleanup with the generic adapter disabled');
+    } finally {
+        $operation?->release();
+        if ($generic !== null) {
+            $db->query("UPDATE {$prefix}extensions SET enabled=" . (int) $generic['enabled']
+                . ' WHERE extension_id=' . (int) $generic['extension_id']);
+        }
+    }
     $params['close_enabled'] = 1;
     $save();
     $foreignOrg = true;
