@@ -26,7 +26,8 @@ body.com_appointments #header .header-title > .d-flex:has(.logo) {
     max-inline-size: 100%;
 }
 
-/* Focus and accordion reflow must not start competing smooth-scroll animations. */
+/* Native Help links, focus and accordion reflow must not compete with smooth scrolling. */
+html:has(#appointments-help),
 html:has(#eventtype-form) {
     scroll-behavior: auto;
 }
