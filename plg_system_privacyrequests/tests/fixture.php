@@ -664,7 +664,7 @@ switch ($op) {
             . 'guest_emails IS NULL AS guests_cleared,conference_room IS NULL AS room_cleared'
             . ' FROM #__appointments_bookings WHERE id=' . (int) $email)->loadObject();
         $out['copies'] = (int) $db->setQuery('SELECT COUNT(*) FROM #__appointments_calendar_objects WHERE booking_id=' . (int) $email)->loadResult();
-        $out['cleanup'] = $db->setQuery('SELECT request_id,booking_id,guest,SHA2(payload,256) AS payload_hash'
+        $out['cleanup'] = $db->setQuery('SELECT request_id,booking_id,guest,SHA2(payload,256) AS payload_hash,CHAR_LENGTH(payload) AS payload_length'
             . ' FROM #__appointments_privacy_cleanup WHERE booking_id=' . (int) $email)->loadObjectList();
         $out['rooms'] = (int) $db->setQuery('SELECT COUNT(*) FROM #__privacy_test_rooms')->loadResult();
         $out['room_hashes'] = $db->setQuery('SELECT SHA2(room,256) FROM #__privacy_test_rooms')->loadColumn();

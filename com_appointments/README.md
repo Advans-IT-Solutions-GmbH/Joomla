@@ -345,10 +345,12 @@ same calendar-copy steps: the copy is removed and, with internet calendars on, w
 again without the address. Both steps are always attempted. If either fails, the
 visitor sees that the removal is not complete instead of a success message, the failure
 is logged with the booking ID only, and a reference row with request ID `0`, the booking
-ID and an empty payload (no address, link or key) stays in the same table. The existing
+ID and a random generation as payload (no address, link or key) stays in the same table.
+Each removal writes a new generation, so an earlier removal or retry that finishes later
+never forgets the reference of a newer one. The existing
 **Appointments: internet calendar retention** Scheduler task retries these references on
 each run (at most 200, also while internet calendars are off) and forgets one only when
-both steps succeed; its log shows `guest_copies_repaired` and `guest_copies_pending`.
+both steps succeed and its generation is unchanged; its log shows `guest_copies_repaired` and `guest_copies_pending`.
 A reference whose booking was deleted meanwhile, or whose internet calendars were switched
 off, resolves once the copy can be removed; deleting all Appointments data on uninstall drops it.
 Nothing activates that task: without a configured task the reference and the stale copy

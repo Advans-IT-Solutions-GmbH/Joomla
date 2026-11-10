@@ -5,6 +5,7 @@ $privacyRequests = [];
 $staffUserId = 0;
 $legacyLogs = [];
 $privacyTrigger = null;
+$overlapBooking = 0;
 // Trigger DDL is not available in MySQL's prepared-statement protocol, so it uses the native connection.
 $triggerDdl = static function (string $sql) use ($joomlaDb): void {
     $joomlaDb->connect();
@@ -97,6 +98,7 @@ try {
     }
     $triggerDdl('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger));
     $privacyTrigger = null;
+$overlapBooking = 0;
     $privacyParams->set('teamcal_enabled', 1);
     $remove(null);
     $check(!\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $id)
@@ -148,6 +150,7 @@ try {
         'An actual initial outcome write failure warns and leaves completion blocked without an outcome row');
     $triggerDdl('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger));
     $privacyTrigger = null;
+$overlapBooking = 0;
     \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, (int) $interrupted->id, true);
     $joomlaDb->setQuery('UPDATE #__appointments_privacy_outcomes SET complete=1 WHERE request_id=' . (int) $interrupted->id)->execute();
     $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
@@ -183,6 +186,7 @@ try {
         'A retry whose outcome reset fails after an earlier success cannot reuse the stale success marker to permit completion');
     $triggerDdl('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger));
     $privacyTrigger = null;
+$overlapBooking = 0;
     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
         ['subject' => $interrupted, 'user' => null]));
     $check(!\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
@@ -224,7 +228,36 @@ try {
     \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, $id, true);
     $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $id),
         'Fair retry progress never turns pending obligations into a success');
+
+    // Two signed-link removals of the same booking overlap: the older one must not forget the newer one's reference.
+    $overlapBooking = 2140000000 + random_int(0, 999999);
+    $copies = \Advans\Component\Appointments\Administrator\Service\PrivacyCleanup::class;
+    $references = static fn (): int => (int) $joomlaDb->setQuery('SELECT COUNT(*) FROM #__appointments_privacy_cleanup'
+        . ' WHERE request_id=0 AND booking_id=' . $overlapBooking)->loadResult();
+    $older = $copies::rememberCopy($joomlaDb, $overlapBooking);
+    $newer = $copies::rememberCopy($joomlaDb, $overlapBooking);
+    $copies::forgetCopy($joomlaDb, $overlapBooking, $older);
+    $check($older !== $newer && $references() === 1, 'An older guest-link removal cannot forget the reference of a newer one');
+    $copies::forgetCopy($joomlaDb, $overlapBooking, $newer);
+    $check($references() === 0, 'The newest guest-link removal forgets its own reference after both mirror steps');
+    // A removal commits while a retry is mirroring the copy: the retry succeeds but keeps the new reference.
+    $copies::rememberCopy($joomlaDb, $overlapBooking);
+    $bridge = new class ($joomlaDb, $overlapBooking, $copies) implements \Advans\Component\Appointments\Administrator\Service\Team\BookingCalendarBridgeInterface {
+        public function __construct(private $db, private int $id, private string $copies) {}
+        public function busyFor(object $eventType, \DateTimeImmutable $fromUtc, \DateTimeImmutable $toUtc, \DateTimeZone $scheduleZone, bool $readOnly = false): array { return []; }
+        public function lockForBooking(int $eventTypeId): void {}
+        public function removeOrphans(int $limit): int { return 0; }
+        public function onBookingSaved(array $booking): bool { ($this->copies)::rememberCopy($this->db, $this->id); return true; }
+        public function onBookingCancelled(array $booking): void {}
+        public function onBookingErased(int $bookingId): bool { return true; }
+    };
+    $result = $copies::retryCopies($joomlaDb, $bridge, 200);
+    $check($result['guest_copies_repaired'] === 0 && $references() === 1,
+        'A retry overlapping a newer guest-link removal keeps the newer reference');
 } finally {
+    if ($overlapBooking > 0) {
+        $joomlaDb->setQuery('DELETE FROM #__appointments_privacy_cleanup WHERE request_id=0 AND booking_id=' . $overlapBooking)->execute();
+    }
     if ($privacyTrigger !== null) {
         $triggerDdl('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger));
     }

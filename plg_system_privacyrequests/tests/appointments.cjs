@@ -267,7 +267,7 @@ async function main() {
                     text.includes('could not be updated yet') && !text.includes('Your address has been removed from this appointment.'));
                 check(`Self-service guest removal (${variant}) keeps one retry reference with the booking id only`,
                     state.cleanup.length === 1 && Number(state.cleanup[0].request_id) === 0
-                    && Number(state.cleanup[0].booking_id) === Number(bookingId) && state.cleanup[0].payload_hash === emptyPayload);
+                    && Number(state.cleanup[0].booking_id) === Number(bookingId) && Number(state.cleanup[0].payload_length) === 32 && state.cleanup[0].payload_hash !== emptyPayload);
                 if (rewritten) {
                     const opened = fixture('appointments-copy-inspect', selfCopy.calendar_id, selfEmail);
                     check('Undeletable copy is still rewritten without the removed guest',

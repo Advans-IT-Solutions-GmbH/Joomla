@@ -365,6 +365,7 @@ final class BookingStore
         if ($host === 0) {
             return ['changed' => false, 'guest' => null];
         }
+        $copyGeneration = '';
         $db->transactionStart();
 
         try {
@@ -387,7 +388,7 @@ final class BookingStore
             }
             $cleanupKey = $privacyCleanup?->remember($booking, true);
             if ($path === 'self_service') {
-                PrivacyCleanup::rememberCopy($db, $bookingId);
+                $copyGeneration = PrivacyCleanup::rememberCopy($db, $bookingId);
             }
             $row = (object) $this->data()->sealChange($booking,
                 ['id' => $bookingId, 'guest_emails' => PrivacyAddress::withoutGuest($booking['guest_emails'], (string) $address)]);
@@ -413,7 +414,7 @@ final class BookingStore
             $privacyCleanup->forget($bookingId, $cleanupKey);
         }
         if ($mirrored && $path === 'self_service') {
-            PrivacyCleanup::forgetCopy($db, $bookingId);
+            PrivacyCleanup::forgetCopy($db, $bookingId, $copyGeneration);
         }
 
         return ['changed' => true, 'guest' => $address, '_calendar_cleanup_error' => !$mirrored];

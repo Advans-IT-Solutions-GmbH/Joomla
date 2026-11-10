@@ -138,18 +138,27 @@ final class PrivacyCleanup
      * A guest removal outside a Core request (the signed guest link) whose calendar copy could
      * not be rewritten. Core request ids start at 1, so request 0 holds these references; the
      * row carries the booking id only, no address, link or key.
+     *
+     * Every removal writes a new random generation into the payload, under the lock of the
+     * booking row. A removal or retry forgets the reference only if the generation is still
+     * the one it saw, so an older one never drops the obligation of a newer removal.
      */
-    public static function rememberCopy(DatabaseInterface $db, int $bookingId): void
+    public static function rememberCopy(DatabaseInterface $db, int $bookingId): string
     {
-        $db->setQuery('INSERT IGNORE INTO ' . $db->quoteName('#__appointments_privacy_cleanup')
+        $generation = bin2hex(random_bytes(16));
+        $quoted = $db->quote($generation);
+        $db->setQuery('INSERT INTO ' . $db->quoteName('#__appointments_privacy_cleanup')
             . ' (request_id, booking_id, cleanup_key, guest, payload) VALUES (0, ' . $bookingId . ', '
-            . $db->quote(hash('sha256', 'guest-copy:' . $bookingId)) . ", 1, '')")->execute();
+            . $db->quote(hash('sha256', 'guest-copy:' . $bookingId)) . ', 1, ' . $quoted . ')'
+            . ' ON DUPLICATE KEY UPDATE payload = ' . $quoted)->execute();
+
+        return $generation;
     }
 
-    public static function forgetCopy(DatabaseInterface $db, int $bookingId): void
+    public static function forgetCopy(DatabaseInterface $db, int $bookingId, string $generation): void
     {
         $db->setQuery('DELETE FROM ' . $db->quoteName('#__appointments_privacy_cleanup')
-            . ' WHERE request_id = 0 AND booking_id = ' . $bookingId)->execute();
+            . ' WHERE request_id = 0 AND booking_id = ' . $bookingId . ' AND payload = ' . $db->quote($generation))->execute();
     }
 
     /**
@@ -161,7 +170,7 @@ final class PrivacyCleanup
     public static function retryCopies(DatabaseInterface $db, BookingCalendarBridgeInterface $bridge, int $limit): array
     {
         $table = $db->quoteName('#__appointments_privacy_cleanup');
-        $rows = $db->setQuery('SELECT booking_id, cleanup_key, retry_order FROM ' . $table
+        $rows = $db->setQuery('SELECT booking_id, cleanup_key, retry_order, payload FROM ' . $table
             . ' WHERE request_id = 0 ORDER BY retry_order, booking_id LIMIT ' . max(1, $limit))->loadAssocList();
         $cursor = (int) $db->setQuery('SELECT MAX(retry_order) FROM ' . $table . ' WHERE request_id = 0')->loadResult();
         $repaired = 0;
@@ -178,9 +187,10 @@ final class PrivacyCleanup
             try {
                 $erased = $bridge->onBookingErased($id);
                 if ($bridge->onBookingSaved(['id' => $id]) && $erased) {
+                    // A removal that committed meanwhile wrote a new generation and keeps its reference.
                     $db->setQuery('DELETE FROM ' . $table . ' WHERE request_id = 0 AND booking_id = ' . $id
-                        . ' AND cleanup_key = ' . $key)->execute();
-                    $repaired++;
+                        . ' AND cleanup_key = ' . $key . ' AND payload = ' . $db->quote((string) $row['payload']))->execute();
+                    $repaired += $db->getAffectedRows() === 1 ? 1 : 0;
                 }
             } catch (\Throwable $error) {
                 Log::add('Appointment guest calendar copy retry failed (' . get_class($error) . ').',
