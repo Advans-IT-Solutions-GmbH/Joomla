@@ -58,6 +58,8 @@ extension/tag family, not the monorepo's global latest release.
 
 ### Scheduler trigger — important
 
+The routine ID is `plg_task_dmarcreports.ingest`. Its own `auto_create_domains` parameter defaults to off. Component settings supply the mailbox timeout (default 20 seconds, bounded to 5–120) and message limit (default 200, bounded to 10–2000) **for each source**, not for the whole task. Scheduler execution uses these configured gates rather than an interactive user's `dmarc.ingest` permission. Restrict who can configure component options and Scheduler tasks.
+
 Joomla's Scheduler only runs when something triggers it. Choose one:
 
 - **Lazy Scheduler** (default): Joomla runs due tasks on normal site traffic (a visitor request).
@@ -66,6 +68,24 @@ Joomla's Scheduler only runs when something triggers it. Choose one:
   from a system cron job at a fixed interval, so ingestion keeps running regardless of traffic.
   See the Joomla documentation on "Scheduled Tasks" for the CLI (`php cli/joomla.php scheduler:run`)
   and web-cron options.
+
+## Usage and Data Handling
+
+Enable the plugin, configure a task and trigger, then inspect **Scheduled Tasks → execution history** and the component's per-source run messages. The plugin reuses component credentials and writes reports through the component; it stores no separate report copy and sends no notification mail. Its logs include source identifiers and ingestion summaries. See the [component's privacy and input limits](../com_dmarcreports/README.md#permissions-and-data-handling) for report storage, network access, export and deletion.
+
+## Updating
+
+Install a newer standalone ZIP over this plugin, or update the DMARC package if installed as part of that package. Existing plugin state is not enabled again on update. Package installations use only the package's update channel; do not update a child independently.
+
+## Uninstall
+
+Remove the standalone plugin through **System → Manage → Extensions**, or uninstall the owning package. The plugin has no report tables or report-deletion routine; component data remains when only the standalone plugin is removed. Review its Scheduler task entries and stop scheduling this routine before removal. Removing the plugin does not revoke the configured mailbox credentials.
+
+## Troubleshooting
+
+Missing component or failure to load sources returns Scheduler `KNOCKOUT`. No active sources returns `OK` without importing anything; sources must be enabled and bound to published domains. A source transport error makes the aggregated task fail, but blocked sources and failed report documents are reported in the summary and do not alone force `KNOCKOUT`. A successful task status is therefore not proof that every source/document was imported. Check source run messages, mailbox reachability and report-format/decoder limits.
+
+If due tasks never run, check plugin/task publication and the trigger separately. A configured interval without traffic or cron does not execute work.
 
 ## Development
 
@@ -84,8 +104,9 @@ plg_task_dmarcreports/
 
 ## Automated Testing
 
-Docker-based integration tests run against a real Joomla 5 and Joomla 6 install. See the
-repository root README and the `joomla-extensions` skill for how the suites are built and run.
+`tests/test.env` registers **installation**, **structure**, **graceful-degradation**, **install-messages** and **uninstall** suites. PHPUnit tests under `tests/Unit/` cover summary aggregation. The [package's auto-ingest suite](../pkg_dmarcreports/README.md#test-suites) separately exercises the real Scheduler-to-component ingestion pipeline; standalone structure/degradation checks are not equivalent to that end-to-end coverage.
+
+Follow [local prerequisites](../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites), build this plugin and copy the ZIP to `tests/extension.zip`. From `tests`, run `docker compose up -d`, `./run-tests.sh all`, then `docker compose down -v`. For Joomla 6 use `docker-compose.joomla6.yml` for both Compose calls and `CONTAINER_NAME=plg_task_dmarcreports_j6_test ./run-tests.sh all`. The runner waits for readiness. Unit tests use `composer test:unit` after installing the declared development dependencies. These commands describe the suites, not a claim that the current checkout passed them.
 
 ## Multi-Language Support
 

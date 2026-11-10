@@ -89,6 +89,12 @@ Uninstall via **System → Manage → Extensions**. The plugin creates no databa
 
 ## Usage
 
+### Browser Storage and Data Handling
+
+Only selected product IDs are persisted in the browser's `localStorage`, under `j2store_compare_products`; there is no expiry timestamp or account synchronization. Remove products from the comparison bar or clear this site's browser storage to clear the selection. Uninstalling the server plugin does not erase previously stored browser data.
+
+Comparison requests use the current visitor's session, form token, access levels and content language. The plugin has no own database tables, Scheduler routine or notification mail. Product data is queried locally when the comparison is opened; administrators control plugin configuration, not a separate public comparison permission. Joomla's update checks are separate from the comparison feature.
+
 1. Browse products
 2. Click "Compare" button
 3. Products added to comparison bar
@@ -125,7 +131,7 @@ Installed path: `plugins/j2commerce/productcompare/` (Joomla 6) or `plugins/j2st
 
 ## Automated Testing
 
-This plugin has automated tests that run via GitHub Actions (`j2commerce-product-compare.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. CI also runs a PHP syntax check and the language file lint. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
+This plugin has automated tests that run via GitHub Actions (`j2commerce-product-compare.yml`) when this directory, shared files consumed by the workflow or the workflow itself change. CI also runs a PHP syntax check and the language file lint. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 
@@ -364,25 +370,18 @@ Additional rows can be added via a `table.php` template override.
 
 ## Browser Compatibility
 
-### Tested Browsers
-- Chrome 90+
-- Firefox 88+
-- Safari 14+
-- Edge 90+
-- Mobile Safari (iOS 14+)
-- Chrome Mobile (Android 10+)
-
 ### Required Features
 - JavaScript enabled
 - `localStorage`
 - CSS3 support
 - AJAX/Fetch API
 
+The registered suites cover PHP/HTTP, asset registration, markup and shop event dispatch. They do not establish acceptance of specific browser versions, mobile devices, assistive technologies or the full manual appearance/interaction matrix.
+
 ## Performance Considerations
 
 - **Browser storage:** only the selected product IDs are stored in `localStorage`
 - **AJAX calls:** none when adding or removing products; opening the comparison issues one AJAX request that loads product data from the database
-- **Page load impact:** ~50KB (CSS + JS)
 - **Database queries:** only when the comparison is opened (product data and options of the selected products)
 
 ## Multi-Language Support
@@ -397,11 +396,7 @@ This extension supports the following languages:
 - **German (de-DE)**
 - **French (fr-FR)**
 
-Users can add additional language files by creating new language folders following Joomla's language structure:
-```
-language/{language-tag}/plg_j2commerce_productcompare.ini
-language/{language-tag}/plg_j2commerce_productcompare.sys.ini
-```
+The supported language set is repository-wide. A further locale needs a maintainer decision and coordinated changes to all extensions, manifests, shared lint and package checks; see the [language conventions](../../.claude/skills/joomla-extensions/references/conventions.md#language-files).
 
 ## Accessibility
 
