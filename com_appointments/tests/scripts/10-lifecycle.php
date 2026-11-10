@@ -180,12 +180,18 @@ try {
         }
     }
     // Joomla prints a queued message twice: in the script options and in the noscript fallback
-    // of #system-message-container.
+    // of #system-message-container. The warning must appear exactly there and nowhere else.
     $document = new DOMDocument();
     @$document->loadHTML($html);
-    $system = (string) (new DOMXPath($document))->query('//*[@id="system-message-container"]')->item(0)?->textContent;
+    $xpath = new DOMXPath($document);
+    $system = substr_count((string) $xpath->query('//*[@id="system-message-container"]')->item(0)?->textContent, $warning);
+    $options = 0;
+    foreach ($xpath->query('//script[contains(concat(" ", normalize-space(@class), " "), " joomla-script-options ")]') as $script) {
+        $options += substr_count($script->textContent, $warning);
+    }
     $check(str_contains($html, 'Override without notices') && !str_contains($html, 'appointment-notices')
-        && str_contains($system, $warning) && (int) $fixture->row((int) $replacement['id'])['state'] === 2,
+        && $system === 1 && $options === 1 && substr_count($html, $warning) === $system + $options
+        && (int) $fixture->row((int) $replacement['id'])['state'] === 2,
         'With an older template override of the manage page, the warning of a failed notification stays a Joomla message');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
