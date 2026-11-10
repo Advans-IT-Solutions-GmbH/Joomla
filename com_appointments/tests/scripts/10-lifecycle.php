@@ -158,42 +158,51 @@ try {
     $check($outsider->status === 404, 'Used cancellation signature is rejected in another browser');
     $replacement = $fixture->booking($event, $day . ' 11:00:00')['booking'];
     $check((int) $replacement['id'] !== (int) $booking['id'], 'Cancellation releases the exact slot');
-    // A template override made before the result showed its messages does not print them, so the
-    // page leaves them in Joomla's queue, where the template shows them as before.
-    $overrideCancel = $fixture->link($replacement, 'cancel');
+    // Both an older override and a copy of the current result layout keep queued notices.
     $siteTemplate = (string) $fixture->db->query("SELECT template FROM {$fixture->prefix}template_styles WHERE client_id=0 AND home='1'")->fetch_row()[0];
     $overrideDir = '/var/www/html/templates/' . $siteTemplate . '/html/com_appointments/manage';
-    $form = $client->request($overrideCancel);
-    $token = $client->token($form);
-    parse_str((string) parse_url($overrideCancel, PHP_URL_QUERY), $query);
-    $createdDir = !is_dir($overrideDir) && mkdir($overrideDir, 0755, true);
-    file_put_contents($overrideDir . '/default.php', "<?php defined('_JEXEC') or die; ?>\n<div id=\"appointment-result\"><p>Override without notices</p></div>\n");
-    $fixture->db->query("UPDATE {$fixture->prefix}users SET email='not-an-address' WHERE id={$fixture->host}");
-    try {
-        $html = $client->request('/index.php?option=com_appointments&task=booking.manage', array_replace($query, [$token => 1, 'confirm' => 1]));
-    } finally {
-        $fixture->db->query("UPDATE {$fixture->prefix}users SET email='" . $fixture->db->real_escape_string($hostEmail) . "' WHERE id={$fixture->host}");
-        @unlink($overrideDir . '/default.php');
-        if ($createdDir) {
-            @rmdir($overrideDir);
-            @rmdir(dirname($overrideDir));
+    foreach (['legacy', 'result'] as $override) {
+        if ($override === 'result') {
+            $replacement = $fixture->booking($event, $day . ' 11:00:00')['booking'];
         }
+        $overrideCancel = $fixture->link($replacement, 'cancel');
+        $form = $client->request($overrideCancel);
+        $token = $client->token($form);
+        parse_str((string) parse_url($overrideCancel, PHP_URL_QUERY), $query);
+        $createdDir = !is_dir($overrideDir) && mkdir($overrideDir, 0755, true);
+        if ($override === 'result') {
+            copy('/var/www/html/components/com_appointments/tmpl/manage/default.php', $overrideDir . '/default.php');
+        } else {
+            file_put_contents($overrideDir . '/default.php', "<?php defined('_JEXEC') or die; ?>\n<div id=\"appointment-result\"><p>Override without notices</p></div>\n");
+        }
+        $fixture->db->query("UPDATE {$fixture->prefix}users SET email='not-an-address' WHERE id={$fixture->host}");
+        try {
+            $html = $client->request('/index.php?option=com_appointments&task=booking.manage', array_replace($query, [$token => 1, 'confirm' => 1]));
+        } finally {
+            $fixture->db->query("UPDATE {$fixture->prefix}users SET email='" . $fixture->db->real_escape_string($hostEmail) . "' WHERE id={$fixture->host}");
+            @unlink($overrideDir . '/default.php');
+            if ($createdDir) {
+                @rmdir($overrideDir);
+                @rmdir(dirname($overrideDir));
+            }
+        }
+        // Joomla prints a queued message twice: in its script options and noscript fallback.
+        // The warning must appear exactly there and nowhere else.
+        $document = new DOMDocument();
+        @$document->loadHTML($html);
+        $xpath = new DOMXPath($document);
+        $system = substr_count((string) $xpath->query('//*[@id="system-message-container"]')->item(0)?->textContent, $warning);
+        $options = 0;
+        foreach ($xpath->query('//script[contains(concat(" ", normalize-space(@class), " "), " joomla-script-options ")]') as $script) {
+            $options += substr_count($script->textContent, $warning);
+        }
+        $check(!str_contains($html, 'appointment-notices')
+            && ($override === 'result' ? $client->landedAt($html, 'appointment-result') : str_contains($html, 'Override without notices'))
+            && $system === 1 && $options === 1 && substr_count($html, $warning) === $system + $options
+            && str_contains($html, 'com_appointments.focusSystemMessage')
+            && (int) $fixture->row((int) $replacement['id'])['state'] === 2,
+            'A failed notification remains a requested Joomla message with a ' . $override . ' template override');
     }
-    // Joomla prints a queued message twice: in the script options and in the noscript fallback
-    // of #system-message-container. The warning must appear exactly there and nowhere else.
-    $document = new DOMDocument();
-    @$document->loadHTML($html);
-    $xpath = new DOMXPath($document);
-    $system = substr_count((string) $xpath->query('//*[@id="system-message-container"]')->item(0)?->textContent, $warning);
-    $options = 0;
-    foreach ($xpath->query('//script[contains(concat(" ", normalize-space(@class), " "), " joomla-script-options ")]') as $script) {
-        $options += substr_count($script->textContent, $warning);
-    }
-    $check(str_contains($html, 'Override without notices') && !str_contains($html, 'appointment-notices')
-        && $system === 1 && $options === 1 && substr_count($html, $warning) === $system + $options
-        && str_contains($html, 'com_appointments.focusSystemMessage')
-        && (int) $fixture->row((int) $replacement['id'])['state'] === 2,
-        'With an older template override of the manage page, the warning of a failed notification stays a Joomla message');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;

@@ -1008,7 +1008,8 @@
     const focusResult = () => {
         const result = document.querySelector('[data-appointments-result]');
 
-        if (result && (!document.activeElement || document.activeElement === document.body)) {
+        if (result && !userInteracted && !hasSystemMessageFocusRequest()
+            && (!document.activeElement || document.activeElement === document.body)) {
             // The fragment already scrolled to the container with its heading; keep that view.
             result.focus({ preventScroll: window.location.hash !== '' });
         }
@@ -1023,15 +1024,22 @@
 
     const focusSystemMessage = () => {
         const active = document.activeElement;
+        const result = document.querySelector('[data-appointments-result]');
         const container = document.getElementById('system-message-container');
         const message = container && visibleSystemMessage(container);
 
         if (!hasSystemMessageFocusRequest() || userInteracted
-            || (active && active !== document.body && active !== document.documentElement)
+            || (active && active !== document.body && active !== document.documentElement && active !== result)
             || document.visibilityState !== 'visible'
-            || document.querySelector('[data-appointments-result], [autofocus], [aria-invalid="true"], [aria-modal="true"], dialog[open]')
+            || document.querySelector('[autofocus]:not([data-appointments-result]), [aria-invalid="true"], [aria-modal="true"], dialog[open]')
             || !message || container.getClientRects().length === 0) {
             return;
+        }
+
+        if (result) {
+            const descriptions = new Set((result.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean));
+            descriptions.add('system-message-container');
+            result.setAttribute('aria-describedby', Array.from(descriptions).join(' '));
         }
 
         container.setAttribute('tabindex', '-1');
