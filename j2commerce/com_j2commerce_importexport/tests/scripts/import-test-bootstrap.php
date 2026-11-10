@@ -52,10 +52,11 @@ function importExportBootAuthorizedAdministrator(): array
 
         $db->insertObject('#__users', $user, 'id');
         $context['user_id'] = (int) $user->id;
-        $db->insertObject('#__user_usergroup_map', (object) [
+        $membership = (object) [
             'user_id'  => (int) $user->id,
             'group_id' => 8,
-        ]);
+        ];
+        $db->insertObject('#__user_usergroup_map', $membership);
 
         $identity = $container->get(UserFactoryInterface::class)->loadUserById((int) $user->id);
         $app->loadIdentity($identity);
