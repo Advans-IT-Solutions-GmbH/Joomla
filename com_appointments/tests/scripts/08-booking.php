@@ -234,6 +234,26 @@ try {
         'The first invalid control in page order receives the focus, not the consent checkbox');
     $check($request[0]->landedAt($xpath->document->saveHTML(), null),
         'A refused booking has no result fragment or region, so the focus stays at the first invalid field');
+    $locations = $request[0]->locations;
+    $lastLocation = $locations === [] ? '' : $locations[array_key_last($locations)];
+    $check($lastLocation !== '' && !str_contains($lastLocation, '#'),
+        'A refused booking with field errors does not let a section fragment suppress native autofocus');
+
+    // A forged form signature is a page-level error, not an invalid field. Keep it in Joomla's
+    // live system-message region and leave the page without a result or fragment.
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['form_signature'] = str_repeat('0', 64);
+    $body = $request[0]->request($request[1], $request[2]);
+    $xpath = $dom($body);
+    $systemMessage = $xpath->query('//*[@id="system-message-container"][@aria-live="polite"]')->item(0);
+    $locations = $request[0]->locations;
+    $lastLocation = $locations === [] ? '' : $locations[array_key_last($locations)];
+    $check($systemMessage instanceof DOMElement
+        && str_contains($systemMessage->textContent, 'The form has expired or could not be verified.')
+        && $lastLocation !== '' && !str_contains($lastLocation, '#')
+        && $xpath->query('//*[@data-appointments-result]')->length === 0,
+        'A forged form signature is present in Joomla\'s live region without a result fragment');
 
     // The component option max_guests limits the guests on the server, whatever the form sends.
     // The submissions above used the hourly booking budget of this client address.

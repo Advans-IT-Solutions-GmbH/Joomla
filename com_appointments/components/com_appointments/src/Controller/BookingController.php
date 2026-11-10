@@ -262,10 +262,10 @@ class BookingController extends BaseController
             $details = false;
         }
 
-        // Field messages stand at their fields, so the page lands at the form instead of its
-        // top. A message for the whole form is shown in the template's message area at the
-        // top of the page, which the anchor would scroll out of view.
-        $this->setRedirect(Route::_($url, false) . ($key === '' ? ($details ? '#appointment-details' : '#appointment-picker') : ''));
+        // A field-error response keeps its native autofocus; a section fragment would suppress it.
+        // Page-level errors stay in Joomla's system-message area and are focused by the booking script.
+        $fragment = $key === '' && $fieldErrors === [] ? ($details ? '#appointment-details' : '#appointment-picker') : '';
+        $this->setRedirect(Route::_($url, false) . $fragment);
 
         return false;
     }

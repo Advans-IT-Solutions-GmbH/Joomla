@@ -33,6 +33,10 @@
 (() => {
     'use strict';
 
+    let userInteracted = false;
+    document.addEventListener('pointerdown', () => { userInteracted = true; }, { capture: true, once: true });
+    document.addEventListener('keydown', () => { userInteracted = true; }, { capture: true, once: true });
+
     const enhance = (root) => {
         if (!root.querySelector('[data-appointments-view]') || !window.fetch || !window.DOMParser || !window.URL
             || !window.AbortController || !window.FormData || !window.history || !window.history.pushState) {
@@ -1004,8 +1008,49 @@
         }
     };
 
+    const visibleSystemMessage = (container) => Array.from(container.querySelectorAll('joomla-alert, .alert'))
+        .find((message) => message.textContent.trim() && message.getClientRects().length > 0);
+
+    const focusSystemMessage = () => {
+        const active = document.activeElement;
+        const container = document.getElementById('system-message-container');
+        const message = container && visibleSystemMessage(container);
+
+        if (userInteracted || (active && active !== document.body && active !== document.documentElement)
+            || document.visibilityState !== 'visible'
+            || document.querySelector('[data-appointments-result], [autofocus], [aria-invalid="true"], [aria-modal="true"], dialog[open]')
+            || !message || container.getClientRects().length === 0) {
+            return;
+        }
+
+        container.setAttribute('tabindex', '-1');
+        container.focus();
+    };
+
+    const watchSystemMessages = () => {
+        const container = document.getElementById('system-message-container');
+
+        if (!container) {
+            return;
+        }
+
+        if (visibleSystemMessage(container)) {
+            focusSystemMessage();
+            return;
+        }
+
+        const observer = new MutationObserver(() => {
+            if (visibleSystemMessage(container)) {
+                observer.disconnect();
+                window.requestAnimationFrame(focusSystemMessage);
+            }
+        });
+        observer.observe(container, { childList: true, subtree: true });
+    };
+
     const start = () => {
         focusResult();
+        watchSystemMessages();
         document.querySelectorAll('[data-appointments-booking]').forEach(enhance);
     };
 
