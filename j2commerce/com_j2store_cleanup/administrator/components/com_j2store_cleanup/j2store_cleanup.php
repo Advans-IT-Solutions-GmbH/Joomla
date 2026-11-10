@@ -713,36 +713,36 @@ $cleanupVersion = getCleanupVersion($db);
 
 ?>
 <!DOCTYPE html>
-<html style="background: #000 !important;">
+<html>
 <head>
     <style>
-        html, body, #wrapper, #content, .com_j2store_cleanup {
-            background: #000 !important;
-            margin: 0;
-            padding: 0;
-        }
-        body {
-            background: #000 !important;
-        }
-        .j2cleanup { 
-            padding: 20px; 
-            background: #000;
-            color: #e0e0e0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        .j2cleanup {
+            box-sizing: border-box;
+            width: 100%;
+            min-width: 0;
+            max-width: 100%;
+            padding: clamp(1rem, 3vw, 1.25rem);
+            background: var(--bs-body-bg, #fff);
+            color: var(--bs-body-color, #212529);
+            font-family: inherit;
             min-height: 100vh;
+        }
+        .j2cleanup *,
+        .j2cleanup *::before,
+        .j2cleanup *::after {
+            box-sizing: border-box;
         }
         .j2cleanup h1 { 
             margin-bottom: 10px; 
-            color: #fff;
+            color: var(--bs-emphasis-color, #212529);
             font-size: 28px;
-            text-shadow: 0 0 10px rgba(0, 123, 255, 0.5);
         }
         .j2cleanup h2 {
-            color: #8ec5fc;
+            color: var(--bs-primary, #0d6efd);
             font-size: 18px;
             margin: 25px 0 15px 0;
             padding-bottom: 8px;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid var(--bs-border-color, #dee2e6);
         }
         .j2cleanup .alert { 
             padding: 15px; 
@@ -750,37 +750,45 @@ $cleanupVersion = getCleanupVersion($db);
             border-radius: 4px; 
         }
         .j2cleanup .alert-info { 
-            background: #1a3a52; 
-            border: 1px solid #2c5f8d; 
-            color: #8ec5fc; 
+            background: var(--bs-info-bg-subtle, #cff4fc);
+            border: 1px solid var(--bs-info-border-subtle, #9eeaf9);
+            color: var(--bs-info-text-emphasis, #055160);
         }
         .j2cleanup .alert-warning { 
-            background: #4a3c1a; 
-            border: 1px solid #8d6e2c; 
-            color: #ffc107; 
+            background: var(--bs-warning-bg-subtle, #fff3cd);
+            border: 1px solid var(--bs-warning-border-subtle, #ffe69c);
+            color: var(--bs-warning-text-emphasis, #664d03);
         }
         .j2cleanup .alert-success { 
-            background: #1a4d2e; 
-            border: 1px solid #2c8d5f; 
-            color: #4ade80; 
+            background: var(--bs-success-bg-subtle, #d1e7dd);
+            border: 1px solid var(--bs-success-border-subtle, #a3cfbb);
+            color: var(--bs-success-text-emphasis, #0a3622);
         }
         .j2cleanup .alert-danger {
-            background: #3d1a1a;
-            border: 1px solid #8d2c2c;
-            color: #fc8e8e;
+            background: var(--bs-danger-bg-subtle, #f8d7da);
+            border: 1px solid var(--bs-danger-border-subtle, #f1aeb5);
+            color: var(--bs-danger-text-emphasis, #58151c);
         }
-        .j2cleanup table { 
+        .j2cleanup .table-responsive {
+            width: 100%;
+            min-width: 0;
+            max-width: 100%;
+            overflow-x: auto;
+            overscroll-behavior-x: contain;
+        }
+        .j2cleanup table {
             width: 100%; 
+            min-width: 40rem;
             border-collapse: collapse; 
             margin: 20px 0; 
-            background: #1a1a1a;
-            border: 1px solid #333;
+            background: var(--bs-body-bg, #fff);
+            border: 1px solid var(--bs-border-color, #dee2e6);
         }
         .j2cleanup th, .j2cleanup td { 
             padding: 10px; 
             text-align: left; 
-            border: 1px solid #333; 
-            color: #e0e0e0;
+            border: 1px solid var(--bs-border-color, #dee2e6);
+            color: var(--bs-body-color, #212529);
         }
         .j2cleanup th { 
             background: #007bff; 
@@ -788,18 +796,22 @@ $cleanupVersion = getCleanupVersion($db);
             font-weight: bold;
         }
         .j2cleanup tr:nth-child(even) { 
-            background: #0d0d0d; 
+            background: var(--bs-tertiary-bg, #f8f9fa);
         }
         .j2cleanup tr:hover { 
-            background: #2a2a2a; 
+            background: var(--bs-secondary-bg, #e9ecef);
         }
         .j2cleanup .incompatible { 
-            background: #3d1a1a !important; 
+            background: var(--bs-danger-bg-subtle, #f8d7da) !important;
             border-left: 3px solid #dc3545;
         }
         .j2cleanup .compatible {
-            background: #1a3d1a !important;
+            background: var(--bs-success-bg-subtle, #d1e7dd) !important;
             border-left: 3px solid #28a745;
+        }
+        .j2cleanup .no-files {
+            background: var(--bs-secondary-bg, #e9ecef);
+            border-left: 3px solid #6c757d;
         }
         .j2cleanup .btn { 
             padding: 10px 20px; 
@@ -825,28 +837,28 @@ $cleanupVersion = getCleanupVersion($db);
             box-shadow: 0 0 15px rgba(108, 117, 125, 0.5);
         }
         .j2cleanup code {
-            background: #2a2a2a;
+            background: var(--bs-secondary-bg, #e9ecef);
             padding: 2px 6px;
             border-radius: 3px;
-            color: #8ec5fc;
+            color: var(--bs-emphasis-color, #212529);
             font-family: monospace;
-            border: 1px solid #333;
+            border: 1px solid var(--bs-border-color, #dee2e6);
         }
         .j2cleanup strong {
-            color: #fff;
+            color: var(--bs-emphasis-color, #212529);
         }
         .j2cleanup p {
-            color: #e0e0e0;
+            color: var(--bs-body-color, #212529);
         }
         .j2cleanup .detection-info {
-            background: #1a1a2e;
-            border: 1px solid #333;
+            background: var(--bs-info-bg-subtle, #cff4fc);
+            border: 1px solid var(--bs-border-color, #dee2e6);
             border-radius: 4px;
             padding: 15px;
             margin: 20px 0;
         }
         .j2cleanup .detection-info h3 {
-            color: #8ec5fc;
+            color: var(--bs-info-text-emphasis, #055160);
             margin: 0 0 10px 0;
             font-size: 16px;
         }
@@ -856,10 +868,10 @@ $cleanupVersion = getCleanupVersion($db);
         }
         .j2cleanup .detection-info li {
             margin: 5px 0;
-            color: #ccc;
+            color: var(--bs-body-color, #212529);
         }
         .j2cleanup .detection-info .criterion {
-            color: #4ade80;
+            color: var(--bs-success-text-emphasis, #0a3622);
             font-weight: bold;
         }
         .j2cleanup .badge {
@@ -895,23 +907,23 @@ $cleanupVersion = getCleanupVersion($db);
         .j2cleanup-footer {
             margin-top: 40px;
             padding: 20px;
-            border-top: 2px solid #333;
+            border-top: 2px solid var(--bs-border-color, #dee2e6);
             text-align: center;
-            color: #888;
+            color: var(--bs-secondary-color, #6c757d);
         }
         .j2cleanup-footer a {
-            color: #007bff;
+            color: var(--bs-link-color, #0d6efd);
             text-decoration: none;
             transition: color 0.3s;
         }
         .j2cleanup-footer a:hover {
-            color: #0056b3;
+            color: var(--bs-link-hover-color, #0a58ca);
             text-decoration: underline;
         }
         .j2cleanup-footer .logo {
             font-size: 20px;
             font-weight: bold;
-            color: #007bff;
+            color: var(--bs-primary, #0d6efd);
             margin-bottom: 10px;
         }
     </style>
@@ -919,7 +931,7 @@ $cleanupVersion = getCleanupVersion($db);
 <body>
 <div class="j2cleanup">
     <h1><?php echo Text::_('COM_J2STORE_CLEANUP'); ?></h1>
-    <p style="color: #888; margin-bottom: 20px;"><?php echo Text::_('COM_J2STORE_CLEANUP_SUBTITLE'); ?></p>
+    <p style="color: var(--bs-secondary-color, #6c757d); margin-bottom: 20px;"><?php echo Text::_('COM_J2STORE_CLEANUP_SUBTITLE'); ?></p>
 
     <div class="detection-info">
         <h3><?php echo Text::sprintf('COM_J2STORE_CLEANUP_SCAN_TITLE', JVERSION); ?></h3>
@@ -931,7 +943,7 @@ $cleanupVersion = getCleanupVersion($db);
             <li><span class="badge badge-info"><?php echo Text::_('COM_J2STORE_CLEANUP_BADGE_CORE'); ?></span> — <?php echo Text::_('COM_J2STORE_CLEANUP_BADGE_CORE_DESC'); ?></li>
         </ul>
         <?php if ((int) JVERSION < 6): ?>
-        <p style="margin-top: 10px; color: #ffc107;"><?php echo Text::sprintf('COM_J2STORE_CLEANUP_NOTE_DEPRECATED', (int) JVERSION); ?></p>
+        <p style="margin-top: 10px; color: var(--bs-warning-text-emphasis, #664d03);"><?php echo Text::sprintf('COM_J2STORE_CLEANUP_NOTE_DEPRECATED', (int) JVERSION); ?></p>
         <?php endif; ?>
     </div>
 
@@ -979,6 +991,7 @@ $cleanupVersion = getCleanupVersion($db);
             <h2><?php echo Text::sprintf('COM_J2STORE_CLEANUP_SECTION_INCOMPATIBLE', count($groups['incompatible'])); ?></h2>
             <p><?php echo Text::_('COM_J2STORE_CLEANUP_SECTION_INCOMPATIBLE_DESC'); ?></p>
 
+            <div class="table-responsive">
             <table>
                 <thead>
                     <tr>
@@ -1015,12 +1028,14 @@ $cleanupVersion = getCleanupVersion($db);
                     <?php endforeach; ?>
                 </tbody>
             </table>
+            </div>
             <?php endif; ?>
 
             <?php if (!empty($groups['no-files'])): ?>
             <h2><?php echo Text::sprintf('COM_J2STORE_CLEANUP_SECTION_NO_FILES', count($groups['no-files'])); ?></h2>
             <p><?php echo Text::_('COM_J2STORE_CLEANUP_SECTION_NO_FILES_DESC'); ?></p>
 
+            <div class="table-responsive">
             <table>
                 <thead>
                     <tr>
@@ -1033,7 +1048,7 @@ $cleanupVersion = getCleanupVersion($db);
                 </thead>
                 <tbody>
                     <?php foreach ($groups['no-files'] as $ext): ?>
-                    <tr style="background: #2a2a2a !important; border-left: 3px solid #6c757d;">
+                    <tr class="no-files">
                         <td><?php if ($canRemoveExtensions): ?><input type="checkbox" name="cid[]" value="<?php echo $ext->extension_id; ?>"><?php endif; ?></td>
                         <td><?php echo htmlspecialchars(getExtensionName($ext)); ?></td>
                         <td><?php echo htmlspecialchars($ext->type); ?></td>
@@ -1043,6 +1058,7 @@ $cleanupVersion = getCleanupVersion($db);
                     <?php endforeach; ?>
                 </tbody>
             </table>
+            </div>
             <?php endif; ?>
 
             <?php if ($canRemoveExtensions && (!empty($groups['incompatible']) || !empty($groups['no-files']))): ?>
@@ -1056,6 +1072,7 @@ $cleanupVersion = getCleanupVersion($db);
             <?php if (!empty($groups['compatible']) || !empty($groups['core'])): ?>
             <h2><?php echo Text::sprintf('COM_J2STORE_CLEANUP_SECTION_COMPATIBLE', count($groups['compatible']) + count($groups['core'])); ?></h2>
 
+            <div class="table-responsive">
             <table>
                 <thead>
                     <tr>
@@ -1080,6 +1097,7 @@ $cleanupVersion = getCleanupVersion($db);
                     <?php endforeach; ?>
                 </tbody>
             </table>
+            </div>
             <?php endif; ?>
 
             <?php if (empty($groups['incompatible']) && empty($groups['no-files'])): ?>
@@ -1097,7 +1115,7 @@ $cleanupVersion = getCleanupVersion($db);
             <strong><?php echo Text::_('COM_J2STORE_CLEANUP'); ?></strong><?php if ($cleanupVersion !== ''): ?> <?php echo Text::sprintf('COM_J2STORE_CLEANUP_FOOTER_VERSION', htmlspecialchars($cleanupVersion)); ?><?php endif; ?><br>
             <?php echo Text::sprintf('COM_J2STORE_CLEANUP_FOOTER_DEVELOPED_BY', '<a href="https://advans.ch" target="_blank">Advans IT Solutions GmbH</a>'); ?>
         </p>
-        <p style="margin-top: 15px; font-size: 12px; color: #666;">
+        <p style="margin-top: 15px; font-size: 12px; color: var(--bs-secondary-color, #6c757d);">
             <?php echo Text::sprintf('COM_J2STORE_CLEANUP_FOOTER_COPYRIGHT', '2025-2026', 'Advans IT Solutions GmbH'); ?>
         </p>
     </div>

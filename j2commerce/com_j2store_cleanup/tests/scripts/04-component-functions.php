@@ -103,6 +103,7 @@ class ComponentFunctionsTest
         $this->testScanForIssues();
         $this->testClassifyExtension();
         $this->testPageHasNoFixedText();
+        $this->testResponsiveAndThemeLayout();
         $this->testLocalizationGuardCatchesHardcodedText();
         $this->testTextsFollowTheLanguage();
 
@@ -288,6 +289,29 @@ class ComponentFunctionsTest
 
         $this->test('No English message is built outside the language file',
             !preg_match("/(?:enqueueMessage|\['messages'\]\[\]\s*=|'reason'\s*=>)\s*\(?\s*'[A-Za-z][^']*\s[^']*'/", $source));
+    }
+
+    private function testResponsiveAndThemeLayout(): void
+    {
+        echo "\n--- Responsive and theme layout ---\n";
+
+        $source = (string) file_get_contents($this->mainFile);
+        $styleStart = strpos($source, '<style>');
+        $styleEnd = strpos($source, '</style>', $styleStart === false ? 0 : $styleStart);
+        $styles = $styleStart === false || $styleEnd === false
+            ? ''
+            : substr($source, $styleStart, $styleEnd - $styleStart);
+
+        $this->test('Component does not override page-wide template backgrounds',
+            !preg_match('/(?:^|[},])\s*(?:html|body|#wrapper|#content|\.com_j2store_cleanup)\s*\{[^}]*background\s*:/s', $styles)
+            && !str_contains($source, '<html style="background: #000'));
+        $this->test('Component surface follows the active Joomla Bootstrap color scheme',
+            str_contains($styles, 'var(--bs-body-bg, #fff)')
+            && str_contains($styles, 'var(--bs-body-color, #212529)'));
+        $this->test('Wide tables scroll within responsive containers rather than the page',
+            str_contains($styles, '.j2cleanup .table-responsive')
+            && preg_match('/\.j2cleanup \.table-responsive\s*\{[^}]*overflow-x:\s*auto/s', $styles) === 1
+            && substr_count($source, '<div class="table-responsive">') === 3);
     }
 
     /**

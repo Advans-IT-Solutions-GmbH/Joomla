@@ -14,6 +14,8 @@ Extension scan and removal tool for transitioning from J2Store to [J2Commerce](h
 
 The component lists J2Store/J2Commerce-related extensions, scans their PHP for selected removed APIs and lets an authorised administrator uninstall selected entries. A clean scan is not proof of runtime compatibility, and a finding is not by itself a reason to remove an extension. Review each result and take a complete files/database backup: the tool has no dependency graph, automatic backup or rollback.
 
+The page follows Joomla/Atum's active Bootstrap color scheme. On narrow screens, wide extension tables scroll within their own horizontal containers so they do not widen the page.
+
 ## Features
 
 - Scan for incompatible extensions
