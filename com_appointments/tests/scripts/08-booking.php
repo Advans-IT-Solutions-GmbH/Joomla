@@ -342,14 +342,26 @@ try {
     $check(str_contains($body, 'The form has expired or could not be verified.') && !str_contains($body, 'Please confirm your consent.')
         && $bookings($eventIds[0]) === 1, 'A filled honeypot gets the form message, never the consent message');
 
-    // A sent time that is no time at all names no day: the reason stands above the calendar.
-    $request = $prepare($eventIds[0], $slot);
-    $request[2]['booking']['start'] = 'not-a-time';
-    sleep(2);
-    $xpath = $dom($request[0]->request($request[1], $request[2]));
-    $check(trim((string) ($xpath->query('//*[@id="booking-start-error"]')->item(0)?->textContent ?? '')) === 'Please choose an available time.'
-        && $xpath->query('//form[@id="appointment-details-form"]')->length === 0 && $bookings($eventIds[0]) === 1,
-        'A malformed time returns to the calendar with its message, without a booking');
+    // A missing or malformed time names no field control, so the alert above the calendar
+    // takes native autofocus; no section fragment may suppress it.
+    foreach (['', 'not-a-time'] as $invalidStart) {
+        $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+        $request = $prepare($eventIds[0], $slot);
+        $request[2]['booking']['start'] = $invalidStart;
+        sleep(2);
+        $body = $request[0]->request($request[1], $request[2]);
+        $xpath = $dom($body);
+        $startError = $xpath->query('//*[@id="booking-start-error"]')->item(0);
+        $locations = $request[0]->locations;
+        $lastLocation = $locations === [] ? '' : $locations[array_key_last($locations)];
+        $check(trim((string) ($startError?->textContent ?? '')) === 'Please choose an available time.'
+            && $startError instanceof DOMElement && $startError->getAttribute('role') === 'alert'
+            && $startError->getAttribute('tabindex') === '-1' && $startError->hasAttribute('autofocus')
+            && !str_contains($body, 'com_appointments.focusSystemMessage')
+            && $lastLocation !== '' && !str_contains($lastLocation, '#')
+            && $xpath->query('//form[@id="appointment-details-form"]')->length === 0 && $bookings($eventIds[0]) === 1,
+            'An empty or malformed time returns to the calendar with a focusable alert and no booking');
+    }
 
     // Release test 22.10.: dates in words of the site language, times without a zone abbreviation.
     $dates = new AppointmentsHttp('http://localhost', 'booking-dates');
