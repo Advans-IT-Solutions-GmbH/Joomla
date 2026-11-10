@@ -124,6 +124,20 @@ To test without DNS, send the host header yourself, for example
 `-k` while the certificate does not cover the main host name). A `200` with `version: STSv1` proves
 conditions 1 and 3 to 5. Condition 2 needs the real host name.
 
+## Updating
+
+Install a newer standalone ZIP over the plugin, or update the owning DMARC package. Updates preserve an existing enabled/disabled state. A package installation uses its package update channel, not an independent child update.
+
+## Uninstall
+
+Remove the standalone plugin through **System → Manage → Extensions**, or remove the owning package. The plugin has no own report tables or Scheduler tasks; removing it alone does not delete the component's reports. DNS records, certificates and manually added web-server rules are not reverted. Coordinate policy-host retirement with the published DNS record and policy lifetime; disabling or uninstalling this plugin is not proof that senders stopped using a cached policy.
+
+## Usage and Data Handling
+
+The policy is deliberately public: no Joomla login or component-management permission is required to fetch it. It exposes the configured mode, MX patterns and lifetime, not reports or credentials. Administrator access is required to change component options, monitored-domain publication and plugin state. The endpoint sends `Content-Type: text/plain; charset=utf-8` and `Cache-Control: public, max-age=3600`. A cached HTTP response may therefore outlive a change; the policy's own `max_age` is a separate sender-policy lifetime.
+
+The plugin has no separate operational configuration and sends no notification mail. The component controls policy settings. A missing component, disabled feature, invalid policy, unmonitored/unpublished domain or failed domain lookup makes the plugin decline to serve a policy; it does not fabricate a successful empty policy.
+
 ## Development
 
 ### Structure
@@ -137,6 +151,12 @@ plg_system_dmarcmtasts/
 ├── language/                 # en-GB, de-DE, fr-FR (.ini + .sys.ini)
 └── updates/update.xml        # update server manifest
 ```
+
+## Automated Testing
+
+`tests/test.env` registers **installation**, **structure**, **graceful-degradation**, **install-messages** and **uninstall**. PHPUnit tests cover host/path selection in `PolicyRequest`; the [package MTA-STS suite](../pkg_dmarcreports/README.md#test-suites) separately requests the exact well-known URL with the documented rewrite rule.
+
+Follow [local prerequisites](../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites), build this plugin and copy the ZIP to `tests/extension.zip`. From `tests`, run `docker compose up -d`, `./run-tests.sh all`, then `docker compose down -v`. For Joomla 6 use `docker-compose.joomla6.yml` for both Compose calls and `CONTAINER_NAME=plg_system_dmarcmtasts_j6_test ./run-tests.sh all`. The runner waits for readiness. PHPUnit uses `composer test:unit` with the declared development dependencies. These suites do not verify an operator's real DNS, TLS certificate or public host routing.
 
 ## Multi-Language Support
 

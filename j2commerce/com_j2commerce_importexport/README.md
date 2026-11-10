@@ -75,7 +75,7 @@ The `t('suffix')` helper returns the correct table name and `col('j2store_col')`
 
 ## Installation
 
-1. Download `com_j2commerce_importexport_<version>.zip` from the latest release
+1. Download `com_j2commerce_importexport_<version>.zip` from the matching `importexport-v<version>` release, not the monorepo's global latest release
 2. **System → Install → Extensions**
 3. Upload and install
 4. Access via **Components → J2Commerce Import/Export**
@@ -100,6 +100,12 @@ Uninstall via **System → Manage → Extensions**. The component has no uninsta
 | CSV Enclosure | " | Text qualifier of the CSV export. The import always expects double quotes. |
 
 ## Usage
+
+### Permissions and Data Handling
+
+Import upload/preview/process and export require component `core.manage` permission and a valid Joomla form token. Grant this permission only to trusted administrators: importing changes real articles, categories, menus and shop records. The component has no own business tables, no Scheduler routine and no notification mail. Removing it does not undo imports.
+
+Uploads are stored under the Joomla root's `tmp` directory as `j2commerce_import_<random>.csv` or `.json`. Preview and process must reference the current session's upload identifier. Normal completed processing attempts to remove that file and clears its session reference; there is no automatic abandoned-upload retention job. Operators must restrict access to temporary files, remove stale imports deliberately and protect downloaded exports and backups. Row-level failures can leave a partial import; inspect counts/errors before retrying.
 
 ### Full Product Export
 1. Select **Products (Complete)** as export type
@@ -308,7 +314,7 @@ uses `DatabaseAwareTrait` **and** falls back to the DI container, otherwise
 
 ## Automated Testing
 
-This component has automated tests that run via GitHub Actions (`j2commerce-import-export.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. CI also runs a PHP syntax check and the language file lint. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
+The `j2commerce-import-export.yml` workflow runs the suites when this extension, consumed shared files or the workflow change. CI also runs a PHP syntax check and the language file lint. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Scope Note
 

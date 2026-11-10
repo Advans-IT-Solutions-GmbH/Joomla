@@ -71,6 +71,8 @@ The installer also installs the bundled task plugin **Task - J2Commerce Privacy 
 
 ### Updating
 
+The bundle includes [System - J2Commerce Privacy](plugins/system/j2commerceprivacy/README.md) for checkout consent and guest-confirmation mail links, and [Task - J2Commerce Privacy Cleanup](plugins/task/j2commerceprivacy/README.md) for scheduled retention. Both are installed/enabled when first introduced and updated with this parent; later updates preserve their existing enabled/disabled states. They have no independent release/update channel. The task plugin being enabled is not the same as a published task with a working trigger.
+
 The manifest registers an update server (`updates/update.xml` in this repository). New versions appear under **System → Update → Extensions**. On update, template overrides that were already deployed are not touched (see [Updating overrides after plugin updates](#updating-overrides-after-plugin-updates)).
 
 ### Uninstall
@@ -997,6 +999,7 @@ This plugin does not store or have access to complete payment details. Users mus
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Retention Period (Years) | 10 | Legal retention period. Switzerland: 10 (OR Art. 958f), Germany: 10 (AO §147), Austria: 7, UK/Spain: 6 |
+| Fiscal year end (`fiscal_year_end`) | `12-31` | Month-day used for the accounting-year cutoff in the site time zone; configure the cleanup task's own value separately |
 | Legal Basis | (pre-filled with CH/DE/EU examples) | Internal documentation only. Not shown to users or used in any message. |
 | Support Email | (empty) | Contact address shown to users for privacy inquiries. If left empty, the sender address of the Global Configuration (Mail → From Email) is shown. Set a dedicated privacy contact before going live. |
 
@@ -1032,6 +1035,10 @@ These options are evaluated by the deployed MyProfile overrides; see [Profile Pr
 ---
 
 ### Scheduled Task Settings
+
+The routine is `plg_task_j2commerceprivacy.autocleanup`. Its parameters are **task-local**, not inherited from the parent plugin: retention years `10` (form range 1–30), fiscal year end `12-31`, anonymize orders `Yes`, delete addresses `Yes`. Set them deliberately when creating/editing the task; changing the privacy plugin's options does not change an existing task's settings.
+
+Choose a working Scheduler trigger as well as an execution rule: the lazy scheduler depends on site traffic; system cron calling `php cli/joomla.php scheduler:run` or Joomla's configured web cron is suitable for regular unattended execution. Installation enables the task plugin, but does not itself run retention continuously. There is no dry-run mode; use synthetic data on an isolated test installation and inspect execution history before enabling destructive retention on real data.
 
 **Access:** `System → Manage → Scheduled Tasks → J2Commerce - Automatic data cleanup`
 
@@ -1249,7 +1256,7 @@ Creates: `plg_privacy_j2commerce_<version>.zip`
 
 ## Automated Testing
 
-This plugin has automated tests that run via GitHub Actions (`j2commerce-privacy.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. Besides the Joomla 5 and Joomla 6 suites, CI runs a PHP syntax check, the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, latest J2Commerce 6). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
+This plugin has automated tests that run via GitHub Actions (`j2commerce-privacy.yml`) when this directory, shared files consumed by the workflow or the workflow itself change. Besides the Joomla 5 and Joomla 6 suites, CI runs a PHP syntax check, the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, latest J2Commerce 6). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 
