@@ -973,6 +973,7 @@ final class GrantService implements GrantServiceInterface
             }
 
             $previousOwner = (int) $locked->owner_user_id;
+            $notificationRecipients = $this->notificationRecipients($locked);
             $state = $role->holdsKey() ? TeamStates::GRANT_PENDING_KEY : TeamStates::GRANT_ACTIVE;
             self::queueEpoch($calendarId, CalendarService::bumpEpoch($this->services, $calendarId));
             self::write($this->services, $calendarId, $granteeUserId, $role, $state, $audience, $actorUserId);
@@ -988,7 +989,8 @@ final class GrantService implements GrantServiceInterface
                 CalendarService::setOwner($this->services, $calendarId, $granteeUserId);
             }
 
-            return ['previous' => $previous !== null, 'previous_role' => $previousRole, 'audience' => $audience, 'previous_owner' => $previousOwner];
+            return ['previous' => $previous !== null, 'previous_role' => $previousRole, 'audience' => $audience,
+                'previous_owner' => $previousOwner, 'notification_recipients' => $notificationRecipients];
         });
 
         if ($result['previous_role'] !== null && $result['previous_role']->holdsKey() && !$role->holdsKey() && $keys !== null) {
@@ -1005,7 +1007,7 @@ final class GrantService implements GrantServiceInterface
                 'details' => ['reason' => 'owner_assigned', 'previous_owner' => $result['previous_owner']],
             ]);
         }
-        $this->mailGrantChanged($calendarId, $granteeUserId, $role, $actorUserId);
+        $this->mailGrantChanged($calendarId, $granteeUserId, $role, $actorUserId, $result['notification_recipients']);
     }
 
     public function revoke(int $actorUserId, int $calendarId, int $granteeUserId, ?KeyContext $actorKeys): void
@@ -1037,12 +1039,7 @@ final class GrantService implements GrantServiceInterface
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
             }
 
-            $grant->notification_recipient_ids = [(int) $calendar->owner_user_id];
-            foreach ($this->grantsOf($calendarId) as $recipient) {
-                if ($recipient->effective && $recipient->role === CalendarRole::Manage->value) {
-                    $grant->notification_recipient_ids[] = (int) $recipient->user_id;
-                }
-            }
+            $grant->notification_recipient_ids = $this->notificationRecipients($calendar);
 
             $db = $this->services->db();
             $db->setQuery(
@@ -1153,7 +1150,8 @@ final class GrantService implements GrantServiceInterface
         $this->assertEnabled();
         $calendarId = $keyring->calendarId();
         $audience = null;
-        $previous = $this->atomic(function () use ($actorUserId, $calendarId, $granteeUserId, $role, $keyring, $makeOwner, &$audience): bool {
+        $notificationRecipients = [];
+        $previous = $this->atomic(function () use ($actorUserId, $calendarId, $granteeUserId, $role, $keyring, $makeOwner, &$audience, &$notificationRecipients): bool {
             // Decided under the calendar lock: a concurrent switch-off of
             // external users or a second owner change cannot slip in.
             $locked = $this->lockCalendar($calendarId);
@@ -1181,6 +1179,7 @@ final class GrantService implements GrantServiceInterface
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
             }
 
+            $notificationRecipients = $this->notificationRecipients($calendar);
             $previous = $this->grantRow($calendarId, $granteeUserId, true) !== null;
             self::queueEpoch($calendarId, CalendarService::bumpEpoch($this->services, $calendarId));
 
@@ -1218,7 +1217,7 @@ final class GrantService implements GrantServiceInterface
             'actor_user_id' => $actorUserId, 'subject_user_id' => $granteeUserId, 'calendar_id' => $calendarId,
             'details' => ['role' => $role->name, 'audience' => $audience, 'recovery' => 1],
         ]);
-        $this->mailGrantChanged($calendarId, $granteeUserId, $role, $actorUserId);
+        $this->mailGrantChanged($calendarId, $granteeUserId, $role, $actorUserId, $notificationRecipients);
     }
 
     // ------------------------------------------------------------------
@@ -1413,6 +1412,19 @@ final class GrantService implements GrantServiceInterface
             $this->services->audit()->log($event, $context);
         } catch (\Throwable) {
         }
+    }
+
+    /** Capture before changing grants, while the calendar lock is held. */
+    private function notificationRecipients(object $calendar): array
+    {
+        $recipients = [(int) $calendar->owner_user_id];
+        foreach ($this->grantsOf((int) $calendar->id) as $grant) {
+            if ($grant->effective && $grant->role === CalendarRole::Manage->value) {
+                $recipients[] = (int) $grant->user_id;
+            }
+        }
+
+        return array_values(array_unique(array_filter($recipients)));
     }
 
     private function mailGrantChanged(int $calendarId, int $granteeUserId, ?CalendarRole $role, int $actorUserId, array $priorRecipientUserIds = []): void
