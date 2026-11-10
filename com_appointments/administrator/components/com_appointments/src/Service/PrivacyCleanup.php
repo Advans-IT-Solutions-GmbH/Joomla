@@ -162,7 +162,7 @@ final class PrivacyCleanup
     {
         $table = $db->quoteName('#__appointments_privacy_cleanup');
         $rows = $db->setQuery('SELECT booking_id, cleanup_key, retry_order FROM ' . $table
-            . ' WHERE request_id = 0 ORDER BY retry_order, booking_id', 0, $limit)->loadAssocList();
+            . ' WHERE request_id = 0 ORDER BY retry_order, booking_id LIMIT ' . max(1, $limit))->loadAssocList();
         $cursor = (int) $db->setQuery('SELECT MAX(retry_order) FROM ' . $table . ' WHERE request_id = 0')->loadResult();
         $repaired = 0;
         foreach ($rows as $row) {

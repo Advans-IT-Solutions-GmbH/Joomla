@@ -547,6 +547,15 @@ switch ($op) {
             $db->setQuery('DROP TRIGGER IF EXISTS privacy_fixture_copy_block')->execute();
         }
         break;
+    case 'appointments-booking-purge':
+        // Stands in for retention/admin deletion of a booking whose guest-link copy cleanup is pending.
+        if (!ctype_digit($email) || (int) $db->setQuery('SELECT COUNT(*) FROM #__appointments_privacy_cleanup'
+            . ' WHERE request_id=0 AND booking_id=' . (int) $email)->loadResult() !== 1) {
+            throw new RuntimeException('Only a synthetic booking with a pending guest-link reference may be purged.');
+        }
+        $db->setQuery('DELETE FROM #__appointments_bookings WHERE id=' . (int) $email)->execute();
+        $out['purged'] = $db->getAffectedRows();
+        break;
     case 'appointments-copy-retry':
         if (!ctype_digit($email)) {
             throw new RuntimeException('An explicit synthetic booking id is required.');

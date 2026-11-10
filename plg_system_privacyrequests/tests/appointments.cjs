@@ -236,18 +236,22 @@ async function main() {
         // A: the copy cannot be deleted, but the enabled target is rewritten without the address.
         // B: the copy is deleted, but its sanitised rebuild cannot be written.
         // C: internet calendars off and the copy cannot be deleted: both steps fail.
+        // D: as A, then internet calendars are switched off before the retry.
+        // E: as C, then the booking itself is deleted (retention or administrator) before the retry.
         const emptyPayload = createHash('sha256').update('').digest('hex');
-        for (const variant of ['delete-blocked', 'rewrite-blocked', 'both-blocked']) {
+        for (const variant of ['delete-blocked', 'rewrite-blocked', 'both-blocked', 'switched-off', 'booking-deleted']) {
             const selfEmail = `self-${variant}-${Date.now()}@example.test`;
             bookingId = fixture('appointments-booking', selfEmail, 'guest').booking_id;
             const selfCopy = fixture('appointments-copy', bookingId);
+            const rewritten = ['delete-blocked', 'switched-off'].includes(variant);
+            const bothFail = ['both-blocked', 'booking-deleted'].includes(variant);
             if (variant === 'rewrite-blocked') {
                 fixture('appointments-copy-unblock');
             }
-            if (variant !== 'both-blocked') {
+            if (!bothFail) {
                 fixture('appointments-rebuild-setup', bookingId);
             }
-            if (variant === 'delete-blocked') {
+            if (rewritten) {
                 fixture('appointments-rebuild-unblock');
             }
             const guestPage = await browser.newPage();
@@ -264,7 +268,7 @@ async function main() {
                 check(`Self-service guest removal (${variant}) keeps one retry reference with the booking id only`,
                     state.cleanup.length === 1 && Number(state.cleanup[0].request_id) === 0
                     && Number(state.cleanup[0].booking_id) === Number(bookingId) && state.cleanup[0].payload_hash === emptyPayload);
-                if (variant === 'delete-blocked') {
+                if (rewritten) {
                     const opened = fixture('appointments-copy-inspect', selfCopy.calendar_id, selfEmail);
                     check('Undeletable copy is still rewritten without the removed guest',
                         state.copies === 1 && opened.opened === 1 && opened.removed_guest_absent && opened.bystander_present);
@@ -278,6 +282,11 @@ async function main() {
                 await guestPage.reload();
                 check(`The same browser sees the ${variant} notice again without a second removal`,
                     (await guestPage.locator('body').innerText()).includes('could not be updated yet'));
+                if (variant === 'switched-off') {
+                    fixture('appointments-rebuild-restore');
+                } else if (variant === 'booking-deleted') {
+                    check('The booking with a pending reference is deleted', fixture('appointments-booking-purge', bookingId).purged === 1);
+                }
                 let retry = fixture('appointments-copy-retry', bookingId);
                 check(`Retry while the ${variant} failure persists keeps the reference`, retry.references === 1);
                 fixture(variant === 'rewrite-blocked' ? 'appointments-rebuild-unblock' : 'appointments-copy-unblock');
@@ -285,8 +294,8 @@ async function main() {
                 state = fixture('appointments-snapshot', bookingId);
                 check(`Retry after the ${variant} repair forgets the reference`,
                     retry.references === 0 && state.cleanup.length === 0 && retry.retry.guest_copies_repaired >= 1);
-                if (variant === 'both-blocked') {
-                    check('Repaired retry with internet calendars off removes the stale copy', state.copies === 0);
+                if (bothFail || variant === 'switched-off') {
+                    check(`Repaired retry (${variant}) removes the stale copy and leaves no pending reference`, state.copies === 0);
                 } else {
                     const opened = fixture('appointments-copy-inspect', selfCopy.calendar_id, selfEmail);
                     check(`Repaired retry (${variant}) leaves one clean copy without the removed guest`,

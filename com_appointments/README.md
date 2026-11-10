@@ -349,6 +349,8 @@ ID and an empty payload (no address, link or key) stays in the same table. The e
 **Appointments: internet calendar retention** Scheduler task retries these references on
 each run (at most 200, also while internet calendars are off) and forgets one only when
 both steps succeed; its log shows `guest_copies_repaired` and `guest_copies_pending`.
+A reference whose booking was deleted meanwhile, or whose internet calendars were switched
+off, resolves once the copy can be removed; deleting all Appointments data on uninstall drops it.
 Nothing activates that task: without a configured task the reference and the stale copy
 remain until the operator resolves the failure and runs it. A formal Core request does
 not process these references, and the removed address no longer finds the booking.
