@@ -312,7 +312,16 @@ namespace {
         private function testPermissionEditorConfiguration(): void
         {
             $extensionRoot = dirname(__DIR__, 2);
-            $manifest = simplexml_load_file($extensionRoot . DIRECTORY_SEPARATOR . 'com_j2store_cleanup.xml');
+            $manifestPath = $extensionRoot . DIRECTORY_SEPARATOR . 'com_j2store_cleanup.xml';
+            if (!is_file($manifestPath)) {
+                $manifestPath = $extensionRoot . DIRECTORY_SEPARATOR . 'administrator' . DIRECTORY_SEPARATOR
+                    . 'components' . DIRECTORY_SEPARATOR . 'com_j2store_cleanup'
+                    . DIRECTORY_SEPARATOR . 'com_j2store_cleanup.xml';
+            }
+            if (!is_file($manifestPath)) {
+                throw new \RuntimeException('Cleanup manifest missing from both source and installed component locations');
+            }
+            $manifest = simplexml_load_file($manifestPath);
             $files = $manifest->administration->files;
             $componentDirectory = $extensionRoot . DIRECTORY_SEPARATOR
                 . str_replace('/', DIRECTORY_SEPARATOR, (string) $files['folder']);
