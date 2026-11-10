@@ -295,7 +295,7 @@ try {
             && !str_contains($restrictedHtml, 'task=close.reconcile')
             && !str_contains($restrictedHtml, 'Close booking transfer'),
             'Event editor with component access but no core.admin sees no Close controls');
-        $restrictedToken = $restricted->token($restricted->request('/administrator/index.php'));
+        $restrictedToken = $restricted->token($listing($restricted));
         foreach (['retry', 'reconcile'] as $action) {
             $endpoint = '/administrator/index.php?option=com_appointments&task=close.' . $action;
             $admin->request($endpoint . '&' . $adminToken . '=1');
