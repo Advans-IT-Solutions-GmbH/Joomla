@@ -81,6 +81,26 @@ Download `com_appointments_<version>.zip` from the repository's
 in the Appointments tag family is retained; releases of other extensions are not Appointments
 packages.
 
+### Bundled plugins
+
+The component ZIP manages the following plugins; they are not independent release downloads.
+Initial plugin enablement is separate from task publication, a Scheduler trigger, calendar
+activation and effective content access.
+
+| Plugin | Role | First installation |
+|---|---|---|
+| [`privacy/appointments`](plugins/privacy/appointments/README.md) | Native privacy export/removal and calendar privacy integration | Enabled |
+| [`task/appointments`](plugins/task/appointments/README.md) | Booking reminders/retention and calendar-maintenance routines | Enabled; check task states and trigger separately |
+| [`system/appointmentsdav`](plugins/system/appointmentsdav/README.md) | Local CalDAV endpoint and pre-authentication sign-in guard | Disabled until deliberate setup |
+| [`user/appointments`](plugins/user/appointments/README.md) | Password/key sessions, lockout and account/device cleanup | Disabled until deliberate setup |
+
+Updates preserve existing enabled/disabled states. Start with [Internet calendars](#internet-calendars)
+for server prerequisites and deliberate activation, then use [Roles](#roles),
+[Devices and app passwords](#devices-and-app-passwords) and
+[Privacy requests and retention](#privacy-requests-and-retention) for the applicable administration,
+key/grant and data-handling boundaries. Administrative configuration access is not a substitute for
+the key/grant requirements of the action being performed.
+
 ## Updating
 
 The component registers its own update site during installation. Once releases are published,
@@ -759,6 +779,8 @@ to users with component management permission when internet calendars are disabl
 personal keys and changes no setting. It supplements, rather than replaces, contextual field help.
 Its topic fragments reserve space for the native sticky administrator toolbar, including wrapped
 mobile actions, so navigation does not hide the topic heading or the start of its text.
+Help uses immediate native scrolling so consecutive contents clicks do not move their targets
+between pointer press and release; browser fragment history remains native.
 
 On narrow administrator screens, the access table scrolls horizontally within its calendar card
 so every grant action remains reachable without widening the page. Long page headings use the

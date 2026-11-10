@@ -8,12 +8,14 @@ Extensions for [J2Commerce](https://github.com/j2commerce/j2commerce) e-commerce
 
 #### OSMap J2Commerce (`plg_osmap_j2commerce`)
 
-Adds all publicly visible J2Store/J2Commerce products to the OSMap sitemap. Bridges the gap between OSMap's menu-based indexing and J2Commerce's `published=-2` routing pattern. [→ Details](plg_osmap_j2commerce/README.md)
+Adds publicly visible J2Store/J2Commerce products to OSMap using direct catalogue queries and optional hidden menu routes; hidden menu items are not required. [→ Details](plg_osmap_j2commerce/README.md)
 
 #### Privacy - J2Commerce (`plg_privacy_j2commerce`)
 GDPR/DSGVO compliance solution with automated data retention management and lifetime license handling.
 
 [Documentation](plg_privacy_j2commerce/README.md)
+
+Its bundled [system plugin](plg_privacy_j2commerce/plugins/system/j2commerceprivacy/README.md) handles J2Commerce 6 checkout consent and guest-confirmation mail links. Its bundled [task plugin](plg_privacy_j2commerce/plugins/task/j2commerceprivacy/README.md) handles scheduled retention with task-local settings. Both are managed through the parent ZIP, not independent downloads.
 
 #### J2Commerce - Product Compare (`plg_j2commerce_productcompare`)
 Product comparison functionality for J2Commerce stores.
@@ -23,7 +25,7 @@ Product comparison functionality for J2Commerce stores.
 ### Components
 
 #### J2Commerce Import/Export (`com_j2commerce_importexport`)
-Import and export of J2Commerce products, variants and tier prices; categories can be exported.
+Complete-product JSON/CSV import and JSON/CSV/XML export. Additional export-only types include basic products, variants, tier prices and categories; they are not partial-update import formats.
 
 [Documentation](com_j2commerce_importexport/README.md)
 

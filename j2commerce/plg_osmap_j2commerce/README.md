@@ -172,6 +172,12 @@ the plugin defaults.
 
 ## Usage
 
+### Permissions and Data Handling
+
+The plugin emits catalogue URLs for guest-visible products, not customer/order records. Article access and publication windows and shop visibility are checked even when an administrator requests the sitemap. Restrict plugin/OSMap configuration to trusted administrators; public sitemap access remains governed by OSMap.
+
+The plugin creates no own data tables, sends no notification mail and installs no Scheduler routine. Catalogue URLs are read locally during sitemap generation; this is not an external indexing submission service. Joomla's update checks are separate. Uninstall does not remove shop data or reverse installer changes described above.
+
 ### How It Works
 
 OSMap calls `getTree()` for every menu item whose `option` matches the installed
@@ -252,7 +258,7 @@ Installed path: `plugins/osmap/j2commerce/`
 
 ## Automated Testing
 
-This plugin has automated tests that run via GitHub Actions (`osmap-j2commerce.yml`) on pushes and pull requests to `main` that change this directory, `shared/**` or the workflow file. Besides the Joomla 5, Joomla 6, Joomla 5 SEF and Joomla 6 SEF jobs, CI runs a PHP syntax check, the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, latest J2Commerce 6). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Because the Joomla 6 SEF lane uses the moving `joomla:6-php8.4-apache` image but needs a real `de-DE` language pack, its fixture tries the current Joomla patch first, then older patches of the same major.minor and then the two previous minors of the same major with `joomlagerman` release suffixes `v1`..`v3`, using curl retries/timeouts for transient network failures. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
+This plugin has automated tests that run via GitHub Actions (`osmap-j2commerce.yml`) when this directory, shared files consumed by the workflow or the workflow itself change. Besides the Joomla 5, Joomla 6, Joomla 5 SEF and Joomla 6 SEF jobs, CI runs a PHP syntax check, the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, latest J2Commerce 6). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Because the Joomla 6 SEF lane uses the moving `joomla:6-php8.4-apache` image but needs a real `de-DE` language pack, its fixture tries the current Joomla patch first, then older patches of the same major.minor and then the two previous minors of the same major with `joomlagerman` release suffixes `v1`..`v3`, using curl retries/timeouts for transient network failures. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 

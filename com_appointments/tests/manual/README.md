@@ -630,6 +630,9 @@ the start of its first paragraph must appear below the actual visible sticky too
 measured bottom edge and native viewport screenshots; DOM visibility or a full-page screenshot
 alone does not establish that text is unobscured. Keep the original fragment and scroll position
 when reporting a failure; do not change Core styles or manually reposition the page to make it pass.
+At 375 px in both browsers and themes, also click all eight contents links consecutively without
+adding artificial delays. Each pointer activation must reach its intended fragment; the page must
+not keep scrolling between pointerdown and pointerup and redirect the click onto another element.
 
 ## 18. Complete functional acceptance scenario
 

@@ -53,6 +53,8 @@ Joomla/
 └── .github/workflows/          # je Extension ein Test- und zwei Release-/Publish-Workflows
 ```
 
+Das vollständige Extension-Inventar einschliesslich gebündelter Plugins und ihrer READMEs steht im [Root-README](README.md#available-extensions).
+
 **`shared/` ist der Kern.** Kern sind zwei generische Skripte (unten); daneben liegen gemeinsame Hilfsdateien (`verify-package.sh`, Docker-Vorlage, Entrypoint, Installer). Die Extensions kopieren keine Logik:
 
 - `shared/build/build.sh` — generischer Paketierer. Liest `build.env` der Extension (`EXTENSION_NAME`, `VERSION`, `EXTENSION_TYPE`), rsync't die Dateien unter Ausschluss von Tests/Docker/Composer-Artefakten, bindet mit `prepare-installer.php` die gemeinsamen Installer-Prüfungen ein, erzeugt das Installations-ZIP und ruft anschließend `verify-package.sh`. Jede Extension hat nur einen dünnen Wrapper `build.sh`, der hierher delegiert. Builds benötigen PHP CLI 8.1+; das gemeinsame Post-Install-/Systemcheck- und Dateifreigabe-Muster steht in `README.md`, Abschnitt „Installation safety and repeatable system checks“.
