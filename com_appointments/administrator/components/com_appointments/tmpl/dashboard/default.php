@@ -78,7 +78,7 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
     <?php endif; ?>
 
     <?php if ($user->authorise('core.admin', 'com_appointments')) : ?>
-        <section class="card card-body mb-3">
+        <section class="card card-body mb-3 com-appointments-close">
             <h2><?php echo Text::_('COM_APPOINTMENTS_CLOSE_TITLE'); ?></h2>
             <p><?php echo Text::_($this->closeEnabled ? 'COM_APPOINTMENTS_CLOSE_ENABLED' : 'COM_APPOINTMENTS_CLOSE_DISABLED'); ?></p>
             <?php if (!$this->closeConfigured) : ?>
@@ -93,13 +93,13 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
                 $deliveryStates = ['pending' => 'COM_APPOINTMENTS_CLOSE_PENDING', 'retry' => 'COM_APPOINTMENTS_CLOSE_RETRY_STATE',
                     'done' => 'COM_APPOINTMENTS_CLOSE_DONE', 'blocked' => 'COM_APPOINTMENTS_CLOSE_BLOCKED',
                     'uncertain' => 'COM_APPOINTMENTS_CLOSE_UNCERTAIN']; ?>
-                <div class="table-responsive"><table class="table">
+                <table class="table com-appointments-close-queue">
                     <caption><?php echo Text::_('COM_APPOINTMENTS_CLOSE_RECENT'); ?></caption>
-                    <thead><tr><th><?php echo Text::_('JGRID_HEADING_ID'); ?></th><th><?php echo Text::_('JSTATUS'); ?></th><th><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REASON'); ?></th></tr></thead>
+                    <thead><tr><th scope="col"><?php echo Text::_('JGRID_HEADING_ID'); ?></th><th scope="col"><?php echo Text::_('JSTATUS'); ?></th><th scope="col"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REASON'); ?></th></tr></thead>
                     <tbody><?php foreach ($this->closeRows as $delivery) : ?><tr>
-                        <td><?php echo (int) $delivery['booking_id']; ?></td>
-                        <td><?php echo Text::_($deliveryStates[$delivery['state']] ?? 'COM_APPOINTMENTS_CLOSE_BLOCKED'); ?></td>
-                        <td><code><?php echo $this->escape($delivery['reason']); ?></code>
+                        <td><span class="com-appointments-close-label" aria-hidden="true"><?php echo Text::_('JGRID_HEADING_ID'); ?></span><?php echo (int) $delivery['booking_id']; ?></td>
+                        <td><span class="com-appointments-close-label" aria-hidden="true"><?php echo Text::_('JSTATUS'); ?></span><?php echo Text::_($deliveryStates[$delivery['state']] ?? 'COM_APPOINTMENTS_CLOSE_BLOCKED'); ?></td>
+                        <td><span class="com-appointments-close-label" aria-hidden="true"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REASON'); ?></span><code><?php echo $this->escape($delivery['reason']); ?></code>
                             <?php if ($delivery['state'] === 'uncertain') : ?>
                                 <p><?php echo Text::_('COM_APPOINTMENTS_DETAIL_UID'); ?>:
                                     <code class="text-break"><?php echo $this->escape($delivery['uid']); ?></code></p>
@@ -113,7 +113,7 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
                             <?php endif; ?>
                         </td>
                     </tr><?php endforeach; ?></tbody>
-                </table></div>
+                </table>
                 <nav aria-label="<?php echo Text::_('COM_APPOINTMENTS_CLOSE_PAGES'); ?>">
                     <p><?php echo Text::sprintf('COM_APPOINTMENTS_CLOSE_PAGE', intdiv($this->closeStart, 100) + 1,
                         max(1, (int) ceil($this->closeTotal / 100))); ?></p>

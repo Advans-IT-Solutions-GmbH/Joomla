@@ -36,6 +36,74 @@ html:has(#eventtype-form) {
     min-inline-size: 0;
 }
 
+.com-appointments-close,
+.com-appointments-close-queue td,
+.com-appointments-close-queue form {
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+}
+
+.com-appointments-close-queue {
+    inline-size: 100%;
+    table-layout: fixed;
+}
+
+.com-appointments-close-queue th:nth-child(1) {
+    inline-size: 15%;
+}
+
+.com-appointments-close-queue th:nth-child(2) {
+    inline-size: 25%;
+}
+
+.com-appointments-close code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.com-appointments-close .form-control,
+.com-appointments-close .btn {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+}
+
+.com-appointments-close .btn {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.com-appointments-close-label {
+    display: none;
+}
+
+@media (max-width: 767.98px) {
+    /* Stack every queue field; recovery must not depend on horizontal scrolling. */
+    .com-appointments-close-queue,
+    .com-appointments-close-queue tbody,
+    .com-appointments-close-queue tr,
+    .com-appointments-close-queue td {
+        display: block;
+        inline-size: 100%;
+    }
+
+    .com-appointments-close-queue thead {
+        position: absolute;
+        inline-size: 1px;
+        block-size: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+    }
+
+    .com-appointments-close-queue tr {
+        margin-block-end: 1rem;
+    }
+
+    .com-appointments-close-label {
+        display: block;
+        font-weight: bold;
+    }
+}
+
 @media (max-width: 991.98px) {
     /* Atum gives vertical tab navigation the full width below its lg breakpoint. */
     #eventtype-form #permissions-sliders[view="tabs"] {

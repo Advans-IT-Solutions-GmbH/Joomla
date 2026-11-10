@@ -178,6 +178,12 @@ try {
     $check((new DOMXPath($document))->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
         'Administrator navigation loads its local responsive styles outside event-type forms too');
     $styles = $admin->request('/media/com_appointments/css/admin.css');
+    $check((new DOMXPath($document))->query('//section[contains(concat(" ",normalize-space(@class)," ")," com-appointments-close ")]')->length === 1
+        && str_contains($styles, '.com-appointments-close-queue')
+        && preg_match('~\.com-appointments-close-queue\s*\{[^}]*table-layout:\s*fixed~', $styles) === 1
+        && preg_match('~\.com-appointments-close\s+code\s*\{[^}]*overflow-wrap:\s*anywhere~', $styles) === 1
+        && preg_match('~@media\s*\(max-width:\s*767\.98px\)[\s\S]*?\.com-appointments-close-queue\s+td\s*\{[^}]*display:\s*block~', $styles) === 1,
+        'The installed Close queue has scoped wrapping and a stacked mobile layout without hiding recovery fields');
     $check($admin->status === 200
         && preg_match('~#calendar-form\s+\.switcher\s*\{[^}]*max-inline-size:\s*100%~', $styles) === 1,
         'The installed stylesheet bounds native calendar switchers to their settings column without clipping');
