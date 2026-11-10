@@ -511,7 +511,11 @@ outcome; outstanding cleanup references independently count as incomplete. The b
 **Content - Appointments privacy completion guard** vetoes native Core **Complete**
 while Appointments remains incomplete, even with the generic request adapter, DAV and
 user plugins disabled. Installation enables this guard; updates preserve its state.
-Keep it enabled while relying on the completion protection. Core's removal audit
+Keep it enabled while relying on the completion protection. Remove and Complete of the
+same request are serialized by a per-request database lock, also without the generic
+adapter. The guard holds the lock through Core's status save and rechecks the stored
+request state. An overlapping operation is refused with a "still running" message and
+can be retried after a reload. Core's removal audit
 records an attempt, not proof of successful teardown. Complete is a separate authorized
 Core action after a clean retry and scope review, never an automatic consequence of
 callback dispatch.

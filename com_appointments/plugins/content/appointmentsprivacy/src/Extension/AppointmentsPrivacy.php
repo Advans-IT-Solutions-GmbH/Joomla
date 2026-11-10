@@ -8,6 +8,7 @@
 
 namespace Advans\Plugin\Content\AppointmentsPrivacy\Extension;
 
+use Advans\Component\Appointments\Administrator\Service\PrivacyOperationLock;
 use Advans\Component\Appointments\Administrator\Service\PrivacyOutcome;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Plugin\CMSPlugin;
@@ -25,9 +26,12 @@ final class AppointmentsPrivacy extends CMSPlugin implements SubscriberInterface
 
     protected $autoloadLanguage = true;
 
+    /** @var array<int, PrivacyOperationLock> held from the veto check through the native save */
+    private array $locks = [];
+
     public static function getSubscribedEvents(): array
     {
-        return ['onContentBeforeSave' => 'onContentBeforeSave'];
+        return ['onContentBeforeSave' => 'onContentBeforeSave', 'onContentAfterSave' => 'onContentAfterSave'];
     }
 
     public function onContentBeforeSave(EventInterface $event): void
@@ -36,10 +40,44 @@ final class AppointmentsPrivacy extends CMSPlugin implements SubscriberInterface
         if (!$table instanceof RequestTable || $table->request_type !== 'remove' || (int) $table->status !== 2) {
             return;
         }
+        $id = (int) $table->id;
         $this->getApplication()->bootComponent('com_appointments');
-        if (PrivacyOutcome::incomplete($this->getDatabase(), (int) $table->id)) {
-            $table->setError(Text::_('PLG_CONTENT_APPOINTMENTSPRIVACY_BLOCKED'));
+        $db = $this->getDatabase();
+        if (!isset($this->locks[$id])) {
+            try {
+                $lock = PrivacyOperationLock::acquire($db, $id, (string) $this->getApplication()->get('secret'));
+            } catch (\Throwable) {
+                $lock = null;
+            }
+            if ($lock === null) {
+                $table->setError(Text::_('PLG_CONTENT_APPOINTMENTSPRIVACY_BUSY'));
+                $event->addResult(false);
+                return;
+            }
+            $this->locks[$id] = $lock;
+        }
+        $error = PrivacyOperationLock::state($db, $id) !== ['status' => 1, 'type' => 'remove']
+            ? 'PLG_CONTENT_APPOINTMENTSPRIVACY_CHANGED'
+            : (PrivacyOutcome::incomplete($db, $id) ? 'PLG_CONTENT_APPOINTMENTSPRIVACY_BLOCKED' : '');
+        if ($error !== '') {
+            $this->release($id);
+            $table->setError(Text::_($error));
             $event->addResult(false);
         }
+    }
+
+    public function onContentAfterSave(EventInterface $event): void
+    {
+        $table = $event->getArgument('subject');
+        if ($table instanceof RequestTable) {
+            $this->release((int) $table->id);
+        }
+    }
+
+    private function release(int $id): void
+    {
+        $lock = $this->locks[$id] ?? null;
+        unset($this->locks[$id]);
+        $lock?->release();
     }
 }

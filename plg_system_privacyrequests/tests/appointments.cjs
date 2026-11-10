@@ -4,10 +4,42 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const {spawn} = require('node:child_process');
 const {createHash, createHmac} = require('node:crypto');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const {root, route, submit, check} = require('./browser.cjs');
 const {fixture, create, action} = require('./lifecycle.cjs');
+
+/** Holds the shared per-request lock on a separate connection, like an in-flight operation. */
+async function hold(id, outcome = '') {
+    const child = spawn(process.env.PRIVACY_PHP, [
+        ...JSON.parse(process.env.PRIVACY_PHP_ARGS || '[]'), path.join(__dirname, 'fixture.php'),
+        'appointments-operation-hold', String(id), outcome,
+    ], {env: process.env, stdio: ['pipe', 'pipe', 'pipe']});
+    let output = '';
+    let errors = '';
+    child.stderr.on('data', chunk => {errors += chunk;});
+    const exited = new Promise(resolve => child.once('close', code => resolve(code)));
+    await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            child.stdin.end('\n');
+            reject(new Error('Actual database lock was not acquired'));
+        }, 15000);
+        child.stdout.on('data', chunk => {
+            output += chunk;
+            if (output.includes('LOCK_HELD')) {clearTimeout(timer); resolve();}
+        });
+        child.once('error', error => {clearTimeout(timer); reject(error);});
+        child.once('exit', code => {
+            clearTimeout(timer);
+            if (!output.includes('LOCK_HELD')) reject(new Error(`Lock process exited ${code}: ${errors}`));
+        });
+    });
+    return async () => {
+        child.stdin.end('\n');
+        if (await exited !== 0) throw new Error(`Lock owner did not finish cleanly: ${errors}`);
+    };
+}
 
 function totp(secret) {
     const bits = [...secret.toUpperCase()].map(char =>
@@ -165,6 +197,47 @@ async function main() {
             state.copies === 0 && state.cleanup.length === 0 && !state.room_hashes.includes(booking.room_hash));
         check('Successful repair and retry do not complete the Core request automatically',
             Number(fixture('snapshot', email).requests[0].status) === 1);
+        // Overlapping operations without the generic adapter: an in-flight Remove retry holds
+        // the shared per-request lock and records an incomplete outcome before it ends.
+        fixture('generic-disable');
+        try {
+            const busy = 'Another privacy operation for this request is still running';
+            let release = await hold(receipt.id, 'incomplete');
+            let messages;
+            let overlapped;
+            try {
+                await admin.goto(url);
+                await action(admin, 'request.complete');
+                messages = (await admin.locator('joomla-alert').allTextContents()).join(' ');
+                overlapped = Number(fixture('snapshot', email).requests[0].status);
+            } finally {
+                await release();
+            }
+            console.log('OVERLAP_COMPLETE_MESSAGES', JSON.stringify(messages));
+            check('Native Complete overlapping an in-flight Remove retry is refused without the generic adapter',
+                overlapped === 1 && messages.includes(busy));
+            check('The overlapped Remove retry recorded its incomplete outcome',
+                String(fixture('appointments-outcome-state', receipt.id).complete) === '0');
+            check('Complete after the overlapped incomplete retry stays blocked', await complete(email, false) === 1);
+            release = await hold(receipt.id);
+            try {
+                await admin.goto(url);
+                await action(admin, 'request.remove');
+                messages = (await admin.locator('joomla-alert').allTextContents()).join(' ');
+            } finally {
+                await release();
+            }
+            console.log('OVERLAP_REMOVE_MESSAGES', JSON.stringify(messages));
+            check('Native Remove overlapping another operation is refused before it touches the outcome',
+                messages.includes(busy) && String(fixture('appointments-outcome-state', receipt.id).complete) === '0'
+                && Number(fixture('snapshot', email).requests[0].status) === 1);
+        } finally {
+            fixture('generic-enable');
+        }
+        state = await remove(true);
+        check('A non-overlapping Remove retry restores the verified outcome',
+            state.copies === 0 && state.cleanup.length === 0
+            && String(fixture('appointments-outcome-state', receipt.id).complete) === '1');
         check('Separate reviewed native Complete succeeds only after actual remediation', await complete() === 2);
         const final = fixture('snapshot', email).requests[0];
         check('Partial retries preserve original Core receipt id and date',

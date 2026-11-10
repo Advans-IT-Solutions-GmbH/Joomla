@@ -10,6 +10,7 @@ namespace Advans\Plugin\Privacy\Appointments\Extension;
 
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Service\PrivacyService;
+use Advans\Component\Appointments\Administrator\Service\PrivacyOperationLock;
 use Advans\Component\Appointments\Administrator\Service\PrivacyOutcome;
 use Advans\Component\Appointments\Administrator\Service\PrivacyStaffCleanup;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
@@ -35,6 +36,9 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     use DatabaseAwareTrait;
 
     protected $autoloadLanguage = true;
+
+    /** @var array<int, PrivacyOperationLock> */
+    private array $locks = [];
 
     public static function getSubscribedEvents(): array
     {
@@ -116,11 +120,20 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             $status->reason = Text::sprintf('PLG_PRIVACY_APPOINTMENTS_LEGAL_BLOCK', $service->legalReason());
         }
         if ($status->canRemove && (int) $event->getRequest()->id > 0) {
+            $requestId = (int) $event->getRequest()->id;
+            $reason = $this->lock($event->getRequest());
+            if ($reason !== '') {
+                $status->canRemove = false;
+                $status->reason = Text::_($reason);
+                $event->addResult($status);
+                return;
+            }
             try {
-                $this->staffScope((int) $event->getRequest()->id)->remember($address, $user);
+                $this->staffScope($requestId)->remember($address, $user);
             } catch (\Throwable $error) {
                 Log::add('Appointment staff privacy scope could not be captured (' . get_class($error) . ').',
                     Log::WARNING, 'com_appointments');
+                $this->release($requestId);
                 $status->canRemove = false;
                 $status->reason = Text::_('PLG_PRIVACY_APPOINTMENTS_STAFF_SCOPE_FAILED');
             }
@@ -131,6 +144,21 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     public function onPrivacyRemoveData(RemoveDataEvent $event): void
     {
         $requestId = (int) $event->getRequest()->id;
+        // Held from CanRemove until the outcome is recorded, so Core Complete cannot pass its
+        // check between an earlier success marker and this attempt's outcome.
+        if ($requestId > 0 && ($reason = $this->lock($event->getRequest())) !== '') {
+            $this->getApplication()->enqueueMessage(Text::_($reason), 'warning');
+            return;
+        }
+        try {
+            $this->removeAttempt($event, $requestId);
+        } finally {
+            $this->release($requestId);
+        }
+    }
+
+    private function removeAttempt(RemoveDataEvent $event, int $requestId): void
+    {
         // Invalidate both success markers of an earlier attempt independently before any
         // cleanup: the pending attempt alone keeps Complete blocked if the outcome write fails.
         $failure = null;
@@ -219,6 +247,40 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         if (!$complete) {
             $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_INCOMPLETE'), 'warning');
         }
+    }
+
+    /** @return string empty when this plugin holds the request's operation lock and the request is unchanged */
+    private function lock(object $request): string
+    {
+        $requestId = (int) $request->id;
+        if (isset($this->locks[$requestId])) {
+            return '';
+        }
+        $this->getApplication()->bootComponent('com_appointments');
+        $db = $this->getDatabase();
+        try {
+            $lock = PrivacyOperationLock::acquire($db, $requestId, (string) $this->getApplication()->get('secret'));
+            if ($lock !== null && PrivacyOperationLock::state($db, $requestId)
+                !== ['status' => (int) $request->status, 'type' => (string) $request->request_type]) {
+                $lock->release();
+                return 'PLG_PRIVACY_APPOINTMENTS_CHANGED';
+            }
+        } catch (\Throwable $error) {
+            Log::add('Appointment privacy operation lock failed (' . get_class($error) . ').', Log::WARNING, 'com_appointments');
+            $lock = null;
+        }
+        if ($lock === null) {
+            return 'PLG_PRIVACY_APPOINTMENTS_BUSY';
+        }
+        $this->locks[$requestId] = $lock;
+        return '';
+    }
+
+    private function release(int $requestId): void
+    {
+        $lock = $this->locks[$requestId] ?? null;
+        unset($this->locks[$requestId]);
+        $lock?->release();
     }
 
     private function staffScope(int $requestId): PrivacyStaffCleanup
