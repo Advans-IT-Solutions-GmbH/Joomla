@@ -1065,6 +1065,10 @@ result's `aria-describedby` without removing existing descriptions. This is the 
 ordinary result-focus rule above: standard result layouts keep their notices inside the result
 and never request this fallback. Invalid fields, modals, other focused controls and prior pointer
 or keyboard interaction still prevent the fallback from taking focus.
+Initial result/message focus runs once at `pageshow`, after native fragment navigation
+instead of during DOMContentLoaded; progressive form enhancement still starts at
+DOMContentLoaded. Back-forward cache restores do not refocus the outcome. A script loaded
+after the page has already loaded handles the outcome immediately, using the same guards.
 
 **Steps and addresses.** Step 1 is the event type's address plus `month` (`YYYY-MM`), and `day`
 (`YYYY-MM-DD`) once a day is chosen; step 2 adds `start`, the chosen time in UTC

@@ -7,8 +7,10 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'media', 'com_appointments', 'js', 'booking.js'), 'utf8');
 
 function page({ request = true, result = true, nativeResultFocus = false, invalid = false, modal = false,
-    populated = true, interaction = false, unrelatedFocus = false } = {}) {
+    populated = true, interaction = false, unrelatedFocus = false, reveal = true, persisted = false,
+    readyState = 'loading' } = {}) {
     const listeners = {};
+    const windowListeners = {};
     let observer;
     let disconnected = false;
     let timeout;
@@ -32,7 +34,7 @@ function page({ request = true, result = true, nativeResultFocus = false, invali
         documentElement: {},
         activeElement: invalid ? field : unrelatedFocus ? {} : nativeResultFocus ? status : body,
         visibilityState: 'visible',
-        readyState: 'loading',
+        readyState,
         addEventListener(name, callback) { listeners[name] = callback; },
         getElementById: () => container,
         querySelector(selector) {
@@ -53,6 +55,7 @@ function page({ request = true, result = true, nativeResultFocus = false, invali
     const window = {
         Joomla: { getOptions: () => request },
         location: { hash: '#appointment-result' },
+        addEventListener(name, callback) { windowListeners[name] = callback; },
         requestAnimationFrame: (callback) => callback(),
         setTimeout(callback) { timeout = callback; },
     };
@@ -67,15 +70,69 @@ function page({ request = true, result = true, nativeResultFocus = false, invali
     if (interaction) {
         listeners.pointerdown();
     }
-    listeners.DOMContentLoaded();
+    listeners.DOMContentLoaded?.();
+    const show = () => windowListeners.pageshow?.({ persisted });
+    if (reveal) {
+        show();
+    }
     return {
         document, status, container, field, body,
-        render() { populated = true; observer?.(); },
+        show,
+        render() { populated = true; if (!disconnected) observer?.(); },
         interact() { listeners.keydown(); },
         expire() { timeout?.(); },
         disconnected: () => disconnected,
     };
 }
+
+test('Result focus waits until fragment navigation has revealed the page', () => {
+    const fixture = page({ request: false, reveal: false });
+    assert.equal(fixture.document.activeElement, fixture.body);
+    fixture.show();
+    assert.equal(fixture.document.activeElement, fixture.status);
+});
+
+test('A cached history restore does not move focus', () => {
+    const fixture = page({ request: false, persisted: true });
+    assert.equal(fixture.document.activeElement, fixture.body);
+});
+
+test('Interaction before page reveal prevents result focus', () => {
+    const fixture = page({ request: false, reveal: false });
+    fixture.interact();
+    fixture.show();
+    assert.equal(fixture.document.activeElement, fixture.body);
+});
+
+test('A pointer interaction prevents result focus at page reveal', () => {
+    const fixture = page({ request: false, interaction: true });
+    assert.equal(fixture.document.activeElement, fixture.body);
+});
+
+test('A script loaded after pageshow handles the outcome once', () => {
+    const fixture = page({ request: false, readyState: 'complete' });
+    assert.equal(fixture.document.activeElement, fixture.status);
+    fixture.document.activeElement = fixture.body;
+    fixture.show();
+    assert.equal(fixture.document.activeElement, fixture.body);
+});
+
+for (const guard of ['invalid', 'modal', 'unrelatedFocus']) {
+    test(`Page reveal preserves ${guard}`, () => {
+        const fixture = page({ request: false, [guard]: true, reveal: false });
+        const active = fixture.document.activeElement;
+        fixture.show();
+        assert.equal(fixture.document.activeElement, active);
+    });
+}
+
+test('Repeated page reveal does not create another message watcher', () => {
+    const fixture = page({ populated: false });
+    fixture.expire();
+    fixture.show();
+    fixture.render();
+    assert.equal(fixture.document.activeElement, fixture.body);
+});
 
 for (const nativeResultFocus of [false, true]) {
     test(`Queued override warning wins over result focus (native=${nativeResultFocus})`, () => {

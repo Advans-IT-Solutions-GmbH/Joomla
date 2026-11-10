@@ -1004,11 +1004,13 @@
      * The outcome of a completed form ([data-appointments-result]) takes the focus, so a screen
      * reader reads it out. The redirect lands at its fragment, which keeps the browser from
      * running the autofocus of the page; without the fragment autofocus already did it.
+     * Wait for pageshow: fragment navigation can clear focus after DOMContentLoaded.
      */
     const focusResult = () => {
         const result = document.querySelector('[data-appointments-result]');
 
         if (result && !userInteracted && !hasSystemMessageFocusRequest()
+            && !document.querySelector('[autofocus]:not([data-appointments-result]), [aria-invalid="true"], [aria-modal="true"], dialog[open]')
             && (!document.activeElement || document.activeElement === document.body)) {
             // The fragment already scrolled to the container with its heading; keep that view.
             result.focus({ preventScroll: window.location.hash !== '' });
@@ -1079,11 +1081,23 @@
         }, 5000);
     };
 
-    const start = () => {
+    let focusHandled = false;
+    const focusOutcome = (event) => {
+        if (focusHandled || event?.persisted) {
+            return;
+        }
+
+        focusHandled = true;
         focusResult();
         watchSystemMessages();
-        document.querySelectorAll('[data-appointments-booking]').forEach(enhance);
     };
+    const start = () => document.querySelectorAll('[data-appointments-booking]').forEach(enhance);
+
+    if (document.readyState === 'complete') {
+        focusOutcome();
+    } else {
+        window.addEventListener('pageshow', focusOutcome, { once: true });
+    }
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', start);
