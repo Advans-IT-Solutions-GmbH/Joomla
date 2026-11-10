@@ -255,6 +255,7 @@ try {
     $rules = json_decode($componentRules, true, 512, JSON_THROW_ON_ERROR);
     $rules['core.manage'][(string) $groupId] = 1;
     $rules['core.options'][(string) $groupId] = 0;
+    $rules['core.admin'][(string) $groupId] = 0;
     $db->query("UPDATE {$prefix}assets SET rules='" . $db->real_escape_string(json_encode($rules, JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR)) . "' WHERE name='com_appointments'");
     foreach ([$eventA => 1, $eventB => 0] as $event => $edit) {
         $rules = $db->real_escape_string(json_encode([
@@ -273,6 +274,53 @@ try {
     } finally {
         putenv($oldUsername === false ? 'JOOMLA_ADMIN_USERNAME' : 'JOOMLA_ADMIN_USERNAME=' . $oldUsername);
         putenv($oldPassword === false ? 'JOOMLA_ADMIN_PASSWORD' : 'JOOMLA_ADMIN_PASSWORD=' . $oldPassword);
+    }
+    $closeParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
+    try {
+        $disabledClose = array_replace(json_decode($closeParams, true, 512, JSON_THROW_ON_ERROR), [
+            'close_enabled' => 0, 'close_origin' => '', 'close_credential_env' => '',
+        ]);
+        $db->query("UPDATE {$prefix}extensions SET params='"
+            . $db->real_escape_string(json_encode($disabledClose, JSON_THROW_ON_ERROR))
+            . "' WHERE element='com_appointments' AND type='component'");
+        $closeDashboard = '/administrator/index.php?option=com_appointments&view=dashboard';
+        $closeHtml = $admin->request($closeDashboard);
+        $check($admin->status === 200 && str_contains($closeHtml, 'Transfer disabled: no CRM calls.')
+            && str_contains($closeHtml, 'Close configuration is incomplete or invalid.')
+            && str_contains($closeHtml, 'task=close.retry'),
+            'Administrator sees disabled Close status, configuration warning and safe retry form');
+        $adminToken = $admin->token($closeHtml);
+        $restrictedHtml = $restricted->request($closeDashboard);
+        $check($restricted->status === 200 && !str_contains($restrictedHtml, 'task=close.retry')
+            && !str_contains($restrictedHtml, 'task=close.reconcile')
+            && !str_contains($restrictedHtml, 'Close booking transfer'),
+            'Event editor with component access but no core.admin sees no Close controls');
+        $restrictedToken = $restricted->token($restricted->request('/administrator/index.php'));
+        foreach (['retry', 'reconcile'] as $action) {
+            $endpoint = '/administrator/index.php?option=com_appointments&task=close.' . $action;
+            $admin->request($endpoint . '&' . $adminToken . '=1');
+            $check($admin->status === 403, 'Close ' . $action . ' rejects GET even with a valid token');
+            $admin->request($endpoint, ['booking_id' => 0, 'remote_id' => 'acti_fixture']);
+            $check($admin->status === 403, 'Close ' . $action . ' rejects a tokenless POST');
+            $admin->request($endpoint, [$adminToken => 'invalid', 'booking_id' => 0]);
+            $check($admin->status === 403, 'Close ' . $action . ' rejects an invalid POST token');
+            $admin->request($endpoint . '&' . $adminToken . '=1', ['booking_id' => 0]);
+            $check($admin->status === 403, 'Close ' . $action . ' does not accept a query token for POST');
+            $restricted->request($endpoint, [$restrictedToken => 1, 'booking_id' => 0, 'remote_id' => 'acti_fixture']);
+            $check($restricted->status === 403, 'Close ' . $action . ' rejects a valid-token event editor without core.admin');
+        }
+        $retryHtml = $admin->request('/administrator/index.php?option=com_appointments&task=close.retry', [$adminToken => 1]);
+        $check($admin->status === 200 && str_contains($retryHtml, 'Delivery pass finished.')
+            && str_contains($retryHtml, 'Transfer disabled: no CRM calls.'),
+            'Authorised token-protected retry returns to the dashboard without enabling delivery');
+        $invalidReconcile = $admin->request('/administrator/index.php?option=com_appointments&task=close.reconcile', [
+            $adminToken => 1, 'booking_id' => 0, 'remote_id' => 'acti_fixture',
+        ]);
+        $check($admin->status === 200 && str_contains($invalidReconcile, 'Close delivery could not run.'),
+            'Authorised reconciliation rejects an invalid booking locally with a visible error');
+    } finally {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($closeParams)
+            . "' WHERE element='com_appointments' AND type='component'");
     }
     $html = $listing($restricted);
     $check($restricted->status === 200 && str_contains($html, $tag . '-allowed') && !str_contains($html, $tag . '-denied'),
