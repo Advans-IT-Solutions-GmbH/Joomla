@@ -179,8 +179,13 @@ try {
             @rmdir(dirname($overrideDir));
         }
     }
+    // Joomla prints a queued message twice: in the script options and in the noscript fallback
+    // of #system-message-container.
+    $document = new DOMDocument();
+    @$document->loadHTML($html);
+    $system = (string) (new DOMXPath($document))->query('//*[@id="system-message-container"]')->item(0)?->textContent;
     $check(str_contains($html, 'Override without notices') && !str_contains($html, 'appointment-notices')
-        && substr_count($html, $warning) === 1 && (int) $fixture->row((int) $replacement['id'])['state'] === 2,
+        && str_contains($system, $warning) && (int) $fixture->row((int) $replacement['id'])['state'] === 2,
         'With an older template override of the manage page, the warning of a failed notification stays a Joomla message');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";

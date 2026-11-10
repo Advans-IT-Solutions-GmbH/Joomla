@@ -13,8 +13,9 @@
     min-inline-size: 0;
 }
 
-.header-title .page-title {
+.header .header-title .page-title {
     white-space: normal;
+    text-overflow: clip;
     overflow-wrap: anywhere;
 }
 

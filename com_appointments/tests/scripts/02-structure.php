@@ -450,7 +450,9 @@ class StructureTest
             $dispatcher = (string) @file_get_contents($this->admin . '/src/Dispatcher/Dispatcher.php');
 
             return preg_match('/\.header-title\s*,[^{]*\.header-title\s*>\s*\.d-flex\s*,[^{]*\.container-title\s*\{[^}]*min-inline-size:\s*0/', $css)
-                && preg_match('/\.page-title\s*\{[^}]*white-space:\s*normal/', $css)
+                // Atum sets `.header .page-title` to nowrap with an ellipsis and loads after this file,
+                // so the rule needs a higher specificity, not just the same one.
+                && preg_match('/\.header\s+\.header-title\s+\.page-title\s*\{[^}]*white-space:\s*normal[^}]*text-overflow:\s*clip/', $css)
                 && preg_match('/@media\s*\(width\s*<=\s*575\.98px\)\s*\{[^}]*\.header-title\s*\{[^}]*padding-inline-end/', $css)
                 && preg_match('/\.container-main\s*\{[^}]*min-inline-size:\s*0/', $css)
                 && ($names['com_appointments.admin.layout'] ?? '') === 'com_appointments/admin-layout.css'
