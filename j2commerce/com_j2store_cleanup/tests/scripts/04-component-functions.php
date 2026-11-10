@@ -305,9 +305,20 @@ class ComponentFunctionsTest
         $this->test('Component does not override page-wide template backgrounds',
             !preg_match('/(?:^|[},])\s*(?:html|body|#wrapper|#content|\.com_j2store_cleanup)\s*\{[^}]*background\s*:/s', $styles)
             && !str_contains($source, '<html style="background: #000'));
-        $this->test('Component surface follows the active Joomla Bootstrap color scheme',
-            str_contains($styles, 'var(--bs-body-bg, #fff)')
-            && str_contains($styles, 'var(--bs-body-color, #212529)'));
+        $this->test('Component surface prefers Atum unprefixed body colors with Bootstrap fallback',
+            str_contains($styles, 'var(--body-bg, var(--bs-body-bg, #fff))')
+            && str_contains($styles, 'var(--body-color, var(--bs-body-color, #212529))'));
+        preg_match_all('/var\(--bs-([a-z-]+),\s*(#[a-fA-F0-9]+)\)/', $source, $tokens, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        $missingAtumTokens = [];
+        foreach ($tokens as $token) {
+            $prefix = 'var(--' . $token[1][0] . ', ';
+            if (substr($source, $token[0][1] - strlen($prefix), strlen($prefix)) !== $prefix) {
+                $missingAtumTokens[] = $token[1][0];
+            }
+        }
+        $this->test('All semantic color tokens prefer Atum names before prefixed Bootstrap fallbacks',
+            count($tokens) === 44 && $missingAtumTokens === [],
+            implode(', ', $missingAtumTokens));
         $this->test('Wide tables scroll within responsive containers rather than the page',
             str_contains($styles, '.j2cleanup .table-responsive')
             && preg_match('/\.j2cleanup \.table-responsive\s*\{[^}]*overflow-x:\s*auto/s', $styles) === 1
