@@ -3,6 +3,7 @@
 final class AppointmentsHttp
 {
     public int $status = 0;
+    public string $contentType = '';
     private string $cookie;
 
     public function __construct(private string $base = 'http://localhost', string $name = 'appointments')
@@ -23,6 +24,7 @@ final class AppointmentsHttp
         $body = curl_exec($curl);
         $error = curl_error($curl);
         $this->status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        $this->contentType = (string) curl_getinfo($curl, CURLINFO_CONTENT_TYPE);
         curl_close($curl);
 
         if ($body === false) {
@@ -84,6 +86,7 @@ final class AppointmentsHttp
                 }
 
                 $client->status = (int) curl_getinfo($handle, CURLINFO_HTTP_CODE);
+                $client->contentType = (string) curl_getinfo($handle, CURLINFO_CONTENT_TYPE);
                 $bodies[] = curl_multi_getcontent($handle);
             }
         } finally {

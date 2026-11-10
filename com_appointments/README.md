@@ -1637,7 +1637,7 @@ The authoritative list and order is [`tests/test.env`](tests/test.env):
 | Feeds / Scheduler | Credentials, conditional responses, independent rotation, reminders and bounded retention |
 | Conference | Automatic links, JWT separation, explicit failure, retry and lifecycle teardown |
 | Privacy | Real typed Joomla privacy events, Unicode isolation, export/removal and legal blocking |
-| Administration | Filters, CSV safety, reschedule, system checks, restricted event ACL and Close action POST/token/component-administrator guards |
+| Administration | Filters, CSV safety, reschedule, system checks, restricted event ACL by exact list/CSV row identity across pagination, and Close action POST/token/component-administrator guards |
 | Backend views | Shared HTTP rendering checks for every administrator view |
 | Installer messages | Shared install/update checks in en-GB, de-DE and fr-FR |
 | Uninstall | Component removal and table cleanup |
