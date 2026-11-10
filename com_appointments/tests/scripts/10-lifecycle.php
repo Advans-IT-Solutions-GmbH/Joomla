@@ -98,10 +98,36 @@ try {
     };
     $check($confirmError($refused) && $fixture->row((int) $booking['id'])['start_utc'] === $day . ' 11:00:00',
         'Rescheduling without the confirmation checkbox shows the message at the checkbox and changes nothing');
-    $check($client->landedAt($refused, null) && preg_match('#<input[^>]*id="manage-confirm"[^>]*autofocus#', $refused) === 1,
+    $check($client->landedAt($refused, null) && preg_match('#<input[^>]*id="manage-confirm"[^>]*autofocus#', $refused) === 1
+        && !str_contains($refused, 'com_appointments.focusSystemMessage')
+        && preg_match('#/media/com_appointments/js/booking(\.min)?\.js#', $refused) !== 1,
         'A refused reschedule has no result fragment or region and the invalid checkbox keeps the focus');
     $reloadedReschedule = $client->request($fresh . '&month=' . substr($day, 0, 7) . '&timezone=Europe%2FZurich');
     $check($confirmError($reloadedReschedule), 'The confirmation message is still at the checkbox after a reload');
+    foreach (['', substr($day, 0, 7)] as $invalidZoneMonth) {
+        $refused = $client->request('/index.php?option=com_appointments&task=booking.manage', array_replace($rescheduleQuery, [
+            $token => 1, 'confirm' => 1, 'start' => $day . ' 12:00:00',
+            'month' => $invalidZoneMonth, 'timezone' => 'not-a-zone',
+        ]));
+        $document = new DOMDocument();
+        @$document->loadHTML($refused);
+        $xpath = new DOMXPath($document);
+        $locations = $client->locations;
+        $location = $locations === [] ? '' : $locations[array_key_last($locations)];
+        $check($client->status === 200 && $client->landedAt($refused, null)
+            && str_contains($refused, 'com_appointments.focusSystemMessage')
+            && preg_match('#/media/com_appointments/js/booking(\.min)?\.js#', $refused) === 1
+            && $xpath->query('//*[@id="system-message-container"][@aria-live="polite"]')->length === 1
+            && str_contains((string) $xpath->query('//*[@id="system-message-container"]')->item(0)?->textContent, 'Choose a valid time zone.')
+            && $xpath->query('//*[@aria-invalid="true"]')->length === 0
+            && $location !== '' && !str_contains($location, '#') && !str_contains($location, 'not-a-zone')
+            && $fixture->row((int) $booking['id'])['start_utc'] === $day . ' 11:00:00',
+            'An invalid manage timezone returns a usable form with a one-shot native-message focus request, month=' . $invalidZoneMonth);
+        $reload = $client->request($fresh);
+        $check(!str_contains($reload, 'com_appointments.focusSystemMessage')
+            && preg_match('#/media/com_appointments/js/booking(\.min)?\.js#', $reload) !== 1,
+            'The manage refusal focus option is consumed and an ordinary form remains script-free');
+    }
     $otherEvent = $fixture->event();
     $fixture->booking($otherEvent, $day . ' 12:00:00');
     parse_str(parse_url($fresh, PHP_URL_QUERY), $query);
@@ -109,6 +135,7 @@ try {
         $token => 1, 'confirm' => 1, 'start' => $day . ' 12:00:00', 'month' => substr($day, 0, 7), 'timezone' => 'UTC',
     ]));
     $check(str_contains($html, 'This time was just taken')
+        && str_contains($html, 'com_appointments.focusSystemMessage')
         && $fixture->row((int) $booking['id'])['start_utc'] === $day . ' 11:00:00', 'Overlapping cross-event reschedule is refused without changing the appointment');
     $freshCancel = $fixture->link($moved, 'cancel');
     // Release test 22.10.: without the confirmation checkbox there is a real error message

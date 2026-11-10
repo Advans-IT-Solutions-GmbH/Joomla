@@ -179,12 +179,18 @@ class BookingController extends BaseController
         $month = $this->input->getString('month', '');
         $zone = $this->input->getString('timezone', '');
         if ($month !== '') {
-            $url .= '&month=' . urlencode($month) . '&timezone=' . urlencode($zone);
+            $url .= '&month=' . urlencode($month);
+            if (in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
+                $url .= '&timezone=' . urlencode($zone);
+            }
         }
         $this->setRedirect(Route::_($url, false));
+        $focusKey = 'com_appointments.manage_focus_message.' . $this->input->getInt('id') . '.' . $model->action();
+        $this->app->setUserState($focusKey, null);
 
         if (!(new RateLimiter($db, $keys))->allow('manage', $this->input->server->getString('REMOTE_ADDR'), $now, 60, 900)) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_RATE'), 'error');
+            $this->app->setUserState($focusKey, true);
             return false;
         }
         // Visible fields get their message at the field (manage layout), hidden values
@@ -202,6 +208,7 @@ class BookingController extends BaseController
         }
         if ($model->action() === 'reschedule' && !in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_ZONE'), 'error');
+            $this->app->setUserState($focusKey, true);
             return false;
         }
         $start = UtcTimestamp::parse($this->input->post->getString('start', ''));
@@ -220,9 +227,11 @@ class BookingController extends BaseController
             $model->apply($now, $start, $reason);
         } catch (SlotTakenException $e) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_TAKEN'), 'error');
+            $this->app->setUserState($focusKey, true);
             return false;
         } catch (\DomainException $e) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_ERROR_STATE'), 'error');
+            $this->app->setUserState($focusKey, true);
             return false;
         }
         $this->app->setUserState('com_appointments.cancel_reason', null);

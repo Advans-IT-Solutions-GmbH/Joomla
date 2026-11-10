@@ -46,8 +46,15 @@ class HtmlView extends BaseHtmlView
         $this->applyPageTitle('manage', Text::_(['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL', 'erase' => 'COM_APPOINTMENTS_MANAGE_ERASE'][$this->action]));
         $this->signature = $model->signature();
         $this->completed = $model->completed();
-        // The script only for the result, which it focuses; the forms work without it.
-        $this->useAppointmentsAssets($this->completed);
+        $focusKey = 'com_appointments.manage_focus_message.' . $app->getInput()->getInt('id') . '.' . $this->action;
+        $focusMessage = !$this->completed && (bool) $app->getUserState($focusKey, false);
+        $app->setUserState($focusKey, null);
+        // Ordinary forms keep native field autofocus; only outcomes and page-level refusals need the script.
+        $this->useAppointmentsAssets($this->completed || $focusMessage);
+
+        if ($focusMessage) {
+            $this->getDocument()->addScriptOptions('com_appointments.focusSystemMessage', true);
+        }
 
         if ($this->completed) {
             $this->takeResultNotices();

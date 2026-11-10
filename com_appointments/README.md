@@ -1069,6 +1069,10 @@ Initial result/message focus runs once at `pageshow`, after native fragment navi
 instead of during DOMContentLoaded; progressive form enhancement still starts at
 DOMContentLoaded. Back-forward cache restores do not refocus the outcome. A script loaded
 after the page has already loaded handles the outcome immediately, using the same guards.
+Page-level refusals of signed manage actions use the same one-shot message-focus option,
+scoped to the booking and action. Ordinary manage GETs and field-error forms remain
+script-free. A rejected timezone is not echoed into the redirect; its validation message
+is retained and the form uses its existing known timezone.
 
 **Steps and addresses.** Step 1 is the event type's address plus `month` (`YYYY-MM`), and `day`
 (`YYYY-MM-DD`) once a day is chosen; step 2 adds `start`, the chosen time in UTC
@@ -1083,7 +1087,7 @@ invalid public site address in **Options**), only the `.ics` download is shown.
 
 **Booking script and slot endpoint.** `media/com_appointments/js/booking.js` is registered as the
 web asset `com_appointments.booking` (deferred, no dependency) and loaded by the booking page, the confirmation and a completed manage
-page, where it only moves the focus to the result. It
+page, or a manage form returning a one-shot page-level error. On manage pages it only handles outcome/message focus. It
 adds `.com-appointments-js` to `.com-appointments`. A day or month link (`a[data-appointments-load]`)
 and the zone selection request the same address plus `format=raw` and replace `#appointment-picker`
 with the response; that response is the layout `default_picker.php` alone, so a template override
@@ -1094,8 +1098,8 @@ into the browser history (`history.pushState`; the back and forward buttons load
 address the same way), the focus moves to the new times or the new step title, and a polite live
 region announces the times legend or the step title. Details typed into step 2 are kept when the
 visitor goes back for another time. Without JavaScript every link and the time form load the full
-page and land at `#appointment-picker` or `#appointment-booking`; a refused submission lands at
-`#appointment-details` when its messages stand at the fields. The script writes no text of its
+page and land at `#appointment-picker` or `#appointment-booking`; a refused submission with field
+messages has no fragment, preserving native autofocus on its invalid control. The script writes no text of its
 own, contains no inline code and makes no third-party request, so the page works under a Content
 Security Policy without `unsafe-inline`. When a background request fails, it falls back to the
 normal page request.
