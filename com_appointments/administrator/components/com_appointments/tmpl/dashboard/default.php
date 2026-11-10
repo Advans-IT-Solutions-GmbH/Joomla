@@ -61,6 +61,7 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
         <?php endforeach; ?>
     </div>
     <?php if ($this->eventCounts) : ?>
+        <div class="table-responsive">
         <table class="table">
             <caption><?php echo Text::_('COM_APPOINTMENTS_STAT_BY_EVENT'); ?></caption>
             <thead><tr>
@@ -74,6 +75,7 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
                 </tr><?php endforeach; ?>
             </tbody>
         </table>
+        </div>
     <?php endif; ?>
 
     <?php if ($isEmpty) : ?>

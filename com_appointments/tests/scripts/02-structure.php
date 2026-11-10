@@ -423,6 +423,24 @@ class StructureTest
 
         $this->testCalendarFields();
 
+        // An unwrapped table widens the whole administrator page on a phone; inside
+        // .table-responsive it scrolls on its own.
+        $tables = 0;
+        foreach (glob($this->admin . '/tmpl/*/*.php') as $layout) {
+            $source = (string) file_get_contents($layout);
+            if (!preg_match('/<table\b/', $source)) {
+                continue;
+            }
+            $tables += preg_match_all('/<table\b/', $source);
+            $this->test('Every table in ' . basename(dirname($layout)) . '/' . basename($layout) . ' sits in .table-responsive', function () use ($source) {
+                return preg_match_all('/<table\b/', $source)
+                    === preg_match_all('/<div class="table-responsive">\s*<table\b/', $source);
+            });
+        }
+        $this->test('Administrator tables were checked', function () use ($tables) {
+            return $tables >= 14;
+        });
+
         echo "\n=== Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;

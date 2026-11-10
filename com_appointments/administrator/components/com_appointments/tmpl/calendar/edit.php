@@ -98,6 +98,7 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
             <?php elseif (!$this->grants) : ?>
                 <p class="alert alert-info"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_GRANTS_EMPTY'); ?></p>
             <?php else : ?>
+                <div class="table-responsive">
                 <table class="table">
                     <caption class="visually-hidden"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_GRANTS_HEADING'); ?></caption>
                     <thead><tr>
@@ -160,6 +161,7 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
                     <?php endforeach; ?>
                     </tbody>
                 </table>
+                </div>
             <?php endif; ?>
 
             <?php if ($this->candidates) : ?>

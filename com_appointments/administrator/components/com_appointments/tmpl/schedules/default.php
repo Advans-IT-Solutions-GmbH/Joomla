@@ -28,6 +28,7 @@ $canEdit = Factory::getApplication()->getIdentity()->authorise('core.edit', 'com
                         <?php echo Text::_('COM_APPOINTMENTS_SCHEDULES_EMPTY'); ?>
                     </div>
                 <?php else : ?>
+                    <div class="table-responsive">
                     <table class="table" id="scheduleList">
                         <caption class="visually-hidden">
                             <?php echo Text::_('COM_APPOINTMENTS_SCHEDULES_TITLE'); ?>
@@ -71,6 +72,7 @@ $canEdit = Factory::getApplication()->getIdentity()->authorise('core.edit', 'com
                             <?php endforeach; ?>
                         </tbody>
                     </table>
+                    </div>
 
                     <?php echo $this->pagination->getListFooter(); ?>
                 <?php endif; ?>
