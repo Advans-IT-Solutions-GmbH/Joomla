@@ -28,6 +28,7 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
         <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=blockeds'); ?>"><?php echo Text::_('COM_APPOINTMENTS_BLOCKEDS_TITLE'); ?></a>
         <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=templates'); ?>"><?php echo Text::_('COM_APPOINTMENTS_TEMPLATES_TITLE'); ?></a>
         <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=calendars'); ?>"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_NAV_CALENDARS'); ?></a>
+        <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=help'); ?>"><?php echo Text::_('COM_APPOINTMENTS_HELP_TITLE'); ?></a>
         <?php if ($user->authorise('core.manage', 'com_appointments') && $user->authorise('core.options', 'com_appointments')) : ?>
             <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=feeds'); ?>"><?php echo Text::_('COM_APPOINTMENTS_FEEDS_TITLE'); ?></a>
             <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=system'); ?>"><?php echo Text::_('COM_APPOINTMENTS_SYSTEM_TITLE'); ?></a>

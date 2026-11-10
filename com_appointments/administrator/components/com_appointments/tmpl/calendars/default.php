@@ -21,6 +21,10 @@ $action = Route::_('index.php?option=com_appointments&view=calendars');
 <?php if (!$this->enabled) : ?>
     <div class="alert alert-info" role="status"><?php echo Text::_('COM_APPOINTMENTS_TEAM_DISABLED'); ?></div>
 <?php else : ?>
+    <div class="alert alert-info" id="calendar-administration-help" role="note">
+        <p class="mb-2"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_ADMINISTRATION_HELP'); ?></p>
+        <p class="mb-0"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_KEY_SETUP_HELP'); ?></p>
+    </div>
     <?php if ($this->recoverySecret !== null) : ?>
         <section class="card mb-4 border-warning" aria-labelledby="recovery-secret-heading">
             <div class="card-body">

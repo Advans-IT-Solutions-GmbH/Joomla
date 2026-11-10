@@ -88,6 +88,26 @@ Download `com_appointments_<version>.zip` from the repository's
 in the Appointments tag family is retained; releases of other extensions are not Appointments
 packages.
 
+### Bundled plugins
+
+The component ZIP manages the following plugins; they are not independent release downloads.
+Initial plugin enablement is separate from task publication, a Scheduler trigger, calendar
+activation and effective content access.
+
+| Plugin | Role | First installation |
+|---|---|---|
+| [`privacy/appointments`](plugins/privacy/appointments/README.md) | Native privacy export/removal and calendar privacy integration | Enabled |
+| [`task/appointments`](plugins/task/appointments/README.md) | Booking reminders/retention and calendar-maintenance routines | Enabled; check task states and trigger separately |
+| [`system/appointmentsdav`](plugins/system/appointmentsdav/README.md) | Local CalDAV endpoint and pre-authentication sign-in guard | Disabled until deliberate setup |
+| [`user/appointments`](plugins/user/appointments/README.md) | Password/key sessions, lockout and account/device cleanup | Disabled until deliberate setup |
+
+Updates preserve existing enabled/disabled states. Start with [Internet calendars](#internet-calendars)
+for server prerequisites and deliberate activation, then use [Roles](#roles),
+[Devices and app passwords](#devices-and-app-passwords) and
+[Privacy requests and retention](#privacy-requests-and-retention) for the applicable administration,
+key/grant and data-handling boundaries. Administrative configuration access is not a substitute for
+the key/grant requirements of the action being performed.
+
 ## Updating
 
 The component registers its own update site during installation. Once releases are published,
@@ -446,14 +466,20 @@ right is locked and can lift the lock in the devices view. Not covered, stated p
    the access level «Internet calendars», and add both groups to **Users → Options →
    Multi-factor Authentication → Enforce MFA for these user groups**. Never list them under the
    groups that skip MFA; the system check reports that as an error.
-4. Create the **recovery key** in **Internet calendars** as a Super User who is also a member of
-   «Internet calendars internal» (that membership gives the account a key pair; it needs no calendar
-   grant). Sign out and in again with password and second factor first: the key operations need a
-   session unlocked by the password. Its secret is shown once.
+4. Create the **recovery key** in **Internet calendars** as a Super User with an enrolled, approved
+   second factor. Administrative recovery needs neither a calendar grant nor team-group membership.
+   Sign out and in again with password and second factor first: the key operations release the
+   administrator's own key only from that authenticated session. Its secret is shown once.
    Print it **twice together with the site secret** (`$secret` in `configuration.php`) and keep the
    two printouts offline in separate places. The recovery key is never stored, and without it no
    calendar can be created.
 5. Create a calendar, name its owner (the owner gets the manage role) and grant access to users.
+   The owner must belong to a configured internal team group.
+   When selecting your own account without an existing key pair, **Save** releases your first key
+   only from the administrator session's verified password sign-in and completed second factor.
+   Opening the list or form creates no key. A passwordless, remembered or MFA-incomplete session
+   must sign in again with password and an approved second factor. Selecting another owner never
+   initializes that person's key; their own authenticated key session must create it first.
 6. Add a menu item **My calendars** with the access level «Internet calendars». There each user
    adds one device per client and receives the app password and the instructions for that client.
 
@@ -467,8 +493,9 @@ with it; Joomla enforces the second factor at the first sign-in. When the activa
 every user with the permission «Share with external users» receives a mail with a link that
 revokes the access in one step (all grants removed, account blocked, devices cleaned up).
 
-That first password sign-in also creates the user's key pair; a grant becomes usable only after
-it.
+The first password sign-in prepares the user's key pair; an authenticated key action releases it
+only after that session completes the approved second factor. A grant becomes usable only when
+the real key pair and its calendar wrap exist.
 
 #### Options
 
@@ -553,8 +580,16 @@ possible with CalDAV clients.
   dates, times, event types and states stay readable, because reminders and the slot calculation
   need them. A row added or changed in the database without the site
   secret grants nothing. A Super User without a grant sees calendar lists and the log, never
-  contents; granting oneself access is possible, but it is logged and mailed to the calendar's
-  owner and managers.
+  contents. Active accounts with `core.admin` on the component can edit settings, delete valid
+  foreign or orphan calendars (with `core.delete`), revoke any grant and assign an owner.
+  Grants, including self-grants and owner assignments, require a password-authenticated session
+  with an approved second factor and the administrator's unlocked own user key (not a calendar key),
+  and obey the configured audience and external-role limits. A key-holding grant without genuine
+  wraps remains pending: only a real key holder or authorised use of the offline recovery key can
+  complete it. Administrative privilege never decrypts contents. Each grant is logged and mailed
+  to the owner and managers. Revocation preserves the pre-change owner and effective managers
+  as notification recipients, including a removed sole owner; the actor receives no copy.
+
 - **Not protected:** anybody who executes code on the server, which includes a compromised
   extension, the hosting provider and anybody with access to the files: while a key holder's request
   runs, the calendar key is in memory, and such an attacker can also capture app passwords. A copy
@@ -574,6 +609,22 @@ possible with CalDAV clients.
   forged booking request (a crafted POST, not the booking page) for a time the page did not offer
   is accepted, because the busy times of that calendar are unknown. The booking page itself offers
   only free times.
+
+**Administrative ownership:** assigning an active team account writes a Manage grant and updates
+the owner atomically. Without real wraps the new owner's grant is not effective; ownership alone
+does not permit contents or personal-calendar management. The former owner's existing grant is
+retained, not silently revoked. Revoke it separately if required: wraps are removed, the epoch
+advances and rotation is marked due until a genuine key holder rotates. Administratively revoking
+the current owner also clears ownership. Ordinary settings, revocation and deletion do not need MFA or
+a keyring; changing external sharing retains its separate permission and MFA requirements.
+The backend still enforces Joomla ACL, POST, CSRF and held edit ids.
+Grant changes, recovery grants and revocations retain the pre-change owner and effective managers
+as security-notice recipients, including when an ownerless calendar loses its last effective manager.
+
+Component administrators may configure calendar links and remove inaccessible links on booking
+pages, deliberately controlling public free/busy exposure without obtaining contents. The host
+still needs real effective access to busy calendars and real Write access to the target, including
+when the host is a Super User. Ordinary editors still need their own effective access as well.
 
 #### Updating to 1.4.0
 
@@ -623,8 +674,39 @@ addresses against it.
   recovery key).
 - Searches, exports and removals are logged with counts only, never the address or content.
 
-Each calendar has its own **retention**; the Scheduler deletes older entries and logs only their
-number.
+Each calendar has its own **retention** in days (0–65535). Its default `0` disables only age-based
+object deletion; it does not inherit booking retention or prevent separate removal of cancelled,
+erased or orphan booking copies. With internet calendars enabled, the calendar-retention task
+deletes an entire object or finite series after its last safely determined occurrence ends before
+the UTC cutoff. Future, endless or indeterminate series remain. The same rule covers imported,
+CalDAV-written and booking objects, but not booking rows or erasure audits. A later upload or
+booking change can recreate an object. The log records only the count.
+
+The backend fields explain these separate lifecycles, UTC cutoffs, ranges and Scheduler prerequisites.
+An empty event-type booking-retention value inherits the component setting; booking `0` processes
+already ended bookings on the next task run, unlike calendar `0`. The configurable erasure audit
+(default three calendar years) is separate from the fixed twelve-month internet-calendar log.
+Calendar list/edit pages also explain administrative control versus real content keys and the
+password-and-approved-MFA gate for creating one's own first key on backend Save.
+
+**Components → Appointments → Help & tips** provides the complete generic setup guide, also
+linked from the dashboard and component Options. It covers the first calendar, schedules and
+booking menus, administrative rights versus content keys, grants/ownership/recovery, devices,
+the separate retention lifecycles, privacy, mail and troubleshooting. The page remains accessible
+to users with component management permission when internet calendars are disabled, releases no
+personal keys and changes no setting. It supplements, rather than replaces, contextual field help.
+Its topic fragments reserve space for the native sticky administrator toolbar, including wrapped
+mobile actions, so navigation does not hide the topic heading or the start of its text.
+Help uses immediate native scrolling so consecutive contents clicks do not move their targets
+between pointer press and release; browser fragment history remains native.
+
+On narrow administrator screens, the access table scrolls horizontally within its calendar card
+so every grant action remains reachable without widening the page. Long page headings use the
+administrator template's native ellipsis; the complete heading remains available to assistive
+technology. Native calendar switches also fit their settings column when labels and controls
+share a row, without clipping the control or widening the page. Long calling-code choices in
+Options use Joomla's normal in-flow radio labels, keeping their description below the complete
+choice text rather than overlapping it.
 
 #### Replacing the token feeds
 

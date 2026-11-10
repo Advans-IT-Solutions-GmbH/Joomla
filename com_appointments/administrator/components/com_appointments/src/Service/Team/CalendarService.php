@@ -32,10 +32,10 @@ defined('_JEXEC') or die;
  * - create: `core.create` on the component; a recovery key exists; the owner is
  *   an unblocked team member with a key pair. Allowing externals at creation
  *   needs the right to share externally.
- * - update: an effective manager of the calendar; switching «allow external
+ * - update: an effective manager or active component administrator; switching «allow external
  *   users» needs the right to share externally as well, and switching it off
  *   removes every external grant at once.
- * - delete: `core.delete` and an effective manager. A calendar whose row no
+ * - delete: `core.delete` and an effective manager or active component administrator. A calendar whose row no
  *   longer verifies (for example after the site secret changed) may be deleted
  *   by a user with `core.admin` and `core.delete`: deleting never grants.
  *
@@ -224,7 +224,7 @@ final class CalendarService implements CalendarServiceInterface
 
     /**
      * Set a new owner, with a new MAC over the verified row. Only for the
-     * recovery path, inside its transaction.
+     * administrative or recovery grant path, inside its transaction.
      */
     public static function setOwner(TeamServices $services, int $calendarId, int $ownerUserId): void
     {
@@ -365,7 +365,7 @@ final class CalendarService implements CalendarServiceInterface
             }
 
             // Decided under the row lock, against the verified row.
-            if (GrantService::accessUnderLock($this->services, $actorUserId, $row)?->role !== CalendarRole::Manage) {
+            if (!GrantService::mayManageCalendar($this->services, $actorUserId, $row)) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
             }
 
@@ -441,9 +441,8 @@ final class CalendarService implements CalendarServiceInterface
             // calendar that no longer verifies: an administrator (deleting
             // never grants).
             $valid = $this->macValid($row);
-            $allowed = $valid
-                ? GrantService::accessUnderLock($this->services, $actorUserId, $row)?->role === CalendarRole::Manage
-                : $actor->authorise('core.admin', 'com_appointments');
+            $allowed = GrantService::isAdministrator($actorUserId)
+                || ($valid && GrantService::accessUnderLock($this->services, $actorUserId, $row)?->role === CalendarRole::Manage);
 
             if (!$allowed) {
                 throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_NOT_ALLOWED', 403);
