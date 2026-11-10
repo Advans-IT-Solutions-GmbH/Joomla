@@ -148,7 +148,10 @@ the initial outcome write must not permit Complete with skipped booking cleanup.
 `#__appointments_privacy_outcomes` plus any outstanding cleanup reference govern the
 bundled `content/appointmentsprivacy` native before-save veto for Core Complete.
 This guard is independent of the generic system adapter and normally disabled DAV/user
-plugins. A removal audit is an attempt, not success proof. Unreadable/unsearched calendar
+plugins. `Service/PrivacyOperationLock` (same HMAC key as the adapter's lock, so the two are re-entrant
+on one connection) serializes CanRemove/Remove and the Complete save per request,
+rechecking the stored status/type after it is acquired; a busy lock refuses, never waits.
+A removal audit is an attempt, not success proof. Unreadable/unsearched calendar
 or booking data remains incomplete; genuine unlocked key-holder access is still
 required. See the component README "Formal privacy requests" for repair and separate
 Core completion, and distinguish external/client/mail/backup copies from internal

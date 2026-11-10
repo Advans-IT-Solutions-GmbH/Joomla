@@ -313,6 +313,40 @@ switch ($op) {
             $lock->release();
         }
         exit(0);
+    case 'appointments-operation-hold':
+        // Simulates another in-flight privacy operation on its own connection with only
+        // the shared per-request lock name, independent of either plugin being enabled.
+        if (!ctype_digit($email) || (int) $email < 1) {
+            throw new RuntimeException('An explicit synthetic Core request id is required.');
+        }
+        $subject = $db->setQuery('SELECT email FROM #__privacy_requests WHERE id=' . (int) $email)->loadResult();
+        if (!is_string($subject) || !str_ends_with($subject, '@example.test')) {
+            throw new RuntimeException('Only a synthetic Core request may be held.');
+        }
+        $name = $db->quote(hash_hmac('sha256', 'privacy-operation:' . (int) $email, (string) $app->get('secret')));
+        if ((int) $db->setQuery("SELECT GET_LOCK($name, 0)")->loadResult() !== 1) {
+            throw new RuntimeException('The synthetic operation lock was not acquired.');
+        }
+        echo "LOCK_HELD\n";
+        fflush(STDOUT);
+        try {
+            fgets(STDIN);
+            if (($argv[3] ?? '') === 'incomplete') {
+                // The overlapped Remove retry records its incomplete outcome before it ends.
+                $app->bootComponent('com_appointments');
+                \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($db, (int) $email, false);
+            }
+        } finally {
+            $db->setQuery("SELECT RELEASE_LOCK($name)")->execute();
+        }
+        exit(0);
+    case 'appointments-outcome-state':
+        if (!ctype_digit($email)) {
+            throw new RuntimeException('An explicit synthetic Core request id is required.');
+        }
+        $out['complete'] = $db->setQuery('SELECT complete FROM #__appointments_privacy_outcomes WHERE request_id='
+            . (int) $email)->loadResult();
+        break;
     case 'appointments-host-state':
         $app->bootComponent('com_appointments');
         $host = (int) $db->setQuery("SELECT id FROM #__users WHERE username='privacy-fixture-host'")->loadResult();
