@@ -17,6 +17,8 @@ Copilot recommendation remain separate gates.
 For Help navigation, UI-03 also checks all eight native fragments, direct entry and browser
 Back/Forward against the actual sticky-toolbar geometry, including wrapped mobile actions.
 DOM visibility and full-page captures do not establish unobscured native viewport text.
+At 375 px, exercise consecutive Help contents clicks in both browsers/themes without added delays;
+native scrolling must not move the pointer target between press and release.
 
 ## PHPUnit — the domain logic
 

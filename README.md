@@ -40,12 +40,12 @@ Joomla/
 | Extension | Description | Joomla |
 |-----------|-------------|--------|
 | [Joomla! AJAX Forms](plg_ajax_joomlaajaxforms/) | AJAX login, registration, MFA, profile editing, password reset, username reminder; optional J2Commerce 4.x/6.x cart operations | 5.4 – 6.x |
-| [DMARC Reports](com_dmarcreports/) | Administrator component that ingests and analyses RFC 7489 DMARC aggregate reports (IMAP and file upload) across multiple domains, with an actionable rollout dashboard and CSV export | 5.4 – 6.x |
+| [DMARC Reports](com_dmarcreports/) | Administrator component for RFC 7489 DMARC aggregate and RFC 8460 TLS-RPT reports (IMAP/file upload), multi-domain analysis, Action Center, MTA-STS guidance and CSV export | 5.4 – 6.x |
 | [DMARC Reports Dashboard Module](mod_dmarcreports/) | Administrator control-panel module that surfaces the DMARC Reports multi-domain summary and top Action Center items on the Joomla backend dashboard, linking into the component and degrading gracefully when it is absent | 5.4 – 6.x |
 | [DMARC Reports Scheduler Task](plg_task_dmarcreports/) | Joomla scheduler task plugin that automatically fetches, parses and stores DMARC and TLS-RPT reports from every active IMAP source on a configurable interval, reusing the component's ingestion and locking so automatic and on-demand runs stay parallel-safe | 5.4 – 6.x |
 | [DMARC Reports MTA-STS Policy](plg_system_dmarcmtasts/) | System plugin that serves the generated MTA-STS policy (RFC 8461) at `/.well-known/mta-sts.txt` for each configured domain, so the policy stays in sync with the component options without a hand-maintained static file | 5.4 – 6.x |
 | [DMARC Reports Package](pkg_dmarcreports/) | Joomla package that bundles the DMARC Reports component, dashboard module, scheduler task plugin and MTA-STS system plugin into one install, update and uninstall for the administrator | 5.4 – 6.x |
-| [Appointments](com_appointments/) | **Pre-release.** Self-hosted scheduling with availability rules, no-JavaScript booking, approval, calendar invitations, signed reschedule/cancel/erase links, private subscriptions, reminders and retention, opt-in conferencing, Joomla privacy integration and per-event administration. See the component README for setup and limitations | 5.4 – 6.x |
+| [Appointments](com_appointments/) | **Pre-release.** Self-hosted scheduling, no-JavaScript booking, approval, signed management links, invitations, reminders/retention and opt-in conferencing; encrypted internet calendars with CalDAV, device credentials and grants; Joomla privacy integration. See the component README for setup and limitations | 5.4 – 6.x |
 | [Core privacy requests](plg_system_privacyrequests/) | **Pre-release.** Standalone, opt-in no-account removal request and email confirmation through the native Core privacy lifecycle; administrators and active privacy plugins retain authorization, legal blocking and separate completion responsibility | 5.4 – 6.x |
 
 ### J2Commerce Extensions
@@ -58,6 +58,22 @@ Joomla/
 | [Product Compare](j2commerce/plg_j2commerce_productcompare/) | Compare products side-by-side |
 | [Privacy](j2commerce/plg_privacy_j2commerce/) | GDPR compliance for J2Commerce |
 
+### Bundled Plugin Inventory
+
+The tables above list the **13 independently built extensions** on this branch. Their production manifests also declare these **seven bundled plugins**. Each child has its own manifest/languages and is installed, updated and removed through its parent; do not treat it as a separate release download. A package's four DMARC children are already listed above, not four additional extensions. Product Compare's Joomla 5 `j2store` mirror is a deployment variant of that plugin, not another source extension.
+
+| Bundled plugin | Parent and role | Initial state |
+|---|---|---|
+| [Privacy - Appointments](com_appointments/plugins/privacy/appointments/README.md) | Appointments: native privacy export, removal and legal-blocker callbacks | Enabled |
+| [Content - Appointments privacy completion guard](com_appointments/plugins/content/appointmentsprivacy/README.md) | Appointments: independent veto of native removal completion while Appointments reports incomplete | Enabled |
+| [Task - Appointments](com_appointments/plugins/task/appointments/README.md) | Appointments: reminders, retention and internet-calendar maintenance routines | Enabled; task states and triggers are separate |
+| [System - Appointments CalDAV](com_appointments/plugins/system/appointmentsdav/README.md) | Appointments: DAV endpoint and sign-in guard | Disabled until operator setup |
+| [User - Appointments internet calendars](com_appointments/plugins/user/appointments/README.md) | Appointments: key sessions, account events and cleanup | Disabled until operator setup |
+| [System - J2Commerce Privacy](j2commerce/plg_privacy_j2commerce/plugins/system/j2commerceprivacy/README.md) | J2Commerce Privacy: checkout consent and guest-confirmation mail links | Enabled when first introduced |
+| [Task - J2Commerce Privacy Cleanup](j2commerce/plg_privacy_j2commerce/plugins/task/j2commerceprivacy/README.md) | J2Commerce Privacy: automatic retention cleanup | Enabled when first introduced; configure a task/trigger |
+
+Existing enabled/disabled plugin states are preserved on updates. This inventory describes implemented source, not a statement of release, installed acceptance or website-wide privacy coverage.
+
 ## Installation safety and repeatable system checks
 
 Every distributable uses the same installer support from `shared/installer/`, staged into its
@@ -66,7 +82,7 @@ rsync and zip/unzip). Each extension keeps its own lifecycle work, but
 the common installer adds a live prerequisite report after installation and update. **Passed
 checks, blockers and warnings are separate.** A disabled plugin is not a missing PHP extension,
 and an unverified cron trigger or mail delivery is never reported as a successful end-to-end test.
-The report is translated into en-GB, de-DE and fr-FR; shipped de-CH files use the de-DE text.
+The report is translated into en-GB, de-DE and fr-FR.
 
 The **System check** tab is read-only and can be reopened and refreshed without reinstalling:
 

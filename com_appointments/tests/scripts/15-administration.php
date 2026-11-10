@@ -149,6 +149,8 @@ try {
         'The installed stylesheet bounds native calendar switchers to their settings column without clipping');
     $check(preg_match('~#appointments-help\s*>\s*section\[id\]\s*\{[^}]*scroll-margin-block-start:\s*8rem~', $styles) === 1,
         'The installed stylesheet reserves native sticky-toolbar clearance for every Help topic fragment');
+    $check(preg_match('~html:has\(\#appointments-help\)[^{]*\{[^}]*scroll-behavior:\s*auto\s*;~', $styles) === 1,
+        'The installed stylesheet keeps native Help navigation from moving targets during pointer activation');
     $componentParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
     try {
         foreach ([0, 1] as $enabled) {
