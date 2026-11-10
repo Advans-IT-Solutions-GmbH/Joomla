@@ -12,7 +12,7 @@ services:
       JOOMLA_DB_NAME: privacy_fixture
       JOOMLA_SITE_NAME: Privacy Test Fixture
       JOOMLA_ADMIN_USER: Synthetic Administrator
-      JOOMLA_ADMIN_USERNAME: fixture-admin
+      JOOMLA_ADMIN_USERNAME: fixtureadmin
       JOOMLA_ADMIN_PASSWORD: Synthetic-Fixture-Only-632!
       JOOMLA_ADMIN_EMAIL: admin@example.test
       PRIVACY_TEST_ROOT: /var/www/html

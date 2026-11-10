@@ -135,7 +135,9 @@ never let a permanently failing first page starve later obligations.
 staff ID during CanRemove, before Core pseudonymisation. Keep it across null-user
 retries and feature switches; use native revocation/ownership teardown, and independently
 check staff obligations before accepting any success flag. Unknown older interrupted
-scope fails closed, not a fabricated guest success. See the README for retention
+scope fails closed, not a fabricated guest success. A Core removal action-log entry
+for the request with neither staff scope nor outcome row marks such a pre-provenance
+attempt (CanRemove and Complete both refuse). See the README for retention
 and recovery limits of this still-linkable request metadata.
 Its authenticated pending-attempt marker also survives unexpected removal failures
 and missing/forged outcome flags. Log and warn instead of aborting Core's remaining

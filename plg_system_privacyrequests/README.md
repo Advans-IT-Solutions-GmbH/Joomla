@@ -13,6 +13,14 @@ This extension carries the swiss made software label.
 email-confirmation page. Requires Joomla 5.4 or 6 and PHP 8.1+. It does not require
 Appointments, J2Commerce, a new user account, or changes to Joomla Core files.
 
+## Requirements
+
+Joomla 5.4.x or 6.x, PHP 8.1+, enabled Joomla Privacy component, a configured native
+mail transport supporting the visitor's original address, and active privacy plugins
+covering the site's data. Appointments and J2Commerce are optional. A usable local
+public operator contact route is required; contact is not confirmation or proof of
+ownership.
+
 ## Installation and activation
 
 Build `plg_system_privacyrequests` with its `build.sh` wrapper and install the ZIP
@@ -112,6 +120,25 @@ prevents automated confirmation. GET only displays the form or prefills a code; 
 and the real Joomla session form token. There is no return-URL or redirect facility.
 Keep an operator contact route available when automated submission or delivery fails.
 
+## Updating
+
+Install the newer standalone ZIP through Joomla's normal installer and shared
+approval/backup process. Updates preserve plugin publication state. Recheck the
+contact route, mail and active privacy callbacks on an isolated test installation;
+an update is not acceptance of native mail delivery or complete site-wide erasure.
+
+## Uninstall
+
+Pause intake and native processing before removal. Uninstall removes this plugin and
+drops its three auxiliary tables (`#__privacy_guest_subjects`,
+`#__privacy_guest_attempts`, `#__privacy_guest_outcomes`); it leaves native Core
+privacy requests and audit records in place. This destroys adapter provenance,
+outcome and rate-limit state, not the underlying Core requests or all subject data.
+It is not a rollback or a successful removal/completion. Reconcile pending work and
+preserve the matching lawful recovery evidence before uninstalling. Disabling also
+removes the adapter's processing guard: do not process or complete adapter-managed
+requests while it is disabled.
+
 ## Native Core lifecycle
 
 Creation and renewal use the public **administrator RequestModel::save** to save an
@@ -193,7 +220,8 @@ and delivery failure), `#__privacy_guest_attempts` (window counters) and
 `#__privacy_guest_outcomes` (Core request removal outcome). They do not replace Core's
 request or audit records. No background retention task is installed for these records:
 include their still-linkable identifiers and the native Core records in the site's
-retention/access policy.
+retention/access policy. Uninstalling the plugin drops exactly these three tables
+and their indexes (see [Uninstall](#uninstall)).
 
 Core success is **not website-wide proof that everything was erased**. An enabled
 privacy plugin may implement export only. Audit/retention obligations, unreadable
@@ -252,6 +280,17 @@ Do not install probes or run fixture controls on a live site. A passing lifecycl
 does not establish the full browser/locale matrix, legacy-shop coexistence or production
 readiness. Build, installed upgrade, negative/concurrent cases and relevant UI acceptance
 must be completed before deployment.
+
+See [test setup and limits](tests/README.md) for the isolated native suites. Neither
+CLI mail-failure tests nor exact address isolation establishes positive
+Unicode-local-part delivery; the stock native mail limitation remains unresolved
+unless the original-address confirmation lifecycle actually succeeds.
+
+## Multi-Language Support
+
+Exactly de-DE, en-GB and fr-FR are shipped; de-DE uses Swiss High German.
+Subjects/bodies follow the documented native template/recipient-language rules.
+Another locale requires a repository-wide maintainer decision.
 
 ## License
 

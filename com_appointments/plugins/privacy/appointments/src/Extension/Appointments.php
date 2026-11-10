@@ -131,10 +131,27 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     public function onPrivacyRemoveData(RemoveDataEvent $event): void
     {
         $requestId = (int) $event->getRequest()->id;
+        // Invalidate both success markers of an earlier attempt independently before any
+        // cleanup: the pending attempt alone keeps Complete blocked if the outcome write fails.
+        $failure = null;
+        $scope = null;
+        if ($requestId > 0) {
+            try {
+                $scope = $this->staffScope($requestId);
+                $scope->beginAttempt();
+            } catch (\Throwable $error) {
+                $failure = $error;
+            }
+        }
         try {
             PrivacyOutcome::record($this->getDatabase(), $requestId, false);
-            $scope = $requestId > 0 ? $this->staffScope($requestId) : null;
-            $scope?->beginAttempt();
+        } catch (\Throwable $error) {
+            $failure ??= $error;
+        }
+        try {
+            if ($failure !== null) {
+                throw $failure;
+            }
             $this->removeData($event, $scope);
         } catch (\Throwable $error) {
             // A failed listener must not starve later plugins after Core has changed the account.

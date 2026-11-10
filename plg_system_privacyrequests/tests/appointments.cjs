@@ -230,6 +230,85 @@ async function main() {
         await remove(true);
         check('Rebuild request closes only after actual repair and separate remaining-scope resolution',
             await complete(rebuildEmail) === 2);
+
+        // Self-service guest link: a calendar copy step that fails is reported, never shown as complete,
+        // and leaves a booking-only reference that the booking upkeep retries until both steps succeed.
+        // A: the copy cannot be deleted, but the enabled target is rewritten without the address.
+        // B: the copy is deleted, but its sanitised rebuild cannot be written.
+        // C: internet calendars off and the copy cannot be deleted: both steps fail.
+        // D: as A, then internet calendars are switched off before the retry.
+        // E: as C, then the booking itself is deleted (retention or administrator) before the retry.
+        const emptyPayload = createHash('sha256').update('').digest('hex');
+        for (const variant of ['delete-blocked', 'rewrite-blocked', 'both-blocked', 'switched-off', 'booking-deleted']) {
+            const selfEmail = `self-${variant}-${Date.now()}@example.test`;
+            bookingId = fixture('appointments-booking', selfEmail, 'guest').booking_id;
+            const selfCopy = fixture('appointments-copy', bookingId);
+            const rewritten = ['delete-blocked', 'switched-off'].includes(variant);
+            const bothFail = ['both-blocked', 'booking-deleted'].includes(variant);
+            if (variant === 'rewrite-blocked') {
+                fixture('appointments-copy-unblock');
+            }
+            if (!bothFail) {
+                fixture('appointments-rebuild-setup', bookingId);
+            }
+            if (rewritten) {
+                fixture('appointments-rebuild-unblock');
+            }
+            const guestPage = await browser.newPage();
+            try {
+                await guestPage.goto(root + fixture('appointments-guest-link', selfEmail, String(bookingId)).url);
+                await Promise.all([guestPage.waitForNavigation(),
+                    guestPage.locator('form.com-appointments-manage-form button[type="submit"]').click()]);
+                const text = await guestPage.locator('body').innerText();
+                state = fixture('appointments-snapshot', bookingId);
+                check(`Self-service guest removal (${variant}) removes the address from the booking only`,
+                    state.guests_hash === guestsHash && state.primary_hash === primaryHash);
+                check(`Self-service guest removal (${variant}) reports the outstanding calendar copy instead of plain success`,
+                    text.includes('could not be updated yet') && !text.includes('Your address has been removed from this appointment.'));
+                check(`Self-service guest removal (${variant}) keeps one retry reference with the booking id only`,
+                    state.cleanup.length === 1 && Number(state.cleanup[0].request_id) === 0
+                    && Number(state.cleanup[0].booking_id) === Number(bookingId) && Number(state.cleanup[0].payload_length) === 32 && state.cleanup[0].payload_hash !== emptyPayload);
+                if (rewritten) {
+                    const opened = fixture('appointments-copy-inspect', selfCopy.calendar_id, selfEmail);
+                    check('Undeletable copy is still rewritten without the removed guest',
+                        state.copies === 1 && opened.opened === 1 && opened.removed_guest_absent && opened.bystander_present);
+                } else if (variant === 'rewrite-blocked') {
+                    check('Copy deleted although its rebuild failed: no stale address remains in the calendar',
+                        state.copies === 0);
+                } else {
+                    check('Both steps failed: the old copy is still there and only the reference makes it retryable',
+                        state.copies === 1);
+                }
+                await guestPage.reload();
+                check(`The same browser sees the ${variant} notice again without a second removal`,
+                    (await guestPage.locator('body').innerText()).includes('could not be updated yet'));
+                if (variant === 'switched-off') {
+                    fixture('appointments-rebuild-restore');
+                } else if (variant === 'booking-deleted') {
+                    check('The booking with a pending reference is deleted', fixture('appointments-booking-purge', bookingId).purged === 1);
+                }
+                let retry = fixture('appointments-copy-retry', bookingId);
+                check(`Retry while the ${variant} failure persists keeps the reference`, retry.references === 1);
+                fixture(variant === 'rewrite-blocked' ? 'appointments-rebuild-unblock' : 'appointments-copy-unblock');
+                retry = fixture('appointments-copy-retry', bookingId);
+                state = fixture('appointments-snapshot', bookingId);
+                check(`Retry after the ${variant} repair forgets the reference`,
+                    retry.references === 0 && state.cleanup.length === 0 && retry.retry.guest_copies_repaired >= 1);
+                if (bothFail || variant === 'switched-off') {
+                    check(`Repaired retry (${variant}) removes the stale copy and leaves no pending reference`, state.copies === 0);
+                } else {
+                    const opened = fixture('appointments-copy-inspect', selfCopy.calendar_id, selfEmail);
+                    check(`Repaired retry (${variant}) leaves one clean copy without the removed guest`,
+                        state.copies === 1 && opened.opened === 1 && opened.removed_guest_absent && opened.bystander_present);
+                }
+            } finally {
+                await guestPage.close();
+                fixture('appointments-copy-unblock');
+                fixture('appointments-rebuild-restore');
+                fixture('appointments-copy-retry', bookingId);
+                fixture('appointments-calendar-delete', selfCopy.calendar_id);
+            }
+        }
     } finally {
         fixture('appointments-outcome-unblock');
         fixture('appointments-copy-unblock');

@@ -8,6 +8,7 @@
 
 namespace Advans\Plugin\Task\Appointments\Extension;
 
+use Advans\Component\Appointments\Administrator\Service\PrivacyCleanup;
 use Advans\Component\Appointments\Administrator\Service\SchedulerService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Component\ComponentHelper;
@@ -173,7 +174,8 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
      */
     private static function bookingUpkeep(TeamServices $services): array
     {
-        $result = ['orphans_removed' => $services->bookings()->removeOrphans(500)];
+        $result = ['orphans_removed' => $services->bookings()->removeOrphans(500)]
+            + PrivacyCleanup::retryCopies($services->db(), $services->bookings(), 200);
         $records = 'Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords';
 
         if (class_exists($records) && method_exists($records, 'resume')) {

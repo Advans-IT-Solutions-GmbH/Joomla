@@ -3,7 +3,22 @@
 // Focused native plugin-event regressions, not a substitute for Core browser E2E.
 $privacyRequests = [];
 $staffUserId = 0;
+$legacyLogs = [];
 $privacyTrigger = null;
+$overlapBooking = 0;
+// Trigger DDL is not available in MySQL's prepared-statement protocol, so it uses the native connection.
+$triggerDdl = static function (string $sql) use ($joomlaDb): void {
+    $joomlaDb->connect();
+    $connection = $joomlaDb->getConnection();
+    if (!$connection instanceof \mysqli) {
+        $joomlaDb->setQuery($sql)->execute();
+
+        return;
+    }
+    if ($connection->query($joomlaDb->replacePrefix($sql)) !== true) {
+        throw new \RuntimeException('Trigger DDL failed: ' . $connection->error);
+    }
+};
 $privacyParams = \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments');
 $savedTeamEnabled = $privacyParams->get('teamcal_enabled', 0);
 $newPrivacyFixture = static function (string $email) use ($joomlaDb, &$privacyRequests) {
@@ -50,9 +65,9 @@ try {
     $check($canRemove->getArgument('result')[0]->canRemove && $scope->userId() === $staffUserId,
         'CanRemove captures authenticated request-bound staff scope before the Core user callback');
     $privacyTrigger = $joomlaDb->getPrefix() . 'privacy_scope_hold';
-    $joomlaDb->setQuery('CREATE TRIGGER ' . $joomlaDb->quoteName($privacyTrigger)
+    $triggerDdl('CREATE TRIGGER ' . $joomlaDb->quoteName($privacyTrigger)
         . ' BEFORE DELETE ON #__appointments_user_keys FOR EACH ROW BEGIN IF OLD.user_id = ' . $staffUserId
-        . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected staff cleanup failure'; END IF; END")->execute();
+        . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected staff cleanup failure'; END IF; END");
     $coreUser = $application->bootPlugin('user', 'privacy');
     $coreUser->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
         ['subject' => $request, 'user' => $user]));
@@ -81,8 +96,9 @@ try {
         $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $id),
             "The completion guard independently refuses a forged outcome flag, feature=$enabled");
     }
-    $joomlaDb->setQuery('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger))->execute();
+    $triggerDdl('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger));
     $privacyTrigger = null;
+$overlapBooking = 0;
     $privacyParams->set('teamcal_enabled', 1);
     $remove(null);
     $check(!\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $id)
@@ -99,15 +115,32 @@ try {
         && !\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $empty->id),
         'A registered subject with no staff records acquires no invented cleanup obligation while calendars are disabled');
 
+    $legacy = $newPrivacyFixture('legacy-' . bin2hex(random_bytes(6)) . '@example.test');
+    $legacy->status = 1;
+    $legacy->store();
+    $logsBefore = (int) $joomlaDb->setQuery('SELECT MAX(id) FROM #__action_logs')->loadResult();
+    $application->bootComponent('com_privacy')->getMVCFactory()
+        ->createModel('Remove', 'Administrator', ['ignore_request' => true])->logRemove($legacy);
+    $legacyLogs = $joomlaDb->setQuery('SELECT id FROM #__action_logs WHERE id>' . $logsBefore)->loadColumn();
+    $check($legacyLogs !== [], 'The upgrade regression records an actual Core removal log for the legacy request');
+    $legacyCheck = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData',
+        ['subject' => $legacy, 'user' => null]);
+    $plugin->onPrivacyCanRemoveData($legacyCheck);
+    $check(!$legacyCheck->getArgument('result')[0]->canRemove
+        && $legacyCheck->getArgument('result')[0]->reason === \Joomla\CMS\Language\Text::_('PLG_PRIVACY_APPOINTMENTS_STAFF_SCOPE_FAILED')
+        && $joomlaDb->setQuery('SELECT COUNT(*) FROM #__appointments_privacy_staff WHERE request_id=' . (int) $legacy->id)->loadResult() == 0
+        && \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $legacy->id),
+        'A legacy removal with neither provenance nor outcome rows requires operator recovery instead of a fresh guest scope');
+
     $interrupted = $newPrivacyFixture('interrupted-' . bin2hex(random_bytes(6)) . '@example.test');
     $firstAttempt = new \Advans\Component\Appointments\Administrator\Service\PrivacyStaffCleanup($joomlaDb, $keys, (int) $interrupted->id);
     $firstAttempt->remember((string) $interrupted->email, null);
     $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
         'A captured guest scope without an authenticated removal attempt cannot permit completion');
     $privacyTrigger = $joomlaDb->getPrefix() . 'privacy_initial_outcome_hold';
-    $joomlaDb->setQuery('CREATE TRIGGER ' . $joomlaDb->quoteName($privacyTrigger)
+    $triggerDdl('CREATE TRIGGER ' . $joomlaDb->quoteName($privacyTrigger)
         . ' BEFORE INSERT ON #__appointments_privacy_outcomes FOR EACH ROW BEGIN IF NEW.request_id = ' . (int) $interrupted->id
-        . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected initial outcome write failure'; END IF; END")->execute();
+        . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected initial outcome write failure'; END IF; END");
     $check($assertIncomplete(static function () use ($plugin, $interrupted): void {
         $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
             ['subject' => $interrupted, 'user' => null]));
@@ -115,12 +148,13 @@ try {
         && $joomlaDb->setQuery('SELECT complete FROM #__appointments_privacy_outcomes WHERE request_id='
             . (int) $interrupted->id)->loadResult() === null,
         'An actual initial outcome write failure warns and leaves completion blocked without an outcome row');
-    $joomlaDb->setQuery('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger))->execute();
+    $triggerDdl('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger));
     $privacyTrigger = null;
+$overlapBooking = 0;
     \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, (int) $interrupted->id, true);
     $joomlaDb->setQuery('UPDATE #__appointments_privacy_outcomes SET complete=1 WHERE request_id=' . (int) $interrupted->id)->execute();
     $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
-        'A forged success cannot replace the missing authenticated removal attempt');
+        'A forged success cannot replace an unfinished authenticated removal attempt');
     $firstAttempt->beginAttempt();
     \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, (int) $interrupted->id, true);
     $joomlaDb->setQuery('DELETE FROM #__appointments_privacy_outcomes WHERE request_id=' . (int) $interrupted->id)->execute();
@@ -139,6 +173,24 @@ try {
         ['subject' => $interrupted, 'user' => null]));
     $check(!\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
         'A genuinely successful current native retry clears the interrupted-attempt obligation');
+    $privacyTrigger = $joomlaDb->getPrefix() . 'privacy_retry_outcome_hold';
+    $triggerDdl('CREATE TRIGGER ' . $joomlaDb->quoteName($privacyTrigger)
+        . ' BEFORE UPDATE ON #__appointments_privacy_outcomes FOR EACH ROW BEGIN IF NEW.request_id = ' . (int) $interrupted->id
+        . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected retry outcome write failure'; END IF; END");
+    $check($assertIncomplete(static function () use ($plugin, $interrupted): void {
+        $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
+            ['subject' => $interrupted, 'user' => null]));
+    }) && (int) $joomlaDb->setQuery('SELECT complete FROM #__appointments_privacy_outcomes WHERE request_id='
+            . (int) $interrupted->id)->loadResult() === 1
+        && \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
+        'A retry whose outcome reset fails after an earlier success cannot reuse the stale success marker to permit completion');
+    $triggerDdl('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger));
+    $privacyTrigger = null;
+$overlapBooking = 0;
+    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
+        ['subject' => $interrupted, 'user' => null]));
+    $check(!\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
+        'A repaired successful retry after the failed outcome reset clears the obligation again');
 
     $original = $joomlaDb->setQuery('SELECT payload FROM #__appointments_privacy_staff WHERE request_id=' . $id)->loadResult();
     $foreign = $newPrivacyFixture('foreign-' . bin2hex(random_bytes(6)) . '@example.test');
@@ -176,11 +228,43 @@ try {
     \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, $id, true);
     $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $id),
         'Fair retry progress never turns pending obligations into a success');
+
+    // Two signed-link removals of the same booking overlap: the older one must not forget the newer one's reference.
+    $overlapBooking = 2140000000 + random_int(0, 999999);
+    $copies = \Advans\Component\Appointments\Administrator\Service\PrivacyCleanup::class;
+    $references = static fn (): int => (int) $joomlaDb->setQuery('SELECT COUNT(*) FROM #__appointments_privacy_cleanup'
+        . ' WHERE request_id=0 AND booking_id=' . $overlapBooking)->loadResult();
+    $older = $copies::rememberCopy($joomlaDb, $overlapBooking);
+    $newer = $copies::rememberCopy($joomlaDb, $overlapBooking);
+    $copies::forgetCopy($joomlaDb, $overlapBooking, $older);
+    $check($older !== $newer && $references() === 1, 'An older guest-link removal cannot forget the reference of a newer one');
+    $copies::forgetCopy($joomlaDb, $overlapBooking, $newer);
+    $check($references() === 0, 'The newest guest-link removal forgets its own reference after both mirror steps');
+    // A removal commits while a retry is mirroring the copy: the retry succeeds but keeps the new reference.
+    $copies::rememberCopy($joomlaDb, $overlapBooking);
+    $bridge = new class ($joomlaDb, $overlapBooking, $copies) implements \Advans\Component\Appointments\Administrator\Service\Team\BookingCalendarBridgeInterface {
+        public function __construct(private $db, private int $id, private string $copies) {}
+        public function busyFor(object $eventType, \DateTimeImmutable $fromUtc, \DateTimeImmutable $toUtc, \DateTimeZone $scheduleZone, bool $readOnly = false): array { return []; }
+        public function lockForBooking(int $eventTypeId): void {}
+        public function removeOrphans(int $limit): int { return 0; }
+        public function onBookingSaved(array $booking): bool { ($this->copies)::rememberCopy($this->db, $this->id); return true; }
+        public function onBookingCancelled(array $booking): void {}
+        public function onBookingErased(int $bookingId): bool { return true; }
+    };
+    $result = $copies::retryCopies($joomlaDb, $bridge, 200);
+    $check($result['guest_copies_repaired'] === 0 && $references() === 1,
+        'A retry overlapping a newer guest-link removal keeps the newer reference');
 } finally {
+    if ($overlapBooking > 0) {
+        $joomlaDb->setQuery('DELETE FROM #__appointments_privacy_cleanup WHERE request_id=0 AND booking_id=' . $overlapBooking)->execute();
+    }
     if ($privacyTrigger !== null) {
-        $joomlaDb->setQuery('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger))->execute();
+        $triggerDdl('DROP TRIGGER ' . $joomlaDb->quoteName($privacyTrigger));
     }
     $privacyParams->set('teamcal_enabled', $savedTeamEnabled);
+    if ($legacyLogs !== []) {
+        $joomlaDb->setQuery('DELETE FROM #__action_logs WHERE id IN (' . implode(',', array_map('intval', $legacyLogs)) . ')')->execute();
+    }
     foreach ($privacyRequests as $id) {
         foreach (['appointments_privacy_cleanup', 'appointments_privacy_staff', 'appointments_privacy_outcomes', 'privacy_requests'] as $table) {
             $joomlaDb->setQuery('DELETE FROM ' . $joomlaDb->quoteName('#__' . $table)

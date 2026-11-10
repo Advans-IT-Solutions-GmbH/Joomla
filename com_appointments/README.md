@@ -440,6 +440,23 @@ silently abandons unresolved cleanup and no newly activated cleanup task.
 Retries process at most 200 references, rotating attempted rows behind untouched
 ones even when they fail. An unreadable first batch cannot starve later references.
 
+A guest who leaves a booking through the **signed link** in their mail goes through the
+same calendar-copy steps: the copy is removed and, with internet calendars on, written
+again without the address. Both steps are always attempted. If either fails, the
+visitor sees that the removal is not complete instead of a success message, the failure
+is logged with the booking ID only, and a reference row with request ID `0`, the booking
+ID and a random generation as payload (no address, link or key) stays in the same table.
+Each removal writes a new generation, so an earlier removal or retry that finishes later
+never forgets the reference of a newer one. The existing
+**Appointments: internet calendar retention** Scheduler task retries these references on
+each run (at most 200, also while internet calendars are off) and forgets one only when
+both steps succeed and its generation is unchanged; its log shows `guest_copies_repaired` and `guest_copies_pending`.
+A reference whose booking was deleted meanwhile, or whose internet calendars were switched
+off, resolves once the copy can be removed; deleting all Appointments data on uninstall drops it.
+Nothing activates that task: without a configured task the reference and the stale copy
+remain until the operator resolves the failure and runs it. A formal Core request does
+not process these references, and the removed address no longer finds the booking.
+
 Before Core pseudonymises an account, **CanRemove** captures its minimal staff scope
 in authenticated-encrypted `#__appointments_privacy_staff`, bound to the Core request
 ID and exact normalized request address. Later **Remove** attempts use that retained
@@ -462,6 +479,11 @@ retries, not anonymous booking data. Include it in the site's request-record ret
 and access policy. Earlier interrupted requests without recoverable staff provenance
 fail closed when their original account can no longer be identified; they need
 operator investigation, not an automatic scope/status migration or a success flag.
+This includes a request upgraded from a version without these tables: if Core's action
+log already records a **Remove** for it but neither a staff scope nor an outcome row
+exists, CanRemove blocks the retry and the completion guard blocks Complete. Core
+captures the scope before it writes that log entry, so a current attempt never
+matches. A site that purged or never kept that log entry cannot be detected this way.
 
 `#__appointments_privacy_outcomes` records the request's incomplete/complete callback
 outcome; outstanding cleanup references independently count as incomplete. The bundled
@@ -855,6 +877,8 @@ booking menus, administrative rights versus content keys, grants/ownership/recov
 the separate retention lifecycles, privacy, mail and troubleshooting. The page remains accessible
 to users with component management permission when internet calendars are disabled, releases no
 personal keys and changes no setting. It supplements, rather than replaces, contextual field help.
+Its topic fragments reserve space for the native sticky administrator toolbar, including wrapped
+mobile actions, so navigation does not hide the topic heading or the start of its text.
 
 On narrow administrator screens, the access table scrolls horizontally within its calendar card
 so every grant action remains reachable without widening the page. Long page headings use the

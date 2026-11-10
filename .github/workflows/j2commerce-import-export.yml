@@ -1,5 +1,7 @@
 name: Build & Test - J2Commerce Import/Export
 
+run-name: "${{ github.event_name == 'pull_request' && format('PR #{0} base={1} base-sha={2} head-sha={3} merge-sha={4}', github.event.pull_request.number, github.event.pull_request.base.ref, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha) || (github.event_name == 'push' && github.event.head_commit.message) || github.workflow }}"
+
 on:
   workflow_dispatch:
   push:
@@ -19,7 +21,7 @@ on:
       - '.github/actions/resolve-shops/**'
       - '.github/scripts/check-sql-alignment.php'
   pull_request:
-    branches: [main]
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
       - 'j2commerce/com_j2commerce_importexport/**'
       - 'shared/build/**'

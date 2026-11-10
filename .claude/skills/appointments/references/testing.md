@@ -14,6 +14,9 @@ calendar clients, conferencing and the three erasure paths. Use the
 storage; record the actual tested commit and never publish credentials, real data or raw evidence.
 The plan itself claims no executed manual tests. Human acceptance and the required exact-head
 Copilot recommendation remain separate gates.
+For Help navigation, UI-03 also checks all eight native fragments, direct entry and browser
+Back/Forward against the actual sticky-toolbar geometry, including wrapped mobile actions.
+DOM visibility and full-page captures do not establish unobscured native viewport text.
 
 ## PHPUnit — the domain logic
 

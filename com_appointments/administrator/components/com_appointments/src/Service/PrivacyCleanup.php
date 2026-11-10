@@ -11,6 +11,7 @@ namespace Advans\Component\Appointments\Administrator\Service;
 use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
+use Advans\Component\Appointments\Administrator\Service\Team\BookingCalendarBridgeInterface;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Log\Log;
 use Joomla\Database\DatabaseInterface;
@@ -136,6 +137,74 @@ final class PrivacyCleanup
     {
         return (int) $this->db->setQuery('SELECT COUNT(*) FROM ' . $this->db->quoteName('#__appointments_privacy_cleanup')
             . ' WHERE request_id = ' . $this->requestId)->loadResult();
+    }
+
+    /**
+     * A guest removal outside a Core request (the signed guest link) whose calendar copy could
+     * not be rewritten. Core request ids start at 1, so request 0 holds these references; the
+     * row carries the booking id only, no address, link or key.
+     *
+     * Every removal writes a new random generation into the payload, under the lock of the
+     * booking row. A removal or retry forgets the reference only if the generation is still
+     * the one it saw, so an older one never drops the obligation of a newer removal.
+     */
+    public static function rememberCopy(DatabaseInterface $db, int $bookingId): string
+    {
+        $generation = bin2hex(random_bytes(16));
+        $quoted = $db->quote($generation);
+        $db->setQuery('INSERT INTO ' . $db->quoteName('#__appointments_privacy_cleanup')
+            . ' (request_id, booking_id, cleanup_key, guest, payload) VALUES (0, ' . $bookingId . ', '
+            . $db->quote(hash('sha256', 'guest-copy:' . $bookingId)) . ', 1, ' . $quoted . ')'
+            . ' ON DUPLICATE KEY UPDATE payload = ' . $quoted)->execute();
+
+        return $generation;
+    }
+
+    public static function forgetCopy(DatabaseInterface $db, int $bookingId, string $generation): void
+    {
+        $db->setQuery('DELETE FROM ' . $db->quoteName('#__appointments_privacy_cleanup')
+            . ' WHERE request_id = 0 AND booking_id = ' . $bookingId . ' AND payload = ' . $db->quote($generation))->execute();
+    }
+
+    /**
+     * Retry of {@see self::rememberCopy()}: the copy is removed and written again from the
+     * current booking; the reference goes only when both steps succeed.
+     *
+     * @return  array{guest_copies_repaired: int, guest_copies_pending: int}
+     */
+    public static function retryCopies(DatabaseInterface $db, BookingCalendarBridgeInterface $bridge, int $limit): array
+    {
+        $table = $db->quoteName('#__appointments_privacy_cleanup');
+        $rows = $db->setQuery('SELECT booking_id, cleanup_key, retry_order, payload FROM ' . $table
+            . ' WHERE request_id = 0 ORDER BY retry_order, booking_id LIMIT ' . max(1, $limit))->loadAssocList();
+        $cursor = (int) $db->setQuery('SELECT MAX(retry_order) FROM ' . $table . ' WHERE request_id = 0')->loadResult();
+        $repaired = 0;
+        foreach ($rows as $row) {
+            $id = (int) $row['booking_id'];
+            $key = $db->quote((string) $row['cleanup_key']);
+            // Claim as in retry(): a failing reference moves back and a parallel run skips it.
+            $db->setQuery('UPDATE ' . $table . ' SET retry_order = ' . (++$cursor) . ' WHERE request_id = 0'
+                . ' AND booking_id = ' . $id . ' AND cleanup_key = ' . $key
+                . ' AND retry_order = ' . (int) $row['retry_order'])->execute();
+            if ($db->getAffectedRows() !== 1) {
+                continue;
+            }
+            try {
+                $erased = $bridge->onBookingErased($id);
+                if ($bridge->onBookingSaved(['id' => $id]) && $erased) {
+                    // A removal that committed meanwhile wrote a new generation and keeps its reference.
+                    $db->setQuery('DELETE FROM ' . $table . ' WHERE request_id = 0 AND booking_id = ' . $id
+                        . ' AND cleanup_key = ' . $key . ' AND payload = ' . $db->quote((string) $row['payload']))->execute();
+                    $repaired += $db->getAffectedRows() === 1 ? 1 : 0;
+                }
+            } catch (\Throwable $error) {
+                Log::add('Appointment guest calendar copy retry failed (' . get_class($error) . ').',
+                    Log::WARNING, 'com_appointments');
+            }
+        }
+
+        return ['guest_copies_repaired' => $repaired, 'guest_copies_pending' => (int) $db->setQuery('SELECT COUNT(*) FROM '
+            . $table . ' WHERE request_id = 0')->loadResult()];
     }
 
     private function open(array $row): array

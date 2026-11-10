@@ -17,6 +17,7 @@ use Advans\Component\Appointments\Administrator\Service\InvalidBookingLinkExcept
 use Advans\Component\Appointments\Administrator\Service\RateLimiter;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\MVC\View\HtmlView;
 use Advans\Component\Appointments\Site\View\AssetsTrait;
@@ -48,7 +49,8 @@ class GuestController extends BaseController
         $id = $this->input->getInt('id', 0);
         $signature = $this->input->getString('signature', '');
         $completed = (bool) $this->app->getUserState($this->receiptKey($id, $signature), false);
-        $data = ['completed' => $completed, 'id' => $id, 'signature' => $signature];
+        $data = ['completed' => $completed, 'id' => $id, 'signature' => $signature,
+            'calendar_pending' => $completed && (bool) $this->app->getUserState($this->receiptKey($id, $signature, 'guest_calendar_pending'), false)];
 
         if (!$completed) {
             $booking = $this->booking($id);
@@ -91,9 +93,17 @@ class GuestController extends BaseController
 
         // A second submission of the same form (double click, reload) repeats nothing.
         if (!$this->app->getUserState($receipt, false)) {
-            (new BookingStore(Factory::getContainer()->get(DatabaseInterface::class)))->removeGuest(
+            $result = (new BookingStore(Factory::getContainer()->get(DatabaseInterface::class)))->removeGuest(
                 $id, new \DateTimeImmutable('now', new \DateTimeZone('UTC')), 'self_service', null, $this->links(), $signature
             );
+            // The signed link cannot be used again once the address is gone, so a calendar copy that
+            // could not be rewritten is reported to the guest and logged for the operator, never
+            // shown as a complete removal.
+            if (!empty($result['_calendar_cleanup_error'])) {
+                Log::add('Appointment guest self-service removal left calendar copy cleanup outstanding for booking #'
+                    . $id . '.', Log::ERROR, 'com_appointments');
+            }
+            $this->app->setUserState($this->receiptKey($id, $signature, 'guest_calendar_pending'), !empty($result['_calendar_cleanup_error']));
             $this->app->setUserState($receipt, true);
         }
 
@@ -139,9 +149,13 @@ class GuestController extends BaseController
         return new SignedLink(new KeyProvider((string) $this->app->get('secret')));
     }
 
-    private function receiptKey(int $id, string $signature): string
+    /**
+     * User state is a dotted registry: the pending flag gets its own branch, because a child of the
+     * receipt path would be overwritten when the receipt itself is set.
+     */
+    private function receiptKey(int $id, string $signature, string $branch = 'guest_removed'): string
     {
-        return 'com_appointments.guest_removed.' . hash('sha256', $id . ':' . $signature);
+        return 'com_appointments.' . $branch . '.' . hash('sha256', $id . ':' . $signature);
     }
 
     /**
