@@ -167,8 +167,10 @@ switch ($op) {
             $db->setQuery('INSERT INTO ' . $db->quoteName($config)
                 . " VALUES ('privacy_fixture','synthetic-only')")->execute();
             $db->setQuery('CREATE TABLE ' . $db->quoteName($active)
-                . ' (id INT PRIMARY KEY, email VARCHAR(320) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
-            $row = (object) ['id' => 1, 'email' => $email];
+                . ' (id INT PRIMARY KEY, email VARCHAR(320) NOT NULL, name VARCHAR(255) NULL,'
+                . ' confirmed TINYINT NOT NULL DEFAULT 0, creation_date DATETIME NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+            $row = (object) ['id' => 1, 'email' => $email, 'name' => 'Synthetic Subscriber', 'confirmed' => 1,
+                'creation_date' => gmdate('Y-m-d H:i:s')];
             $db->insertObject($active, $row);
             $db->setQuery('RENAME TABLE ' . $db->quoteName($active) . ' TO ' . $db->quoteName($unavailable))->execute();
         } elseif (in_array($config, $existing, true)) {

@@ -128,4 +128,7 @@ async function main() {
         await browser.close();
     }
 }
-main().catch(error => {console.error(error); process.exitCode = 1;});
+module.exports = {legacyConfirm};
+if (require.main === module) {
+    main().catch(error => {console.error(error); process.exitCode = 1;});
+}
