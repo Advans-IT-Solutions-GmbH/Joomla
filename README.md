@@ -60,11 +60,12 @@ Joomla/
 
 ### Bundled Plugin Inventory
 
-The tables above list the **12 independently built extensions** on this branch. Their production manifests also declare these **six bundled plugins**. Each child has its own manifest/languages and is installed, updated and removed through its parent; do not treat it as a separate release download. A package's four DMARC children are already listed above, not four additional extensions. Product Compare's Joomla 5 `j2store` mirror is a deployment variant of that plugin, not another source extension.
+The tables above list the **13 independently built extensions** on this branch. Their production manifests also declare these **seven bundled plugins**. Each child has its own manifest/languages and is installed, updated and removed through its parent; do not treat it as a separate release download. A package's four DMARC children are already listed above, not four additional extensions. Product Compare's Joomla 5 `j2store` mirror is a deployment variant of that plugin, not another source extension.
 
 | Bundled plugin | Parent and role | Initial state |
 |---|---|---|
 | [Privacy - Appointments](com_appointments/plugins/privacy/appointments/README.md) | Appointments: native privacy export, removal and legal-blocker callbacks | Enabled |
+| [Content - Appointments privacy completion guard](com_appointments/plugins/content/appointmentsprivacy/README.md) | Appointments: independent veto of native removal completion while Appointments reports incomplete | Enabled |
 | [Task - Appointments](com_appointments/plugins/task/appointments/README.md) | Appointments: reminders, retention and internet-calendar maintenance routines | Enabled; task states and triggers are separate |
 | [System - Appointments CalDAV](com_appointments/plugins/system/appointmentsdav/README.md) | Appointments: DAV endpoint and sign-in guard | Disabled until operator setup |
 | [User - Appointments internet calendars](com_appointments/plugins/user/appointments/README.md) | Appointments: key sessions, account events and cleanup | Disabled until operator setup |

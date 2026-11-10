@@ -90,6 +90,7 @@ activation and effective content access.
 | Plugin | Role | First installation |
 |---|---|---|
 | [`privacy/appointments`](plugins/privacy/appointments/README.md) | Native privacy export/removal and calendar privacy integration | Enabled |
+| [`content/appointmentsprivacy`](plugins/content/appointmentsprivacy/README.md) | Independent veto of native removal completion while Appointments reports incomplete | Enabled |
 | [`task/appointments`](plugins/task/appointments/README.md) | Booking reminders/retention and calendar-maintenance routines | Enabled; check task states and trigger separately |
 | [`system/appointmentsdav`](plugins/system/appointmentsdav/README.md) | Local CalDAV endpoint and pre-authentication sign-in guard | Disabled until deliberate setup |
 | [`user/appointments`](plugins/user/appointments/README.md) | Password/key sessions, lockout and account/device cleanup | Disabled until deliberate setup |
