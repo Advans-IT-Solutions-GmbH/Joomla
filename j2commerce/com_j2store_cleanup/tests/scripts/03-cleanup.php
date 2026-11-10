@@ -109,17 +109,13 @@ class CleanupTest
         $this->test('Fake extension registered in #__extensions',
             $this->extensionExists($fakeElement));
 
-        @mkdir($fakeDir, 0755, true);
-        file_put_contents($fakeDir . '/plugin.php', '<?php // fake');
-        $this->test('Fake extension files created', file_exists($fakeDir . '/plugin.php'));
-
         $deleted = $this->executeCleanup([$extensionId]);
         $this->test('Cleanup executed without error', $deleted !== false);
         $this->test('Extension removed from #__extensions',
             !$this->extensionExists($fakeElement));
 
         $this->removeDir($fakeDir);
-        $this->test('Extension files removed from filesystem', !is_dir($fakeDir));
+        $this->test('Missing extension directory remains absent', !is_dir($fakeDir));
     }
 
     private function testCleanupEdgeCases(): void

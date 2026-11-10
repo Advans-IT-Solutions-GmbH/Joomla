@@ -442,11 +442,7 @@ class SafetyChecksTest
             }
         }
 
-        // --- ACL: core.manage required for cleanup action ---
-        // The cleanup handler now calls $user->authorise('core.manage', 'com_j2store_cleanup')
-        // before executing any destructive action. Verify that the authorise()
-        // call is present in the source and that an unauthenticated user object
-        // (guest) would be denied.
+        // --- ACL: core.manage and core.delete required for cleanup action ---
         echo "\n--- ACL enforcement ---\n";
 
         $cleanupSrc = @file_get_contents(
@@ -457,54 +453,42 @@ class SafetyChecksTest
             $cleanupSrc !== false && strpos($cleanupSrc, "authorise('core.manage'") !== false
         );
         $this->test(
+            'Cleanup handler calls authorise(core.delete)',
+            $cleanupSrc !== false && strpos($cleanupSrc, "authorise('core.delete'") !== false
+        );
+        $this->test(
             'Cleanup handler checks the authenticated backend identity',
             $cleanupSrc !== false && strpos($cleanupSrc, '$app->getIdentity()') !== false
         );
         $this->testBackendUserWithoutManageIsDenied();
 
-        // --- Cleanup POST protection ---
-        // Verify that the cleanup handler rejects a crafted POST containing
-        // the extension_id of com_j2store or com_j2commerce. This covers the
-        // path that classifyExtension() alone did not protect.
-        echo "\n--- Cleanup POST protection ---\n";
-        $protectedElements = ['com_j2store', 'com_j2commerce'];
-        foreach ($protectedElements as $element) {
-            $query = $this->db->getQuery(true)
-                ->select($this->db->quoteName('extension_id'))
-                ->from($this->db->quoteName('#__extensions'))
-                ->where($this->db->quoteName('element') . ' = ' . $this->db->quote($element))
-                ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('component'));
-            $this->db->setQuery($query);
-            $extId = (int) $this->db->loadResult();
-
-            if (!$extId) {
-                if ($this->expectedCoreComponent === $element) {
-                    $this->test("$element installed for POST protection test", false);
-                } else {
-                    echo "Note: $element not installed, skipping POST protection test\n";
-                    $this->test("$element POST protection skipped", true);
-                }
-                continue;
-            }
-
-            // Simulate the protection check added to the cleanup handler:
-            // load the extension row and verify it is in the protected list.
-            $query = $this->db->getQuery(true)
-                ->select($this->db->quoteName(['extension_id', 'element']))
-                ->from($this->db->quoteName('#__extensions'))
-                ->whereIn($this->db->quoteName('extension_id'), [$extId]);
-            $this->db->setQuery($query);
-            $blocked = [];
-            foreach ($this->db->loadObjectList() as $ext) {
-                if (in_array($ext->element, $protectedElements, true)) {
-                    $blocked[] = $ext->element;
-                }
-            }
-            $this->test(
-                "$element is blocked by cleanup POST protection check",
-                in_array($element, $blocked, true)
-            );
+        // --- Candidate scope ---
+        echo "\n--- Cleanup candidate scope ---\n";
+        if (!function_exists('isCleanupCandidate')) {
+            define('J2STORE_CLEANUP_FUNCTIONS_ONLY', true);
+            require_once JPATH_BASE . '/administrator/components/com_j2store_cleanup/j2store_cleanup.php';
         }
+
+        foreach (['com_j2store', 'com_j2commerce'] as $element) {
+            $core = (object) ['type' => 'component', 'element' => $element, 'folder' => '', 'protected' => 0];
+            $this->test("$element is not a cleanup candidate", !isCleanupCandidate($core));
+        }
+
+        $systemPlugin = (object) [
+            'type' => 'plugin',
+            'element' => 'system_security',
+            'folder' => 'system',
+            'protected' => 0,
+        ];
+        $this->test('Unrelated system plugin is outside cleanup scope', !isCleanupCandidate($systemPlugin));
+
+        $protectedPlugin = (object) [
+            'type' => 'plugin',
+            'element' => 'payment_protected',
+            'folder' => 'j2store',
+            'protected' => 1,
+        ];
+        $this->test('Protected J2Store record is not a cleanup candidate', !isCleanupCandidate($protectedPlugin));
 
         echo "\n=== Safety Checks Test Summary ===\n";
         echo "Passed: {$this->passed}\n";

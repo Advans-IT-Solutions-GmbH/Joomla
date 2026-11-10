@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    @package     J2Store Cleanup
+    @copyright   (C) 2026 Advans IT Solutions GmbH
+    @license     GNU General Public License version 3 or later; see LICENSE.txt
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<config>
+    <fieldset name="permissions" label="JCONFIG_PERMISSIONS_LABEL" description="JCONFIG_PERMISSIONS_DESC">
+        <field
+            name="rules"
+            type="rules"
+            label="JCONFIG_PERMISSIONS_LABEL"
+            class="inputbox"
+            validate="rules"
+            filter="rules"
+            component="com_j2store_cleanup"
+            section="component"
+        />
+    </fieldset>
+</config>
