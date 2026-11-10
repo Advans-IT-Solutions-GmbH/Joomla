@@ -243,6 +243,8 @@ class BookingController extends BaseController
             $this->app->enqueueMessage(Text::_($key), 'error');
         }
 
+        $this->app->setUserState('com_appointments.booking_focus_message.' . $eventId,
+            $key !== '' && $fieldErrors === [] ? true : null);
         $this->app->setUserState('com_appointments.booking_errors.' . $eventId, $fieldErrors);
         $data = (array) $this->app->getUserState('com_appointments.booking.' . $eventId, []);
         $start = is_string($data['start'] ?? null) ? UtcTimestamp::parse($data['start']) : null;

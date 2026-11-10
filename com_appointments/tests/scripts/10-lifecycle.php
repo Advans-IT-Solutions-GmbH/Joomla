@@ -147,7 +147,7 @@ try {
     $warning = 'Your change was saved, but one or more notification emails could not be delivered.';
     $check($xpath->query('//p[@data-appointments-result][@aria-describedby="appointment-notices"]')->length === 1
         && str_contains((string) $xpath->query('//*[@id="appointment-result"]//*[@id="appointment-notices"]')->item(0)?->textContent, $warning)
-        && substr_count($html, $warning) === 1,
+        && substr_count($html, $warning) === 1 && !str_contains($html, 'com_appointments.focusSystemMessage'),
         'A failed notification is shown once, inside the result, as the description of the focused status');
     $cancelled = $fixture->row((int) $booking['id']);
     $check(str_contains($html, 'Your appointment has been cancelled') && (int) $cancelled['state'] === 2
@@ -191,6 +191,7 @@ try {
     }
     $check(str_contains($html, 'Override without notices') && !str_contains($html, 'appointment-notices')
         && $system === 1 && $options === 1 && substr_count($html, $warning) === $system + $options
+        && str_contains($html, 'com_appointments.focusSystemMessage')
         && (int) $fixture->row((int) $replacement['id'])['state'] === 2,
         'With an older template override of the manage page, the warning of a failed notification stays a Joomla message');
 } catch (Throwable $e) {

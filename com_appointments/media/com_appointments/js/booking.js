@@ -34,8 +34,14 @@
     'use strict';
 
     let userInteracted = false;
-    document.addEventListener('pointerdown', () => { userInteracted = true; }, { capture: true, once: true });
-    document.addEventListener('keydown', () => { userInteracted = true; }, { capture: true, once: true });
+    let messageObserver = null;
+    const markUserInteracted = () => {
+        userInteracted = true;
+        messageObserver?.disconnect();
+        messageObserver = null;
+    };
+    document.addEventListener('pointerdown', markUserInteracted, { capture: true, once: true });
+    document.addEventListener('keydown', markUserInteracted, { capture: true, once: true });
 
     const enhance = (root) => {
         if (!root.querySelector('[data-appointments-view]') || !window.fetch || !window.DOMParser || !window.URL
@@ -1011,12 +1017,17 @@
     const visibleSystemMessage = (container) => Array.from(container.querySelectorAll('joomla-alert, .alert'))
         .find((message) => message.textContent.trim() && message.getClientRects().length > 0);
 
+    const hasSystemMessageFocusRequest = () => window.Joomla
+        && typeof window.Joomla.getOptions === 'function'
+        && window.Joomla.getOptions('com_appointments.focusSystemMessage') === true;
+
     const focusSystemMessage = () => {
         const active = document.activeElement;
         const container = document.getElementById('system-message-container');
         const message = container && visibleSystemMessage(container);
 
-        if (userInteracted || (active && active !== document.body && active !== document.documentElement)
+        if (!hasSystemMessageFocusRequest() || userInteracted
+            || (active && active !== document.body && active !== document.documentElement)
             || document.visibilityState !== 'visible'
             || document.querySelector('[data-appointments-result], [autofocus], [aria-invalid="true"], [aria-modal="true"], dialog[open]')
             || !message || container.getClientRects().length === 0) {
@@ -1028,6 +1039,10 @@
     };
 
     const watchSystemMessages = () => {
+        if (!hasSystemMessageFocusRequest()) {
+            return;
+        }
+
         const container = document.getElementById('system-message-container');
 
         if (!container) {
@@ -1042,10 +1057,18 @@
         const observer = new MutationObserver(() => {
             if (visibleSystemMessage(container)) {
                 observer.disconnect();
+                messageObserver = null;
                 window.requestAnimationFrame(focusSystemMessage);
             }
         });
+        messageObserver = observer;
         observer.observe(container, { childList: true, subtree: true });
+        window.setTimeout(() => {
+            if (messageObserver === observer) {
+                observer.disconnect();
+                messageObserver = null;
+            }
+        }, 5000);
     };
 
     const start = () => {

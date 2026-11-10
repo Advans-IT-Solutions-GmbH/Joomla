@@ -236,7 +236,8 @@ try {
         'A refused booking has no result fragment or region, so the focus stays at the first invalid field');
     $locations = $request[0]->locations;
     $lastLocation = $locations === [] ? '' : $locations[array_key_last($locations)];
-    $check($lastLocation !== '' && !str_contains($lastLocation, '#'),
+    $check($lastLocation !== '' && !str_contains($lastLocation, '#')
+        && !str_contains($body, 'com_appointments.focusSystemMessage'),
         'A refused booking with field errors does not let a section fragment suppress native autofocus');
 
     // A forged form signature is a page-level error, not an invalid field. Keep it in Joomla's
@@ -252,8 +253,13 @@ try {
     $check($systemMessage instanceof DOMElement
         && str_contains($systemMessage->textContent, 'The form has expired or could not be verified.')
         && $lastLocation !== '' && !str_contains($lastLocation, '#')
+        && str_contains($body, 'com_appointments.focusSystemMessage')
         && $xpath->query('//*[@data-appointments-result]')->length === 0,
         'A forged form signature is present in Joomla\'s live region without a result fragment');
+    $cleanPage = $request[0]->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventIds[0]
+        . '&timezone=UTC&start=' . urlencode($slot));
+    $check(!str_contains($cleanPage, 'com_appointments.focusSystemMessage'),
+        'The one-request error-message focus option is consumed after the refused submission');
 
     // The component option max_guests limits the guests on the server, whatever the form sends.
     // The submissions above used the hourly booking budget of this client address.

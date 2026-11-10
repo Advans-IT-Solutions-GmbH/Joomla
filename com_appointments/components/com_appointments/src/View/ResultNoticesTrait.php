@@ -30,14 +30,19 @@ trait ResultNoticesTrait
         $layout = $this->getLayout();
         $file = str_contains($layout, ':') ? '' : (string) Path::find($this->_path['template'], $layout . '.php');
         $own = realpath(JPATH_SITE . '/components/com_appointments/tmpl/' . $this->getName() . '/' . $layout . '.php');
+        $app = Factory::getApplication();
 
         if ($file === '' || $own === false || realpath($file) !== $own) {
+            if ($app->getMessageQueue() !== []) {
+                Factory::getDocument()->addScriptOptions('com_appointments.focusSystemMessage', true);
+            }
+
             return;
         }
 
         $classes = ['error' => 'danger', 'warning' => 'warning', 'notice' => 'info', 'info' => 'info'];
 
-        foreach (Factory::getApplication()->getMessageQueue(true) as $message) {
+        foreach ($app->getMessageQueue(true) as $message) {
             $text = (string) ($message['message'] ?? '');
 
             if ($text !== '') {
