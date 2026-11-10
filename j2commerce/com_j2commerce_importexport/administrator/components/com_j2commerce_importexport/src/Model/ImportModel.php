@@ -32,10 +32,15 @@ class ImportModel extends BaseDatabaseModel
     private function getCurrentUserId(): int
     {
         try {
-            return (int) Factory::getApplication()->getIdentity()->id;
+            return (int) $this->getImportIdentity()->id;
         } catch (\Exception $e) {
             return 0;
         }
+    }
+
+    protected function getImportIdentity(): object
+    {
+        return Factory::getApplication()->getIdentity();
     }
 
     public function importProductFull(array $data, array $options = []): array
@@ -119,37 +124,83 @@ class ImportModel extends BaseDatabaseModel
 
     protected function ensureCategory(array $data, array $options): int
     {
-        if (!empty($data['catid'])) {
-            return (int) $data['catid'];
+        if (array_key_exists('catid', $data) && $data['catid'] !== null && $data['catid'] !== '') {
+            $catId = $this->positiveId($data['catid'], 'catid');
+            return $this->requireContentCategory($catId);
         }
 
-        if (empty($data['category_path'])) {
-            return $options['default_category'] ?? 2; // Uncategorised
+        if (!empty($data['category_path'])) {
+            $db = $this->getDatabase();
+            $query = $this->createDbQuery($db)
+                ->select('id')
+                ->from($db->quoteName('#__categories'))
+                ->where('path = :path')
+                ->where('extension = ' . $db->quote('com_content'))
+                ->bind(':path', $data['category_path']);
+
+            $db->setQuery($query);
+            $catId = (int) $db->loadResult();
+
+            if ($catId > 0) {
+                return $this->requireContentCategory($catId);
+            }
+
+            $user = $this->getImportIdentity();
+            if (!$user->authorise('core.create', 'com_content')
+                && count($user->getAuthorisedCategories('com_content', 'core.create')) === 0) {
+                throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+            }
+
+            $title = $data['category_title'] ?? 'Imported';
+            if (!is_string($title) || trim($title) === '') {
+                throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+            }
+
+            $alias = $data['category_alias'] ?? null;
+            if ($alias !== null && !is_string($alias)) {
+                throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+            }
+
+            return $this->createCategory($title, $alias);
         }
 
+        return $this->requireContentCategory($options['default_category'] ?? 2);
+    }
+
+    protected function requireContentCategory(int $categoryId): int
+    {
         $db = $this->getDatabase();
         $query = $this->createDbQuery($db)
             ->select('id')
             ->from($db->quoteName('#__categories'))
-            ->where('path = :path')
+            ->where('id = :id')
             ->where('extension = ' . $db->quote('com_content'))
-            ->bind(':path', $data['category_path']);
+            ->bind(':id', $categoryId, \Joomla\Database\ParameterType::INTEGER);
 
         $db->setQuery($query);
-        $catId = $db->loadResult();
-
-        if ($catId) {
-            return (int) $catId;
+        if (!(int) $db->loadResult()) {
+            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
         }
 
-        // Create category
-        return $this->createCategory($data['category_title'] ?? 'Imported', $data['category_alias'] ?? null);
+        return $categoryId;
+    }
+
+    protected function positiveId($value, string $field): int
+    {
+        if ((!is_int($value) && !is_string($value))
+            || filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false) {
+            throw new \InvalidArgumentException(Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_OPTION', $field));
+        }
+
+        return (int) $value;
     }
 
     protected function createCategory(string $title, ?string $alias = null): int
     {
         $db = $this->getDatabase();
         $alias = $alias ?: ApplicationHelper::stringURLSafe($title);
+        $application = Factory::getApplication();
+        $user = $this->getImportIdentity();
 
         $category = (object) [
             'parent_id' => 1,
@@ -158,8 +209,8 @@ class ImportModel extends BaseDatabaseModel
             'extension' => 'com_content',
             'title' => $title,
             'alias' => $alias,
-            'published' => 1,
-            'access' => 1,
+            'published' => $user->authorise('core.edit.state', 'com_content') ? 1 : 0,
+            'access' => (int) $application->get('access'),
             'language' => '*',
             'created_user_id' => $this->getCurrentUserId(),
             'created_time' => Factory::getDate()->toSql(),
@@ -180,55 +231,19 @@ class ImportModel extends BaseDatabaseModel
         $userId = $this->getCurrentUserId();
         $now = Factory::getDate()->toSql();
 
-        // Check if article exists - try multiple methods
-        $existingId = null;
-        
-        // 1. Check by article_id if provided
-        if (!empty($data['article_id'])) {
-            $query = $this->createDbQuery($db)
-                ->select('id')
-                ->from($db->quoteName('#__content'))
-                ->where('id = :id')
-                ->bind(':id', $data['article_id'], \Joomla\Database\ParameterType::INTEGER);
-            $db->setQuery($query);
-            $existingId = $db->loadResult();
-        }
-        
-        // 2. Check by alias if not found by ID
         $title = (string) $data['title'];
         $alias = $data['alias'] ?? ApplicationHelper::stringURLSafe($title);
-        if (!$existingId && !empty($alias)) {
-            $query = $this->createDbQuery($db)
-                ->select('id')
-                ->from($db->quoteName('#__content'))
-                ->where('alias = :alias')
-                ->bind(':alias', $alias);
-            $db->setQuery($query);
-            $existingId = $db->loadResult();
-        }
-        
-        // 3. Check by SKU via J2Store product -> article link
-        if (!$existingId && !empty($data['variants'][0]['sku'])) {
-            $sku = $data['variants'][0]['sku'];
-            $query = $this->createDbQuery($db)
-                ->select('p.product_source_id')
-                ->from($db->quoteName($this->t('products'), 'p'))
-                ->join('INNER', $db->quoteName($this->t('variants'), 'v') . ' ON p.' . $this->col('j2store_product_id') . ' = v.product_id')
-                ->where('v.sku = :sku')
-                ->where('p.product_source = ' . $db->quote('com_content'))
-                ->bind(':sku', $sku);
-            $db->setQuery($query);
-            $existingId = $db->loadResult();
-        }
+        $existing = !empty($options['update_existing']) ? $this->findExistingArticle($data, $alias) : null;
+        $permissions = $this->authorizeArticleImport($existing, $catId, $data);
 
         $article = (object) [
             'title' => $title,
             'alias' => $alias,
             'introtext' => $data['introtext'] ?? '',
             'fulltext' => $data['fulltext'] ?? '',
-            'state' => $data['article_state'] ?? 1,
+            'state' => $permissions['state'],
             'catid' => $catId,
-            'access' => $data['access'] ?? 1,
+            'access' => $permissions['access'],
             'language' => $data['language'] ?? '*',
             'featured' => $data['featured'] ?? 0,
             'images' => $data['article_images'] ?? '{}',
@@ -243,16 +258,150 @@ class ImportModel extends BaseDatabaseModel
             'modified_by' => $userId,
         ];
 
-        if ($existingId && ($options['update_existing'] ?? true)) {
-            $article->id = $existingId;
+        if ($existing) {
+            $article->id = (int) $existing->id;
             $db->updateObject('#__content', $article, 'id');
-            return $existingId;
+            return (int) $existing->id;
         }
 
         $article->created = $now;
         $article->created_by = $userId;
         $db->insertObject('#__content', $article);
         return $db->insertid();
+    }
+
+    protected function findExistingArticle(array $data, string $alias): ?object
+    {
+        $db = $this->getDatabase();
+        $article = null;
+
+        if (array_key_exists('article_id', $data) && $data['article_id'] !== null && $data['article_id'] !== '') {
+            $articleId = $this->positiveId($data['article_id'], 'article_id');
+            $query = $this->createDbQuery($db)
+                ->select('*')
+                ->from($db->quoteName('#__content'))
+                ->where('id = :id')
+                ->bind(':id', $articleId, \Joomla\Database\ParameterType::INTEGER);
+            $db->setQuery($query);
+            $article = $db->loadObject() ?: null;
+        }
+
+        if (!$article && $alias !== '') {
+            $query = $this->createDbQuery($db)
+                ->select('*')
+                ->from($db->quoteName('#__content'))
+                ->where('alias = :alias')
+                ->bind(':alias', $alias);
+            $db->setQuery($query);
+            $article = $db->loadObject() ?: null;
+        }
+
+        if (!$article && !empty($data['variants'][0]['sku'])) {
+            $query = $this->createDbQuery($db)
+                ->select($db->quoteName('c') . '.*')
+                ->from($db->quoteName($this->t('products'), 'p'))
+                ->join(
+                    'INNER',
+                    $db->quoteName($this->t('variants'), 'v')
+                    . ' ON ' . $db->quoteName('p') . '.' . $db->quoteName($this->col('j2store_product_id'))
+                    . ' = ' . $db->quoteName('v') . '.' . $db->quoteName('product_id')
+                )
+                ->join(
+                    'INNER',
+                    $db->quoteName('#__content', 'c')
+                    . ' ON ' . $db->quoteName('c') . '.' . $db->quoteName('id')
+                    . ' = ' . $db->quoteName('p') . '.' . $db->quoteName('product_source_id')
+                )
+                ->where($db->quoteName('v') . '.' . $db->quoteName('sku') . ' = :sku')
+                ->where($db->quoteName('p') . '.' . $db->quoteName('product_source') . ' = ' . $db->quote('com_content'))
+                ->bind(':sku', $data['variants'][0]['sku']);
+            $db->setQuery($query);
+            $article = $db->loadObject() ?: null;
+        }
+
+        if ($article && !$this->isActiveShopProduct((int) $article->id)) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
+        return $article;
+    }
+
+    protected function isActiveShopProduct(int $articleId): bool
+    {
+        if ($this->getActiveShop() === null) {
+            return false;
+        }
+
+        $db = $this->getDatabase();
+        $query = $this->createDbQuery($db)
+            ->select($this->col('j2store_product_id'))
+            ->from($db->quoteName($this->t('products')))
+            ->where('product_source_id = :articleid')
+            ->where('product_source = ' . $db->quote('com_content'))
+            ->bind(':articleid', $articleId, \Joomla\Database\ParameterType::INTEGER);
+        $db->setQuery($query);
+
+        return (bool) $db->loadResult();
+    }
+
+    protected function authorizeArticleImport(?object $existing, int $categoryId, array $data): array
+    {
+        $user = $this->getImportIdentity();
+        $articleAsset = $existing ? 'com_content.article.' . (int) $existing->id : '';
+        $categoryAsset = 'com_content.category.' . $categoryId;
+        $canEditState = $user->authorise('core.edit.state', $existing ? $articleAsset : $categoryAsset);
+
+        if ($existing) {
+            $isOwner = (int) ($existing->created_by ?? 0) === (int) ($user->id ?? 0);
+            if (!$user->authorise('core.edit', $articleAsset)
+                && !($isOwner && $user->authorise('core.edit.own', $articleAsset))) {
+                throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+            }
+
+            if ((int) ($existing->catid ?? 0) !== $categoryId
+                && !$user->authorise('core.create', $categoryAsset)) {
+                throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+            }
+
+            $state = array_key_exists('article_state', $data)
+                ? $this->articleState($data['article_state'])
+                : (int) ($existing->state ?? 0);
+            $access = array_key_exists('access', $data)
+                ? $this->positiveId($data['access'], 'access')
+                : (int) ($existing->access ?? 1);
+
+            if (!$canEditState
+                && ($state !== (int) ($existing->state ?? 0) || $access !== (int) ($existing->access ?? 1))) {
+                throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+            }
+
+            return ['state' => $state, 'access' => $access];
+        }
+
+        if (!$user->authorise('core.create', $categoryAsset)) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
+        $state = array_key_exists('article_state', $data)
+            ? $this->articleState($data['article_state'])
+            : ($canEditState ? 1 : 0);
+        $access = array_key_exists('access', $data) ? $this->positiveId($data['access'], 'access') : 1;
+        if (!$canEditState && ($state !== 0 || $access !== 1)) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
+        return ['state' => $state, 'access' => $access];
+    }
+
+    protected function articleState($value): int
+    {
+        if ((!is_int($value) && !is_string($value))
+            || filter_var($value, FILTER_VALIDATE_INT) === false
+            || !in_array((int) $value, [-2, 0, 1, 2], true)) {
+            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+        }
+
+        return (int) $value;
     }
 
     protected function importJ2StoreProduct(array $data, int $articleId, array $options): int
