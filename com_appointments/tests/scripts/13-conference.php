@@ -174,6 +174,16 @@ try {
     $reloaded = $unconfigured['browser']->request('/index.php?option=com_appointments&view=booking');
     $check(substr_count($reloaded, 'a conference link is not available') === 1,
         'The missing conference link is still stated once after reloading the confirmation');
+    foreach (['booking' => $unconfigured['html'], 'reload' => $reloaded] as $moment => $page) {
+        $document = new DOMDocument();
+        @$document->loadHTML($page);
+        $xpath = new DOMXPath($document);
+        $status = $xpath->query('//p[@data-appointments-result]')->item(0);
+        $described = preg_split('/\s+/', trim((string) $status?->getAttribute('aria-describedby')), -1, PREG_SPLIT_NO_EMPTY);
+        $check(in_array('appointment-conference-missing', $described, true)
+            && str_contains((string) $xpath->query('//*[@id="appointment-conference-missing"]')->item(0)?->textContent, 'a conference link is not available'),
+            "The focused status is described by the missing conference link warning ({$moment})");
+    }
     $calendarMail($before, $unconfigured['booking'], 3);
     $db->query("UPDATE {$prefix}appointments_eventtypes SET conference_params=" . ($originalConferenceParams === null ? 'NULL'
         : "'" . $db->real_escape_string($originalConferenceParams) . "'") . " WHERE id={$event}");

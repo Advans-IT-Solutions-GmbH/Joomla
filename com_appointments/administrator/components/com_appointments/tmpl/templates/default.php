@@ -53,6 +53,7 @@ $purposeKeys = [
     <?php if (!$this->items) : ?>
         <p class="alert alert-info"><?php echo Text::_('COM_APPOINTMENTS_TEMPLATES_EMPTY'); ?></p>
     <?php else : ?>
+        <div class="table-responsive">
         <table class="table">
             <caption class="visually-hidden"><?php echo Text::_('COM_APPOINTMENTS_TEMPLATES_TITLE'); ?></caption>
             <thead><tr>
@@ -83,6 +84,7 @@ $purposeKeys = [
             <?php endforeach; ?>
             </tbody>
         </table>
+        </div>
         <?php echo $this->pagination->getListFooter(); ?>
     <?php endif; ?>
     <input type="hidden" name="task" value="">

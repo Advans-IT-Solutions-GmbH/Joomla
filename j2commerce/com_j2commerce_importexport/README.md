@@ -103,7 +103,7 @@ Uninstall via **System → Manage → Extensions**. The component has no uninsta
 
 ### Permissions and Data Handling
 
-Import upload/preview/process and export require component `core.manage` permission and a valid Joomla form token. Grant this permission only to trusted administrators: importing changes real articles, categories, menus and shop records. The component has no own business tables, no Scheduler routine and no notification mail. Removing it does not undo imports.
+Import upload/preview/process and export require component `core.manage` permission and a valid Joomla form token. Product imports also enforce Joomla Content permissions for the target category and any matched article. Existing rows can be updated only when the article is linked to a product in the active shop; creating or moving articles requires `core.create`, while changing publication state, access level, the featured flag or the publishing window (start and end date) requires `core.edit.state`. Articles without their own Joomla permission asset (for example from earlier imports) are checked against their current category. New articles default to published for users with `core.edit.state` on the target category and unpublished otherwise. Creating categories requires `core.create` on the Content component or an authorized Content category, following Joomla's category-controller permission check. New categories are published only for users with `core.edit.state` on the Content component, matching Joomla's new-category form asset; their access level uses the site's configured default. Creating a menu item requires `core.create` on the target site menu, updating one requires `core.edit`, and changing its publication state requires `core.edit.state`; an unknown menu type is rejected. Creating a new tag requires `core.create` on the Tags component, and writing a custom field value requires `core.edit.value` on that field. A denied row is reported as failed. Grant component access only to trusted administrators: imports change articles, categories, menus and shop records. The component has no own business tables, no Scheduler routine and no notification mail. Removing it does not undo imports.
 
 Uploads are stored under the Joomla root's `tmp` directory as `j2commerce_import_<random>.csv` or `.json`. Preview and process must reference the current session's upload identifier. Normal completed processing attempts to remove that file and clears its session reference; there is no automatic abandoned-upload retention job. Operators must restrict access to temporary files, remove stale imports deliberately and protect downloaded exports and backups. Row-level failures can leave a partial import; inspect counts/errors before retrying.
 
@@ -322,14 +322,15 @@ The compatibility jobs install the extension ZIP into official Joomla Docker ima
 
 The export controller is covered by a **real HTTP export test** (`07-export-http.php`): it authenticates against the Joomla administrator, obtains a valid CSRF token, and performs authenticated `task=export.export` requests for CSV and JSON. It asserts the HTTP status, the `Content-Type` and `Content-Disposition` (attachment + filename) headers, and that the downloaded file CONTENT contains the seeded product/variant data. Negative requests with a missing or invalid CSRF token are asserted to be rejected and to never leak seeded data. A companion **real HTTP import test** (`08-import-http.php`) performs upload, preview and process requests; asserts flat response shapes, rejected types/options and CSRF protection; and verifies actual products, default category/menu settings and stock add/replace behavior in the live database. Both HTTP tests run on both stacks.
 
-Lightweight contract checks can run without Docker or Joomla, from the repository root:
+Lightweight contract checks can run without Docker or Joomla, from the repository root (the CI job "PHP Syntax Check" runs the PHP check on every pull request):
 
 ```sh
 php -d memory_limit=32M j2commerce/com_j2commerce_importexport/tests/import-contract.php
 node --test j2commerce/com_j2commerce_importexport/tests/import-dashboard.test.cjs
 ```
 
-The PHP check uses framework doubles around the real controller, parser and quantity helper.
+The PHP check uses framework doubles around the real controller, parser and quantity helper,
+and covers the import authorization rules above with allowed and denied cases.
 It also previews 100,000 CSV records under a 32 MiB peak-memory threshold and verifies that
 malformed rows beyond the preview sample are still rejected.
 The Node.js check renders the actual PHP template and exercises its script with a simulated
