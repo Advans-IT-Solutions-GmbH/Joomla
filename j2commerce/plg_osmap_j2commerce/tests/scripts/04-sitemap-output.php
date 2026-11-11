@@ -337,6 +337,33 @@ class SitemapOutputTest
             }
         });
 
+        // Joomla hides the articles of an unpublished or access-restricted category, so the
+        // sitemap must not list them either (every view that loads products).
+        foreach ([
+            'unpublished' => ['published = 0', 'published = 1'],
+            'guest-inaccessible' => ['access = 2', 'access = 1'],
+        ] as $label => [$hide, $restore]) {
+            $this->test("Products of a $label category are excluded from every product view", function () use ($hide, $restore) {
+                $this->db->setQuery('UPDATE #__categories SET ' . $hide . ' WHERE id = 2')->execute();
+
+                try {
+                    foreach (['view=products', 'view=products&catid=2', 'view=categories&id=2', 'view=categoryalias&id=2', 'view=product&id=9001'] as $query) {
+                        if ($this->aliases($this->collect($query)) !== []) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                } finally {
+                    $this->db->setQuery('UPDATE #__categories SET ' . $restore . ' WHERE id = 2')->execute();
+                }
+            });
+        }
+
+        $this->test('Products of the restored category are listed again', function () {
+            return in_array('test-product-alpha', $this->aliases($this->collect('view=product&id=9001')), true)
+                && in_array('test-product-beta', $this->aliases($this->collect()), true);
+        });
         $this->test('Products stay in getTree(view=products) when a hidden child menu item is removed', function () {
             $this->db->setQuery('UPDATE #__menu SET published = 0 WHERE id = 9003')->execute();
 
