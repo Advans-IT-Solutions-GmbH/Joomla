@@ -421,18 +421,18 @@ try {
         $check($formalState() === 1 && str_contains($pendingHtml, 'Appointments reported incomplete removal.')
             && $queue->pendingPrivacy($formalId) === 1 && count($requests) === $callsBeforeOverlap,
             'After overlap release the independent completion guard still sees pending CRM cleanup with the generic adapter disabled');
-        // Native Remove of the second request: only the Close cleanup is outstanding.
-        $application->bootComponent('com_privacy');
-        $privacyPlugin = $application->bootPlugin('appointments', 'privacy');
-        $removal = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
-        if (!$removal->load($requestId + 2)) {
-            throw new RuntimeException('Cannot load the second formal privacy request.');
-        }
-        // Test output has already been sent, so the native PHP session cannot start. Joomla's
-        // message queue uses an in-memory session for this check only.
+        // Native Remove of the second request: only the Close cleanup is outstanding. Test output
+        // has already been sent, so the native PHP session cannot start. The application uses an
+        // in-memory session for this check only.
         $nativeSession = $application->getSession();
         $application->setSession(new \Joomla\CMS\Session\Session(new \Joomla\Session\Storage\RuntimeStorage()));
         try {
+            $application->bootComponent('com_privacy');
+            $privacyPlugin = $application->bootPlugin('appointments', 'privacy');
+            $removal = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
+            if (!$removal->load($requestId + 2)) {
+                throw new RuntimeException('Cannot load the second formal privacy request.');
+            }
             $application->getMessageQueue(true);
             $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $removal, 'user' => null]);
             $privacyPlugin->onPrivacyCanRemoveData($canRemove);
@@ -570,7 +570,10 @@ try {
     ], true)) {
         echo $e->getMessage() . "\n";
     }
-    $check(false, 'Installed Close mock failed: ' . get_class($e) . ' in ' . basename($e->getFile()) . ' at line ' . $e->getLine());
+    $frames = array_map(static fn (array $frame): string => basename((string) ($frame['file'] ?? '?')) . ':' . ($frame['line'] ?? 0),
+        array_slice($e->getTrace(), 0, 8));
+    $check(false, 'Installed Close mock failed: ' . get_class($e) . ' in ' . basename($e->getFile()) . ' at line ' . $e->getLine()
+        . ' (called from ' . implode(' < ', $frames) . ')');
 } finally {
     if (is_resource($raceProcess)) {
         proc_terminate($raceProcess);
