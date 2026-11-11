@@ -44,7 +44,9 @@ final class MenuViews
         'booking' => ['submit', 'ics', 'manage'],
         'guest' => ['confirm', 'remove'],
         'feed' => ['download'],
-        'devices' => ['create', 'rename', 'remove'],
+        // Joomla compares tasks without case: removalMode is listed in lower case.
+        'devices' => ['create', 'rename', 'removalmode', 'remove'],
+        'notifications' => ['save'],
         'activation' => ['complete'],
     ];
 

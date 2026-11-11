@@ -312,7 +312,7 @@ try {
     $unset['public_site_url'] = '';
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($unset)) . "' WHERE element='com_appointments' AND type='component'");
     try {
-        $page = $browser->request('/index.php?option=com_appointments&view=eventtype&id=' . $event);
+        $page = $browser->request(appointments_page($event));
         $check($browser->status === 503 && str_contains($page, 'Booking is currently not possible') && !str_contains($page, 'name="booking[start]"'),
             'Without a public site URL the booking page answers 503 with a neutral notice and no form');
         sleep(2);
@@ -324,7 +324,7 @@ try {
     } finally {
         $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($componentParams) . "' WHERE element='com_appointments' AND type='component'");
     }
-    $page = $browser->request('/index.php?option=com_appointments&view=eventtype&id=' . $event);
+    $page = $browser->request(appointments_page($event));
     $check($browser->status === 200 && str_contains($page, 'name="booking[start]"'), 'With a public site URL the booking page shows its form again');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";

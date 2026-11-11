@@ -416,7 +416,10 @@ return static function (TeamSuite $suite): void {
 
             return $browser;
         };
-        $page = static fn (TeamDBrowser $browser): string => $browser->request('/index.php?option=com_appointments&view=mycalendars');
+        // «My calendars» opens only through its menu item (appointments-menu.php).
+        require_once __DIR__ . '/appointments-menu.php';
+        $myCalendars = '/index.php?option=com_appointments&view=mycalendars&Itemid=' . appointments_menu_item('index.php?option=com_appointments&view=mycalendars');
+        $page = static fn (TeamDBrowser $browser): string => $browser->request($myCalendars);
         $paramsOf = static fn (int $id): string => (string) $db->query("SELECT params FROM {$p}users WHERE id={$id}")->fetch_row()[0];
 
         $suite->test($names[7], static function () use ($signIn, $page, $paramsOf, $tag, $totp, $reader, $host, $calendar, $other, $expect, $book, $eventRow, $send, $to, $address) {

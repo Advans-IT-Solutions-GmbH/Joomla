@@ -18,6 +18,7 @@ use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Helper\MailLanguage;
 use Advans\Component\Appointments\Administrator\Helper\MailPresentation;
 use Advans\Component\Appointments\Administrator\Helper\ManageMenuItem;
+use Advans\Component\Appointments\Administrator\Helper\MenuViews;
 use Advans\Component\Appointments\Administrator\Helper\NotificationSwitch;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl;
@@ -38,6 +39,9 @@ defined('_JEXEC') or die;
 final class NotificationService
 {
     private ?BookingData $data = null;
+
+    /** Menu item of «My calendars» (MenuViews::itemFor()), null until first needed, 0 without one. */
+    private ?int $myCalendarsItem = null;
 
     /**
      * @param   TeamServices|null  $team  The internet calendars; null reads them from the application when needed.
@@ -393,7 +397,10 @@ final class NotificationService
         }
 
         if ($base !== null) {
-            $links[rtrim($base, '/') . '/index.php?option=com_appointments&view=mycalendars'] = 'COM_APPOINTMENTS_MAIL_CALENDAR_LINK_SETTINGS';
+            // «My calendars» opens only through its menu item (MenuViews): without the Itemid the link answers 404.
+            $this->myCalendarsItem ??= MenuViews::itemFor($this->db, 'mycalendars');
+            $links[rtrim($base, '/') . '/index.php?option=com_appointments&view=mycalendars'
+                . ($this->myCalendarsItem > 0 ? '&Itemid=' . $this->myCalendarsItem : '')] = 'COM_APPOINTMENTS_MAIL_CALENDAR_LINK_SETTINGS';
         }
 
         $known = [];
