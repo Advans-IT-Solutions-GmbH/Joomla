@@ -66,6 +66,12 @@ final class Queue
             mac CHAR(64) NOT NULL,
             INDEX delivery_due (state, next_attempt)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+        // Bookings the retention erased after the longest wait without reaching Close (dashboard warning).
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_close_missed') . ' (
+            booking_id INT UNSIGNED NOT NULL PRIMARY KEY,
+            erased_utc DATETIME NOT NULL,
+            INDEX close_missed_erased (erased_utc)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName(self::LIMITS) . ' (
             profile VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
             paused_until BIGINT NOT NULL DEFAULT 0

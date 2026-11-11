@@ -77,6 +77,13 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
         </table>
     <?php endif; ?>
 
+    <?php if ($this->closeWaiting['waiting'] > 0) : ?>
+        <div class="alert alert-warning" id="close-retention-waiting" role="status"><?php echo Text::sprintf('COM_APPOINTMENTS_CLOSE_RETENTION_WAITING',
+            (int) $this->closeWaiting['waiting'], \Joomla\CMS\HTML\HTMLHelper::_('date', (string) $this->closeWaiting['first_forced'], Text::_('DATE_FORMAT_LC4'), 'UTC')); ?></div>
+    <?php endif; ?>
+    <?php if ($this->closeWaiting['missed'] > 0) : ?>
+        <div class="alert alert-danger" id="close-retention-missed" role="alert"><?php echo Text::sprintf('COM_APPOINTMENTS_CLOSE_RETENTION_MISSED', (int) $this->closeWaiting['missed']); ?></div>
+    <?php endif; ?>
     <?php if ($user->authorise('core.admin', 'com_appointments')) : ?>
         <section class="card card-body mb-3 com-appointments-close">
             <h2><?php echo Text::_('COM_APPOINTMENTS_CLOSE_TITLE'); ?></h2>

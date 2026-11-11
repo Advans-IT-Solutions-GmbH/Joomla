@@ -43,6 +43,7 @@ class UninstallTest
         'appointments_eventtype_calendars',
         'appointments_close_delivery',
         'appointments_close_limits',
+        'appointments_close_missed',
         'appointments_copy_restore',
     ];
 
