@@ -96,7 +96,8 @@ Streaming design (do not revert to loading all messages into an array):
   stored in round-robin order (unvisited first, retried last, not sorted), so the quota rotates. The
   callback gets `'retry' => true`; the ingestor then allows only half of each run limit
   (`checkRetry()`), and a postponed retry stops only the retry pass, not the scan. Run limits are
-  clamped to at least twice the per-message limits.
+  clamped to at least twice the per-message limits. A retry whose container still lacks its decoder
+  (`ReportArchive::decoderMissing()`) returns `RESULT_BLOCKED` without unpacking.
   `IngestLog` writes UID, limit and counts to `com_dmarcreports.php`, never content or addresses.
   Rationale and defaults: component `README.md`, "Mailbox ingestion limits".
 - `advance()` flags a processed message `\Seen` with `UID STORE +FLAGS.SILENT (\Seen)`. When

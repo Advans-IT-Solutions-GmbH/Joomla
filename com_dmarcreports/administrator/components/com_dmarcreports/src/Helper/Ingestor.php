@@ -197,6 +197,21 @@ final class Ingestor
 
         $attachments = MimeMessage::attachments((string) ($message['raw'] ?? ''));
 
+        if ($isRetry) {
+            // A retried message is in the retry set because one of its
+            // containers could not be decoded; its other attachments were
+            // stored on the first visit. While the PHP extension is still
+            // missing, report it as blocked again without unpacking anything,
+            // so a large blocked retry cannot cost run budget every poll.
+            foreach ($attachments as $attachment) {
+                if (ReportArchive::decoderMissing((string) $attachment['content'], (string) $attachment['filename'])) {
+                    $summary['blocked'] = (int) ($summary['blocked'] ?? 0) + 1;
+
+                    return self::RESULT_BLOCKED;
+                }
+            }
+        }
+
         if ($this->limits !== null) {
             $reason = $this->limits->checkAttachments(\count($attachments));
 
