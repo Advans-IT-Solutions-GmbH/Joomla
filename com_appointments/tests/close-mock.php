@@ -87,6 +87,7 @@ namespace {
             $this->pdo->exec('CREATE TABLE test_appointments_privacy_cleanup (request_id INTEGER)');
             $this->pdo->exec('CREATE TABLE test_appointments_privacy_outcomes (request_id INTEGER PRIMARY KEY, complete INTEGER)');
             $this->pdo->exec('CREATE TABLE test_appointments_privacy_staff (request_id INTEGER PRIMARY KEY, payload TEXT)');
+        $this->pdo->exec('CREATE TABLE test_appointments_privacy_review (request_id INTEGER)');
         }
         public function getPrefix(): string { return 'test_'; }
         public function quoteName(string $name): string { return '`' . str_replace('#__', 'test_', $name) . '`'; }
