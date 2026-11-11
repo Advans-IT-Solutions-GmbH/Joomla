@@ -559,7 +559,7 @@ for your site's address; the CalDAV address below assumes the default base addre
 
 | Client | Address | Refresh |
 |---|---|---|
-| Classic Outlook (Office LTSC 2024) with the CalDav Synchronizer add-in | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, then «Discover resources and assign to Outlook folders», each calendar to a new, empty folder | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
+| Classic Outlook (Office LTSC 2024) with the CalDav Synchronizer add-in | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, then «Discover resources and assign to Outlook folders», select the calendar and assign a new, empty Outlook calendar folder; after synchronising, the calendar appears under «My Calendars» in the Outlook calendar view and must be ticked there | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
 | iOS calendar | Settings → Calendar → Accounts → Add Account → Other → CalDAV account, server `<site>` | Fetch New Data → every 15 minutes |
 | DAVx⁵ (Android) | «Login with URL and user name», `https://<site>/` | calendar sync interval 15 minutes (the Android minimum) |
 | Thunderbird | New Calendar → On the Network, `https://<site>/dav/` | calendar properties → refresh every 5 minutes |
@@ -572,6 +572,8 @@ tested set.
 
 Clients refresh by polling; the server keeps the CTag and the sync token (RFC 6578) exact, so a
 refresh without changes transfers no events. Menu paths can differ between client versions.
+
+The setup page links the manufacturers' official download pages, opened in a new window: CalDav Synchronizer (`https://caldavsynchronizer.org/download-2/`, own installer, administrator rights, afterwards the «CalDav Synchronizer» tab in Outlook) and DAVx⁵ (`https://www.davx5.com/download/`). The addresses are language strings (`COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_URL`, `COM_APPOINTMENTS_TEAM_D_GUIDE_DAVX5_URL`), so an operator can change them with a language override; only `https://` addresses are rendered. They are plain links the visitor clicks, the server never contacts them. Thunderbird needs no download.
 
 #### Blocking and clean-up
 
