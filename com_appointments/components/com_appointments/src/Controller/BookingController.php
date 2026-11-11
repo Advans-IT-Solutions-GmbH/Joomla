@@ -13,6 +13,7 @@ use Advans\Component\Appointments\Administrator\Helper\BookingValidationExceptio
 use Advans\Component\Appointments\Administrator\Helper\ConsentMode;
 use Advans\Component\Appointments\Administrator\Helper\FormGuard;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Helper\ManageMenuItem;
 use Advans\Component\Appointments\Administrator\Helper\SlotTakenException;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Service\FeedService;
@@ -122,7 +123,7 @@ class BookingController extends BaseController
         $this->app->setUserState('com_appointments.confirmation.id', (int) $booking['id']);
         // The confirmation lands at its card, so modules a template places above the component
         // do not push the outcome out of the first screen; the booking script focuses its status.
-        $this->setRedirect(Route::_('index.php?option=com_appointments&view=booking', false) . '#appointment-confirmation');
+        $this->setRedirect(Route::_('index.php?option=com_appointments&view=booking' . $this->frame($eventId), false) . '#appointment-confirmation');
 
         return true;
     }
@@ -170,12 +171,17 @@ class BookingController extends BaseController
             throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
         }
         $model = $this->getModel('Manage');
-        $model->getItem();
+        $booking = $model->getItem();
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $keys = new KeyProvider((string) $this->app->get('secret'));
         $url = 'index.php?option=com_appointments&view=manage&id=' . $this->input->getInt('id')
             . '&action=' . $model->action() . '&signature=' . urlencode($model->signature());
+        // The page and its receipt stay in the frame of the event type's booking page, also for a
+        // link without an Itemid (a mail sent before the links carried one). Looked up only after
+        // getItem() verified the signature (or found this session's receipt), so an unsigned
+        // request learns nothing about a booking.
+        $url .= $this->frame($booking !== null ? (int) $booking->eventtype_id : 0);
         $month = $this->input->getString('month', '');
         $zone = $this->input->getString('timezone', '');
         if ($month !== '') {
@@ -240,6 +246,21 @@ class BookingController extends BaseController
         $this->setRedirect(Route::_($url, false) . '#appointment-result');
 
         return true;
+    }
+
+    /**
+     * '&Itemid=…' of the page frame of a result, or '' for none. The confirmation, the signed
+     * pages and their receipts are no menu views, so without an Itemid Joomla frames them with
+     * its default menu item, usually the home page, and the outcome stands below its content.
+     * The menu item the request came through when it belongs to this component, else the booking
+     * page of the event type or an event type list (ManageMenuItem).
+     */
+    private function frame(int $eventtypeId): string
+    {
+        $itemId = ManageMenuItem::frame($this->app->getMenu()->getActive(), Factory::getContainer()->get(DatabaseInterface::class),
+            $eventtypeId, $this->app->getLanguage()->getTag());
+
+        return $itemId > 0 ? '&Itemid=' . $itemId : '';
     }
 
     /**

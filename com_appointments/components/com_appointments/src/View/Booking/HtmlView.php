@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Site\View\Booking;
 
+use Advans\Component\Appointments\Site\Helper\NoPageCache;
 use Advans\Component\Appointments\Administrator\Service\NotificationException;
 use Advans\Component\Appointments\Administrator\Service\NotificationService;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
@@ -37,6 +38,8 @@ class HtmlView extends BaseHtmlView
     {
         $app = Factory::getApplication();
         $app->setHeader('Cache-Control', 'private, no-store', true);
+        // Nor Joomla's page cache: the page carries signed links and tokens of one browser session.
+        NoPageCache::apply($app);
         $this->item = $this->getModel()->getItem();
 
         // A cancelled appointment has nothing to add to a calendar and nothing left to change.
@@ -47,7 +50,8 @@ class HtmlView extends BaseHtmlView
 
             try {
                 $links = (new NotificationService(Factory::getContainer()->get(DatabaseInterface::class)))
-                    ->links(['id' => (int) $this->item->id, 'modified_utc' => (string) $this->item->modified_utc]);
+                    ->links(['id' => (int) $this->item->id, 'eventtype_id' => (int) $this->item->eventtype_id,
+                        'modified_utc' => (string) $this->item->modified_utc], $app->getLanguage()->getTag());
                 $this->manageLinks = array_intersect_key($links, array_flip(['reschedule_url', 'cancel_url']));
             } catch (NotificationException $e) {
                 // Without a valid public site address the links are only in the email.
