@@ -183,7 +183,7 @@ class ExportController extends BaseController
      * A text cell starting with =, +, -, @, tab or carriage return is evaluated as a formula
      * by Excel, LibreOffice and Google Sheets. Such a cell gets a leading apostrophe, which
      * spreadsheets treat as a text marker and do not display. Plain numbers (including negative
-     * ones) and non-strings are left alone. The import removes the apostrophe again.
+     * ones) and non-strings are left alone. A text that already starts with apostrophes followed by such a character gets one more, so the import can remove exactly one apostrophe and restore every value.
      *
      * @param   mixed  $value  A cell value
      *
@@ -191,7 +191,7 @@ class ExportController extends BaseController
      */
     public static function neutralizeFormula($value)
     {
-        if (!\is_string($value) || $value === '' || strpbrk($value[0], "=+-@\t\r") === false) {
+        if (!\is_string($value) || !preg_match("/^'*[=+\\-@\\t\\r]/", $value)) {
             return $value;
         }
 

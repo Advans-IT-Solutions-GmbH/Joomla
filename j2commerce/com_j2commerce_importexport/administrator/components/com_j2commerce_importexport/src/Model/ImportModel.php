@@ -335,9 +335,11 @@ class ImportModel extends BaseDatabaseModel
             } elseif (is_string($item)) {
                 $item = (string) InputFilter::getInstance()->clean($item, 'string');
                 if (in_array($key, $linkKeys, true)) {
-                    // Browsers ignore control characters inside a scheme ("java\tscript:").
-                    $item = preg_replace('/[\x00-\x20\x7F]+/', '', $item);
-                    if (preg_match('/^([a-z][a-z0-9+.\-]*):/i', $item, $scheme)
+                    // Browsers ignore control characters inside a scheme ("java\tscript:"), so
+                    // the scheme is read from a copy without them. The stored value keeps its spaces.
+                    $item = trim($item);
+                    $probe = preg_replace('/[\x00-\x20\x7F]+/', '', $item);
+                    if (preg_match('/^([a-z][a-z0-9+.\-]*):/i', $probe, $scheme)
                         && !in_array(strtolower($scheme[1]), ['http', 'https', 'mailto', 'tel', 'ftp', 'ftps', 'sftp'], true)) {
                         $item = '';
                     }
@@ -1495,8 +1497,7 @@ class ImportModel extends BaseDatabaseModel
     public static function restoreFormulaCell($value)
     {
         if (is_string($value)
-            && preg_match("/^'[=+\\-@\\t\\r]/", $value)
-            && !preg_match('/^-?\d+(?:\.\d+)?$/', substr($value, 1))) {
+            && preg_match("/^'+[=+\\-@\\t\\r]/", $value)) {
             return substr($value, 1);
         }
 

@@ -1031,6 +1031,15 @@ namespace {
             'Imported article texts pass through the Joomla text filter');
         check(json_decode($stored->urls, true) === ['urla' => '', 'urla_text' => 'x', 'urlb' => 'https://example.org/a?b=1&c=2', 'urlc' => 'mailto:a@example.org'],
             'Imported links drop unsafe schemes and markup, safe links stay');
+        $authDb->resetAuthorizationScenario([], []);
+        $authModel->importArticleData([
+            'title' => 'Links', 'alias' => 'links',
+            'article_images' => '{"image_intro":"images/product photo.jpg"}',
+            'urls' => '{"urla":" /shop/our product "}',
+        ], 2, ['update_existing' => false]);
+        check(json_decode($authDb->inserted['#__content']->images, true) === ['image_intro' => 'images/product photo.jpg']
+            && json_decode($authDb->inserted['#__content']->urls, true) === ['urla' => '/shop/our product'],
+            'Spaces inside a stored link are kept');
         check(json_decode($stored->attribs, true) === ['show_title' => '1', 'note' => 't', 'nested' => ['k' => 'v']]
             && $stored->images === '{"image_intro":"images/a.jpg","float_intro":""}'
             && $stored->metadata === '{"robots":"noindex"}',
@@ -1055,7 +1064,13 @@ namespace {
             check($exportClass::neutralizeFormula($cell) === "'" . $cell && ImportModel::restoreFormulaCell("'" . $cell) === $cell,
                 'A formula cell is prefixed and restored: ' . json_encode($cell));
         }
-        foreach (['Plain', '', '12', '-5', '-5.25', '0.5', 'a=b', '{"a":"=1"}', 12, 1.5, null] as $cell) {
+        // A literal leading apostrophe must survive the round trip as well.
+        foreach (["'=1+1", "''-x", "'-5", "'@a", "'abc", "'", "''"] as $cell) {
+            $exported = $exportClass::neutralizeFormula($cell);
+            check(ImportModel::restoreFormulaCell($exported) === $cell,
+                'A literal apostrophe value survives export and import: ' . json_encode($cell));
+        }
+        foreach (['Plain', '', '12', '-5', '-5.25', '0.5', 'a=b', "'abc", '{"a":"=1"}', 12, 1.5, null] as $cell) {
             check($exportClass::neutralizeFormula($cell) === $cell && ImportModel::restoreFormulaCell($cell) === $cell,
                 'A harmless cell stays unchanged: ' . json_encode($cell));
         }

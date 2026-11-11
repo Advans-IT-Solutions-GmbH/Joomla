@@ -12,6 +12,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     ? __DIR__ . '/advansinstaller/load.php'
     : dirname(__DIR__, 2) . '/shared/installer/load.php';
 
+use Joomla\CMS\Access\Access;
 use Joomla\CMS\Factory;
 use Advans\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
@@ -62,12 +63,13 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
     }
 
     /**
-     * Gives the new import and export actions to the groups that already may manage the
-     * component, so an update does not lock out existing administrators.
+     * Gives the new import and export actions to every group that may manage the component
+     * today, so an update does not lock out existing administrators.
      *
-     * An action without a rule is denied for everyone except Super Users. Administrators
-     * receive core.manage from the root asset, so this falls back to the Administrator group
-     * when the component asset sets no core.manage rule. Existing rules are never changed.
+     * An action without a rule is denied for everyone except Super Users. The groups are read
+     * from the effective core.manage permission on the component asset (own rules, inherited
+     * grants from the root asset and parent groups, and denials), not from the stored rules
+     * alone. A rule that already exists is never changed.
      */
     private function seedActionRules(): void
     {
@@ -87,18 +89,30 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
 
         $rules = json_decode((string) $asset->rules, true);
         $rules = is_array($rules) ? $rules : [];
-        $manage = isset($rules['core.manage']) && is_array($rules['core.manage']) ? $rules['core.manage'] : ['7' => 1];
-        $changed = false;
+        $actions = array_values(array_filter(
+            ['importexport.import', 'importexport.export'],
+            static fn (string $action): bool => !array_key_exists($action, $rules)
+        ));
 
-        foreach (['importexport.import', 'importexport.export'] as $action) {
-            if (!array_key_exists($action, $rules)) {
-                $rules[$action] = (object) $manage;
-                $changed = true;
+        if ($actions === []) {
+            return;
+        }
+
+        $groupIds = $db->setQuery(
+            $this->createDbQuery($db)->select($db->quoteName('id'))->from($db->quoteName('#__usergroups'))
+        )->loadColumn();
+
+        Access::clearStatics();
+        $grants = [];
+
+        foreach ($groupIds as $groupId) {
+            if (Access::checkGroup((int) $groupId, 'core.manage', $name)) {
+                $grants[(string) (int) $groupId] = 1;
             }
         }
 
-        if (!$changed) {
-            return;
+        foreach ($actions as $action) {
+            $rules[$action] = (object) $grants;
         }
 
         $json = json_encode((object) $rules);
@@ -110,6 +124,7 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
             ->bind(':rules', $json)
             ->bind(':id', $assetId, ParameterType::INTEGER);
         $db->setQuery($query)->execute();
+        Access::clearStatics();
     }
 
     private function ensureUpdateSite(): void
