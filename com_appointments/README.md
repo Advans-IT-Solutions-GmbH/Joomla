@@ -875,6 +875,8 @@ confirmation, the signed pages, their receipts, the guest removal page and the a
 the internet calendars are kept out of Joomla's page cache (they exclude themselves from
 **System - Page Cache**, which ignores the browser cache headers), so a cached copy never hands
 their entries, links or form tokens to another visitor. The list of event types stays cacheable.
+Installing or updating the component empties the site's page cache, so no page that an earlier
+version let it store is served afterwards.
 Public requests use the directly connected address for rate limiting, not untrusted forwarding
 headers: an IPv4 address counts on its own, an IPv6 address counts together with its whole /64
 network (one connection usually holds all of it), an IPv4-mapped IPv6 address as its IPv4 address.
