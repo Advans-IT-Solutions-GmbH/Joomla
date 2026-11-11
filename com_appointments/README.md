@@ -233,10 +233,16 @@ components. The guest links in e-mails and the calendar subscriptions stay non-S
   `/component/appointments/?view=eventtype&id=…` and non-SEF
   `index.php?option=com_appointments&view=eventtype&id=…` keep working.
 - **Links in e-mails** (reschedule, cancel, erase) are built as
-  `index.php?option=com_appointments&view=manage&id=…&action=…&signature=…` from the public site URL.
-  They are signed, are also sent by the reminder task from the command line, where no site router is
-  available, and must stay valid for as long as the booking exists. On a multilingual site Joomla
-  adds the language prefix when such a link is opened.
+  `index.php?option=com_appointments&view=manage&id=…&action=…&signature=…&Itemid=…` from the public
+  site URL. They are signed, are also sent by the reminder task from the command line, where no site
+  router is available, and must stay valid for as long as the booking exists. On a multilingual site
+  Joomla adds the language prefix when such a link is opened. The `Itemid` frames the page: the
+  *Book an appointment* item of the booking's event type, otherwise an *Event types* item, each in the
+  reader's language or in *All*, published and open to guests. Without one the link has no `Itemid`.
+  The signature does not cover the `Itemid`, which only chooses the frame. The confirmation, the
+  receipts after a change and the guest's removal page use the same frame, so they are not shown
+  in the frame of the home page (its modules and content above the result). A link without an
+  `Itemid` from an earlier mail gets it with the redirect after the change.
 - **Calendar subscriptions** use `index.php?option=com_appointments&task=feed.download&…`.
 
 A site that blocks direct component addresses in its `.htaccess` therefore needs two exceptions,
@@ -392,6 +398,13 @@ disabled and recoverable error states. Administrator edit forms leave through Sa
 Cancel so their checkout is released. Authorisation and deliberate privacy-preserving 403/404
 responses take precedence over navigation; public links never grant access to another person's
 booking. Component options retain Joomla's native Close action.
+
+The button **Back to appointments** (on a form **Cancel**) leads to the list of all event types. On
+a *Book an appointment* menu item, which publishes one event type, it is hidden by default, so the
+list does not show that item's visitors the other event types. The menu item's **Navigation** tab
+shows it again and chooses its target (another menu item, otherwise the list). While it is hidden,
+the confirmation, the signed pages and their receipts in that item's frame lead back to its booking
+page instead.
 
 Adding a device checks existing account and address locks without reserving a password attempt;
 successful device creation neither consumes sign-in attempts nor clears a real sign-in lock.
@@ -1085,7 +1098,10 @@ so automatic browser-zone detection does not reload the picker and discard its e
 `task=booking.ics&id=<booking>` (a link of an earlier confirmation is refused), with the same UID and sequence as the attachment of the confirmation email, and
 the signed reschedule and cancel links of that email; like the confirmation page itself it is
 only available to the browser session that made the booking. When the links cannot be built (an
-invalid public site address in **Options**), only the `.ics` download is shown.
+invalid public site address in **Options**), only the `.ics` download is shown. The receipt of a
+reschedule likewise shows the new signed reschedule and cancel links, the same as in the reschedule
+email: only to the browser session that made the change and only while the appointment is still the
+version this change produced. The receipts of a cancellation or erasure show no links.
 
 **Booking script and slot endpoint.** `media/com_appointments/js/booking.js` is registered as the
 web asset `com_appointments.booking` (deferred, no dependency) and loaded by the booking page, the confirmation and a completed manage

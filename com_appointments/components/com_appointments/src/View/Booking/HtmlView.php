@@ -47,7 +47,8 @@ class HtmlView extends BaseHtmlView
 
             try {
                 $links = (new NotificationService(Factory::getContainer()->get(DatabaseInterface::class)))
-                    ->links(['id' => (int) $this->item->id, 'modified_utc' => (string) $this->item->modified_utc]);
+                    ->links(['id' => (int) $this->item->id, 'eventtype_id' => (int) $this->item->eventtype_id,
+                        'modified_utc' => (string) $this->item->modified_utc], $app->getLanguage()->getTag());
                 $this->manageLinks = array_intersect_key($links, array_flip(['reschedule_url', 'cancel_url']));
             } catch (NotificationException $e) {
                 // Without a valid public site address the links are only in the email.

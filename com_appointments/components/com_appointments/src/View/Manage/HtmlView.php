@@ -34,6 +34,10 @@ class HtmlView extends BaseHtmlView
     protected $zone;
     protected $reason;
     protected $errors = [];
+    /** New signed reschedule and cancel addresses on the receipt of a reschedule (ManageModel::receiptLinks). */
+    protected array $manageLinks = [];
+    /** Itemid of the page frame, kept by the GET form of the reschedule page; 0 for none. */
+    protected int $itemId = 0;
 
     public function display($tpl = null)
     {
@@ -58,7 +62,11 @@ class HtmlView extends BaseHtmlView
 
         if ($this->completed) {
             $this->takeResultNotices();
+            $this->manageLinks = $model->receiptLinks();
         }
+
+        $active = $app->getMenu()->getActive();
+        $this->itemId = $active !== null && ($active->query['option'] ?? '') === 'com_appointments' ? (int) $active->id : 0;
         $this->item = $model->getItem();
         $this->deleteMode = $model->deleteMode();
         $this->reason = (string) $app->getUserState('com_appointments.cancel_reason', '');

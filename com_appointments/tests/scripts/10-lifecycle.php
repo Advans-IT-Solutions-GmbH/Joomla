@@ -46,6 +46,31 @@ try {
         && $moved['invitee_timezone'] === 'Europe/Zurich', 'Reschedule updates the same UID/id, sequence and displayed zone');
     $check((int) $fixture->db->query("SELECT COUNT(*) AS n FROM {$fixture->prefix}appointments_bookings WHERE uid='" . $booking['uid'] . "'")->fetch_assoc()['n'] === 1,
         'Exactly one row remains for the calendar UID');
+    // The receipt gives this browser the new signed links, like the confirmation of a booking:
+    // the earlier links no longer apply, and without the mail the appointment stays manageable.
+    $receipt = new DOMXPath((static function (string $html): DOMDocument {
+        $document = new DOMDocument();
+        @$document->loadHTML($html);
+
+        return $document;
+    })($html));
+    $receiptLink = static function (string $class) use ($receipt): string {
+        $node = $receipt->query('//*[@id="appointment-result"]//a[contains(concat(" ", normalize-space(@class), " "), " ' . $class . ' ")]')->item(0);
+
+        return $node instanceof DOMElement ? html_entity_decode($node->getAttribute('href'), ENT_QUOTES | ENT_HTML5) : '';
+    };
+    $newSignature = static function (string $url): string {
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+
+        return (string) ($query['signature'] ?? '');
+    };
+    $check($newSignature($receiptLink('com-appointments-reschedule')) === $newSignature($fixture->link($moved, 'reschedule'))
+        && $newSignature($receiptLink('com-appointments-cancel')) === $newSignature($fixture->link($moved, 'cancel'))
+        && $newSignature($fixture->link($moved, 'cancel')) !== $newSignature($cancel),
+        'The receipt of a reschedule shows the new signed reschedule and cancel links of the moved appointment');
+    $reloaded = $client->request($reschedule);
+    $check($client->status === 200 && str_contains($reloaded, $newSignature($fixture->link($moved, 'cancel'))),
+        'The receipt keeps the new links on reload in the browser that made the change');
     $messages = AppointmentsMail::messagesSince($before);
     $check(count($messages) === 3, 'Reschedule sends actual mail to invitee, guest and host');
     foreach ($messages as $mime) {

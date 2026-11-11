@@ -7,4 +7,14 @@
     <fields name="request"><fieldset name="request" addfieldprefix="Advans\Component\Appointments\Administrator\Field">
         <field name="id" type="eventtypelist" label="COM_APPOINTMENTS_MENU_FIELD_EVENTTYPE_LABEL" description="COM_APPOINTMENTS_MENU_FIELD_EVENTTYPE_DESC" required="true" filter="integer" validate="options"><option value="">JSELECT</option></field>
     </fieldset></fields>
+    <!-- The way back on the pages of this menu item (Site\Helper\BackLink). -->
+    <fields name="params"><fieldset name="appointments_navigation" label="COM_APPOINTMENTS_MENU_FIELDSET_NAVIGATION">
+        <field name="show_back_link" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_MENU_FIELD_SHOW_BACK_LABEL" description="COM_APPOINTMENTS_MENU_FIELD_SHOW_BACK_DESC" default="0" filter="integer" validate="options">
+            <option value="0">JHIDE</option>
+            <option value="1">JSHOW</option>
+        </field>
+        <field name="back_link_itemid" type="menuitem" label="COM_APPOINTMENTS_MENU_FIELD_BACK_TARGET_LABEL" description="COM_APPOINTMENTS_MENU_FIELD_BACK_TARGET_DESC" filter="integer" client="site" showon="show_back_link:1">
+            <option value="">COM_APPOINTMENTS_MENU_FIELD_BACK_TARGET_OVERVIEW</option>
+        </field>
+    </fieldset></fields>
 </metadata>

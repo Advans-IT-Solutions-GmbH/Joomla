@@ -139,7 +139,10 @@ class ManageModel extends BaseDatabaseModel
         if (($messageBooking['conference_state'] ?? '') === 'failed') {
             Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'), 'warning');
         }
-        Factory::getApplication()->setUserState($this->receiptKey(), true);
+        // The receipt belongs to this browser session. After a reschedule it also keeps the version
+        // of the moved appointment, for which receiptLinks() shows the new signed links.
+        Factory::getApplication()->setUserState($this->receiptKey(), $action === 'reschedule'
+            ? ['modified_utc' => (string) $this->version((int) $booking->id)] : true);
 
         if ($messageBooking !== null && empty($messageBooking['_conference_missing']) && empty($messageBooking['_conference_error'])) {
             try {
@@ -151,6 +154,56 @@ class ManageModel extends BaseDatabaseModel
         } elseif (!empty($messageBooking['_conference_error'])) {
             Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_STORAGE_ERROR'), 'error');
         }
+    }
+
+    /**
+     * The new signed reschedule and cancel addresses on the receipt of a reschedule, like the
+     * confirmation page of a booking shows them: only to the browser session that made the change
+     * (its receipt), only while the appointment is still the version this change produced, and
+     * never for a cancelled or erased appointment. Empty otherwise, or without a valid public site
+     * address (the links are then only in the mail).
+     *
+     * @return array{reschedule_url?: string, cancel_url?: string}
+     */
+    public function receiptLinks(): array
+    {
+        $app = Factory::getApplication();
+        $receipt = $app->getUserState($this->receiptKey(), false);
+
+        if ($this->action() !== 'reschedule' || !is_array($receipt) || !is_string($receipt['modified_utc'] ?? null)
+            || $receipt['modified_utc'] === '') {
+            return [];
+        }
+
+        $db = $this->getDatabase();
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName(['id', 'eventtype_id', 'state', 'modified_utc', 'anonymised_utc']))
+            ->from($db->quoteName('#__appointments_bookings'))
+            ->where($db->quoteName('id') . ' = ' . $app->getInput()->getInt('id', 0));
+        $booking = $db->setQuery($query)->loadObject();
+
+        if (!$booking || $booking->anonymised_utc !== null || !in_array((int) $booking->state, [0, 1], true)
+            || !hash_equals($receipt['modified_utc'], (string) $booking->modified_utc)) {
+            return [];
+        }
+
+        try {
+            $links = (new NotificationService($db))->links(['id' => (int) $booking->id, 'eventtype_id' => (int) $booking->eventtype_id,
+                'modified_utc' => (string) $booking->modified_utc], $app->getLanguage()->getTag());
+        } catch (NotificationException $e) {
+            return [];
+        }
+
+        return array_intersect_key($links, array_flip(['reschedule_url', 'cancel_url']));
+    }
+
+    /** The stored row version of booking $id, as the signed links are bound to it. */
+    private function version(int $id): string
+    {
+        $db = $this->getDatabase();
+
+        return (string) $db->setQuery('SELECT ' . $db->quoteName('modified_utc') . ' FROM ' . $db->quoteName('#__appointments_bookings')
+            . ' WHERE ' . $db->quoteName('id') . ' = ' . $id)->loadResult();
     }
 
     private function links(): SignedLink
