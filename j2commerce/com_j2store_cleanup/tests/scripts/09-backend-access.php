@@ -190,6 +190,24 @@ try {
     ba_request($page, ['task' => 'cleanup', 'cid' => [$probeId], (string) ba_token($full['body']) => '1']);
     ba_check('With core.manage, core.delete and the form token the eligible record is removed',
         !ba_has_extension($db, $probeId));
+
+    // 4. Permission editing: the installed config.xml/access.xml drive Joomla's editor.
+    $options = $baseUrl . '/administrator/index.php?option=com_config&view=component&component=com_j2store_cleanup';
+    ba_set_rules($db, '{"core.manage":{"6":1}}');
+    $withoutAdmin = ba_request($page);
+    ba_check('Without core.admin or core.options the Options button is hidden',
+        $withoutAdmin['code'] === 200 && !str_contains($withoutAdmin['body'], 'component=com_j2store_cleanup'));
+    $refused = ba_request($options);
+    ba_check('Without core.admin the permission editor is refused', !str_contains($refused['body'], 'jform_rules'));
+
+    ba_set_rules($db, '{"core.manage":{"6":1},"core.admin":{"6":1}}');
+    $withAdmin = ba_request($page);
+    ba_check('With core.admin the Options button links to the component options',
+        str_contains($withAdmin['body'], 'component=com_j2store_cleanup'));
+    $editor = ba_request($options);
+    ba_check('With core.admin the permission editor lists the manage and delete actions',
+        $editor['code'] === 200 && str_contains($editor['body'], 'jform_rules')
+        && str_contains($editor['body'], 'core.manage') && str_contains($editor['body'], 'core.delete'));
 } finally {
     if ($original !== null) {
         ba_set_rules($db, (string) $original);

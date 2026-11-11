@@ -158,7 +158,8 @@ Order as in `tests/test.env`:
    component's real Joomla permission rules: without `core.manage` the page and the task are
    refused, with `core.manage` only the scan is read-only and a forged cleanup request removes
    nothing, and with `core.delete` as well an eligible record is removed, but only with the
-   form token
+   form token. It also checks that the Options button and Joomla's permission editor (with the
+   manage and delete actions) are available only with `core.admin`
 8. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator`
    and really renders the component page. It asserts HTTP 200, no PHP error and no Joomla
    error page, no untranslated language key, and at least one string of the component's own
