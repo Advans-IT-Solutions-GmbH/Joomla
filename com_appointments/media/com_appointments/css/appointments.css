@@ -193,8 +193,15 @@
     font-size: var(--appointments-step-title-size);
 }
 
-.com-appointments-step-title:focus {
+.com-appointments-step-title:focus,
+.com-appointments [data-appointments-result]:focus {
     outline: none;
+}
+
+/* The result a completed form lands at, with a little room above it. */
+#appointment-result,
+#appointment-confirmation {
+    scroll-margin-top: 1rem;
 }
 
 .com-appointments-title {

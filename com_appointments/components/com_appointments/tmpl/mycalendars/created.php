@@ -62,7 +62,8 @@ $guide = static fn (array $steps): string => '<ol class="com-appointments-mycal-
 <div class="com-appointments com-appointments-mycalendars">
     <div class="com-appointments-container">
         <h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
-        <p class="com-appointments-status"><?php echo Text::sprintf('COM_APPOINTMENTS_TEAM_D_CREATED_INTRO', $this->escape($created['name'])); ?></p>
+        <?php // The answer to the form itself, not a redirect: autofocus brings the outcome into view and to the screen reader. ?>
+        <p class="com-appointments-status" role="status" tabindex="-1" autofocus data-appointments-result><?php echo Text::sprintf('COM_APPOINTMENTS_TEAM_D_CREATED_INTRO', $this->escape($created['name'])); ?></p>
         <?php if (!$created['mail_sent']) : ?>
             <p class="com-appointments-notice"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_CREATED_NO_MAIL'); ?></p>
         <?php endif; ?>

@@ -60,6 +60,7 @@ class HtmlView extends BaseHtmlView
     protected $days = [];
     protected $inputData = [];
     protected $errors = [];
+    protected bool $focusSystemMessage = false;
     protected $renderedAt;
     protected $formSignature;
     protected $params;
@@ -136,6 +137,13 @@ class HtmlView extends BaseHtmlView
             // Field messages of the last refused submission, shown once at their fields.
             $this->errors = array_filter((array) $app->getUserState('com_appointments.booking_errors.' . (int) $this->item->id, []), 'is_string');
             $app->setUserState('com_appointments.booking_errors.' . (int) $this->item->id, null);
+            $messageKey = 'com_appointments.booking_focus_message.' . (int) $this->item->id;
+            $this->focusSystemMessage = (bool) $app->getUserState($messageKey, false);
+            $app->setUserState($messageKey, null);
+
+            if ($this->focusSystemMessage) {
+                $this->getDocument()->addScriptOptions('com_appointments.focusSystemMessage', true);
+            }
         }
 
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));

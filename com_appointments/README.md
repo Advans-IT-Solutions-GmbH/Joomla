@@ -53,6 +53,14 @@ asset field; it does not display the component's rules instead of the saved even
 The [backend pointer regression matrix](../shared/tests/browser/README.md) covers the editor
 and the DMARC module editor in Edge and Firefox at seven widths in light and dark mode.
 
+Every administrator page of the component loads `media/com_appointments/css/admin-layout.css`
+through the component dispatcher. Atum keeps the page title on one line and lets neither the
+header nor the main column beside the sidebar shrink, so a long translated title or a wide table
+widened the whole page. The stylesheet lets the title wrap (leaving room for the toolbar toggler
+on phones) and lets the main column shrink, so every list table scrolls inside its
+`.table-responsive` wrapper instead. Booking detail labels and values wrap unbroken text,
+including the calendar UID, inside `.com-appointments-booking-details`.
+
 ## Installation
 
 ### Currently: build from source
@@ -1046,8 +1054,27 @@ copies, because the booking script and the server rely on them.
 | Checkboxes | `div.form-check` with `input.form-check-input` and `label.form-check-label` (no margin, centred with the box); with a checkbox mode the consent `.com-appointments-privacy > .com-appointments-consent` with the link `a.com-appointments-privacy-link` and `p.form-text.com-appointments-consent-text`, confirmation `.com-appointments-confirm` |
 | Errors | The control gets `.is-invalid`, `aria-invalid="true"` and `aria-describedby`; the message is `div.invalid-feedback.com-appointments-field-error` with the id `booking-<field>-error` or `manage-<field>-error` (the browser's check before sending: `<control id>-check`) |
 | Actions | `div.com-appointments-actions` with `button.btn.btn-primary` (cancel and erase: `btn-danger`) |
-| Confirmation | `.com-appointments-card.com-appointments-confirmation-card.com-appointments-state-<0/1/2>` with `span.com-appointments-confirmation-mark`, `h1.com-appointments-heading` ("Appointment confirmed", "Appointment received" while it awaits approval, "Appointment cancelled"), `p.com-appointments-status`, `h2.com-appointments-title`, `dl.com-appointments-summary`, `p.com-appointments-join > a.btn.btn-primary`, and `.com-appointments-confirmation-actions` with `a.com-appointments-calendar-add` (the `.ics` download), `a.com-appointments-reschedule` and `a.com-appointments-cancel`, then `p.com-appointments-confirmation-note` |
+| Confirmation | `#appointment-confirmation.com-appointments-card.com-appointments-confirmation-card.com-appointments-state-<0/1/2>` with `span.com-appointments-confirmation-mark`, `h1.com-appointments-heading` ("Appointment confirmed", "Appointment received" while it awaits approval, "Appointment cancelled"), `p.com-appointments-status` (see Result), `h2.com-appointments-title`, `dl.com-appointments-summary`, `p.com-appointments-join > a.btn.btn-primary`, and `.com-appointments-confirmation-actions` with `a.com-appointments-calendar-add` (the `.ics` download), `a.com-appointments-reschedule` and `a.com-appointments-cancel`, then `p.com-appointments-confirmation-note` |
 | Summary | `h2.com-appointments-title`, `dl.com-appointments-summary` (date, time, time zone, location or email address), `p.com-appointments-status` |
+| Result | A completed form shows its outcome as `p.com-appointments-status[role=status][tabindex=-1][autofocus][data-appointments-result]`: the confirmation, the completed manage page inside `div#appointment-result.com-appointments-manage` and the page with the app password of a new device. A successful booking redirects to `#appointment-confirmation` and a successful reschedule, cancellation or erasure to `#appointment-result`, so the outcome is in the first screen even below modules the template places above the component. A fragment keeps the browser from running `autofocus`, so the booking script focuses the status there; the device page is the answer to its form and relies on `autofocus`. Messages queued for the outcome (a notification email that could not be delivered, a missing or unreleased conference) are taken from Joomla's message queue and shown inside the result as `div#appointment-notices.com-appointments-notices` with one `div.alert.alert-<type>.com-appointments-alert` each; the status names them with `aria-describedby="appointment-notices"`, so they are in view and read out with it instead of above the component. A template override of the confirmation or the manage page may not print them, so with an override they stay in Joomla's message queue and the template shows them as before; the booking script focuses that live system-message region when an override leaves the notices there. On the confirmation, the stored warning of a failed conference (`p#appointment-conference-missing`, also after a reload) is part of the same `aria-describedby`. A refused field-error submission has no fragment or result, so the browser's native autofocus stays on the first invalid field; if the time is missing or malformed and no slot control can receive focus, `#booking-start-error` is the focusable alert. A page-level Joomla message is focused in its live system-message container only when a server-provided booking error or retained result notice requests it, no field, modal or success result already owns focus, and the visitor has not interacted |
+
+**Override notice focus.** An explicit queued-warning request on a result override takes
+precedence over that override's result autofocus, including a copy of the current layout.
+The visible system-message container receives focus after Joomla renders it and is added to the
+result's `aria-describedby` without removing existing descriptions. This is the exception to the
+ordinary result-focus rule above: standard result layouts keep their notices inside the result
+and never request this fallback. Invalid fields, modals, other focused controls and prior pointer
+or keyboard interaction still prevent the fallback from taking focus.
+Initial result/message focus runs once at `pageshow`, after native fragment navigation
+instead of during DOMContentLoaded; progressive form enhancement still starts at
+DOMContentLoaded. Back-forward cache restores do not refocus the outcome. A script loaded
+after the page has already loaded handles the outcome immediately, using the same guards.
+Page-level refusals of signed manage actions use the same one-shot message-focus option,
+scoped to the booking and action. Ordinary manage GETs and field-error forms remain
+script-free. A rejected timezone is not echoed into the redirect; its validation message
+is retained and the form uses its existing known timezone.
+Booking refusals retain a valid submitted timezone even when the start is empty or malformed,
+so automatic browser-zone detection does not reload the picker and discard its error alert.
 
 **Steps and addresses.** Step 1 is the event type's address plus `month` (`YYYY-MM`), and `day`
 (`YYYY-MM-DD`) once a day is chosen; step 2 adds `start`, the chosen time in UTC
@@ -1061,7 +1088,8 @@ only available to the browser session that made the booking. When the links cann
 invalid public site address in **Options**), only the `.ics` download is shown.
 
 **Booking script and slot endpoint.** `media/com_appointments/js/booking.js` is registered as the
-web asset `com_appointments.booking` (deferred, no dependency) and loaded by the booking page. It
+web asset `com_appointments.booking` (deferred, no dependency) and loaded by the booking page, the confirmation and a completed manage
+page, or a manage form returning a one-shot page-level error. On manage pages it only handles outcome/message focus. It
 adds `.com-appointments-js` to `.com-appointments`. A day or month link (`a[data-appointments-load]`)
 and the zone selection request the same address plus `format=raw` and replace `#appointment-picker`
 with the response; that response is the layout `default_picker.php` alone, so a template override
@@ -1072,8 +1100,8 @@ into the browser history (`history.pushState`; the back and forward buttons load
 address the same way), the focus moves to the new times or the new step title, and a polite live
 region announces the times legend or the step title. Details typed into step 2 are kept when the
 visitor goes back for another time. Without JavaScript every link and the time form load the full
-page and land at `#appointment-picker` or `#appointment-booking`; a refused submission lands at
-`#appointment-details` when its messages stand at the fields. The script writes no text of its
+page and land at `#appointment-picker` or `#appointment-booking`; a refused submission with field
+messages has no fragment, preserving native autofocus on its invalid control. The script writes no text of its
 own, contains no inline code and makes no third-party request, so the page works under a Content
 Security Policy without `unsafe-inline`. When a background request fails, it falls back to the
 normal page request.

@@ -21,6 +21,7 @@ $user = Factory::getApplication()->getIdentity();
     <?php if (!$this->items) : ?>
         <p class="alert alert-info"><?php echo Text::_('COM_APPOINTMENTS_EVENTTYPES_EMPTY'); ?></p>
     <?php else : ?>
+        <div class="table-responsive">
         <table class="table">
             <caption class="visually-hidden"><?php echo Text::_('COM_APPOINTMENTS_EVENTTYPES_TITLE'); ?></caption>
             <thead><tr>
@@ -50,6 +51,7 @@ $user = Factory::getApplication()->getIdentity();
             <?php endforeach; ?>
             </tbody>
         </table>
+        </div>
         <?php echo $this->pagination->getListFooter(); ?>
     <?php endif; ?>
     <input type="hidden" name="task" value="">
