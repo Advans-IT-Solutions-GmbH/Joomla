@@ -39,6 +39,26 @@ final class PrivacyOutcome
         return $outcome === '0'
             || PrivacyStaffCleanup::pending($db, $requestId, $outcome !== '')
             || (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName('#__appointments_privacy_cleanup')
+                . ' WHERE request_id = ' . $requestId)->loadResult() > 0
+            || self::reviewPending($db, $requestId);
+    }
+
+    /**
+     * Whether calendar entries of the request still wait for the handling person's decision
+     * («Privacy: calendar entries», PrivacyReview): until each is decided the request is not
+     * complete. A check that cannot be made counts as pending.
+     */
+    public static function reviewPending(DatabaseInterface $db, int $requestId): bool
+    {
+        if ($requestId < 1) {
+            return false;
+        }
+
+        try {
+            return (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName('#__appointments_privacy_review')
                 . ' WHERE request_id = ' . $requestId)->loadResult() > 0;
+        } catch (\Throwable $e) {
+            return true;
+        }
     }
 }

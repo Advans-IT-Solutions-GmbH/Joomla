@@ -45,6 +45,7 @@ class StructureTest
         'appointments_eventtype_calendars',
         'appointments_copy_restore',
         'appointments_privacy_scope',
+        'appointments_privacy_review',
     ];
 
     public function __construct()

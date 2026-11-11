@@ -58,6 +58,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         'privacy_staff',
         'privacy_cleanup',
         'privacy_outcomes',
+        'privacy_review',
         'copy_restore',
         'privacy_scope',
         'eventtype_calendars',
@@ -301,7 +302,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
     }
 
     /**
-     * The table of requests to write calendar copies anew (see install.mysql.utf8.sql), also on
+     * The tables of requests to write calendar copies anew and of privacy matches waiting for a
+     * decision (see install.mysql.utf8.sql), also on
      * an update from a version without it. Independent of the schema version on purpose.
      */
     private function ensureCopyRestoreTable(): void
@@ -312,6 +314,12 @@ class Com_appointmentsInstallerScript extends InstallerScript
             . ' `token` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, `after_booking_id` INT UNSIGNED NOT NULL DEFAULT 0,'
             . ' `failed` TINYINT UNSIGNED NOT NULL DEFAULT 0, `passes` TINYINT UNSIGNED NOT NULL DEFAULT 0,'
             . ' PRIMARY KEY (`eventtype_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_privacy_review')
+            . ' (`id` INT UNSIGNED NOT NULL AUTO_INCREMENT, `request_id` INT UNSIGNED NOT NULL, `calendar_id` INT UNSIGNED NOT NULL,'
+            . ' `uri` VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, `created_utc` DATETIME NOT NULL, PRIMARY KEY (`id`),'
+            . ' UNIQUE KEY `idx_privacy_review_entry` (`request_id`, `calendar_id`, `uri`), KEY `idx_privacy_review_calendar` (`calendar_id`),'
+            . ' FOREIGN KEY (`calendar_id`) REFERENCES ' . $db->quoteName('#__appointments_calendars') . ' (`id`) ON DELETE CASCADE)'
+            . ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
     }
 
     private function prepareUninstall(): bool

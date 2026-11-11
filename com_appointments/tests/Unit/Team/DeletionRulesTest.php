@@ -65,7 +65,7 @@ final class DeletionRulesTest extends TestCase
         preg_match_all('/COM_APPOINTMENTS_HELP_DEL_[A-Z0-9_]+/', $template, $found);
         $keys = array_values(array_unique($found[0]));
 
-        foreach (['RULE_ORIGIN_DESC', 'RULE_BOOKINGS_DESC', 'RULE_OWNER_DESC', 'RULE_DEVICE_DELETE_DESC', 'RULE_OWN_DESC',
+        foreach (['RULE_ORIGIN_DESC', 'RULE_BOOKINGS_DESC', 'RULE_OWNER_DESC', 'RULE_DEVICE_DELETE_DESC', 'RULE_OWN_DESC', 'RULE_PRIVACY_DESC',
             'RULE_CALRET_DESC', 'RULE_CLEANUP_DESC', 'RULE_RESTORE_DESC', 'RULE_BACKUP_DESC', 'TABLE_TITLE',
             'OUTLOOK_TITLE', 'OUTLOOK_WHY', 'NEVER_TITLE', 'BEYOND_TITLE'] as $rule) {
             self::assertContains('COM_APPOINTMENTS_HELP_DEL_' . $rule, $keys, $rule);
@@ -93,8 +93,8 @@ final class DeletionRulesTest extends TestCase
         self::assertGreaterThan(60, \count($keys));
 
         foreach ($keys as $key) {
-            // Swiss High German, no semicolons, no long dashes.
-            self::assertDoesNotMatchRegularExpression('/[;ß\x{2013}\x{2014}]/u', $german[$key], $key);
+            // Swiss High German, no semicolons (HTML entities of a link aside), no long dashes.
+            self::assertDoesNotMatchRegularExpression('/[;ß\x{2013}\x{2014}]/u', (string) preg_replace('/&[a-z]+;/', '', $german[$key]), $key);
         }
     }
 }

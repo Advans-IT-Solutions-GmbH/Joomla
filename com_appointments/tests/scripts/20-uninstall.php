@@ -45,6 +45,7 @@ class UninstallTest
         'appointments_close_limits',
         'appointments_copy_restore',
         'appointments_privacy_scope',
+        'appointments_privacy_review',
     ];
 
     private const TASK_TYPES = [

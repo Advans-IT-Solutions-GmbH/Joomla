@@ -724,3 +724,21 @@ CREATE TABLE IF NOT EXISTS `#__appointments_privacy_scope` (
     `created_utc` DATETIME NOT NULL,
     PRIMARY KEY (`request_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Entries of a calendar's own that a Joomla privacy request found, waiting for
+-- the decision of the person handling it (remove only the address, delete the
+-- entry or leave it). Only where the entry is: no address, no hash of it, no
+-- content. Created by script.php on an update as well.
+--
+CREATE TABLE IF NOT EXISTS `#__appointments_privacy_review` (
+    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `request_id` INT UNSIGNED NOT NULL,
+    `calendar_id` INT UNSIGNED NOT NULL,
+    `uri` VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `created_utc` DATETIME NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `idx_privacy_review_entry` (`request_id`, `calendar_id`, `uri`),
+    KEY `idx_privacy_review_calendar` (`calendar_id`),
+    FOREIGN KEY (`calendar_id`) REFERENCES `#__appointments_calendars` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
