@@ -69,7 +69,10 @@ final class SchedulerService
             ->join('INNER', $db->quoteName('#__appointments_close_delivery', 'd') . ' ON ' . $db->quoteName('d.booking_id') . ' = ' . $db->quoteName('b.id'))
             ->where($db->quoteName('b.anonymised_utc') . ' IS NULL')
             ->where($db->quoteName('d.state') . ' <> ' . $db->quote('done'))
-            ->where($db->quoteName('b.end_utc') . ' < DATE_SUB(' . $db->quote($this->time($now)) . ', INTERVAL ' . $retention . ' DAY)'))
+            ->where($db->quoteName('b.end_utc') . ' < DATE_SUB(' . $db->quote($this->time($now)) . ', INTERVAL ' . $retention . ' DAY)')
+            // Only those still within the wait: an older one is erased at the next run, not waiting.
+            ->where($db->quoteName('b.end_utc') . ' >= DATE_SUB(' . $db->quote($this->time($now)) . ', INTERVAL ' . $retention . ' + '
+                . self::CLOSE_WAIT_DAYS . ' DAY)'))
             ->loadAssoc() ?: [];
         $missed = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName(self::CLOSE_MISSED))
             ->where($db->quoteName('erased_utc') . ' >= ' . $db->quote($this->time($now->modify('-' . self::CLOSE_WAIT_DAYS . ' days')))))
