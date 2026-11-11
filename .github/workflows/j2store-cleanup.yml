@@ -381,7 +381,10 @@ jobs:
         working-directory: shared/tests/browser
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npx playwright install --with-deps chromium firefox
+          # The hosted runner image already ships the system libraries both browsers
+          # need. Installing them again through apt only adds a dependency on the
+          # Ubuntu mirrors; a missing library would still fail the browser launch below.
+          npx playwright install chromium firefox
       - name: Start environment (J6 + J2Commerce 6)
         run: |
           cd j2commerce/com_j2store_cleanup/tests
