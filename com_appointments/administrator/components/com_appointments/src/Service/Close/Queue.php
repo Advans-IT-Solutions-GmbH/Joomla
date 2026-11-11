@@ -68,7 +68,7 @@ final class Queue
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName(self::LIMITS) . ' (
             profile VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
-            until BIGINT NOT NULL DEFAULT 0
+            paused_until BIGINT NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
     }
 
@@ -570,9 +570,9 @@ final class Queue
     private function limits(): array
     {
         $limits = [];
-        foreach ($this->db->setQuery('SELECT profile, until FROM ' . $this->db->quoteName(self::LIMITS)
-            . ' WHERE until > ' . time())->loadAssocList() as $row) {
-            $limits[(string) $row['profile']] = (int) $row['until'];
+        foreach ($this->db->setQuery('SELECT profile, paused_until FROM ' . $this->db->quoteName(self::LIMITS)
+            . ' WHERE paused_until > ' . time())->loadAssocList() as $row) {
+            $limits[(string) $row['profile']] = (int) $row['paused_until'];
         }
         return $limits;
     }
@@ -581,7 +581,7 @@ final class Queue
     {
         $table = $this->db->quoteName(self::LIMITS);
         $this->db->setQuery('DELETE FROM ' . $table . ' WHERE profile = ' . $this->db->quote($profile))->execute();
-        $this->db->setQuery('INSERT INTO ' . $table . ' (profile, until) VALUES (' . $this->db->quote($profile) . ', ' . $until . ')')->execute();
+        $this->db->setQuery('INSERT INTO ' . $table . ' (profile, paused_until) VALUES (' . $this->db->quote($profile) . ', ' . $until . ')')->execute();
     }
 
     private static function mac(array $row): string

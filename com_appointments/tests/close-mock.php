@@ -73,7 +73,7 @@ namespace {
                 booking_id INTEGER PRIMARY KEY, profile TEXT, uid TEXT, target_sequence INTEGER, state TEXT, operation TEXT,
                 reason TEXT, binding TEXT, organization_id TEXT, lead_id TEXT, contact_id TEXT, contact_created INTEGER, activity_id TEXT,
                 attempts INTEGER, next_attempt INTEGER, last_attempt INTEGER, mac TEXT)');
-            $this->pdo->exec('CREATE TABLE test_appointments_close_limits (profile TEXT PRIMARY KEY, until INTEGER)');
+            $this->pdo->exec('CREATE TABLE test_appointments_close_limits (profile TEXT PRIMARY KEY, paused_until INTEGER)');
             $this->pdo->exec('CREATE TABLE test_appointments_bookings (
                 id INTEGER PRIMARY KEY, uid TEXT, sequence INTEGER, eventtype_id INTEGER, anonymised_utc TEXT,
                 invitee_name TEXT, invitee_email TEXT, invitee_phone TEXT, start_utc TEXT, end_utc TEXT,
