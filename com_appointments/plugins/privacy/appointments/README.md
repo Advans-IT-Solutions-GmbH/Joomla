@@ -12,7 +12,7 @@
 - Exports a separate, restricted invitation record when the request address is an additional guest.
 - Handles formal removal through the component's privacy service, including its legal blocker, erasure mode and audit path.
 - Searches internet-calendar contents within the handling administrator's unlocked access and exports/removes matching entries and account-specific calendar data. Entries with the address of a team member are never changed automatically; their number is reported for review.
-- Exports and removes the staff data of the account Joomla found (blocked periods, host record; hosted event types and owned schedules are exported and named for review, never changed), also with the internet calendars off.
+- Exports and removes the staff data of the account Joomla found (blocked periods, host feed credential; hosted event types and owned schedules are exported and named for review, never changed), also with the internet calendars off.
 
 ## Requirements
 

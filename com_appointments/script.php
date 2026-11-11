@@ -59,6 +59,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         'privacy_cleanup',
         'privacy_outcomes',
         'copy_restore',
+        'privacy_scope',
         'eventtype_calendars',
         'auth_failures',
         'teamlog_head',

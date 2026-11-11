@@ -711,3 +711,16 @@ CREATE TABLE IF NOT EXISTS `#__appointments_copy_restore` (
     `passes` TINYINT UNSIGNED NOT NULL DEFAULT 0,
     PRIMARY KEY (`eventtype_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- The account a Joomla privacy request concerns, captured by the removal check while Joomla still
+-- finds the account (StaffPrivacy::capture()). The removal and every retry of the request use it,
+-- also after Joomla's user plugin has pseudonymised the account. One row per request, never replaced.
+--
+CREATE TABLE IF NOT EXISTS `#__appointments_privacy_scope` (
+    `request_id` INT UNSIGNED NOT NULL,
+    `user_id` INT UNSIGNED NOT NULL,
+    `team_member` TINYINT(1) NOT NULL DEFAULT 0,
+    `created_utc` DATETIME NOT NULL,
+    PRIMARY KEY (`request_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -1095,7 +1095,7 @@ sleep(3);
             }
         });
 
-        $suite->test('A removal for a team member keeps their calendar entries, also on a retry after the account was pseudonymised', static function () use ($run) {
+        $suite->test('A removal for a team member keeps their calendar entries, also on a retry after the account was pseudonymised and for a request without a known scope', static function () use ($run) {
             $result = $run('
                 $db = $services->db();
                 $group = (int) (((array) $services->params()->get("team_groups", []))[0] ?? 0);
@@ -1117,28 +1117,45 @@ sleep(3);
                     if (!$request->store()) {
                         throw new \RuntimeException("The privacy request fixture could not be stored.");
                     }
+                    // The removal check captures the scope, then the first run with the account and a
+                    // retry in which Joomla no longer finds it.
                     $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent("onPrivacyCanRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance($uid)]));
-                    // First run with the account, then a retry in which Joomla no longer finds it.
                     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance($uid)]));
                     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => null]));
-                    $rows = $db->setQuery("SELECT details FROM #__appointments_teamlog WHERE event = " . $db->quote(AuditEvent::PRIVACY_DELETE) . " ORDER BY id DESC", 0, 2)->loadColumn();
+                    // A request checked before the scope existed, retried after the pseudonymisation:
+                    // neither a scope nor an account, so nothing of the calendars is changed, never guessed.
+                    $unknown = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
+                    $unknown->email = "$name@example.test";
+                    $unknown->request_type = "remove";
+                    $unknown->status = 1;
+                    $unknown->requested_at = gmdate("Y-m-d H:i:s");
+                    if (!$unknown->store()) {
+                        throw new \RuntimeException("The privacy request fixture could not be stored.");
+                    }
+                    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $unknown, "user" => null]));
+                    $rows = $db->setQuery("SELECT details FROM #__appointments_teamlog WHERE event = " . $db->quote(AuditEvent::PRIVACY_DELETE) . " ORDER BY id DESC", 0, 3)->loadColumn();
 
-                    return ["request" => (int) $request->id, "rows" => array_map(static fn ($d): ?array => AuditService::decodeDetails($d), $rows)];
+                    return ["request" => (int) $request->id, "unknown" => (int) $unknown->id,
+                        "rows" => array_map(static fn ($d): ?array => AuditService::decodeDetails($d), $rows)];
                 } finally {
-                    if (!empty($request->id)) {
-                        foreach (["appointments_privacy_cleanup", "appointments_privacy_staff", "appointments_privacy_outcomes"] as $table) {
-                            $db->setQuery("DELETE FROM #__$table WHERE request_id = " . (int) $request->id)->execute();
+                    foreach ([$request ?? null, $unknown ?? null] as $fixtureRequest) {
+                        if (!empty($fixtureRequest->id)) {
+                            foreach (["appointments_privacy_cleanup", "appointments_privacy_staff", "appointments_privacy_outcomes", "appointments_privacy_scope"] as $table) {
+                                $db->setQuery("DELETE FROM #__$table WHERE request_id = " . (int) $fixtureRequest->id)->execute();
+                            }
+                            $db->setQuery("DELETE FROM #__privacy_requests WHERE id = " . (int) $fixtureRequest->id)->execute();
                         }
-                        $db->setQuery("DELETE FROM #__privacy_requests WHERE id = " . (int) $request->id)->execute();
                     }
                     $db->setQuery("DELETE FROM #__user_usergroup_map WHERE user_id = $uid")->execute();
                     $db->setQuery("DELETE FROM #__users WHERE id = $uid")->execute();
                 }');
             $rows = $result['rows'] ?? [];
+            $unknownRows = array_filter($rows, static fn (?array $row): bool => (int) ($row['request'] ?? 0) === (int) ($result['unknown'] ?? -1));
+            $requestRows = array_values(array_filter($rows, static fn (?array $row): bool => (int) ($row['request'] ?? 0) === (int) ($result['request'] ?? -1)));
 
-            return \count($rows) === 2
-                && (int) ($rows[0]['request'] ?? 0) === $result['request'] && !empty($rows[0]['team_member'])
-                && (int) ($rows[1]['request'] ?? 0) === $result['request'] && !empty($rows[1]['team_member']);
+            // The request without a scope fails closed before any calendar change (PrivacyStaffCleanup).
+            return $unknownRows === [] && \count($requestRows) === 2
+                && !empty($requestRows[0]['team_member']) && !empty($requestRows[1]['team_member']);
         });
 
         $privacyOpen = $openPackages(['A', 'B', 'C', 'D', 'E', 'F']);
@@ -1263,9 +1280,21 @@ sleep(3);
                             }
                         }
                         $subjects = $joomlaDb->setQuery("SELECT subject_user_id FROM #__appointments_teamlog WHERE id > $beforeLog AND event = \"privacy.export\"")->loadColumn();
+                        // A stored removal request: the removal check locks it, retains its scope and records
+                        // that it has no account, so the removal may change the entries of the address.
+                        $request->request_type = "remove";
+                        $request->requested_at = gmdate("Y-m-d H:i:s");
+                        if (!$request->store()) {
+                            throw new \RuntimeException("The privacy request fixture could not be stored.");
+                        }
+                        $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent("onPrivacyCanRemoveData", ["subject" => $request, "user" => null]));
                         $remove = new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => $user]);
                         $plugin->onPrivacyRemoveData($remove);
                         $remaining = (int) $joomlaDb->setQuery("SELECT COUNT(*) FROM #__appointments_calendar_objects WHERE calendar_id = ' . (int) $fixture->calendarId . ' AND uri = " . $joomlaDb->quote(' . var_export($uri, true) . '))->loadResult();
+                        foreach (["appointments_privacy_cleanup", "appointments_privacy_staff", "appointments_privacy_outcomes", "appointments_privacy_scope"] as $table) {
+                            $joomlaDb->setQuery("DELETE FROM #__$table WHERE request_id = " . (int) $request->id)->execute();
+                        }
+                        $joomlaDb->setQuery("DELETE FROM #__privacy_requests WHERE id = " . (int) $request->id)->execute();
                         $result = ["domain" => $domainFound, "items" => $items, "content" => $content, "remaining" => $remaining,
                             "mismatch_items" => $mismatchItems, "mismatch_content" => $mismatchContent,
                             "mismatch_staff" => $staffDomains, "mismatch_subjects" => $subjects,

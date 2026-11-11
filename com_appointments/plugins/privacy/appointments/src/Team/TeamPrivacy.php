@@ -12,7 +12,6 @@ use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKeyring;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
-use Advans\Component\Appointments\Administrator\Service\Team\AuditService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Application\CMSApplicationInterface;
 use Joomla\CMS\Language\Text;
@@ -406,13 +405,13 @@ final class TeamPrivacy
      * false means incomplete. Entries kept because the address is a team member's are left for
      * the administrator's review and do not make the removal incomplete.
      *
-     * @param   int|null  $staffUserId  The staff account retained for the request
-     *                                  (PrivacyStaffCleanup); null falls back to $user.
-     * @param   int       $requestId    The Joomla privacy request. Its log row keeps whether the
-     *                                  address belongs to a team member, because a retry after
-     *                                  Joomla has pseudonymised the account no longer finds it.
+     * @param   int|null   $staffUserId  The staff account retained for the request
+     *                                   (PrivacyStaffCleanup); null falls back to $user.
+     * @param   int        $requestId    The Joomla privacy request, recorded in the log row.
+     * @param   bool|null  $teamMember   The team-member decision the removal check captured for
+     *                                   the account (StaffPrivacy::capture()), null to decide now.
      */
-    public function remove(string $email, ?User $user, ?int $staffUserId = null, int $requestId = 0): bool
+    public function remove(string $email, ?User $user, ?int $staffUserId = null, int $requestId = 0, ?bool $teamMember = null): bool
     {
         $this->staffRemoved = false;
         if ($this->services === null) {
@@ -428,9 +427,7 @@ final class TeamPrivacy
         $staff = false;
         $userId = $staffUserId ?? ($user !== null ? (int) $user->id : 0);
         // The address of a team member is in many entries of the team: those are never changed automatically.
-        // The retained staff account of a retry has already lost its grants, so an earlier run of the
-        // same request that found a team member decides as well.
-        $teamMember = ($userId > 0 && !self::changesEntriesOf($this->audienceOf($userId))) || $this->teamMemberOfRequest($requestId);
+        $teamMember ??= $userId > 0 && !self::changesEntriesOf($this->audienceOf($userId));
 
         try {
             $search = $this->search($email, null);
@@ -511,37 +508,6 @@ final class TeamPrivacy
     public function staffRemoved(): bool
     {
         return $this->staffRemoved;
-    }
-
-    /**
-     * Whether an earlier removal of this privacy request found the address to be a team
-     * member's (its `privacy.delete` log row). A check that cannot be made counts as team
-     * member, so a retry never changes entries that the first run kept.
-     */
-    private function teamMemberOfRequest(int $requestId): bool
-    {
-        if ($requestId <= 0) {
-            return false;
-        }
-
-        try {
-            $db = $this->services->db();
-            $rows = $db->setQuery($this->query()->select($db->quoteName('details'))->from($db->quoteName('#__appointments_teamlog'))
-                ->where($db->quoteName('event') . ' = ' . $db->quote(AuditEvent::PRIVACY_DELETE))
-                ->order($db->quoteName('id') . ' DESC')->setLimit(self::LOG_ROWS))->loadColumn() ?: [];
-
-            foreach ($rows as $stored) {
-                $details = AuditService::decodeDetails($stored) ?? [];
-
-                if ((int) ($details['request'] ?? 0) === $requestId && !empty($details['team_member'])) {
-                    return true;
-                }
-            }
-
-            return false;
-        } catch (\Throwable $e) {
-            return true;
-        }
     }
 
     /**

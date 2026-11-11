@@ -86,6 +86,7 @@ try {
             ['subject_user_id' => $staffId]);
         $staffUser = \Joomla\CMS\Factory::getContainer()->get(\Joomla\CMS\User\UserFactoryInterface::class)->loadUserById($staffId);
         $fixture->update($firstId, ['invitee_email' => $requestEmail]);
+        $componentStaffDomains = ['appointments_staff_absences', 'appointments_staff_host', 'appointments_staff_event_types', 'appointments_staff_schedules'];
         foreach ([
             ['matching staff address', $staffEmail, $staffUser, true, []],
             ['trimmed Unicode case match', ' ' . mb_strtoupper($staffEmail, 'UTF-8') . ' ', $staffUser, true, []],
@@ -113,7 +114,11 @@ try {
             }
             $subjects = $joomlaDb->setQuery("SELECT subject_user_id FROM #__appointments_teamlog WHERE id>{$beforeLog} AND event='privacy.export' ORDER BY id DESC")->loadColumn();
             $check(count($subjects) === 1 && ($staffExpected
-                ? count($staffDomains) === 4 && min($staffDomains) >= 1 && (int) $subjects[0] === $staffId
+                // The internet calendar staff domains hold rows; the staff data domains of the component
+                // (blocked periods, host record, event types, schedules) are present, empty or not.
+                ? count(array_diff_key($staffDomains, array_flip($componentStaffDomains))) === 4
+                    && min(array_diff_key($staffDomains, array_flip($componentStaffDomains))) >= 1
+                    && array_diff($componentStaffDomains, array_keys($staffDomains)) === [] && (int) $subjects[0] === $staffId
                 : $staffDomains === [] && $subjects[0] === null
                     && !str_contains(serialize($scopeExport->getArgument('result')), 'Export bystander phone')),
                 'Native privacy export scopes staff domains and audit subject for ' . $label);
@@ -245,13 +250,31 @@ try {
     }
     $check(!$leaked, 'An account whose address does not match the request exactly gets no staff export');
     $request->email = $tag . '@example.test';
+    // Joomla runs the removal check before every removal, while it still finds the account. The
+    // removal itself here gets no account, as a retry after Joomla pseudonymised it: the scope
+    // captured by the check decides. A stored request, which the plugin locks and checks.
+    $staffRequest = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
+    $staffRequest->email = $tag . '@example.test';
+    $staffRequest->request_type = 'remove';
+    $staffRequest->status = 1;
+    $staffRequest->requested_at = gmdate('Y-m-d H:i:s');
+    if (!$staffRequest->store()) {
+        throw new RuntimeException('The staff privacy request fixture could not be stored.');
+    }
+    $staffRows['request'] = (int) $staffRequest->id;
+    $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $staffRequest, 'user' => $staffUser]);
+    $plugin->onPrivacyCanRemoveData($canRemove);
+    $scope = $db->query("SELECT user_id FROM {$prefix}appointments_privacy_scope WHERE request_id=" . (int) $staffRequest->id)->fetch_row();
+    $check($canRemove->getArgument('result')[0]->canRemove !== false && $scope !== null && (int) $scope[0] === $staffId,
+        'The removal check captures the verified account of the request');
     $application->getMessageQueue(true);
-    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => $staffUser]));
+    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $staffRequest, 'user' => null]));
     $blocked = $db->query("SELECT title, end_utc > UTC_TIMESTAMP() AS future FROM {$prefix}appointments_blocked WHERE user_id={$staffId}")->fetch_all(MYSQLI_ASSOC);
     $check(count($blocked) === 1 && $blocked[0]['title'] === '' && (int) $blocked[0]['future'] === 1,
-        'Removal deletes past blocked periods and keeps future ones for the slot calculation without their reason');
-    $check((int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_hosts WHERE user_id={$staffId}")->fetch_row()[0] === 0,
-        'Removal deletes the host record with its feed credential');
+        'Removal without the account (a retry) deletes past blocked periods and keeps future ones without their reason');
+    $host = $db->query("SELECT feed_token FROM {$prefix}appointments_hosts WHERE user_id={$staffId}")->fetch_row();
+    $check($host !== null && $host[0] !== $hostToken,
+        'Removal revokes the host feed credential and keeps the host row, which bookings lock');
     $hosted = $db->query("SELECT host_user_id, info_name FROM {$prefix}appointments_eventtypes WHERE id={$staffRows['event']}")->fetch_assoc();
     $owned = $db->query("SELECT owner_user_id, title FROM {$prefix}appointments_schedules WHERE id={$staffRows['schedule']}")->fetch_assoc();
     $messages = implode("\n", array_column($application->getMessageQueue(true), 'message'));
@@ -263,6 +286,12 @@ try {
 } catch (Throwable $e) {
     $check(false, 'Privacy integration failed: ' . $e->getMessage());
 } finally {
+    if (isset($staffRows['request'])) {
+        foreach (['appointments_privacy_scope', 'appointments_privacy_staff', 'appointments_privacy_outcomes', 'appointments_privacy_cleanup'] as $table) {
+            $db->query("DELETE FROM {$prefix}{$table} WHERE request_id=" . (int) $staffRows['request']);
+        }
+        $db->query("DELETE FROM {$prefix}privacy_requests WHERE id=" . (int) $staffRows['request']);
+    }
     if (isset($staffRows['event'])) {
         $db->query("DELETE FROM {$prefix}appointments_eventtypes WHERE id=" . (int) $staffRows['event']);
     }
