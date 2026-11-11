@@ -392,9 +392,14 @@ class EventtypeModel extends AdminModel
             if ($this->targetChanged) {
                 $this->targetChanged = false;
                 try {
-                    TeamServices::fromApplication()->bookings()->requestRestore($id);
+                    $recorded = TeamServices::fromApplication()->bookings()->requestRestore($id);
                 } catch (\Throwable $e) {
-                    // The event type is saved; the copies then follow at the next booking change.
+                    $recorded = false;
+                }
+
+                // The event type is saved; without the request the copies only follow each booking's next change.
+                if (!$recorded) {
+                    Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_E_RESTORE_REQUEST_FAILED'), 'warning');
                 }
             }
         } catch (\InvalidArgumentException $e) {

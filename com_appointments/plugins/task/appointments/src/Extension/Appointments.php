@@ -209,8 +209,9 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             $result = $routine($services, $services->now());
             $this->logTask('Appointments ' . $name . ': ' . json_encode($result, JSON_THROW_ON_ERROR));
 
-            // Copies that could not be written after every pass: the run fails, so it is seen.
-            if (($result['restore_failed'] ?? 0) !== 0) {
+            // Copies that could not be written after every pass, or a clean-up that could not run:
+            // the run fails, so it is seen.
+            if (($result['restore_failed'] ?? 0) !== 0 || ($result['orphans_removed'] ?? 0) < 0) {
                 $this->logTask('Appointments ' . $name . ': calendar copies could not be restored.', 'error');
 
                 return Status::KNOCKOUT;

@@ -65,7 +65,7 @@ interface BookingCalendarBridgeInterface
      * no key; runs also when the feature is switched off. Called after each
      * booking change with a small limit and by the Scheduler in batches.
      *
-     * @return  int  Objects removed.
+     * @return  int  Objects removed, -1 when the clean-up could not run.
      */
     public function removeOrphans(int $limit): int;
 
@@ -91,8 +91,10 @@ interface BookingCalendarBridgeInterface
      * again, or of every event type with `0`: after its target calendar changed,
      * or after the copies were removed while the feature was switched off.
      * Recorded only; {@see self::restoreCopies()} does the work. Needs no key.
+     *
+     * @return  bool  False when the request could not be recorded (logged).
      */
-    public function requestRestore(int $eventTypeId): void;
+    public function requestRestore(int $eventTypeId): bool;
 
     /**
      * Work through the recorded requests, one worker at a time: for every

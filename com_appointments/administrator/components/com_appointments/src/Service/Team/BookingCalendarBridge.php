@@ -327,12 +327,15 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             }
         } catch (\Throwable $e) {
             $this->failure('orphans', 0, $e);
+
+            // The clean-up could not run: never reported as «nothing left».
+            return -1;
         }
 
         return $removed;
     }
 
-    public function requestRestore(int $eventTypeId): void
+    public function requestRestore(int $eventTypeId): bool
     {
         try {
             $db = $this->services->db();
@@ -344,9 +347,13 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                 . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('requested_utc') . ' = VALUES(' . $db->quoteName('requested_utc') . '), '
                 . $db->quoteName('token') . ' = VALUES(' . $db->quoteName('token') . '), '
                 . $db->quoteName('after_booking_id') . ' = 0, ' . $db->quoteName('failed') . ' = 0, ' . $db->quoteName('passes') . ' = 0')->execute();
+
+            return true;
         } catch (\Throwable $e) {
-            // A booking or a saved event type never fails because of this.
+            // A booking or a saved event type never fails because of this; the caller says so.
             $this->failure('restore-request', $eventTypeId, $e);
+
+            return false;
         }
     }
 
