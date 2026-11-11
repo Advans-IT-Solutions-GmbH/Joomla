@@ -130,7 +130,7 @@ logic is exercised with the actual core component present in each:
   (`EXPECTED_CORE_COMPONENT=com_j2commerce`).
 
 Both stacks run the **same full suite** from `tests/test.env` (installation, scanning,
-cleanup, component functions, safety checks, isolated cleanup-authorization regressions,
+cleanup, component functions, safety checks, isolated cleanup-authorization regressions, backend access,
 backend views, installer messages, uninstall). The
 `official-j5-j2c4` job runs the safety checks against J2Store 4 as expected core
 component; `official-j6-j2c6` asserts that the Joomla 6 matrix passed.
@@ -154,14 +154,19 @@ Order as in `tests/test.env`:
    the expected core component is installed
 6. **Cleanup Authorization** - Isolated PHP regression test for extension-scope filtering,
    delegated delete permission, fail-closed selections, and safe uninstall fallbacks
-7. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator`
+7. **Backend Access** - logs a synthetic Manager into `/administrator` and switches the
+   component's real Joomla permission rules: without `core.manage` the page and the task are
+   refused, with `core.manage` only the scan is read-only and a forged cleanup request removes
+   nothing, and with `core.delete` as well an eligible record is removed, but only with the
+   form token
+8. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator`
    and really renders the component page. It asserts HTTP 200, no PHP error and no Joomla
    error page, no untranslated language key, and at least one string of the component's own
    language file on the page
-8. **Installer Messages** - shared suite: removes and reinstalls the package through the
+9. **Installer Messages** - shared suite: removes and reinstalls the package through the
    Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language
    keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
-9. **Uninstall** - Component removal, verification
+10. **Uninstall** - Component removal, verification
 
 ### Running Tests Locally
 
