@@ -394,7 +394,45 @@ return static function (TeamSuite $suite): void {
             return \count($mails) === 4;
         });
 
-        $suite->test($names[6], static function () use ($book, $plainRow, $booking, $send, $to, $address, $expect, $joomla, $teamOff) {
+        $suite->test('N: a host without write access gets the mail with invitation, every other calendar user still gets theirs', static function () use ($fixture, $db, $p, $reader, $calendar, $book, $send, $to, $address, $expect) {
+            // The reader hosts an event type with the shared calendar as target, but may only read it:
+            // no copy is written, the host falls back to the mail with invitation, nobody else loses theirs.
+            $event = $fixture->event();
+            $db->query("UPDATE {$p}appointments_eventtypes SET host_user_id={$reader}, calendar_id={$calendar} WHERE id={$event}");
+            $hostRow = (int) $db->query("SELECT COUNT(*) FROM {$p}appointments_hosts WHERE user_id={$reader}")->fetch_row()[0] === 0;
+
+            if ($hostRow) {
+                $db->query("INSERT INTO {$p}appointments_hosts (user_id,feed_token,created_utc,modified_utc) VALUES ({$reader},'h1:"
+                    . bin2hex(random_bytes(32)) . "',UTC_TIMESTAMP(),UTC_TIMESTAMP())");
+            }
+
+            try {
+                $row = $db->query("SELECT * FROM {$p}appointments_eventtypes WHERE id={$event}")->fetch_assoc();
+                $mails = $send($book($row, '14:00:00'), 'confirmation');
+                $readerMails = $to($mails, $address('reader'));
+                $expect(\count($readerMails) === 1 && $readerMails[0]['ics'], 'The host without write access must get one mail with invitation.');
+
+                foreach (['host', 'freebusy', 'external'] as $name) {
+                    $found = $to($mails, $address($name));
+                    $expect(\count($found) === 1 && !$found[0]['ics'], 'Calendar user ' . $name . ' must get one mail without invitation: ' . json_encode(array_column($mails, 'to')));
+                }
+
+                foreach (['muted', 'nomfa', 'blocked'] as $name) {
+                    $expect($to($mails, $address($name)) === [], $name . ' must get no mail');
+                }
+
+                $expect($to($mails, 'notify-invitee@example.test')[0]['ics'] && $to($mails, 'notify-guest@example.test')[0]['ics'],
+                    'The booking person and the guest keep their mails with invitation.');
+
+                return true;
+            } finally {
+                if ($hostRow) {
+                    $db->query("DELETE FROM {$p}appointments_hosts WHERE user_id={$reader}");
+                }
+            }
+        });
+
+        $suite->test($names[6],static function () use ($book, $plainRow, $booking, $send, $to, $address, $expect, $joomla, $teamOff) {
             $mails = $send($book($plainRow, '12:00:00'), 'confirmation');
             [$hostMail] = $to($mails, $address('host'));
             $expect(\count($mails) === 3 && $hostMail['ics'] && str_starts_with($hostMail['subject'], 'New appointment: '),

@@ -708,9 +708,10 @@ under Templates. Joomla mailer, recipient language, no secret except the activat
 mails cannot be switched off.
 
 **Booking mails to the calendar users** (`Helper/CalendarNotice`, `NotificationService`). A target
-calendar is *in use* when the feature is on, the calendar active and the host holds an effective
-write access (exactly when `BookingCalendarBridge` writes the copy). Otherwise nothing changes: the
-host gets the mail with ICS. In use:
+calendar is *in use* when the feature is on and the calendar active; otherwise nothing changes: the
+host gets the mail with ICS. Every user with access to a calendar in use is notified. When the host
+holds no effective write access (`BookingCalendarBridge` then writes no copy), only the host falls
+back to the mail with ICS (`host_fallback`), every other user still gets theirs. In use:
 
 | Recipient | Mail | ICS |
 |---|---|---|

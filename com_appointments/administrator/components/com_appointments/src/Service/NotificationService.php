@@ -115,6 +115,8 @@ final class NotificationService
         $hostLanguage = MailLanguage::resolve((string) ($hostParams['language'] ?? ''), $siteLanguage);
         // With a target calendar in use, the host and every other user of that calendar get a mail
         // without invitation (CalendarNotice); without one, the host keeps the mail with invitation.
+        // A host without write access to the target keeps the mail with invitation (no copy is
+        // written), while every other user of the calendar still gets theirs.
         $calendar = $this->calendarAudience($booking, $event);
         $recipients = [];
         // The guests of the stored booking now, not of the copy the caller loaded earlier: a guest
@@ -142,7 +144,7 @@ final class NotificationService
                     $recipients[] = [$guest, $languages[$guest], false, false, true];
                 }
             }
-            if ($calendar === null) {
+            if ($calendar === null || $calendar['host_fallback']) {
                 $recipients[] = [$event['host_email'], $hostLanguage, true, false, false];
             }
 
@@ -266,13 +268,15 @@ final class NotificationService
     }
 
     /**
-     * The users of the target calendar the booking is copied into, or null when no target calendar
-     * is in use: none set, internet calendars off, the calendar inactive, or the host without an
-     * effective write access (BookingCalendarBridge writes the copy only then). Null keeps the host's
-     * mail with invitation, so the host always learns of a booking. A calendar that cannot be read
-     * counts as none, for the same reason.
+     * The users of the target calendar of the event type, or null when no target calendar is in
+     * use: none set, internet calendars off or the calendar inactive. Null keeps the host's mail
+     * with invitation, so the host always learns of a booking. A calendar that cannot be read
+     * counts as none, for the same reason. Every user with access to the calendar is notified: when
+     * the host has no effective write access (BookingCalendarBridge then writes no copy),
+     * `host_fallback` is true, the host keeps the mail with invitation and the other users still
+     * get theirs.
      *
-     * @return  array{id: int, title: string, members: list<array{user_id: int, email: string, role: int, muted: bool, backend: bool, account: object}>}|null
+     * @return  array{id: int, title: string, host_fallback: bool, members: list<array{user_id: int, email: string, role: int, muted: bool, backend: bool, account: object}>}|null
      */
     private function calendarAudience(array $booking, array $event): ?array
     {
@@ -291,18 +295,25 @@ final class NotificationService
             }
 
             $calendar = $team->calendars()->get($calendarId);
-            $grants = $team->grants();
-            $hostAccess = $calendar !== null && (int) $calendar->state === 1 ? $grants->accessFor($host, $calendarId) : null;
 
-            if ($hostAccess === null || !$hostAccess->role->canWrite()) {
+            if ($calendar === null || (int) $calendar->state !== 1) {
                 return null;
             }
+
+            $grants = $team->grants();
+            $hostAccess = $grants->accessFor($host, $calendarId);
+            $hostFallback = $hostAccess === null || !$hostAccess->role->canWrite();
 
             $members = [];
 
             foreach ($grants->grantsOf($calendarId) as $grant) {
                 $userId = (int) $grant->user_id;
                 // Effective only: active grant, valid row, active account in a calendar group, second factor.
+                // A host who falls back to the mail with invitation gets no second mail as a calendar user.
+                if ($userId === $host && $hostFallback) {
+                    continue;
+                }
+
                 $access = $userId === $host ? $hostAccess : $grants->accessFor($userId, $calendarId);
                 $account = $access === null ? null : $this->account($userId);
 
@@ -320,7 +331,7 @@ final class NotificationService
                 ];
             }
 
-            return ['id' => $calendarId, 'title' => (string) $calendar->title, 'members' => $members];
+            return ['id' => $calendarId, 'title' => (string) $calendar->title, 'host_fallback' => $hostFallback, 'members' => $members];
         } catch (\Throwable $e) {
             Log::add('Appointment notification: the target calendar of event type ' . (int) $event['id'] . ' could not be read (' . $e::class . ').', Log::WARNING, 'com_appointments');
 

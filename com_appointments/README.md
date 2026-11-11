@@ -1024,13 +1024,15 @@ it implicitly.
 #### Notifications
 
 Who receives which mail about a booking depends on whether its event type has a **target calendar
-in use**: internet calendars switched on, the calendar active and the host with effective write
-access to it. Only then does the booking land in the calendar as a copy.
+in use**: internet calendars switched on and the calendar active. Every user with access to that
+calendar is notified. The booking lands in the calendar as a copy only while the host has effective
+write access to it; without it the host keeps the `host_*` mail with calendar invitation, and every
+other user of the calendar still gets the calendar user mail.
 
 | Recipient | Without target calendar in use | With target calendar in use |
 |---|---|---|
 | Booking person and additional guests | their mail with calendar invitation (ICS) and their own links | unchanged |
-| Host | `host_*` mail with calendar invitation | calendar user mail **without** invitation, as below |
+| Host | `host_*` mail with calendar invitation | calendar user mail **without** invitation, as below; without write access the `host_*` mail with invitation |
 | Every other user with effective access to the calendar | nothing | calendar user mail **without** invitation |
 
 Effective access means an active grant, an active account in an internet calendar group and an

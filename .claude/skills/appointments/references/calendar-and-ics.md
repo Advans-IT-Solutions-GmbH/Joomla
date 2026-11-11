@@ -198,8 +198,8 @@ The attachment is sent as `text/calendar; charset=UTF-8; method=REQUEST` with th
 `invite.ics`, **and** as a second attachment part of type `application/ics` where the mail client
 needs it. Joomla's `Mail` class takes both. Attach it to **every** e-mail to the invitee and the
 guests, without exception, and to the host's mail while the event type has no target calendar in
-use. With a target calendar in use (internet calendars on, calendar active, host with effective
-write access), the host and every other user of that calendar get their mail **without** an
+use. With a target calendar in use (internet calendars on, calendar active), the host (while it
+holds effective write access, else it keeps the mail with ICS) and every other user of that calendar get their mail **without** an
 attachment: the entry arrives through the synchronisation, and an accepted invitation would show it
 twice (maintainer's decision, `team-calendars.md`, section 12).
 
