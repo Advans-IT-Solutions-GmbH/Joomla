@@ -145,10 +145,34 @@ const JoomlaAjaxForms = {
         }
 
         form.dataset.joomlaajaxformsNative = '1';
+
+        // submit() sends no submit button. The core forms carry their task on
+        // the button (for example name="task" value="profile.save"), so the
+        // button that started the submission goes along as a hidden field.
+        var submitter = form.joomlaajaxformsSubmitter;
+
+        if (submitter && submitter.name && !submitter.disabled) {
+            var carried = document.createElement('input');
+            carried.type = 'hidden';
+            carried.name = submitter.name;
+            carried.value = submitter.value || '';
+            form.appendChild(carried);
+        }
+
         // The prototype method, because a field named "submit" shadows form.submit.
         HTMLFormElement.prototype.submit.call(form);
 
         return true;
+    },
+
+    /**
+     * Remember the button that started a submission, for handOverIfDisabled().
+     *
+     * @param {HTMLFormElement} form - The form
+     * @param {SubmitEvent} e - The submit event
+     */
+    rememberSubmitter: function(form, e) {
+        form.joomlaajaxformsSubmitter = (e && e.submitter) ? e.submitter : null;
     },
 
     /**
@@ -460,6 +484,8 @@ const JoomlaAjaxForms = {
                 return;
             }
 
+            JoomlaAjaxForms.rememberSubmitter(form, e);
+
             e.preventDefault();
 
             const formData = new FormData(form);
@@ -595,6 +621,8 @@ const JoomlaAjaxForms = {
                 return;
             }
 
+            JoomlaAjaxForms.rememberSubmitter(form, e);
+
             e.preventDefault();
 
             const formData = new FormData(form);
@@ -695,6 +723,8 @@ const JoomlaAjaxForms = {
             if (form.dataset.joomlaajaxformsNative === '1' || !JoomlaAjaxForms.formEnabled(task)) {
                 return;
             }
+
+            JoomlaAjaxForms.rememberSubmitter(form, e);
 
             e.preventDefault();
             e.stopPropagation();
@@ -1064,6 +1094,8 @@ const JoomlaAjaxForms = {
                         if (!JoomlaAjaxForms.formEnabled('profile')) {
                             return;
                         }
+
+                        JoomlaAjaxForms.rememberSubmitter(form, e);
 
                         e.preventDefault();
                         e.stopPropagation();

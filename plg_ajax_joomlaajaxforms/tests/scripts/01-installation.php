@@ -331,7 +331,11 @@ class InstallationTest
         // (login, registration, reset/remind, profile), also while the map of
         // enabled forms is still loading or could not be loaded.
         echo "Test: A disabled answer hands the form over to com_users... ";
+        // The button that started the submission goes along, because the core
+        // forms carry their task on it (task=profile.save on the profile form).
         if (substr_count($source, 'JoomlaAjaxForms.handOverIfDisabled(data, form)') === 4
+            && substr_count($source, 'JoomlaAjaxForms.rememberSubmitter(form, e)') === 4
+            && str_contains($source, 'carried.name = submitter.name')
             && str_contains($source, 'HTMLFormElement.prototype.submit.call(form)')) {
             echo "PASS\n";
         } else {
