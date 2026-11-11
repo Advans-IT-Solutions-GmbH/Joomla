@@ -326,6 +326,26 @@ class MimeMessageTest extends TestCase
         $this->assertFalse($truncated);
     }
 
+    public function testReportAsTheLastPartAtTheCeilingIsDecoded(): void
+    {
+        // 999 text parts and a base64 report as part 1000, then the closing
+        // delimiter and an epilogue. The report is the last part the reader
+        // takes; it must decode without the closing delimiter in its body.
+        $raw = $this->partsMessage(999) . "--B\r\n"
+            . "Content-Type: application/gzip; name=\"report.xml.gz\"\r\n"
+            . "Content-Disposition: attachment; filename=\"report.xml.gz\"\r\n"
+            . "Content-Transfer-Encoding: base64\r\n\r\n"
+            . base64_encode('payload') . "\r\n"
+            . "--B--\r\n"
+            . "epilogue text\r\n";
+
+        $attachments = MimeMessage::attachments($raw, $truncated);
+
+        $this->assertFalse($truncated);
+        $this->assertCount(1, $attachments);
+        $this->assertSame('payload', $attachments[0]['content']);
+    }
+
     /**
      * A multipart message head with the given number of small text parts and
      * no closing delimiter.

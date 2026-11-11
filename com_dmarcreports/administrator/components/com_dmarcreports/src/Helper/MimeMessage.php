@@ -134,12 +134,25 @@ final class MimeMessage
         }
 
         // The split stops at the budget and leaves the rest of the body in its
-        // last segment. If that remainder still holds an opening delimiter
-        // (not just the closing one), parts were left unread.
-        $opening = '/\n--' . preg_quote($boundary, '/') . '[\t ]*(?=\n|$)/';
+        // last segment: the last part plus everything after it. Cut that
+        // remainder at its first delimiter so the last part is read without
+        // the delimiter (otherwise, for example, a base64 report would fail to
+        // decode). A closing delimiter there only leaves the epilogue; an
+        // opening one means parts were left unread.
+        if (\count($segments) > $budget) {
+            $last = (string) array_pop($segments);
 
-        if (\count($segments) > $budget && preg_match($opening, "\n" . (string) end($segments)) === 1) {
-            $truncated = true;
+            if (preg_match($pattern, $last, $match, PREG_OFFSET_CAPTURE) === 1) {
+                $closing = '/^\n--' . preg_quote($boundary, '/') . '--/';
+
+                if (preg_match($closing, $match[0][0]) !== 1) {
+                    $truncated = true;
+                }
+
+                $last = substr($last, 0, $match[0][1]);
+            }
+
+            $segments[] = $last;
         }
 
         // Drop the preamble before the opening delimiter; it is never a part.
