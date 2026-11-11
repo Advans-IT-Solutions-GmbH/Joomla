@@ -104,6 +104,17 @@ final class PrivacyReviewTest extends TestCase
             "BEGIN:VCALENDAR\r\nDESCRIPTION:x=anna@example.test\r\nEND:VCALENDAR\r\n", 'anna@example.test', '[removed]'));
     }
 
+    public function testEncodedWhitespaceAndSeparatorsAroundTheAddress(): void
+    {
+        $ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:own-7\r\nSUMMARY:Call anna@example.test\r\n"
+            . "DESCRIPTION:https://x.test/?to=anna%40example.test%20please and https://x.test/?a=1%26to=anna%40example.test%26b=2\r\n"
+            . "END:VEVENT\r\nEND:VCALENDAR\r\n";
+        $changed = str_replace("\r\n ", '', PrivacyReview::withoutAddress($ics, 'anna@example.test', '[removed]'));
+
+        self::assertSame(0, preg_match('/anna/i', rawurldecode($changed)));
+        self::assertStringContainsString('%5Bremoved%5D%20please', $changed);
+        self::assertSame($changed, str_replace("\r\n ", '', PrivacyReview::withoutAddress($changed, 'anna@example.test', '[removed]')));
+    }
     public function testAnOrganiserAddressAndLongLines(): void
     {
         $ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:own-2\r\nORGANIZER:mailto:anna@example.test\r\n"

@@ -426,7 +426,16 @@ final class PrivacyReview
             }
 
             if (mb_strtolower(rawurldecode($found), 'UTF-8') !== $email) {
-                return $text;
+                // Percent-encoded text around the address (%20, %26 …): decoded, the address is
+                // replaced as a whole word there and the rest is encoded again.
+                $decoded = rawurldecode($found);
+                $word = '/(?<![\p{L}\p{N}._%+\-])' . preg_quote($email, '/') . '(?![\p{L}\p{N}\-]|\.[\p{L}\p{N}])/iu';
+
+                if (!str_contains($found, '%') || preg_match($word, $decoded) !== 1) {
+                    return $text;
+                }
+
+                return $lead . rawurlencode((string) preg_replace($word, $replacement, $decoded)) . $tail;
             }
 
             // Inside a URI the placeholder is percent-encoded, so the URI stays valid.
