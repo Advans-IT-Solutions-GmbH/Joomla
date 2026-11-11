@@ -358,7 +358,9 @@ function cleanupExtensions(\Joomla\Database\DatabaseInterface $db, array $ids): 
         } catch (\Throwable $e) {
             // An exception is a failed uninstall. The record is removed
             // database-only only if the extension's files are verifiably gone
-            // afterwards; otherwise it stays, so no code or data is orphaned.
+            // afterwards; otherwise it stays, so no code is orphaned. Only the code
+            // directories are checked: extension-owned database tables may remain
+            // after a failed uninstall.
             try {
                 $removed = removeEligibleCleanupRecord($db, $id, $patterns);
                 $fallbackError = null;
