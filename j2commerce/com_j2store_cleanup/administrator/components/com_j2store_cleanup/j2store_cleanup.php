@@ -1030,7 +1030,10 @@ $cleanupVersion = getCleanupVersion($db);
                 $ext->_manifest = $manifest;
                 if ($result['status'] === 'core') {
                     $groups['core'][] = $ext;
-                } elseif (isCleanupEligible($ext, $result)) {
+                } elseif (isCleanupEligible($ext, $result) || $result['status'] === 'no-files') {
+                    // Records without files stay visible even when they cannot be
+                    // removed here (package children), so the page never reports
+                    // a clean result while orphaned records remain.
                     $groups[$result['status']][] = $ext;
                 } elseif ($result['status'] === 'compatible') {
                     $groups['compatible'][] = $ext;
@@ -1105,11 +1108,11 @@ $cleanupVersion = getCleanupVersion($db);
                 <tbody>
                     <?php foreach ($groups['no-files'] as $ext): ?>
                     <tr style="background: #2a2a2a !important; border-left: 3px solid #6c757d;">
-                        <td><?php if ($canRemoveExtensions): ?><input type="checkbox" name="cid[]" value="<?php echo $ext->extension_id; ?>"><?php endif; ?></td>
+                        <td><?php if ($canRemoveExtensions && isCleanupEligible($ext, ['status' => $ext->_status])): ?><input type="checkbox" name="cid[]" value="<?php echo $ext->extension_id; ?>"><?php endif; ?></td>
                         <td><?php echo htmlspecialchars(getExtensionName($ext)); ?></td>
                         <td><?php echo htmlspecialchars($ext->type); ?></td>
                         <td><code><?php echo htmlspecialchars($ext->element); ?></code></td>
-                        <td><?php echo htmlspecialchars($ext->_reason); ?></td>
+                        <td><?php echo htmlspecialchars($ext->_reason); ?><?php if ((int) ($ext->package_id ?? 0) !== 0): ?><br><?php echo Text::_('COM_J2STORE_CLEANUP_REASON_PACKAGE_CHILD'); ?><?php endif; ?></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>

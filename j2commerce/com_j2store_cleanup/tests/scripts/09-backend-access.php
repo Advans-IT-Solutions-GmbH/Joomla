@@ -131,9 +131,10 @@ function ba_create_user(DatabaseInterface $db, int $groupId, string $label): arr
 }
 
 /** An eligible J2Store plugin record whose files are missing. @return array{id:int, element:string} */
-function ba_insert_probe(DatabaseInterface $db): array
+function ba_insert_probe(DatabaseInterface $db, int $packageId = 0): array
 {
     $probe = (object) [
+        'package_id'     => $packageId,
         'name'           => 'plg_j2store_aclprobe',
         'type'           => 'plugin',
         'element'        => 'aclprobe_' . bin2hex(random_bytes(6)),
@@ -257,9 +258,17 @@ try {
 
     // 4. With core.manage and core.delete in com_installer too: removal works, token required.
     ba_set_rules($db, '{"core.manage":{"6":1},"core.delete":{"6":1}}', 'com_installer');
+    // A package child without files stays listed, but is never selectable here.
+    $child      = ba_insert_probe($db, 999999);
+    $probeIds[] = $child['id'];
     $full = ba_request($page);
     ba_check('With component and Extensions permissions the record is selectable',
         $full['code'] === 200 && str_contains($full['body'], 'name="cid[]" value="' . $probe['id'] . '"'));
+    ba_check('A package child without files is listed but not selectable',
+        str_contains($full['body'], $child['element'])
+        && !str_contains($full['body'], 'name="cid[]" value="' . $child['id'] . '"'));
+    ba_request($page, ['task' => 'cleanup', 'cid' => [$child['id']], (string) ba_token($full['body']) => '1']);
+    ba_check('A forged cleanup request for a package child removes nothing', ba_has_extension($db, $child['id']));
     ba_request($page, ['task' => 'cleanup', 'cid' => [$probe['id']]]);
     ba_check('A cleanup request without the form token removes nothing', ba_has_extension($db, $probe['id']));
     ba_request($page . '&task=cleanup&cid[]=' . $probe['id'] . '&' . ba_token($full['body']) . '=1');
