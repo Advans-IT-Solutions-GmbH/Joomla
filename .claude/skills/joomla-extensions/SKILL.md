@@ -50,6 +50,7 @@ Advans-IT-Solutions-GmbH/Joomla
 2. **Conventional Commits** — prefix all commits: `fix:`, `feat:`, `docs:`, `chore:`, `test:`, `refactor:`. No `Co-authored-by` trailer and no agent signature (no Copilot/Ona/etc.) in commits, PR titles or bodies.
 3. **Auto-delete branches** is enabled — branches are deleted automatically after merge
 4. **One PR per plugin** — do not mix changes across plugins in a single PR
+5. **A Copilot finding stops CI** (binding): If the Copilot review of a PR finds a defect, the running normal CI of that PR is stopped immediately (`gh run cancel <id>`). The Copilot run itself is never cancelled. The defect is fixed first, then CI runs again with the fix push. Never re-run cancelled runs while Copilot findings on the current head are still open. This applies everywhere and always, to people and agents alike.
 
 ## Recorded Decisions
 
