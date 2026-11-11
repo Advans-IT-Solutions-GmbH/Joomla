@@ -292,11 +292,19 @@ final class Ingestor
             $reason = $this->limits->checkRun($reports, $bytes);
 
             if ($reason !== null) {
+                // Unpacked already, so the work counts, although the message is
+                // left for the next run. The run stops here in any case.
+                $this->limits->chargeInspected($bytes + $discarded);
+
                 return $this->postpone($summary, $sourceId, $uid, $reason, $reports, $bytes);
             }
 
             $this->limits->charge($reports, $bytes);
-            $this->limits->chargeInspected($discarded);
+
+            // Every unpacked byte of this run counts: data inflated and thrown
+            // away in pass 1, and the second extraction pass 2 needs when the
+            // documents were too large to keep in memory.
+            $this->limits->chargeInspected($discarded + ($cache ? 0 : $bytes));
         }
 
         // Pass 2: store what pass 1 measured.

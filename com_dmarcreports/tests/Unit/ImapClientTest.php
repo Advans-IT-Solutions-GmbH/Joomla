@@ -698,6 +698,35 @@ class ImapClientTest extends TestCase
         $this->assertSame(5, $result['stats']['last_uid']);
     }
 
+    public function testRetriesUseAtMostHalfOfTheRun(): void
+    {
+        // Three retries wait, one fresh message arrives, and the run takes two
+        // messages. Retries get at most half of the run, so the fresh message
+        // is still imported and the other retries wait for the next run.
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 6\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, "Subject: Late\r\n\r\nlate", 'A0005')
+            . $this->fetchResponse(2, 6, "Subject: Fresh\r\n\r\nfresh", 'A0006')
+            . "A0007 OK STORE completed\r\n"
+            . "* BYE\r\nA0008 OK LOGOUT completed\r\n";
+
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0, 'last_uid' => 5, 'deferred_uids' => [1, 2, 3], 'limit' => 2],
+            static fn (): string => 'new'
+        );
+
+        $this->assertStringNotContainsString('UID FETCH 2 ', $result['sent']);
+        $this->assertStringNotContainsString('UID FETCH 3 ', $result['sent']);
+        $this->assertSame(2, $result['stats']['ingested']);
+        $this->assertSame(6, $result['stats']['last_uid']);
+        $this->assertSame([2, 3], $result['stats']['deferred_uids']);
+        $this->assertStringContainsString('UID STORE 1,6 +FLAGS.SILENT (\\Seen)', $result['sent']);
+    }
+
     /**
      * A callback that decides like the ingestor: postpone once the run is
      * exhausted or a message would exceed it, otherwise store one report.

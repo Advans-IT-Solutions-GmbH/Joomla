@@ -222,6 +222,15 @@ final class ImapClient
             // fetched or inspected in this run.
             $postponed = false;
 
+            // Share of one run the retry pass may use, so retries and fresh
+            // mail cannot starve each other: at most half the messages per run
+            // and at most half the raw byte budget go to retries. The rest is
+            // always left for the scan, and every run starts with at least one
+            // retry, so a retry is never starved by fresh mail either.
+            $retryCount = 0;
+            $retryLimit = max(1, intdiv($limit, 2));
+            $retryFloor = intdiv(self::MAX_TOTAL_BYTES, 2);
+
             // Re-try reports an earlier run could not decode for lack of a PHP
             // extension. They sit below the cursor, so the UID scan below never
             // returns them; fetch each one explicitly. They run before the scan
@@ -236,13 +245,16 @@ final class ImapClient
                     continue;
                 }
 
-                if ($postponed) {
-                    // The run limits are reached: keep every unvisited retry
-                    // UID for the next run without fetching it.
+                if ($postponed || $retryCount >= $retryLimit || ($retryCount > 0 && $budget < $retryFloor)) {
+                    // The run limits are reached or the retry share is used:
+                    // keep every unvisited retry UID for the next run without
+                    // fetching it.
                     $deferred[] = $uid;
 
                     continue;
                 }
+
+                $retryCount++;
 
                 $raw = $this->fetchBody($uid);
 
