@@ -322,7 +322,7 @@ final class BookingStore
             $audit = (object) ['booking_id' => $bookingId, 'action' => $delete ? 'delete' : 'anonymise',
                 'path' => $path, 'actor_user_id' => $actor, 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')];
             $db->insertObject('#__appointments_audit', $audit);
-            Close\Queue::changed($db, $erased, true, $privacyCleanup?->requestId() ?? 0);
+            Close\Queue::changed($db, $erased, true);
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();
@@ -337,7 +337,6 @@ final class BookingStore
         }
 
         return ['changed' => true, 'notification' => $notification,
-            '_crm_cleanup_error' => (new Close\Queue($db, ComponentHelper::getParams('com_appointments')))->hasPendingErasure($bookingId),
             '_calendar_cleanup_error' => !$mirrored,
             '_conference_cleanup_error' => $conferenceFailed];
     }

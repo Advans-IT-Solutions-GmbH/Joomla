@@ -10,37 +10,51 @@ namespace Advans\Component\Appointments\Administrator\Service\Close;
 
 use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
-use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
 
-/** Delivery metadata and a keyed subject association; no copied booking payload. */
+/**
+ * Delivery metadata only: no copy of the booking payload. Close is a separate system with its own
+ * data protection handling. Website erasure (retention, self-service, administrator or a privacy
+ * request) only drops the local link here; nothing is ever deleted in Close.
+ */
 final class Queue
 {
-    public const TABLE = '#__appointments_close';
+    public const TABLE = '#__appointments_close_delivery';
+    public const LIMITS = '#__appointments_close_limits';
+    /** Unreleased evaluation layout; it held erasure obligations that no longer exist. */
+    public const LEGACY_TABLE = '#__appointments_close';
 
+    private ?string $profileKey = null;
+    /** @var array<string, Client> */
+    private array $clients = [];
+
+    /**
+     * @param ?\Closure(Profile): \Closure $transport test transport factory
+     * @param ?\Closure(array): array      $open      test booking decryption
+     * @param ?\Closure(string): string    $translate test translation
+     */
     public function __construct(private DatabaseInterface $db, private object $params, private ?\Closure $transport = null,
-        private ?\Closure $open = null)
+        private ?\Closure $open = null, private ?\Closure $translate = null, private ?string $timezone = null)
     {
     }
 
     public static function install(DatabaseInterface $db): void
     {
+        $db->setQuery('DROP TABLE IF EXISTS ' . $db->quoteName(self::LEGACY_TABLE))->execute();
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName(self::TABLE) . ' (
             booking_id INT UNSIGNED NOT NULL PRIMARY KEY,
+            profile VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT \'\',
             uid CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
             target_sequence INT UNSIGNED NOT NULL,
-            erased TINYINT NOT NULL DEFAULT 0,
-            request_id INT UNSIGNED NOT NULL DEFAULT 0,
-            subject_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT \'\',
             state VARCHAR(16) NOT NULL DEFAULT \'pending\',
             operation VARCHAR(24) NOT NULL DEFAULT \'\',
             reason VARCHAR(48) NOT NULL DEFAULT \'\',
             binding CHAR(64) NOT NULL DEFAULT \'\',
-            organization_id VARCHAR(110) NOT NULL DEFAULT \'\',
             lead_id VARCHAR(110) NOT NULL DEFAULT \'\',
             contact_id VARCHAR(110) NOT NULL DEFAULT \'\',
             contact_created TINYINT NOT NULL DEFAULT 0,
@@ -48,72 +62,63 @@ final class Queue
             attempts INT UNSIGNED NOT NULL DEFAULT 0,
             next_attempt BIGINT NOT NULL DEFAULT 0,
             last_attempt BIGINT NOT NULL DEFAULT 0,
-            rate_limit_until BIGINT NOT NULL DEFAULT 0,
             mac CHAR(64) NOT NULL,
-            INDEX delivery_due (state, next_attempt),
-            INDEX privacy_request (request_id)
+            INDEX delivery_due (state, next_attempt)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
-        $columns = $db->getTableColumns($db->replacePrefix(self::TABLE));
-        foreach (['subject_hash' => "CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT ''",
-            'organization_id' => "VARCHAR(110) NOT NULL DEFAULT ''",
-            'last_attempt' => 'BIGINT NOT NULL DEFAULT 0', 'rate_limit_until' => 'BIGINT NOT NULL DEFAULT 0'] as $name => $type) {
-            if (!isset($columns[$name])) {
-                $db->setQuery('ALTER TABLE ' . $db->quoteName(self::TABLE) . ' ADD ' . $db->quoteName($name) . ' ' . $type)->execute();
-            }
-        }
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName(self::LIMITS) . ' (
+            profile VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+            until BIGINT NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
     }
 
     /** Called inside the canonical write transaction. No network and no historical backfill. */
-    public static function changed(DatabaseInterface $db, array $booking, bool $erased = false, int $requestId = 0, bool $created = false): void
+    public static function changed(DatabaseInterface $db, array $booking, bool $erased = false, bool $created = false): void
     {
-        $params = ComponentHelper::getParams('com_appointments');
         $id = (int) $booking['id'];
         $table = $db->quoteName(self::TABLE);
-        $old = $db->setQuery('SELECT * FROM ' . $table . ' WHERE booking_id = ' . $id)->loadAssoc();
-        if (!$old && ($erased || !$created || (int) $params->get('close_enabled', 0) !== 1)) {
+        if ($erased) {
+            // Close is isolated from website retention and privacy handling: only the local link goes.
+            $db->setQuery('DELETE FROM ' . $table . ' WHERE booking_id = ' . $id)->execute();
             return;
         }
+        $old = $db->setQuery('SELECT * FROM ' . $table . ' WHERE booking_id = ' . $id . ' FOR UPDATE')->loadAssoc();
         if (!$old) {
-            $values = ['booking_id' => $id, 'uid' => (string) $booking['uid'], 'target_sequence' => (int) $booking['sequence'],
-                'erased' => 0, 'request_id' => 0, 'state' => 'pending', 'operation' => '', 'reason' => '', 'binding' => '',
-                'subject_hash' => self::subject((string) $booking['invitee_email']),
-                'organization_id' => '', 'lead_id' => '', 'contact_id' => '', 'contact_created' => 0, 'activity_id' => '',
-                'attempts' => 0, 'next_attempt' => 0, 'last_attempt' => 0, 'rate_limit_until' => 0];
+            $params = ComponentHelper::getParams('com_appointments');
+            if (!$created || (int) $params->get('close_enabled', 0) !== 1) {
+                return;
+            }
+            try {
+                $profile = (new Settings($params))->profileFor((int) ($booking['eventtype_id'] ?? 0));
+                if ($profile === null) {
+                    return;
+                }
+                $key = $profile->key;
+            } catch (\InvalidArgumentException|\JsonException $e) {
+                // Never fail a booking on CRM configuration; the worker resolves the profile later and shows the error.
+                $key = '';
+            }
+            $values = ['booking_id' => $id, 'profile' => $key, 'uid' => (string) $booking['uid'],
+                'target_sequence' => (int) $booking['sequence'], 'state' => 'pending', 'operation' => '', 'reason' => '',
+                'binding' => '', 'lead_id' => '', 'contact_id' => '', 'contact_created' => 0, 'activity_id' => '',
+                'attempts' => 0, 'next_attempt' => 0, 'last_attempt' => 0];
             $row = (object) ($values + ['mac' => self::mac($values)]);
             if (!$db->insertObject(self::TABLE, $row)) {
                 throw new \RuntimeException('Close delivery could not be queued.');
             }
             return;
         }
-        $old = $db->setQuery('SELECT * FROM ' . $table . ' WHERE booking_id = ' . $id . ' FOR UPDATE')->loadAssoc();
         self::verify($old);
         if (!hash_equals((string) $old['uid'], (string) $booking['uid'])) {
             throw new \RuntimeException('Close booking identity does not match.');
         }
-        if (!$erased && (int) $booking['sequence'] <= (int) $old['target_sequence']) {
+        if ((int) $booking['sequence'] <= (int) $old['target_sequence']) {
             return;
         }
-        $change = (object) ['booking_id' => $id, 'target_sequence' => (int) $booking['sequence'],
-            'erased' => $erased || (int) $old['erased'] === 1 ? 1 : 0,
-            'request_id' => $requestId > 0 ? $requestId : (int) $old['request_id'],
-            // Uncertain POSTs remain uncertain even when a newer mutation arrives.
-            'state' => $old['state'] === 'uncertain' ? 'uncertain' : 'pending',
-            'next_attempt' => $old['reason'] === 'rate_limit' ? (int) $old['next_attempt'] : 0];
-        if ($erased && $old['activity_id'] === '' && (int) $old['contact_created'] === 0 && $old['state'] !== 'uncertain') {
-            $change->state = 'done';
-            $change->reason = '';
-            $change->operation = '';
-            $change->lead_id = '';
-            $change->contact_id = '';
-        }
-        if ((int) $old['erased'] === 1 && $old['state'] === 'done') {
-            $change->state = 'done';
-        }
-        if ($change->erased === 1 && $change->state === 'done') {
-            $change->subject_hash = '';
-        }
-        $change->mac = self::mac(array_replace($old, (array) $change));
-        if (!$db->updateObject(self::TABLE, $change, 'booking_id')) {
+        // Uncertain POSTs remain uncertain even when a newer change arrives.
+        $change = ['target_sequence' => (int) $booking['sequence'],
+            'state' => $old['state'] === 'uncertain' ? 'uncertain' : 'pending', 'next_attempt' => 0];
+        $object = (object) (['booking_id' => $id] + $change + ['mac' => self::mac(array_replace($old, $change))]);
+        if (!$db->updateObject(self::TABLE, $object, 'booking_id')) {
             throw new \RuntimeException('Close delivery change could not be queued.');
         }
     }
@@ -133,66 +138,6 @@ final class Queue
         return $rows;
     }
 
-    public function pendingPrivacy(int $requestId): int
-    {
-        return self::pendingForRequest($this->db, $requestId);
-    }
-
-    public static function pendingForRequest(DatabaseInterface $db, int $requestId): int
-    {
-        $address = $db->setQuery('SELECT email FROM ' . $db->quoteName('#__privacy_requests')
-            . ' WHERE id = ' . $requestId)->loadResult();
-        $subject = $address === null ? '' : self::subject((string) $address);
-        // Authenticate before filtering: changing a subject/request/state must not hide a cleanup obligation.
-        $pending = 0;
-        $after = null;
-        do {
-            $rows = $db->setQuery('SELECT * FROM ' . $db->quoteName(self::TABLE)
-                . ($after === null ? '' : ' WHERE booking_id > ' . $after)
-                . ' ORDER BY booking_id LIMIT 200')->loadAssocList();
-            foreach ($rows as $row) {
-                self::verify($row);
-                $after = (int) $row['booking_id'];
-                $matches = (int) $row['request_id'] === $requestId
-                    || ($subject !== '' && (hash_equals((string) $row['subject_hash'], $subject)
-                        || ((int) $row['erased'] === 1 && $row['subject_hash'] === '')));
-                $pending += $matches && $row['state'] !== 'done' ? 1 : 0;
-            }
-        } while (count($rows) === 200);
-        return $pending;
-    }
-
-    public function associatePrivacy(string $address, int $requestId): void
-    {
-        if ($requestId < 1) {
-            throw new \InvalidArgumentException('A formal privacy request is required.');
-        }
-        $subject = self::subject($address);
-        $this->db->transactionStart();
-        try {
-            $rows = $this->db->setQuery('SELECT * FROM ' . $this->table()
-                . ' WHERE subject_hash = ' . $this->db->quote($subject) . " AND state <> 'done' ORDER BY booking_id FOR UPDATE")->loadAssocList();
-            foreach ($rows as $row) {
-                self::verify($row);
-                $this->save((int) $row['booking_id'], ['request_id' => $requestId]);
-            }
-            $this->db->transactionCommit();
-        } catch (\Throwable $error) {
-            $this->db->transactionRollback();
-            throw $error;
-        }
-    }
-
-    public function hasPendingErasure(int $id): bool
-    {
-        $row = $this->db->setQuery('SELECT * FROM ' . $this->table() . ' WHERE booking_id = ' . $id)->loadAssoc();
-        if (!$row) {
-            return false;
-        }
-        self::verify($row);
-        return (int) $row['erased'] === 1 && $row['state'] !== 'done';
-    }
-
     /** Read-only remote reconciliation. It never authorizes another POST. */
     public function reconcile(int $id, string $remoteId): void
     {
@@ -200,7 +145,6 @@ final class Queue
             throw new \RuntimeException('Close delivery is disabled.');
         }
         $settings = new Settings($this->params);
-        $client = new Client($settings, $this->transport ?? Transport::forSettings($settings));
         $lock = $this->lockName();
         if ((int) $this->db->setQuery('SELECT GET_LOCK(' . $this->db->quote($lock) . ', 0)')->loadResult() !== 1) {
             throw new \RuntimeException('Close delivery is already running.');
@@ -210,33 +154,38 @@ final class Queue
             try {
                 $booking = $this->booking($id);
                 $row = $this->row($id, true);
-                if ($row['state'] !== 'uncertain' || !hash_equals($row['binding'], $settings->binding)
-                    || ($booking && !hash_equals($row['uid'], (string) $booking['uid']))) {
+                $profile = $settings->profile((string) $row['profile']);
+                if ($row['state'] !== 'uncertain' || $profile === null || !hash_equals($row['binding'], $profile->binding)
+                    || !$booking || !hash_equals($row['uid'], (string) $booking['uid'])) {
                     throw new \RuntimeException('This transfer cannot be reconciled.');
                 }
-                if ($this->cooldown() > time()) {
+                if (($this->limits()[$profile->key] ?? 0) > time()) {
                     throw new \RuntimeException('Close delivery is waiting for its rate limit.');
                 }
-                $this->assertOrganization($row, $client);
+                $this->profileKey = $profile->key;
+                $client = $this->client($profile);
                 if ($row['operation'] === 'create_activity') {
+                    $note = $profile->mode === Profile::MODE_NOTE;
                     $remoteId = Settings::id($remoteId, 'acti');
-                    $remote = $client->request('GET', '/api/v1/activity/custom/' . $remoteId . '/');
-                    if (($remote['id'] ?? '') !== $remoteId || ($remote['custom_activity_type_id'] ?? '') !== $settings->type
-                        || ($remote['lead_id'] ?? '') !== $row['lead_id'] || ($remote['contact_id'] ?? '') !== $row['contact_id']
-                        || ($remote['custom.' . $settings->fields['uid']] ?? '') !== $row['uid']) {
+                    $remote = $client->request('GET', $this->activityPath($profile) . $remoteId . '/');
+                    $marker = $note ? str_contains((string) ($remote['note'] ?? ''), $row['uid'])
+                        : ($remote['custom.' . $profile->fields['uid']] ?? '') === $row['uid']
+                            && ($remote['custom_activity_type_id'] ?? '') === $profile->type;
+                    if (($remote['id'] ?? '') !== $remoteId || ($remote['lead_id'] ?? '') !== $row['lead_id']
+                        || ($remote['contact_id'] ?? '') !== $row['contact_id'] || !$marker) {
                         throw new \RuntimeException('The remote activity does not match this booking.');
                     }
                     $change = ['activity_id' => $remoteId];
-                } elseif ($row['operation'] === 'create_contact' && $booking && $booking['anonymised_utc'] === null) {
+                } elseif ($row['operation'] === 'create_contact' && $booking['anonymised_utc'] === null) {
                     $remoteId = Settings::id($remoteId, 'cont');
                     $remote = $client->request('GET', '/api/v1/contact/' . $remoteId . '/');
-                    $opened = $this->open !== null ? ($this->open)($booking) : BookingData::fromApplication()->open($booking);
+                    $opened = $this->openBooking($booking);
                     if (!empty($opened[BookingData::UNVERIFIED]) || !filter_var($opened['invitee_email'] ?? '', FILTER_VALIDATE_EMAIL)) {
                         throw new \RuntimeException('The canonical booking cannot be verified.');
                     }
                     $matches = false;
                     foreach ($remote['emails'] ?? [] as $address) {
-                        $matches = $matches || strcasecmp((string) ($address['email'] ?? ''), (string) $opened['invitee_email']) === 0;
+                        $matches = $matches || strcasecmp(trim((string) ($address['email'] ?? '')), trim((string) $opened['invitee_email'])) === 0;
                     }
                     if (!$matches || ($remote['id'] ?? '') !== $remoteId) {
                         throw new \RuntimeException('The remote contact does not match this booking.');
@@ -244,26 +193,26 @@ final class Queue
                     $change = ['contact_id' => $remoteId, 'lead_id' => Settings::id((string) ($remote['lead_id'] ?? ''), 'lead'),
                         'contact_created' => 1];
                 } else {
-                    throw new \RuntimeException('Erased or unmatched contact creations require manual privacy review.');
+                    throw new \RuntimeException('This transfer cannot be reconciled.');
                 }
                 $this->save($id, $change + ['state' => 'pending', 'reason' => '', 'operation' => '', 'next_attempt' => 0]);
                 $this->db->transactionCommit();
             } catch (\Throwable $e) {
                 $this->db->transactionRollback();
-                if ($e instanceof DeliveryException && $e->reason === 'rate_limit') {
-                    $this->failure($id, ['reason' => 'rate_limit', 'rate_limit_until' => time() + $e->delay,
-                        'next_attempt' => time() + $e->delay]);
+                if ($e instanceof DeliveryException && $e->reason === 'rate_limit' && $this->profileKey !== null) {
+                    $this->limit($this->profileKey, time() + $e->delay);
                 }
                 throw $e;
             }
         } finally {
+            $this->profileKey = null;
             $this->db->setQuery('SELECT RELEASE_LOCK(' . $this->db->quote($lock) . ')')->loadResult();
         }
     }
 
-    public function run(int $limit = 20, bool $retryBlocked = false, int $requestId = 0): array
+    public function run(int $limit = 20, bool $retryBlocked = false): array
     {
-        $counts = ['processed' => 0, 'failed' => 0, 'disabled' => 0];
+        $counts = ['processed' => 0, 'failed' => 0, 'disabled' => 0, 'deferred' => 0];
         if ((int) $this->params->get('close_enabled', 0) !== 1) {
             $counts['disabled'] = 1;
             return $counts;
@@ -275,134 +224,142 @@ final class Queue
         }
         try {
             $settings = new Settings($this->params);
-            if (($until = $this->cooldown()) > time()) {
-                return $counts + ['cooldown' => $until];
-            }
-            $client = new Client($settings, $this->transport ?? Transport::forSettings($settings));
             $states = $retryBlocked ? "'pending','retry','blocked'" : "'pending','retry'";
             $rows = $this->db->setQuery('SELECT * FROM ' . $this->table() . ' WHERE state IN (' . $states . ')'
-                . ($requestId > 0 ? ' AND request_id = ' . $requestId : '')
                 . ' AND (next_attempt <= ' . time() . ($retryBlocked ? " OR state = 'blocked'" : '') . ')'
                 . ' ORDER BY last_attempt ASC, booking_id ASC LIMIT ' . max(1, min(100, $limit)))->loadAssocList();
             foreach ($rows as $row) {
                 $counts['processed']++;
                 // A contact creation and its activity are separate crash-safe checkpoints.
                 for ($step = 0; $step < 3; $step++) {
+                    $this->profileKey = null;
                     try {
-                        if ($this->deliver((int) $row['booking_id'], $settings, $client)) {
+                        $result = $this->deliver((int) $row['booking_id'], $settings);
+                        if ($result === 'deferred') {
+                            $counts['deferred']++;
+                        }
+                        if ($result !== 'next') {
                             break;
                         }
                     } catch (DeliveryException $e) {
                         $change = ['state' => $e->state, 'reason' => $e->reason, 'next_attempt' => time() + $e->delay];
-                        if ($e->reason === 'rate_limit') {
-                            $change['rate_limit_until'] = time() + $e->delay;
+                        if ($e->reason === 'rate_limit' && $this->profileKey !== null) {
+                            // Rate limits are per Close organization: other profiles continue.
+                            $this->limit($this->profileKey, time() + $e->delay);
                         }
                         $this->failure((int) $row['booking_id'], $change);
                         $counts['failed']++;
-                        if ($e->reason === 'rate_limit') {
-                            break 2;
-                        }
                         break;
                     } catch (\Throwable $e) {
                         // Do not turn a persisted uncertain write intent into a retry.
-                        $current = $this->row((int) $row['booking_id']);
-                        $this->failure((int) $row['booking_id'], ['state' => $current['state'] === 'uncertain' ? 'uncertain' : 'blocked',
-                            'reason' => 'delivery_error']);
+                        $current = $this->find((int) $row['booking_id']);
+                        if ($current !== null) {
+                            $this->failure((int) $row['booking_id'], ['state' => $current['state'] === 'uncertain' ? 'uncertain' : 'blocked',
+                                'reason' => 'delivery_error']);
+                        }
                         $counts['failed']++;
                         break;
                     }
                 }
             }
         } finally {
+            $this->profileKey = null;
             $this->db->setQuery('SELECT RELEASE_LOCK(' . $this->db->quote($lock) . ')')->loadResult();
         }
         $counts['failed'] = max($counts['failed'], (int) $this->db->setQuery('SELECT COUNT(*) FROM ' . $this->table()
-            . " WHERE state IN ('uncertain','blocked')" . ($requestId > 0 ? ' AND request_id = ' . $requestId : ''))->loadResult());
+            . " WHERE state IN ('uncertain','blocked')")->loadResult());
         return $counts;
     }
 
-    private function deliver(int $id, Settings $settings, Client $client): bool
+    /** @return 'stop'|'next'|'deferred' */
+    private function deliver(int $id, Settings $settings): string
     {
         $db = $this->db;
         $db->transactionStart();
         try {
             $booking = $this->booking($id);
-            $row = $this->row($id, true);
-            if ($booking && !hash_equals($row['uid'], (string) $booking['uid'])) {
+            $row = $this->find($id, true);
+            if ($row === null) {
+                $db->transactionCommit();
+                return 'stop';
+            }
+            if (!$booking || $booking['anonymised_utc'] !== null) {
+                // Erasure normally removes the link in its own transaction; drop any leftover link.
+                $db->setQuery('DELETE FROM ' . $this->table() . ' WHERE booking_id = ' . $id)->execute();
+                $db->transactionCommit();
+                return 'stop';
+            }
+            if (!hash_equals($row['uid'], (string) $booking['uid'])) {
                 throw new DeliveryException('blocked', 'booking_identity');
             }
             if ($row['state'] === 'uncertain') {
                 $db->transactionCommit();
-                return true;
+                return 'stop';
             }
-            if ($row['binding'] !== '' && !hash_equals($row['binding'], $settings->binding)) {
-                throw new DeliveryException('blocked', 'mapping_changed');
-            }
-            $erased = (int) $row['erased'] === 1 || !$booking || $booking['anonymised_utc'] !== null;
-            if (!$erased || $row['activity_id'] !== '' || (int) $row['contact_created'] === 1) {
-                $this->assertOrganization($row, $client);
-            }
-            if ($erased && $row['activity_id'] === '') {
-                if (!$this->contactCleanupComplete($row, $settings, $client)) {
-                    throw new DeliveryException('blocked', 'contact_retention_review');
+            if ($row['profile'] === '') {
+                $resolved = $settings->profileFor((int) $booking['eventtype_id']);
+                if ($resolved === null) {
+                    // The event type has no profile: it is not transferred.
+                    $db->setQuery('DELETE FROM ' . $this->table() . ' WHERE booking_id = ' . $id)->execute();
+                    $db->transactionCommit();
+                    return 'stop';
                 }
-                // A completed contact is retained; CRM master records are never erased here.
-                $this->save($id, ['state' => 'done', 'reason' => '', 'operation' => '', 'lead_id' => '', 'contact_id' => '']);
+                $this->save($id, ['profile' => $resolved->key]);
+                $row['profile'] = $resolved->key;
+            }
+            $profile = $settings->profile($row['profile']);
+            if ($profile === null) {
+                throw new DeliveryException('blocked', 'profile_missing');
+            }
+            $this->profileKey = $profile->key;
+            if ($row['binding'] !== '' && !hash_equals($row['binding'], $profile->binding)) {
+                throw new DeliveryException('blocked', 'profile_changed');
+            }
+            if (($this->limits()[$profile->key] ?? 0) > time()) {
                 $db->transactionCommit();
-                return true;
+                return 'deferred';
             }
-            if ($erased) {
-                $path = '/api/v1/activity/custom/' . Settings::id($row['activity_id'], 'acti') . '/';
-                if ((int) $settings->params->get('close_delete_activity', 0) !== 1) {
-                    if ($client->absent($path)) {
-                        $this->save($id, ['activity_id' => '', 'state' => 'pending', 'reason' => '', 'operation' => '']);
-                        $db->transactionCommit();
-                        return false;
-                    }
-                    throw new DeliveryException('blocked', 'erasure_review');
+            $opened = $this->openBooking($booking);
+            if (!empty($opened[BookingData::UNVERIFIED])) {
+                throw new DeliveryException('blocked', 'unverified_booking');
+            }
+            $client = $this->client($profile);
+            if ($row['contact_id'] === '') {
+                $match = $client->contact((string) ($opened['invitee_email'] ?? ''));
+                if ($match !== null) {
+                    // Existing leads and contacts are never changed.
+                    $this->save($id, $match + ['binding' => $profile->binding, 'state' => 'pending', 'reason' => '']);
+                    $db->transactionCommit();
+                    return 'next';
                 }
-                $method = 'DELETE';
-                $payload = null;
-                $operation = 'delete_activity';
+                $client->validateLeadFields();
+                $payload = $client->lead($opened);
+                $method = 'POST';
+                $path = '/api/v1/lead/';
+                $operation = 'create_contact';
             } else {
-                $booking = $this->open !== null ? ($this->open)($booking) : BookingData::fromApplication()->open($booking);
-                if (!empty($booking[BookingData::UNVERIFIED])) {
-                    throw new DeliveryException('blocked', 'unverified_booking');
-                }
-                $client->validateFields();
-                $payload = $client->activity($booking);
-                if ($row['contact_id'] === '') {
-                    $match = $client->contact((string) $booking['invitee_email']);
-                    if ($match !== null) {
-                        $this->save($id, $match + ['binding' => $settings->binding, 'state' => 'pending', 'reason' => '']);
-                        $db->transactionCommit();
-                        return false;
-                    }
-                    $contact = ['name' => $booking['invitee_name'], 'emails' => [['email' => $booking['invitee_email'], 'type' => 'office']]];
-                    if (!empty($booking['invitee_phone'])) {
-                        $contact['phones'] = [['phone' => $booking['invitee_phone'], 'type' => 'office']];
-                    }
-                    $payload = ['contacts' => [$contact]];
-                    $method = 'POST';
-                    $path = '/api/v1/lead/';
-                    $operation = 'create_contact';
+                $context = $this->context($opened, $profile, (int) $row['contact_created'] === 1);
+                if ($profile->mode === Profile::MODE_ACTIVITY) {
+                    $client->validateActivityFields();
+                    $payload = $client->activity($opened, $context);
                 } else {
-                    $payload['contact_id'] = Settings::id($row['contact_id'], 'cont');
-                    $method = $row['activity_id'] === '' ? 'POST' : 'PUT';
-                    $path = '/api/v1/activity/custom/' . ($method === 'PUT' ? Settings::id($row['activity_id'], 'acti') . '/' : '');
-                    if ($method === 'POST') {
-                        $payload['lead_id'] = Settings::id($row['lead_id'], 'lead');
-                    } else {
-                        unset($payload['custom_activity_type_id']);
-                    }
-                    $operation = $method === 'POST' ? 'create_activity' : 'update_activity';
+                    $payload = $client->note($opened, $context, $this->translator());
                 }
+                $method = $row['activity_id'] === '' ? 'POST' : 'PUT';
+                $path = $this->activityPath($profile) . ($method === 'PUT' ? Settings::id($row['activity_id'], 'acti') . '/' : '');
+                if ($method === 'POST') {
+                    $payload['lead_id'] = Settings::id($row['lead_id'], 'lead');
+                    $payload['contact_id'] = Settings::id($row['contact_id'], 'cont');
+                } else {
+                    unset($payload['custom_activity_type_id']);
+                }
+                $operation = $method === 'POST' ? 'create_activity' : 'update_activity';
             }
             $sequence = (int) $row['target_sequence'];
             $create = $method === 'POST';
             // Persist BEFORE the request; a crash cannot replay an uncertain POST.
             $this->save($id, ['state' => $create ? 'uncertain' : 'retry', 'operation' => $operation,
-                'binding' => $settings->binding, 'reason' => 'in_flight', 'attempts' => (int) $row['attempts'] + 1]);
+                'binding' => $profile->binding, 'reason' => 'in_flight', 'attempts' => (int) $row['attempts'] + 1]);
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();
@@ -411,14 +368,17 @@ final class Queue
 
         $db->transactionStart();
         try {
-            // Same lock order as BookingStore; erasure cannot race an outgoing PII request.
+            // Same lock order as BookingStore; erasure cannot race an outgoing request.
             $currentBooking = $this->booking($id);
-            $current = $this->row($id, true);
-            if ((int) $current['target_sequence'] !== $sequence || (int) $current['erased'] !== (int) $row['erased']
-                || (!$erased && (!$currentBooking || $currentBooking['anonymised_utc'] !== null))) {
+            $current = $this->find($id, true);
+            if ($current === null) {
+                $db->transactionCommit();
+                return 'stop';
+            }
+            if ((int) $current['target_sequence'] !== $sequence || !$currentBooking || $currentBooking['anonymised_utc'] !== null) {
                 $this->save($id, ['state' => 'pending', 'reason' => '', 'operation' => '']);
                 $db->transactionCommit();
-                return false;
+                return 'next';
             }
             $result = $client->request($method, $path, $payload, $create);
             $change = ['state' => 'done', 'reason' => '', 'operation' => '', 'next_attempt' => 0];
@@ -428,7 +388,7 @@ final class Queue
                     if (count($result['contacts'] ?? []) !== 1) {
                         throw new \UnexpectedValueException();
                     }
-                    $change['contact_id'] = Settings::id((string) $result['contacts'][0]['id'], 'cont');
+                    $change['contact_id'] = Settings::id((string) ($result['contacts'][0]['id'] ?? ''), 'cont');
                     $change['contact_created'] = 1;
                 } catch (\Throwable $e) {
                     throw new DeliveryException('uncertain', 'invalid_created_contact');
@@ -440,22 +400,68 @@ final class Queue
                 } catch (\Throwable $e) {
                     throw new DeliveryException('uncertain', 'invalid_created_activity');
                 }
-            } elseif ($erased) {
-                $change['activity_id'] = '';
-                if (!$this->contactCleanupComplete($row, $settings, $client)) {
-                    $change['state'] = 'blocked';
-                    $change['reason'] = 'contact_retention_review';
-                } else {
-                    $change += ['lead_id' => '', 'contact_id' => ''];
-                }
             }
             $this->save($id, $change);
             $db->transactionCommit();
-            return $change['state'] !== 'pending';
+            return $change['state'] === 'pending' ? 'next' : 'stop';
         } catch (\Throwable $e) {
             $db->transactionRollback();
             throw $e;
         }
+    }
+
+    private function context(array $booking, Profile $profile, bool $created): array
+    {
+        $title = (string) $this->db->setQuery('SELECT title FROM ' . $this->db->quoteName('#__appointments_eventtypes')
+            . ' WHERE id = ' . (int) $booking['eventtype_id'])->loadResult();
+        $labels = [];
+        if ($profile->noteAnswers !== []) {
+            foreach ($this->db->setQuery('SELECT id, label FROM ' . $this->db->quoteName('#__appointments_fields')
+                . ' WHERE id IN (' . implode(',', $profile->noteAnswers) . ')')->loadAssocList() as $field) {
+                $labels[(int) $field['id']] = (string) $field['label'];
+            }
+        }
+        $zone = $this->timezone ?? (string) Factory::getApplication()->get('offset', 'UTC');
+        if (!in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
+            $zone = 'UTC';
+        }
+        return ['event_title' => $title, 'labels' => $labels, 'contact_created' => $created, 'timezone' => $zone];
+    }
+
+    /** Notes use the site's default language, independent of who triggered the delivery. */
+    private function translator(): \Closure
+    {
+        if ($this->translate === null) {
+            $tag = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+            $language = Factory::getContainer()->get(LanguageFactoryInterface::class)->createLanguage($tag);
+            $language->load('com_appointments', JPATH_ADMINISTRATOR, $tag, true);
+            $language->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments', $tag, true);
+            $this->translate = static fn (string $key): string => $language->_($key);
+        }
+        return $this->translate;
+    }
+
+    private function client(Profile $profile): Client
+    {
+        if (!isset($this->clients[$profile->key]) || $this->clients[$profile->key]->profile !== $profile) {
+            try {
+                $transport = $this->transport !== null ? ($this->transport)($profile) : Transport::forProfile($profile);
+            } catch (\RuntimeException $e) {
+                throw new DeliveryException('blocked', 'credential');
+            }
+            $this->clients[$profile->key] = new Client($profile, $transport);
+        }
+        return $this->clients[$profile->key];
+    }
+
+    private function activityPath(Profile $profile): string
+    {
+        return $profile->mode === Profile::MODE_NOTE ? '/api/v1/activity/note/' : '/api/v1/activity/custom/';
+    }
+
+    private function openBooking(array $booking): array
+    {
+        return $this->open !== null ? ($this->open)($booking) : BookingData::fromApplication()->open($booking);
     }
 
     private function booking(int $id): ?array
@@ -464,24 +470,29 @@ final class Queue
             . ' WHERE id = ' . $id . ' FOR UPDATE')->loadAssoc() ?: null;
     }
 
-    private function row(int $id, bool $lock = false): array
+    private function find(int $id, bool $lock = false): ?array
     {
         $row = $this->db->setQuery('SELECT * FROM ' . $this->table() . ' WHERE booking_id = ' . $id
             . ($lock ? ' FOR UPDATE' : ''))->loadAssoc();
         if (!$row) {
-            throw new \RuntimeException('Close delivery metadata is missing.');
+            return null;
         }
         self::verify($row);
+        return $row;
+    }
+
+    private function row(int $id, bool $lock = false): array
+    {
+        $row = $this->find($id, $lock);
+        if ($row === null) {
+            throw new \RuntimeException('Close delivery metadata is missing.');
+        }
         return $row;
     }
 
     private function save(int $id, array $fields): void
     {
         $row = $this->row($id);
-        $updated = array_replace($row, $fields);
-        if ((int) $updated['erased'] === 1 && $updated['state'] === 'done') {
-            $fields['subject_hash'] = '';
-        }
         $fields['mac'] = self::mac(array_replace($row, $fields));
         $object = (object) (['booking_id' => $id] + $fields);
         if (!$this->db->updateObject(self::TABLE, $object, 'booking_id')) {
@@ -493,12 +504,8 @@ final class Queue
     {
         $this->db->transactionStart();
         try {
-            $current = $this->row($id, true);
-            // Erasure may have completed after delivery rolled back but before failure recording acquired the row.
-            if ((int) $current['erased'] === 1 && $current['state'] === 'done') {
-                if (isset($fields['rate_limit_until'])) {
-                    $this->save($id, ['rate_limit_until' => $fields['rate_limit_until']]);
-                }
+            // Erasure may have removed the link after delivery rolled back.
+            if ($this->find($id, true) === null) {
                 $this->db->transactionCommit();
                 return;
             }
@@ -509,6 +516,24 @@ final class Queue
             $this->db->transactionRollback();
             throw $e;
         }
+    }
+
+    /** @return array<string, int> profile key => rate limit end */
+    private function limits(): array
+    {
+        $limits = [];
+        foreach ($this->db->setQuery('SELECT profile, until FROM ' . $this->db->quoteName(self::LIMITS)
+            . ' WHERE until > ' . time())->loadAssocList() as $row) {
+            $limits[(string) $row['profile']] = (int) $row['until'];
+        }
+        return $limits;
+    }
+
+    private function limit(string $profile, int $until): void
+    {
+        $table = $this->db->quoteName(self::LIMITS);
+        $this->db->setQuery('DELETE FROM ' . $table . ' WHERE profile = ' . $this->db->quote($profile))->execute();
+        $this->db->setQuery('INSERT INTO ' . $table . ' (profile, until) VALUES (' . $this->db->quote($profile) . ', ' . $until . ')')->execute();
     }
 
     private static function mac(array $row): string
@@ -522,62 +547,9 @@ final class Queue
 
     private static function verify(array $row): void
     {
-        if (hash_equals(self::mac($row), (string) ($row['mac'] ?? ''))) {
-            return;
+        if (!hash_equals(self::mac($row), (string) ($row['mac'] ?? ''))) {
+            throw new \RuntimeException('Close delivery metadata is not authentic.');
         }
-        if (($row['subject_hash'] ?? '') === '') {
-            $previous = $row;
-            unset($previous['subject_hash']);
-            if (hash_equals(self::mac($previous), (string) ($row['mac'] ?? ''))) {
-                return;
-            }
-            $row = $previous;
-        }
-        // Earlier evaluation builds had no account binding. Never assign remote IDs from those builds to an account implicitly.
-        if (($row['organization_id'] ?? '') === '' && (int) ($row['last_attempt'] ?? 0) === 0 && (int) ($row['rate_limit_until'] ?? 0) === 0) {
-            unset($row['organization_id'], $row['last_attempt'], $row['rate_limit_until']);
-            if (hash_equals(self::mac($row), (string) ($row['mac'] ?? ''))) {
-                return;
-            }
-        }
-        throw new \RuntimeException('Close delivery metadata is not authentic.');
-    }
-
-    private static function subject(string $address): string
-    {
-        $key = (new KeyProvider((string) Factory::getApplication()->get('secret', '')))->key('close-privacy-subject');
-        return hash_hmac('sha256', PrivacyAddress::normalise($address), $key);
-    }
-
-    private function assertOrganization(array $row, Client $client): void
-    {
-        $organization = $client->organization();
-        if ($row['organization_id'] !== '' && !hash_equals($row['organization_id'], $organization)) {
-            throw new DeliveryException('blocked', 'organization_changed');
-        }
-        if ($row['organization_id'] === '') {
-            if ($row['activity_id'] !== '' || $row['contact_id'] !== '' || $row['state'] === 'uncertain') {
-                throw new DeliveryException('blocked', 'organization_unbound');
-            }
-            $this->save((int) $row['booking_id'], ['organization_id' => $organization]);
-        }
-    }
-
-    private function cooldown(): int
-    {
-        $rows = $this->db->setQuery('SELECT * FROM ' . $this->table() . ' WHERE rate_limit_until > ' . time())->loadAssocList();
-        $until = 0;
-        foreach ($rows as $row) {
-            self::verify($row);
-            $until = max($until, (int) $row['rate_limit_until']);
-        }
-        return $until;
-    }
-
-    private function contactCleanupComplete(array $row, Settings $settings, Client $client): bool
-    {
-        return (int) $row['contact_created'] !== 1 || (int) $settings->params->get('close_retain_contact', 0) === 1
-            || $client->absent('/api/v1/contact/' . Settings::id($row['contact_id'], 'cont') . '/');
     }
 
     private function table(): string

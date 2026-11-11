@@ -194,8 +194,7 @@ final class PrivacyService
         }
         $store = new BookingStore($this->db);
         $mail = new NotificationService($this->db);
-        // cleanup_failed: calendar copies and conferences. crm_pending: Close cleanup, reported separately.
-        $result = ['removed' => 0, 'guest_removed' => 0, 'mail_failed' => 0, 'cleanup_failed' => 0, 'crm_pending' => 0];
+        $result = ['removed' => 0, 'guest_removed' => 0, 'mail_failed' => 0, 'cleanup_failed' => 0];
         if ($this->legalReason() !== '' && $this->hasBookings($address)) {
             throw new \RuntimeException('Appointment removal is blocked by the configured legal reason.');
         }
@@ -217,7 +216,6 @@ final class PrivacyService
             $erasure = $store->erase((int) $booking['id'], $now, 'privacy_request', $mode === 'delete', privacyCleanup: $cleanup);
             $result['removed'] += $erasure['changed'] ? 1 : 0;
             $result['cleanup_failed'] += !empty($erasure['_conference_cleanup_error']) || !empty($erasure['_calendar_cleanup_error']) ? 1 : 0;
-            $result['crm_pending'] += $requestId < 1 && !empty($erasure['_crm_cleanup_error']) ? 1 : 0;
             if ($erasure['notification'] !== null) {
                 try {
                     $mail->send($erasure['notification'], 'erasure_notice', $now, true);
@@ -228,19 +226,6 @@ final class PrivacyService
         }
 
         $result['cleanup_failed'] = max($result['cleanup_failed'], $cleanup?->pending() ?? 0);
-        if ($requestId > 0) {
-            $crm = new Close\Queue($this->db, $this->params);
-            $crm->associatePrivacy($address, $requestId);
-            if ($crm->pendingPrivacy($requestId) > 0) {
-                try {
-                    $crm->run(20, true, $requestId);
-                } catch (\Throwable $e) {
-                    \Joomla\CMS\Log\Log::add('Appointment CRM erasure remains pending; check delivery configuration.',
-                        \Joomla\CMS\Log\Log::WARNING, 'com_appointments');
-                }
-            }
-            $result['crm_pending'] += $crm->pendingPrivacy($requestId);
-        }
 
         return $result;
     }

@@ -95,9 +95,10 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
                     'uncertain' => 'COM_APPOINTMENTS_CLOSE_UNCERTAIN']; ?>
                 <table class="table com-appointments-close-queue">
                     <caption><?php echo Text::_('COM_APPOINTMENTS_CLOSE_RECENT'); ?></caption>
-                    <thead><tr><th scope="col"><?php echo Text::_('JGRID_HEADING_ID'); ?></th><th scope="col"><?php echo Text::_('JSTATUS'); ?></th><th scope="col"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REASON'); ?></th></tr></thead>
+                    <thead><tr><th scope="col"><?php echo Text::_('JGRID_HEADING_ID'); ?></th><th scope="col"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_PROFILE'); ?></th><th scope="col"><?php echo Text::_('JSTATUS'); ?></th><th scope="col"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REASON'); ?></th></tr></thead>
                     <tbody><?php foreach ($this->closeRows as $delivery) : ?><tr>
                         <td><span class="com-appointments-close-label" aria-hidden="true"><?php echo Text::_('JGRID_HEADING_ID'); ?></span><?php echo (int) $delivery['booking_id']; ?></td>
+                        <td><span class="com-appointments-close-label" aria-hidden="true"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_PROFILE'); ?></span><code><?php echo $this->escape($delivery['profile'] !== '' ? $delivery['profile'] : '-'); ?></code></td>
                         <td><span class="com-appointments-close-label" aria-hidden="true"><?php echo Text::_('JSTATUS'); ?></span><?php echo Text::_($deliveryStates[$delivery['state']] ?? 'COM_APPOINTMENTS_CLOSE_BLOCKED'); ?></td>
                         <td><span class="com-appointments-close-label" aria-hidden="true"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REASON'); ?></span><code><?php echo $this->escape($delivery['reason']); ?></code>
                             <?php if ($delivery['state'] === 'uncertain') : ?>

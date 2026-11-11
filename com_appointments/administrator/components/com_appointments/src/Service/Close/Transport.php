@@ -15,18 +15,19 @@ defined('_JEXEC') or die;
 
 final class Transport
 {
-    public static function forSettings(Settings $settings): \Closure
+    /** Each profile reads its own key from its own server environment variable. */
+    public static function forProfile(Profile $profile): \Closure
     {
-        $key = getenv($settings->credential);
+        $key = getenv($profile->credential);
         if (!is_string($key) || $key === '' || strlen($key) > 1024 || preg_match('/[\s\x00-\x1f\x7f:]/', $key)
             || !extension_loaded('curl')) {
             throw new \RuntimeException('Close credential or HTTPS transport is unavailable.');
         }
-        return static function (string $method, string $path, ?array $payload) use ($settings, $key): array {
-            if (!str_starts_with($path, '/api/v1/') || str_contains($path, '..')) {
-                throw new \InvalidArgumentException('Invalid Close request path.');
+        return static function (string $method, string $path, ?array $payload) use ($profile, $key): array {
+            if (!str_starts_with($path, '/api/v1/') || str_contains($path, '..') || !in_array($method, ['GET', 'POST', 'PUT'], true)) {
+                throw new \InvalidArgumentException('Invalid Close request.');
             }
-            $request = new OutboundHttpRequest($settings->origin . $path, $method,
+            $request = new OutboundHttpRequest($profile->origin . $path, $method,
                 $payload === null ? '' : json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
                 ['Authorization: Basic ' . base64_encode($key . ':'), 'Content-Type: application/json']);
             $handle = curl_init($request->url);

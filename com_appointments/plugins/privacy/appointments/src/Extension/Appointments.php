@@ -209,11 +209,8 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         if ($result['cleanup_failed']) {
             $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_CLEANUP_FAILED'), 'warning');
         }
-        if ($result['crm_pending']) {
-            $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_CRM_PENDING'), 'warning');
-        }
         $team = TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase());
-        $complete = $result['cleanup_failed'] === 0 && $result['crm_pending'] === 0 && $service->unreadable() === 0;
+        $complete = $result['cleanup_failed'] === 0 && $service->unreadable() === 0;
         if ($team !== null) {
             $complete = $team->remove((string) $event->getRequest()->email, $event->getUser(), $staffId) && $complete;
             if ($staffScope !== null && $staffId > 0 && $team->staffRemoved()) {

@@ -48,6 +48,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
     ];
 
     private const APPOINTMENT_TABLES = [
+        'close_delivery',
+        'close_limits',
+        // Unreleased evaluation table; postflight already removes it on update.
         'close',
         'privacy_staff',
         'privacy_cleanup',

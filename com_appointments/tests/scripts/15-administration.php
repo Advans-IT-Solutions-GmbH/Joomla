@@ -320,7 +320,7 @@ try {
     $closeParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
     try {
         $disabledClose = array_replace(json_decode($closeParams, true, 512, JSON_THROW_ON_ERROR), [
-            'close_enabled' => 0, 'close_origin' => '', 'close_credential_env' => '',
+            'close_enabled' => 0, 'close_profiles' => [],
         ]);
         $db->query("UPDATE {$prefix}extensions SET params='"
             . $db->real_escape_string(json_encode($disabledClose, JSON_THROW_ON_ERROR))

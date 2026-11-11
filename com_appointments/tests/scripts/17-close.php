@@ -45,7 +45,7 @@ function closeAssertChildReadiness(string $file): void
 
 function closeChildExcerpt(string $output): string
 {
-    $allowed = ['blocked', 'calls', 'erased', 'lock_timeout', 'pending', 'error',
+    $allowed = ['blocked', 'calls', 'erased', 'lock_timeout', 'linked', 'error',
         'true', 'false', 'null', 'RuntimeException', 'JsonException', 'Error', 'TypeError'];
     $output = preg_replace_callback('/[A-Za-z0-9_\\\\.\\/:@%+-]+/',
         static fn (array $match): string => in_array($match[0], $allowed, true) ? $match[0] : '[redacted]',
@@ -177,7 +177,7 @@ if (($argv[1] ?? '') === '--race-erase') {
         require __DIR__ . '/appointments-joomla.php';
         $blocked = false;
         $calls = 0;
-        $mock = static function () use (&$calls): array {
+        $mock = static function () use (&$calls): \Closure {
             $calls++;
             throw new RuntimeException('Unexpected child transport.');
         };
@@ -210,8 +210,10 @@ if (($argv[1] ?? '') === '--race-erase') {
         file_put_contents($argv[3], 'lock-timeout');
         $joomlaDb->setQuery('SET SESSION innodb_lock_wait_timeout=15')->execute();
         $result = $store->erase((int) $argv[2], $now, 'admin', actor: (int) $argv[4]);
+        $linked = (int) $joomlaDb->setQuery('SELECT COUNT(*) FROM ' . $joomlaDb->quoteName('#__appointments_close_delivery')
+            . ' WHERE booking_id = ' . (int) $argv[2])->loadResult();
         echo json_encode(['blocked' => $blocked, 'calls' => $calls, 'erased' => $result['changed'],
-            'lock_timeout' => $lockTimeout, 'pending' => !empty($result['_crm_cleanup_error'])], JSON_THROW_ON_ERROR);
+            'lock_timeout' => $lockTimeout, 'linked' => $linked > 0], JSON_THROW_ON_ERROR);
         exit(0);
     } catch (Throwable $error) {
         echo json_encode(['error' => get_class($error)], JSON_THROW_ON_ERROR);
@@ -237,106 +239,103 @@ $rateBuckets = implode(',', array_map(static fn (string $ip): string => "'" . ha
     ['127.0.0.1', '::1']));
 $rateRows = $db->query("SELECT id,bucket,window_utc,hits FROM {$prefix}appointments_ratelimit WHERE bucket IN ({$rateBuckets})")->fetch_all(MYSQLI_ASSOC);
 $original = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
-$params = array_replace(json_decode($original, true) ?: [], [
-    'close_enabled' => 0, 'close_origin' => 'https://crm.example.test',
-    'close_type' => 'actitype_fixture', 'close_credential_env' => 'SYNTHETIC_CLOSE_KEY',
-    'close_fields' => '{"uid":"cf_uid","sequence":"cf_seq","start":"cf_start","end":"cf_end","state":"cf_state","source":"cf_source"}',
-    'close_questions' => '{}', 'close_delete_activity' => 1,
-]);
+$params = [];
 $save = static function () use ($db, $prefix, &$params): void {
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($params))
         . "' WHERE element='com_appointments' AND type='component'");
     \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments')->loadArray($params);
 };
 $requests = [];
-$activity = [];
+$notes = [];
 $timeout = false;
-$foreignOrg = false;
 $raceId = 0;
 $raceProcess = null;
 $racePipes = [];
 $raceSignal = null;
 $raceReadiness = null;
 $requestId = random_int(1000000000, 2000000000);
-$transport = static function (string $method, string $path, ?array $payload) use (
-    &$requests, &$activity, &$timeout, &$foreignOrg, &$raceId, &$raceProcess, &$racePipes, &$raceSignal,
-    &$raceReadiness, $fixture
-): array {
-    $requests[] = [$method, $path, $payload];
-    if ($method === 'GET' && $path === '/api/v1/custom_activity/actitype_fixture/') {
-        return ['code' => 200, 'data' => ['id' => 'actitype_fixture', 'organization_id' => $foreignOrg ? 'orga_other' : 'orga_fixture',
-            'fields' => array_map(static fn ($name) => [
-            'id' => 'cf_' . $name, 'type' => 'text', 'custom_activity_type_id' => 'actitype_fixture',
-        ], ['uid', 'seq', 'start', 'end', 'state', 'source'])]];
-    }
-    if ($path === '/api/v1/data/search/') {
-        return ['code' => 200, 'data' => ['data' => [['id' => 'cont_fixture', 'lead_id' => 'lead_fixture',
-            'emails' => [['email' => 'invitee@example.test']]]], 'cursor' => null]];
-    }
-    if ($method === 'POST' && $path === '/api/v1/activity/custom/') {
-        if ($raceId > 0) {
-            $raceSignal = tempnam(sys_get_temp_dir(), 'appointments-close-race-');
-            $raceReadiness = tempnam(sys_get_temp_dir(), 'appointments-close-ready-');
-            if ($raceReadiness === false) {
-                throw new RuntimeException('Cannot create child PHP readiness fixture.');
-            }
-            unlink($raceReadiness);
-            $raceProcess = proc_open(array_merge(closePhpCommand(),
-                ['--race-erase', (string) $raceId, $raceSignal, (string) $fixture->host, $raceReadiness]),
-                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $racePipes, null, getenv());
-            if (!is_resource($raceProcess)) {
-                throw new RuntimeException('The canonical race process did not start.');
-            }
-            fclose($racePipes[0]);
-            closeAssertChildReadiness($raceReadiness);
-            $deadline = microtime(true) + 10;
-            do {
-                clearstatcache(true, $raceSignal);
-                if (file_get_contents($raceSignal) === 'lock-timeout') {
-                    break;
+$transport = static function (\Advans\Component\Appointments\Administrator\Service\Close\Profile $profile) use (
+    &$requests, &$notes, &$timeout, &$raceId, &$raceProcess, &$racePipes, &$raceSignal, &$raceReadiness, $fixture
+): \Closure {
+    return static function (string $method, string $path, ?array $payload) use (
+        $profile, &$requests, &$notes, &$timeout, &$raceId, &$raceProcess, &$racePipes, &$raceSignal, &$raceReadiness, $fixture
+    ): array {
+        $requests[] = [$profile->key, $method, $path, $payload];
+        if ($path === '/api/v1/data/search/') {
+            return ['code' => 200, 'data' => ['data' => [['id' => 'cont_' . $profile->key, 'lead_id' => 'lead_' . $profile->key,
+                'emails' => [['email' => 'invitee@example.test']]]], 'cursor' => null]];
+        }
+        if ($method === 'POST' && $path === '/api/v1/activity/note/') {
+            if ($raceId > 0) {
+                $raceSignal = tempnam(sys_get_temp_dir(), 'appointments-close-race-');
+                $raceReadiness = tempnam(sys_get_temp_dir(), 'appointments-close-ready-');
+                if ($raceReadiness === false) {
+                    throw new RuntimeException('Cannot create child PHP readiness fixture.');
                 }
-                usleep(20000);
-            } while (microtime(true) < $deadline);
-            if (file_get_contents($raceSignal) !== 'lock-timeout') {
-                throw new RuntimeException('The canonical race process did not prove a database lock wait.');
+                unlink($raceReadiness);
+                $raceProcess = proc_open(array_merge(closePhpCommand(),
+                    ['--race-erase', (string) $raceId, $raceSignal, (string) $fixture->host, $raceReadiness]),
+                    [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $racePipes, null, getenv());
+                if (!is_resource($raceProcess)) {
+                    throw new RuntimeException('The canonical race process did not start.');
+                }
+                fclose($racePipes[0]);
+                closeAssertChildReadiness($raceReadiness);
+                $deadline = microtime(true) + 10;
+                do {
+                    clearstatcache(true, $raceSignal);
+                    if (file_get_contents($raceSignal) === 'lock-timeout') {
+                        break;
+                    }
+                    usleep(20000);
+                } while (microtime(true) < $deadline);
+                if (file_get_contents($raceSignal) !== 'lock-timeout') {
+                    throw new RuntimeException('The canonical race process did not prove a database lock wait.');
+                }
+                if (!proc_get_status($raceProcess)['running'] || $fixture->stored($raceId)['anonymised_utc'] !== null) {
+                    throw new RuntimeException('Canonical erasure was not serialized against the remote write.');
+                }
+                $raceId = 0;
             }
-            if (!proc_get_status($raceProcess)['running'] || $fixture->stored($raceId)['anonymised_utc'] !== null) {
-                throw new RuntimeException('Canonical erasure was not serialized against the remote write.');
+            $id = 'acti_' . $profile->key . count($notes);
+            $notes[$id] = $payload + ['id' => $id];
+            if ($timeout) {
+                throw new \RuntimeException('Synthetic timeout after remote write.');
             }
-            $raceId = 0;
+            return ['code' => 200, 'data' => $notes[$id]];
         }
-        $activity = $payload + ['id' => 'acti_fixture'];
-        if ($timeout) {
-            throw new \RuntimeException('Synthetic timeout after remote write.');
+        if (preg_match('~^/api/v1/activity/note/(acti_\w+)/$~', $path, $match) && isset($notes[$match[1]])) {
+            if ($method === 'PUT') {
+                $notes[$match[1]] = array_replace($notes[$match[1]], $payload ?? []);
+            }
+            return ['code' => 200, 'data' => $notes[$match[1]]];
         }
-        return ['code' => 200, 'data' => $activity];
-    }
-    if ($method === 'GET' && $path === '/api/v1/activity/custom/acti_fixture/') {
-        return ['code' => 200, 'data' => $activity];
-    }
-    if ($method === 'PUT') {
-        $activity = array_replace($activity, $payload ?? []);
-        return ['code' => 200, 'data' => $activity];
-    }
-    if ($method === 'DELETE') {
-        $activity = [];
-        return ['code' => 204, 'body' => ''];
-    }
-    throw new \RuntimeException('Unexpected mock request.');
+        throw new \RuntimeException('Unexpected mock request.');
+    };
+};
+$sent = static function (string $method, string $path = '') use (&$requests): int {
+    return count(array_filter($requests, static fn ($request) => $request[1] === $method && ($path === '' || $request[2] === $path)));
 };
 
 try {
     $db->query("DELETE FROM {$prefix}appointments_ratelimit WHERE bucket IN ({$rateBuckets})");
     require __DIR__ . '/appointments-joomla.php';
     $application->bootComponent('com_appointments');
-    $save();
     $event = $fixture->event();
+    $eventQr = $fixture->event();
+    $eventNone = $fixture->event();
     $db->query("UPDATE {$prefix}appointments_eventtypes SET requires_approval=1 WHERE id={$event}");
+    $profile = static fn (string $key, int $eventType): array => ['key' => $key, 'eventtypes' => [(string) $eventType],
+        'origin' => 'https://' . $key . '.example.test', 'credential_env' => 'SYNTHETIC_' . strtoupper($key) . '_KEY',
+        'delivery' => 'note', 'campaign' => 'Campaign ' . $key, 'source' => 'Website booking'];
+    $params = array_replace(json_decode($original, true) ?: [], ['close_enabled' => 0, 'close_profiles' => [
+        'close_profiles0' => $profile('main', $event), 'close_profiles1' => $profile('qr', $eventQr)]]);
+    $save();
     $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
-    $eventRow = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$event}")->fetch_assoc();
     $from = $now->modify('+2 days')->setTime(0, 0);
     $until = $now->modify('+14 days')->setTime(23, 59);
-    $nextSlot = static function () use ($joomlaDb, $eventRow, $now, &$from, $until): DateTimeImmutable {
+    $nextSlot = static function (int $eventId) use ($joomlaDb, $db, $prefix, $now, &$from, $until): DateTimeImmutable {
+        $eventRow = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc();
         $slots = (new \Advans\Component\Appointments\Administrator\Service\AvailabilityService($joomlaDb))
             ->slots($eventRow, $now, $from, $until);
         if ($slots === []) {
@@ -346,170 +345,109 @@ try {
             + (int) $eventRow['buffer_after_minutes'] + (int) $eventRow['buffer_before_minutes'] + 1) . ' minutes');
         return $slots[0];
     };
-    $local = $fixture->booking($event, $nextSlot()->format('Y-m-d H:i:s'))['booking'];
-    $ids[] = (int) $local['id'];
+    $book = static function (int $eventId) use ($fixture, $nextSlot, &$ids): array {
+        $booking = $fixture->booking($eventId, $nextSlot($eventId)->format('Y-m-d H:i:s'))['booking'];
+        $ids[] = (int) $booking['id'];
+        return $booking;
+    };
+    $link = static fn (int $id): ?array => $db->query("SELECT * FROM {$prefix}appointments_close_delivery WHERE booking_id={$id}")->fetch_assoc();
     $queue = new \Advans\Component\Appointments\Administrator\Service\Close\Queue(
         $joomlaDb, \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments'), $transport);
     $store = new \Advans\Component\Appointments\Administrator\Service\BookingStore($joomlaDb);
-    $check($queue->run()['disabled'] === 1 && $requests === [], 'Installed default performs no external calls');
-    $erased = $store->erase((int) $local['id'], $now, 'admin', actor: $fixture->host);
-    $check(empty($erased['_crm_cleanup_error']), 'Never-enrolled local erasure invents no CRM obligation');
+
+    $local = $book($event);
+    $check($queue->run()['disabled'] === 1 && $requests === [] && $link((int) $local['id']) === null,
+        'Installed default enrols nothing and performs no external calls');
     $params['close_enabled'] = 1;
     $save();
-    $booking = $fixture->booking($event, $nextSlot()->format('Y-m-d H:i:s'))['booking'];
+    $none = $book($eventNone);
+    $check($link((int) $none['id']) === null, 'An event type without a profile is never enrolled');
+
+    $booking = $book($event);
     $id = (int) $booking['id'];
-    $ids[] = $id;
-    $metadata = $db->query("SELECT * FROM {$prefix}appointments_close WHERE booking_id={$id}")->fetch_assoc();
-    $check($metadata['state'] === 'pending' && !str_contains(json_encode($metadata), 'invitee@example.test'),
-        'Canonical HTTP create atomically enqueues metadata, not invitee payload');
-    $check($queue->run()['failed'] === 0 && $activity['custom.cf_state'] === 'pending',
-        'Mock receives decrypted pending booking through installed worker');
+    $metadata = $link($id);
+    $check($metadata !== null && $metadata['profile'] === 'main' && $metadata['state'] === 'pending'
+        && !str_contains(json_encode($metadata), 'invitee@example.test'),
+        'Canonical HTTP create atomically enqueues the routed profile, not the invitee payload');
+    $check($queue->run()['failed'] === 0 && count($notes) === 1, 'Installed worker delivers the decrypted pending booking as one note');
+    $note = $notes[$link($id)['activity_id']];
+    $eventTitle = $db->query("SELECT title FROM {$prefix}appointments_eventtypes WHERE id={$event}")->fetch_row()[0];
+    $check($note['lead_id'] === 'lead_main' && $note['contact_id'] === 'cont_main' && str_contains($note['title'], $eventTitle)
+        && str_contains($note['note'], $booking['uid']) && str_contains($note['note'], 'Campaign main')
+        && !str_contains($note['note'], 'COM_APPOINTMENTS_CLOSE_'),
+        'The note is written in the site language with event type, campaign and UID on the existing contact');
+    $check(array_unique(array_column($requests, 0)) === ['main'], 'Only the routed profile was contacted');
+    $pendingTitle = $note['title'];
     $store->changeState($id, 1, $now);
     $queue->run();
-    $check($activity['custom.cf_state'] === 'confirmed', 'Canonical approval updates existing Activity');
-    $rescheduledStart = $nextSlot();
+    $rescheduledStart = $nextSlot($event);
     $store->reschedule($id, $rescheduledStart, $now);
     $queue->run();
-    $check($activity['custom.cf_start'] === $rescheduledStart->format('Y-m-d\TH:i:s\Z') && $activity['custom.cf_seq'] === '2',
-        'Canonical reschedule updates current encrypted booking without another Activity');
+    $note = $notes[$link($id)['activity_id']];
+    $check($sent('POST', '/api/v1/activity/note/') === 1 && $sent('PUT') === 2
+        && str_contains($note['note'], $rescheduledStart->setTimezone(new DateTimeZone((string) $application->get('offset', 'UTC')) )->format('Y-m-d H:i')),
+        'Approval and reschedule update the same note with the new start');
     $store->changeState($id, 2, $now);
     $queue->run();
-    $check($activity['custom.cf_state'] === 'cancelled', 'Canonical cancellation updates Activity');
-    $params['close_enabled'] = 0;
-    $save();
-    $erased = $store->erase($id, $now, 'admin', delete: true, actor: $fixture->host);
-    $check(!empty($erased['_crm_cleanup_error']) && !$fixture->stored($id),
-        'Disabled existing CRM obligation survives canonical hard deletion');
-    foreach ([$requestId + 1, $requestId + 2] as $formalId) {
-        $db->query("INSERT INTO {$prefix}privacy_requests (id,email,requested_at,status,request_type) VALUES "
-            . "({$formalId},'invitee@example.test',UTC_TIMESTAMP(),1,'remove')");
-    }
-    $queue->associatePrivacy('invitee@example.test', $requestId + 1);
-    $queue->associatePrivacy('INVITEE@example.test', $requestId + 2);
-    $check($queue->pendingPrivacy($requestId + 1) === 1 && $queue->pendingPrivacy($requestId + 2) === 1,
-        'Two later formal requests both discover disabled CRM cleanup after canonical hard deletion');
-    $generic = $db->query("SELECT extension_id,enabled FROM {$prefix}extensions"
-        . " WHERE type='plugin' AND folder='system' AND element='privacyrequests'")->fetch_assoc();
-    $operation = null;
-    try {
-        if ($generic !== null) {
-            $db->query("UPDATE {$prefix}extensions SET enabled=0 WHERE extension_id=" . (int) $generic['extension_id']);
-        }
-        $privacyAdmin = new AppointmentsHttp(appointments_test_base_url(), 'close-privacy-overlap');
-        $privacyAdmin->login();
-        $formalId = $requestId + 1;
-        $privacyHtml = $privacyAdmin->request('/administrator/index.php?option=com_privacy&view=request&id=' . $formalId);
-        $privacyToken = $privacyAdmin->token($privacyHtml);
-        $operation = \Advans\Component\Appointments\Administrator\Service\PrivacyOperationLock::acquire(
-            $joomlaDb, $formalId, (string) (new JConfig())->secret);
-        if ($operation === null) {
-            throw new RuntimeException('Cannot acquire the synthetic privacy overlap lock.');
-        }
-        $callsBeforeOverlap = count($requests);
-        $complete = static fn (): string => $privacyAdmin->request(
-            '/administrator/index.php?option=com_privacy&task=request.complete&id=' . $formalId,
-            [$privacyToken => 1, 'id' => $formalId, 'jform' => ['id' => $formalId]]);
-        $overlapHtml = $complete();
-        $formalState = static fn (): int => (int) $db->query(
-            "SELECT status FROM {$prefix}privacy_requests WHERE id={$formalId}")->fetch_row()[0];
-        $check($formalState() === 1 && str_contains($overlapHtml, 'Another privacy operation for this request is still running')
-            && count($requests) === $callsBeforeOverlap,
-            'Native Complete overlapping disabled Close cleanup is refused by the shared request lock without CRM calls');
-        $operation->release();
-        $operation = null;
-        $pendingHtml = $complete();
-        $check($formalState() === 1 && str_contains($pendingHtml, 'Appointments reported incomplete removal.')
-            && $queue->pendingPrivacy($formalId) === 1 && count($requests) === $callsBeforeOverlap,
-            'After overlap release the independent completion guard still sees pending CRM cleanup with the generic adapter disabled');
-        // Native Remove of the second request: only the Close cleanup is outstanding. Test output
-        // has already been sent, so the native PHP session cannot start. The application uses an
-        // in-memory session for this check only.
-        $nativeSession = $application->getSession();
-        $application->setSession(new \Joomla\CMS\Session\Session(new \Joomla\Session\Storage\RuntimeStorage()));
-        try {
-            $application->bootComponent('com_privacy');
-            $privacyPlugin = $application->bootPlugin('appointments', 'privacy');
-            $removal = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
-            if (!$removal->load($requestId + 2)) {
-                throw new RuntimeException('Cannot load the second formal privacy request.');
-            }
-            $application->getMessageQueue(true);
-            $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $removal, 'user' => null]);
-            $privacyPlugin->onPrivacyCanRemoveData($canRemove);
-            $privacyPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
-                ['subject' => $removal, 'user' => null]));
-            $warnings = array_column(array_filter($application->getMessageQueue(true),
-                static fn (array $message): bool => $message['type'] === 'warning'), 'message');
-        } finally {
-            $application->setSession($nativeSession);
-        }
-        $check($canRemove->getArgument('result')[0]->canRemove
-            && in_array(\Joomla\CMS\Language\Text::_('PLG_PRIVACY_APPOINTMENTS_CRM_PENDING'), $warnings, true)
-            && !in_array(\Joomla\CMS\Language\Text::_('PLG_PRIVACY_APPOINTMENTS_CLEANUP_FAILED'), $warnings, true)
-            && \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $requestId + 2)
-            && $queue->pendingPrivacy($requestId + 2) === 1 && count($requests) === $callsBeforeOverlap,
-            'Native Remove with only Close cleanup pending names the Close cleanup, not calendar or conference cleanup, and stays incomplete');
-    } finally {
-        $operation?->release();
-        if ($generic !== null) {
-            $db->query("UPDATE {$prefix}extensions SET enabled=" . (int) $generic['enabled']
-                . ' WHERE extension_id=' . (int) $generic['extension_id']);
-        }
-    }
-    $params['close_enabled'] = 1;
-    $save();
-    $foreignOrg = true;
-    $queue->run();
-    $check($activity !== [] && $queue->hasPendingErasure($id),
-        'Credential organization change cannot clear cleanup against a different organization');
-    $foreignOrg = false;
-    $queue->run(20, true);
-    $check($activity === [] && !$queue->hasPendingErasure($id), 'Mock cleanup resolves own Activity after booking deletion');
-    $check($queue->pendingPrivacy($requestId + 1) === 0 && $queue->pendingPrivacy($requestId + 2) === 0,
-        'Verified own cleanup releases both later requests without creating another booking');
+    $check($notes[$link($id)['activity_id']]['title'] !== $pendingTitle && $sent('POST', '/api/v1/activity/note/') === 1,
+        'Cancellation updates the title and status of the same note');
 
-    $booking = $fixture->booking($event, $nextSlot()->format('Y-m-d H:i:s'))['booking'];
+    $qr = $book($eventQr);
+    $queue->run();
+    $qrRequests = array_filter($requests, static fn ($request) => $request[0] === 'qr');
+    $check(count($qrRequests) === 2 && $link((int) $qr['id'])['profile'] === 'qr' && $link((int) $qr['id'])['state'] === 'done',
+        'A second event type is delivered through its own profile');
+
+    $before = count($requests);
+    $erased = $store->erase($id, $now, 'admin', delete: true, actor: $fixture->host);
+    $check($erased['changed'] && !array_key_exists('_crm_cleanup_error', $erased) && $link($id) === null && !$fixture->stored($id),
+        'Hard deletion drops only the local link and reports no Close obligation');
+    $queue->run(20, true);
+    $check(count($requests) === $before, 'Erasure sends nothing to Close and deletes nothing there');
+
+    // A formal privacy removal never waits for Close.
+    $db->query("INSERT INTO {$prefix}privacy_requests (id,email,requested_at,status,request_type) VALUES "
+        . "({$requestId},'invitee@example.test',UTC_TIMESTAMP(),1,'remove')");
+    $nativeSession = $application->getSession();
+    $application->setSession(new \Joomla\CMS\Session\Session(new \Joomla\Session\Storage\RuntimeStorage()));
+    try {
+        $application->bootComponent('com_privacy');
+        $privacyPlugin = $application->bootPlugin('appointments', 'privacy');
+        $removal = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
+        if (!$removal->load($requestId)) {
+            throw new RuntimeException('Cannot load the formal privacy request.');
+        }
+        $application->getMessageQueue(true);
+        $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $removal, 'user' => null]);
+        $privacyPlugin->onPrivacyCanRemoveData($canRemove);
+        $privacyPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
+            ['subject' => $removal, 'user' => null]));
+        $warnings = array_column(array_filter($application->getMessageQueue(true),
+            static fn (array $message): bool => $message['type'] === 'warning'), 'message');
+    } finally {
+        $application->setSession($nativeSession);
+    }
+    $check($canRemove->getArgument('result')[0]->canRemove && preg_grep('/Close|CRM/', $warnings) === []
+        && !\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $requestId)
+        && $link((int) $qr['id']) === null && $fixture->stored((int) $qr['id'])['anonymised_utc'] !== null
+        && count($requests) === $before,
+        'Native privacy Remove of a transferred booking completes without Close and leaves Close untouched');
+
+    $booking = $book($event);
     $id = (int) $booking['id'];
-    $ids[] = $id;
     $timeout = true;
     $queue->run();
     $before = count($requests);
     $queue->run(20, true);
-    $check(count($requests) === $before, 'Installed durable uncertain intent prevents blind POST replay');
+    $check($link($id)['state'] === 'uncertain' && count($requests) === $before, 'Installed durable uncertain intent prevents blind POST replay');
     $timeout = false;
-    $queue->reconcile($id, 'acti_fixture');
+    $queue->reconcile($id, (string) array_key_last($notes));
     $queue->run();
-    $check($db->query("SELECT state FROM {$prefix}appointments_close WHERE booking_id={$id}")->fetch_row()[0] === 'done',
-        'Read-only remote reconciliation resumes existing Activity');
-    $cleanup = new \Advans\Component\Appointments\Administrator\Service\PrivacyCleanup($joomlaDb,
-        new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) (new JConfig())->secret),
-        $requestId, 'invitee@example.test');
-    $staff = new \Advans\Component\Appointments\Administrator\Service\PrivacyStaffCleanup($joomlaDb,
-        new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) (new JConfig())->secret), $requestId);
-    $staff->remember('invitee@example.test', null);
-    $staff->beginAttempt();
-    \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, $requestId, false);
-    $erased = $store->erase($id, $now, 'privacy_request', privacyCleanup: $cleanup);
-    $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $requestId)
-        && $queue->pendingPrivacy($requestId) === 1, 'Native privacy gate sees request-scoped outstanding CRM cleanup');
-    // A stale successful flag must not bypass the independently durable cleanup obligation.
-    $db->query("UPDATE {$prefix}appointments_privacy_outcomes SET complete=1 WHERE request_id={$requestId}");
-    $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $requestId),
-        'Stale successful outcome cannot hide unfinished remote cleanup');
-    $queue->run(20, true, $requestId);
-    \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, $requestId, true);
-    $check(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $requestId),
-        'Resolved CRM cleanup cannot finish an outstanding authenticated removal attempt');
-    $staff->finishAttempt();
-    \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, $requestId, true);
-    $check(!\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $requestId),
-        'Verified own cleanup allows native Complete gate without completing Core automatically');
-    $check(!$queue->hasPendingErasure($id), 'Synthetic final cleanup finishes without another booking or mail action');
-    $check(count(array_filter($requests, static fn ($request) => $request[0] === 'POST' && $request[1] === '/api/v1/activity/custom/')) === 2,
-        'Exactly one Activity create per synthetic booking despite changes and retries');
-    $booking = $fixture->booking($event, $nextSlot()->format('Y-m-d H:i:s'))['booking'];
+    $check($link($id)['state'] === 'done' && $sent('POST', '/api/v1/activity/note/') === 3,
+        'Read-only reconciliation links the existing note without another create');
+
+    $booking = $book($event);
     $id = (int) $booking['id'];
-    $ids[] = $id;
     $raceId = $id;
     $queue->run();
     $deadline = microtime(true) + 20;
@@ -536,15 +474,17 @@ try {
     if ($childStatus['exitcode'] !== 0) {
         throw new RuntimeException($diagnostic);
     }
-    $check($childStatus['exitcode'] === 0 && $child['blocked'] && $child['calls'] === 0,
+    $check($child['blocked'] && $child['calls'] === 0,
         'Actual second-process worker is excluded by the database advisory lock before transport');
-    $check($child['lock_timeout'] && $child['erased'] && $child['pending'] && $fixture->stored($id)['anonymised_utc'] !== null,
-        'Canonical erasure proves a held-lock timeout then retries after remote-write commit with cleanup retained');
+    $check($child['lock_timeout'] && $child['erased'] && !$child['linked'] && $fixture->stored($id)['anonymised_utc'] !== null,
+        'Canonical erasure waits for the in-flight send, then drops the local link');
+    $before = count($requests);
     $queue->run();
-    $creates = count(array_filter($requests, static fn ($request) =>
-        $request[0] === 'POST' && $request[1] === '/api/v1/activity/custom/'));
-    $check(!$queue->hasPendingErasure($id) && $activity === [] && $creates === 3,
-        'Post-race worker deletes only the saved own Activity without another create');
+    $check(count($requests) === $before && $sent('POST', '/api/v1/activity/note/') === 4,
+        'After the race nothing else is sent and nothing is deleted');
+    $methods = array_values(array_unique(array_column($requests, 1)));
+    sort($methods);
+    $check($methods === ['GET', 'POST', 'PUT'], 'The installed lifecycle never issued DELETE or any other method');
     foreach ([0, 3600] as $offset) {
         $rateWindow = gmdate('Y-m-d H:i:s', intdiv(time(), 3600) * 3600 + $offset);
         foreach (explode(',', $rateBuckets) as $bucket) {
@@ -552,7 +492,7 @@ try {
                 . ' ON DUPLICATE KEY UPDATE hits=10');
         }
     }
-    $limitedStart = $nextSlot()->format('Y-m-d H:i:s');
+    $limitedStart = $nextSlot($event)->format('Y-m-d H:i:s');
     $limitedClient = new AppointmentsHttp(appointments_test_base_url(), 'close-rate-limit');
     [$limitedBrowser, $limitedPath, $limitedForm] = $limitedClient->bookingForm($event, $limitedStart);
     sleep(2);
@@ -596,14 +536,14 @@ try {
     }
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($original) . "' WHERE element='com_appointments' AND type='component'");
     if ($ids) {
-        $db->query("DELETE FROM {$prefix}appointments_close WHERE booking_id IN (" . implode(',', $ids) . ')');
+        $db->query("DELETE FROM {$prefix}appointments_close_delivery WHERE booking_id IN (" . implode(',', $ids) . ')');
         $db->query("DELETE FROM {$prefix}appointments_audit WHERE booking_id IN (" . implode(',', $ids) . ')');
     }
-    $privacyIds = $requestId . ',' . ($requestId + 1) . ',' . ($requestId + 2);
-    $db->query("DELETE FROM {$prefix}appointments_privacy_outcomes WHERE request_id IN ({$privacyIds})");
-    $db->query("DELETE FROM {$prefix}appointments_privacy_cleanup WHERE request_id IN ({$privacyIds})");
-    $db->query("DELETE FROM {$prefix}appointments_privacy_staff WHERE request_id IN ({$privacyIds})");
-    $db->query("DELETE FROM {$prefix}privacy_requests WHERE id IN (" . ($requestId + 1) . ',' . ($requestId + 2) . ')');
+    $db->query("DELETE FROM {$prefix}appointments_close_limits");
+    $db->query("DELETE FROM {$prefix}appointments_privacy_outcomes WHERE request_id={$requestId}");
+    $db->query("DELETE FROM {$prefix}appointments_privacy_cleanup WHERE request_id={$requestId}");
+    $db->query("DELETE FROM {$prefix}appointments_privacy_staff WHERE request_id={$requestId}");
+    $db->query("DELETE FROM {$prefix}privacy_requests WHERE id={$requestId}");
     $db->query("DELETE FROM {$prefix}appointments_ratelimit WHERE bucket IN ({$rateBuckets})");
     foreach ($rateRows as $row) {
         $db->query("INSERT INTO {$prefix}appointments_ratelimit (id,bucket,window_utc,hits) VALUES ("

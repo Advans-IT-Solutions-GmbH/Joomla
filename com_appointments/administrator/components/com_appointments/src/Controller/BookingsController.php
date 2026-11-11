@@ -239,9 +239,6 @@ class BookingsController extends BaseController
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         foreach ($ids as $id) {
             $result = (new BookingStore($db))->erase($id, $now, 'admin', $delete, (int) $user->id);
-            if (!empty($result['_crm_cleanup_error'])) {
-                $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CLOSE_ERASURE_PENDING'), 'warning');
-            }
             if (!empty($result['_conference_cleanup_error'])) {
                 $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_CLEANUP_FAILED'), 'warning');
             }

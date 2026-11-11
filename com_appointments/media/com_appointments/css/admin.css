@@ -49,11 +49,15 @@ html:has(#eventtype-form) {
 }
 
 .com-appointments-close-queue th:nth-child(1) {
-    inline-size: 15%;
+    inline-size: 12%;
 }
 
 .com-appointments-close-queue th:nth-child(2) {
-    inline-size: 25%;
+    inline-size: 18%;
+}
+
+.com-appointments-close-queue th:nth-child(3) {
+    inline-size: 22%;
 }
 
 .com-appointments-close code {

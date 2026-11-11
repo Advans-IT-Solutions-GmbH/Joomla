@@ -44,7 +44,7 @@ namespace {
         public function escape($text) { return htmlspecialchars($text, ENT_QUOTES, 'UTF-8'); }
         public function render() { require getenv('QUEUE_ROOT') . '/administrator/components/com_appointments/tmpl/dashboard/default.php'; }
     };
-    $view->closeRows = [['booking_id' => 900001, 'state' => 'uncertain',
+    $view->closeRows = [['booking_id' => 900001, 'profile' => str_repeat('p', 32), 'state' => 'uncertain',
         'reason' => str_repeat('synthetic_reason_', 8), 'uid' => getenv('QUEUE_UID')]];
     $view->render();
 }
@@ -80,7 +80,7 @@ namespace {
                                 ${css}
                             </style><main>${rendered.stdout}</main>`);
                             const queue = page.locator('.com-appointments-close-queue');
-                            assert.equal(await queue.locator('tbody td').count(), 3);
+                            assert.equal(await queue.locator('tbody td').count(), 4);
                             assert.equal(await queue.locator('code.text-break').textContent(), uid);
                             const geometry = await queue.evaluate(table => {
                                 const nodes = [table, ...table.querySelectorAll('tbody, tbody tr, td, code, input, button')];

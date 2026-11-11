@@ -28,96 +28,90 @@ blocked.
 
 Close transfer is **disabled by default**, has no API origin or credential default, and is separate
 from the booking and self-hosted CalDAV paths. Installing or updating this component does not
-configure Close, disable Calendly, subscribe anyone to marketing, connect a cloud calendar or send
-historical bookings. Keep an existing integration unchanged until the operator explicitly approves
-cutover. Native Close **Meetings** (calendar sidebar/reminders) is a different feature: a Custom
-Activity records a booking but does not emulate Google/Microsoft calendar synchronization.
+configure Close, change an existing scheduling integration, subscribe anyone to marketing, connect a
+cloud calendar or send historical bookings. Only bookings **created after activation** are enrolled.
 
-After cutover approval, configure **Options > Close booking transfer**:
+### What is created in Close
 
-- Supply the approved HTTPS API **origin**, the existing booking Custom Activity type ID and
-  the **name** of a server environment variable containing the API key. Never paste the key into
-  component options, screenshots, source or support reports. PHP cURL is needed only for delivery.
-- Supply a JSON object mapping exactly `uid`, `sequence`, `start`, `end`, `state`, `source` to
-  distinct real `cf_…` identifiers. Every destination must be a **single-valued text field** on
-  that Custom Activity type. The worker checks the field catalog before sending personal data
-  and blocks unknown/wrong-type fields or unmapped required fields. Times use UTC ISO 8601;
-  booking states are `pending`, `confirmed`, `cancelled`, separately from Activity `published`.
-  The source text is `Joomla appointments`, not Close's read-only integration-source enum.
-- Optionally whitelist individual answers using a JSON object mapping a local question ID to a
-  distinct text-field ID. Empty means no answers. No guest list, conferencing link, capability URL,
-  cancellation reason, encryption material or marketing-consent flag is copied.
-- Decide the erasure policy. Deletion can remove **only this integration's own Activity**.
-  Existing Contacts/Leads are never overwritten, anonymised or deleted. If the integration created
-  a Contact, retaining it requires an explicitly approved separate processing purpose; otherwise
-  erasure remains visibly blocked for operator review. Booking consent does not establish that
-  purpose or marketing consent.
-- Enable transfer and, separately, enable the new **Appointments: deliver approved bookings to
-  Close** scheduled task. This task is created **disabled**, including on fresh installations.
-  Missing/invalid configuration prevents delivery without interrupting local booking or CalDAV.
+The transfer reproduces what Close's own Calendly integration does with its "Create Contacts"
+option, using only API features that every Close plan offers:
 
-Only bookings **created after activation** are enrolled, including pending bookings. Each canonical
-create/state change/reschedule/erasure atomically updates a small authenticated delivery record in
-the same database transaction. There is no plaintext or encrypted copy of the booking payload in
-that record. The worker reads/decrypts the current booking only when needed. Guest removal does
-not send anything to CRM because guests are never included. CalDAV continues exclusively through
-the existing Team BookingCalendarBridge; delivery never recreates bookings or replays their mail.
+- **Existing person:** the invitee is matched by exact e-mail address, not by domain. One match reuses
+  that Contact and its Lead **unchanged**. Several matches stop visibly for manual review.
+- **New person:** a new Lead with one Contact (name, e-mail, phone). Optionally the Lead name comes from
+  a form field such as the company, the Contact title from a field such as the job title, and Lead
+  custom fields from fixed values (for example the lead origin) or from answers. These values are set
+  on **new** Leads only; existing Leads and Contacts are never overwritten. No Opportunity is created.
+- **The booking itself:** one **Note** on that Lead and Contact per booking, with status, start and end
+  in the site time zone, event type, name, e-mail, phone, the configured answers with their field
+  labels, campaign, source, "new contact created" and the booking UID. Approval, rescheduling and
+  cancellation **update the same Note** (cancellation changes its title and status). Notes are written
+  in the site's default language.
+- **Optional Custom Activity** instead of a Note, only for Close plans that offer custom activities.
+  Its fields are single-valued text fields; the worker checks the type's field catalog first.
 
-Contacts are matched by exact email, not domain. One match reuses its Contact and Lead without
-changing their fields; multiple matches stop for manual review. No match creates a Lead with one
-Contact (name, email and existing phone only), using the account's default Lead status. Additional
-answers live on the booking Activity, not in existing contact master data. Later changes update
-the saved remote Activity ID. No existing calendar integration is required.
+The Close API has no endpoint to create a Meeting activity; Meetings come from Close's calendar
+sync. A synced calendar keeps working independently of this transfer.
 
-**Failures and recovery:** the administrator dashboard paginates all delivery records, 100 per page,
-including hard-deleted bookings, with diagnostic codes but no payloads or credentials. Scheduled
-safe retries stop the batch on `429` and persist a shared `Retry-After` cooldown, including for
-new bookings. Failed rechecks rotate behind other due records; authentication, mapping and ambiguous-contact errors block
-visibly. The dashboard's safe retry action rechecks blocked records, never uncertain creations.
-The HTTPS transport uses verified TLS, no redirect, a bounded response, five-second timeouts and
-**no transport-level retry**. A database advisory lock serializes workers on this installation;
-booking row locks serialize each send against erasure and rescheduling. The authenticated organization
-ID is obtained from the configured Custom Activity type and saved before transferring data.
-Delivery, reconciliation and cleanup verify it again on each run; rotating a key to another
-organization cannot turn a missing object there into successful cleanup. Keep the configured type
-available until outstanding cleanup is resolved.
+### Profiles: one Close organisation per event type
 
-Before a non-idempotent POST, the worker commits an uncertain intent. A timeout, server error,
-invalid create response, process crash or local persistence failure after remote success leaves
-that intent uncertain. **UID/sequence is correlation, not a remote idempotency guarantee.**
-Do not blindly resend. After independently locating the existing remote object, a component
-administrator can enter its Contact/Activity ID on the dashboard: the reconciliation action
-only GETs and validates its email or booking UID/Contact/Lead/type before linking it. It cannot
-clear uncertainty or issue another POST on an unproven absence. If no object can be verified,
-or a contact creation became uncertain before erasure, manual privacy/CRM review is necessary.
-Duplicate prevention across independent installations is not guaranteed.
+Configure **Options > Close booking transfer**, then add one **profile** per Close organisation or
+campaign. Each profile has:
 
-The dashboard's Close retry and reconciliation actions require a POST request with a valid Joomla
-form token and component `core.admin` permission. Event-management permission or `core.manage`
-alone is not sufficient. Retry processes a bounded safe batch; uncertain remote creations require
-the documented reconciliation workflow rather than another blind create request.
+| Setting | Meaning |
+|---|---|
+| Profile key | Short unique name. Changing it, the origin, the key variable, the delivery mode or the activity type stops updates of records already transferred with the old destination. |
+| Event types | New bookings of these event types use this profile. An event type belongs to at most one profile; an event type without a profile is **never transferred**. |
+| API origin, key variable | The HTTPS origin and the **name** of a server environment variable holding that organisation's API key. The key itself is never stored in the options, the database, screenshots or reports. Use one variable per organisation. |
+| Booking record | Note (all plans) or Custom Activity (plans with custom activities), with its type ID, field mapping and answer mapping. |
+| Answers in the note | Comma-separated local form field IDs. Nothing else from the form is transferred. Guests, conference links, cancellation reasons, consent records and capability links are never sent. |
+| Campaign, source | Fixed texts written into every Note or Activity of the profile. |
+| Lead name, contact title | Comma-separated form field IDs, for example the company field of each event type. The first non-empty answer is used. |
+| Lead fields from answers, fixed lead fields | JSON objects `{"<field ID>": "cf_…"}` and `{"cf_…": "<text>"}`. Every Lead field is fetched before any personal data is sent; an unknown field blocks the transfer. Multi-value fields receive all selected options. |
 
-Erasure stops unsent enrollment locally without an external obligation. Existing own remote
-activities or uncertain writes retain actionable metadata even when the booking is hard deleted.
-Turning transfer off pauses delivery, not those obligations. A keyed, authenticated hash of the
-normalized primary-invitee address retains subject association without copying the address or
-booking payload. Later formal removal requests discover outstanding cleanup even after a prior
-self-service, administrator, retention or formal erasure deleted the canonical booking. Multiple
-requests for the same subject remain blocked independently; retry association does not release
-an earlier request. The hash is discarded once erased-booking cleanup is verified complete.
-Earlier evaluation rows with outstanding erased cleanup but no recoverable subject fail closed
-for formal completion until their own remote cleanup is verified; an unknown subject is never
-treated as proof of absence. Never-enrolled bookings still create no CRM obligation.
-Native privacy Remove retries the associated cleanup; both its result and the Complete gate remain incomplete until
-cleanup actually finishes. If an operator manually removes an integration-created Contact or
-Activity, safe retry verifies its absence read-only in the bound organization before resolving
-the corresponding obligation. It never removes CRM master records automatically.
-This does not auto-confirm or auto-complete a privacy request.
+Each profile has its own **rate-limit pause**: a `429` with `Retry-After` pauses only that
+organisation, other profiles continue. Enable transfer and, separately, the scheduled task
+**Appointments: deliver approved bookings to Close**, which is created **disabled**, including on fresh
+installations. An invalid configuration never breaks a booking: the booking is recorded for later
+routing and the dashboard shows the configuration warning; no call is made until it is fixed.
 
-Synthetic coverage without a network or credential: `php tests/close-mock.php` (PDO SQLite and mbstring
-required). The installed `close` integration suite exercises canonical booking mutations with
-encrypted data and a mock transport on Joomla/MySQL/MariaDB. SQLite tests do not prove MySQL
-lock concurrency or replace installed/browser acceptance and the later authorized account setup.
+### Nothing is deleted in Close
+
+Close is treated as a separate system with its own data protection handling. The component **never
+deletes or anonymises anything in Close**, and nothing on the website waits for Close:
+
+- Retention, self-service erasure, administrator erasure and native privacy **Remove** only delete the
+  local transfer record (the link to the remote IDs). A booking erased before it was sent is not sent.
+- A privacy request is never blocked or left incomplete because of Close.
+- **Data subject requests for Close are handled separately in Close** by the operator (access,
+  correction, deletion there), using Close's own tools.
+
+### Failures and recovery
+
+The administrator dashboard lists the transfer records of current bookings, 100 per page, with the
+profile and a diagnostic code but no payloads or credentials. Failed rechecks rotate behind other due
+records; authentication, mapping, unknown-field and ambiguous-contact errors block visibly. The
+dashboard's safe retry action rechecks blocked records, never uncertain creations. The HTTPS transport
+uses verified TLS, no redirect, a bounded response, five-second timeouts and **no transport-level
+retry**, and it only issues GET, POST and PUT. A database advisory lock serializes workers on this
+installation; booking row locks serialize each send against erasure and rescheduling.
+
+Before a non-idempotent POST, the worker commits an uncertain intent. A timeout, server error, invalid
+create response, process crash or local persistence failure after remote success leaves that intent
+uncertain. **UID/sequence is correlation, not a remote idempotency guarantee.** Do not blindly resend.
+After locating the existing remote object, a component administrator enters its Contact, Note or
+Activity ID on the dashboard: reconciliation only GETs it and checks the e-mail, or the Lead, Contact
+and booking UID, before linking it. Duplicate prevention across independent installations is not
+guaranteed. The retry and reconciliation actions require a POST with a valid Joomla form token and
+component `core.admin` permission.
+
+Synthetic coverage without a network or credential: `php tests/close-mock.php` (PDO SQLite, sodium and
+mbstring required) runs two and three profiles against local fake Close organisations, including
+routing, new and existing contacts, enrichment, updates, rate limits per profile, uncertain creations,
+erasure without remote effect and the refusal of DELETE. The installed `close` integration suite
+exercises canonical booking mutations, native privacy Remove and a two-process erasure race with
+encrypted data and a mock transport on Joomla/MySQL/MariaDB. Neither replaces installed/browser
+acceptance or the later setup against the real accounts.
 The installed PHP harness defaults to `/var/www/html` and `http://localhost`. An exclusive native
 test lane may set `APPOINTMENTS_TEST_ROOT` to its absolute Joomla root and
 `APPOINTMENTS_TEST_BASE_URL` to its loopback HTTP(S) origin, including its port. Explicit invalid
