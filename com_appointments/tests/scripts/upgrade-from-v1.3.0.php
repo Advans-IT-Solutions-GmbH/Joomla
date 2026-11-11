@@ -603,6 +603,27 @@ function upgrade_verify(): void
     upgrade_check('administrator encryption leaves the keyed migration completion marker',
         \Advans\Component\Appointments\Administrator\Helper\BookingData::migrationDone($finalToken, $keys));
 
+    // The conversion of the clear-text feed credentials is marked done; a conversion that did not
+    // finish stays pending and the next installation of the package repeats it.
+    $conversion = static function () use ($db, $extensionsTable, $fixture): string {
+        $row = $db->query("SELECT params FROM `$extensionsTable` WHERE extension_id = " . (int) $fixture['extension_id'])->fetch_assoc();
+
+        return (string) ((json_decode((string) ($row['params'] ?? ''), true) ?: [])['feed_token_conversion'] ?? '');
+    };
+    upgrade_check('the update marks the feed credential conversion as done', $conversion() === 'done', $conversion());
+    $pendingToken = bin2hex(random_bytes(32));
+    $paramsRow = $db->query("SELECT params FROM `$extensionsTable` WHERE extension_id = " . (int) $fixture['extension_id'])->fetch_assoc();
+    $pendingParams = json_decode((string) $paramsRow['params'], true) ?: [];
+    $pendingParams['feed_token_conversion'] = 'pending';
+    $db->query("UPDATE `$extensionsTable` SET params = '" . $db->real_escape_string(json_encode($pendingParams, JSON_THROW_ON_ERROR))
+        . "' WHERE extension_id = " . (int) $fixture['extension_id']);
+    $db->query("UPDATE `$eventtypesTable` SET feed_token = '$pendingToken' WHERE id = $eventId");
+    [$code] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, getenv('CANDIDATE_PACKAGE') ?: '/tmp/extension-candidate-reference.zip');
+    $retried = $db->query("SELECT feed_token FROM `$eventtypesTable` WHERE id = $eventId")->fetch_assoc();
+    upgrade_check('a pending conversion is repeated by the next installation and then marked done',
+        $code === 0 && $conversion() === 'done'
+        && hash_equals('h1:' . hash_hmac('sha256', 'event:' . $eventId . ':' . $pendingToken, $feedKey), (string) ($retried['feed_token'] ?? '')));
+
     echo "\n=== v1.3.0 Upgrade Verification Summary ===\n";
     echo $upgradeFailures === 0 ? "All upgrade checks passed\n" : "$upgradeFailures check(s) failed\n";
     exit($upgradeFailures === 0 ? 0 : 1);

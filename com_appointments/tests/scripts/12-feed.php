@@ -275,9 +275,11 @@ try {
     $rotated = $admin->request($rotate, ['scope' => 'event', 'id' => $event, 'confirm' => 1, $csrf => 1]);
     $newEventToken = (string) $issued($rotated, 'event', $event);
     [$newEventDigest, $sameHostDigest] = $digests($event);
-    $check($admin->status === 200 && $newEventToken !== '' && $newEventDigest === $digest('event', $event, $newEventToken)
-        && $newEventDigest !== $eventDigest && $sameHostDigest === $hostDigest && $noStore($admin->headers),
-        'Event rotation changes only its own credential and shows its new address once, in a no-store response');
+    $check($admin->status === 200 && $newEventToken !== '' && $newEventDigest === $digest('event', $event, $newEventToken),
+        'Event rotation shows its new address once and stores only its keyed digest');
+    $check($newEventDigest !== $eventDigest && $sameHostDigest === $hostDigest, 'Event rotation changes only its own credential');
+    // Joomla adds its own no-cache line to a POST response; the captured header is its last line.
+    $check(str_contains($admin->headers['cache-control'] ?? '', 'no-store'), 'The response with the new address is not stored by any cache');
     $again = $admin->request('/administrator/index.php?option=com_appointments&view=feeds');
     $check($admin->status === 200 && !str_contains($again, $newEventToken) && !str_contains($again, 'task=feed.download'),
         'The issued address is not shown again');

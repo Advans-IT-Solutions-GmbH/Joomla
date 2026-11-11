@@ -184,7 +184,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
         // Read before the schema update widens the columns: only tables of a version before
         // 1.5.0 hold clear-text feed credentials, and only those are converted, exactly once.
-        $this->hasLegacyFeedTokens = $type !== 'uninstall' && $this->feedTokenColumnsAreLegacy();
+        // A conversion that failed stays marked as pending and is repeated by the next installation.
+        $this->hasLegacyFeedTokens = $type !== 'uninstall' && ($this->feedTokenColumnsAreLegacy() || $this->feedTokenConversionPending());
 
         return true;
     }
@@ -715,13 +716,30 @@ class Com_appointmentsInstallerScript extends InstallerScript
     }
 
     /**
+     * Whether an earlier conversion of the clear-text feed credentials did not finish (option
+     * `feed_token_conversion` = pending, a hidden field so that saving the options keeps it).
+     */
+    private function feedTokenConversionPending(): bool
+    {
+        try {
+            $params = $this->componentParams(Factory::getContainer()->get(DatabaseInterface::class), 'com_appointments');
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        return ($params['feed_token_conversion'] ?? '') === 'pending';
+    }
+
+    /**
      * Token feed credentials up to 1.4 were stored in clear text. Replace each with its keyed
      * digest (FeedToken), so the database holds no usable credential; the token in every
      * existing subscription address stays valid. Runs only when the installation found the
      * columns of up to 1.4 (an update, or a new installation over kept tables, whose columns
-     * the schema update does not widen), so it happens exactly once: clear text written into
-     * the database later is never converted and never authenticates. Should it fail, the
-     * affected feeds answer 404 until they are rotated.
+     * the schema update does not widen), or when such a conversion did not finish: it is marked
+     * pending before it starts and done after it succeeded, so a failed conversion is repeated
+     * by the next installation of the package, and after it succeeded clear text written into
+     * the database is never converted and never authenticates. Until then the affected feeds
+     * answer 404.
      */
     private function convertLegacyFeedTokens(): void
     {
@@ -730,8 +748,17 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $mark = function (string $state) use ($db): void {
+            $params = $this->componentParams($db, 'com_appointments');
+
+            if ($params !== null) {
+                $params['feed_token_conversion'] = $state;
+                $this->saveComponentParams($db, 'com_appointments', $params);
+            }
+        };
 
         try {
+            $mark('pending');
             // A new installation over kept tables does not run the schema update that widens them.
             foreach (['#__appointments_hosts', '#__appointments_eventtypes'] as $table) {
                 $db->setQuery('ALTER TABLE ' . $db->quoteName($table) . ' MODIFY ' . $db->quoteName('feed_token') . ' CHAR(67) NOT NULL')->execute();
@@ -753,6 +780,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
             $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) Factory::getApplication()->get('secret', ''));
             (new \Advans\Component\Appointments\Administrator\Service\FeedService($db, $keys))->convertLegacy();
+            $mark('done');
         } catch (\Throwable $e) {
             $app = Factory::getApplication();
             $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
