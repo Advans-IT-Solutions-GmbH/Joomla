@@ -557,7 +557,7 @@ class ImapClientTest extends TestCase
             . "A0008 OK STORE completed\r\n"
             . "* BYE\r\nA0009 OK LOGOUT completed\r\n";
 
-        $first = $this->drive($run1, ['delete_after_import' => 0], $ingest(new IngestLimits(10, 10, 1000, 2, 100000)));
+        $first = $this->drive($run1, ['delete_after_import' => 0], $ingest(new IngestLimits(10, 1, 1000, 2, 100000)));
 
         // UID 3 is left untouched and the cursor stops before it.
         $this->assertSame(2, $first['stats']['ingested']);
@@ -580,7 +580,7 @@ class ImapClientTest extends TestCase
         $second = $this->drive(
             $run2,
             ['delete_after_import' => 0, 'last_uid' => $first['stats']['last_uid']],
-            $ingest(new IngestLimits(10, 10, 1000, 2, 100000))
+            $ingest(new IngestLimits(10, 1, 1000, 2, 100000))
         );
 
         $this->assertStringContainsString('UID SEARCH UID 3:*', $second['sent']);
@@ -636,9 +636,10 @@ class ImapClientTest extends TestCase
     public function testPendingRetriesRunBeforeFreshMail(): void
     {
         // UID 1 waits in the retry set below the cursor; UIDs 6 and 7 are fresh
-        // mail. The run admits one report. The retry runs first, so fresh mail
-        // cannot use up the run limit every poll and starve it.
-        $limits = new IngestLimits(10, 10, 1000, 1, 100000);
+        // mail. The run admits two reports and retries may use one of them.
+        // The retry runs first, so fresh mail cannot use up the run limit
+        // every poll and starve it, and fresh mail keeps the other half.
+        $limits = new IngestLimits(10, 1, 100, 2, 100000);
 
         $script = "* OK IMAP4rev1 ready\r\n"
             . "A0001 OK LOGIN completed\r\n"
@@ -647,8 +648,9 @@ class ImapClientTest extends TestCase
             . "* SEARCH 6 7\r\nA0004 OK SEARCH completed\r\n"
             . $this->fetchResponse(1, 1, "Subject: Late\r\n\r\nlate", 'A0005')
             . $this->fetchResponse(2, 6, "Subject: Fresh\r\n\r\nfresh", 'A0006')
-            . "A0007 OK STORE completed\r\n"
-            . "* BYE\r\nA0008 OK LOGOUT completed\r\n";
+            . $this->fetchResponse(3, 7, "Subject: Fresh 2\r\n\r\nfresh", 'A0007')
+            . "A0008 OK STORE completed\r\n"
+            . "* BYE\r\nA0009 OK LOGOUT completed\r\n";
 
         $result = $this->drive(
             $script,
@@ -658,12 +660,11 @@ class ImapClientTest extends TestCase
 
         $sent = $result['sent'];
         $this->assertLessThan(strpos($sent, 'UID FETCH 6 '), strpos($sent, 'UID FETCH 1 '));
-        $this->assertStringNotContainsString('UID FETCH 7 ', $sent);
-        $this->assertSame(1, $result['stats']['ingested']);
-        // The retry is done, the fresh mail stays above the unchanged cursor.
+        $this->assertSame(2, $result['stats']['ingested']);
+        // The retry is done, UID 6 is imported, UID 7 waits above the cursor.
         $this->assertSame([], $result['stats']['deferred_uids']);
-        $this->assertSame(5, $result['stats']['last_uid']);
-        $this->assertStringContainsString('UID STORE 1 +FLAGS.SILENT (\\Seen)', $sent);
+        $this->assertSame(6, $result['stats']['last_uid']);
+        $this->assertStringContainsString('UID STORE 1,6 +FLAGS.SILENT (\\Seen)', $sent);
     }
 
     public function testPostponedRetryStopsFurtherRetriesAndKeepsThem(): void
@@ -674,7 +675,8 @@ class ImapClientTest extends TestCase
             . "A0003 OK SELECT completed\r\n"
             . "* SEARCH 6\r\nA0004 OK SEARCH completed\r\n"
             . $this->fetchResponse(1, 1, "Subject: Late\r\n\r\nlate", 'A0005')
-            . "* BYE\r\nA0006 OK LOGOUT completed\r\n";
+            . $this->fetchResponse(2, 6, "Subject: Fresh\r\n\r\nfresh", 'A0006')
+            . "* BYE\r\nA0007 OK LOGOUT completed\r\n";
 
         $called = 0;
 
@@ -688,12 +690,13 @@ class ImapClientTest extends TestCase
             }
         );
 
-        // Only the first retry is fetched; the others and the fresh mail are
-        // not touched, and every retry UID is kept for the next run.
-        $this->assertSame(1, $called);
+        // Only the first retry is fetched and every retry UID is kept for the
+        // next run. A postponed retry stops only the retry pass: the scan of
+        // new mail still runs, here up to its own postponement.
+        $this->assertSame(2, $called);
         $this->assertStringNotContainsString('UID FETCH 2 ', $result['sent']);
         $this->assertStringNotContainsString('UID FETCH 3 ', $result['sent']);
-        $this->assertStringNotContainsString('UID FETCH 6 ', $result['sent']);
+        $this->assertStringContainsString('UID FETCH 6 ', $result['sent']);
         $this->assertSame([1, 2, 3], $result['stats']['deferred_uids']);
         $this->assertSame(5, $result['stats']['last_uid']);
     }
@@ -768,12 +771,16 @@ class ImapClientTest extends TestCase
      */
     private function limitedIngest(IngestLimits $limits): callable
     {
-        return static function () use ($limits): string {
-            if ($limits->runExhausted() !== null || $limits->checkRun(1, 100) !== null) {
+        return static function (array $message) use ($limits): string {
+            $retry = !empty($message['retry']);
+
+            if ($limits->runExhausted() !== null
+                || ($retry && ($limits->retryShareExhausted() !== null || $limits->checkRetry(1, 100) !== null))
+                || $limits->checkRun(1, 100) !== null) {
                 return 'postpone';
             }
 
-            $limits->charge(1, 100);
+            $limits->charge(1, 100, $retry);
 
             return 'new';
         };

@@ -71,7 +71,9 @@ final class ReportArchive
      *          is the number of XML entries of a zip skipped because they exceed
      *          the per-document or the per-archive size ceiling; 'discarded' is
      *          the number of gzip bytes inflated and then thrown away (corrupt
-     *          stream or over the size ceiling), so a caller can charge that work.
+     *          stream or over the size ceiling), so a caller can charge that work;
+     *          'unpacked' is every byte decompressed or read for a document,
+     *          returned or discarded, counted before the byte order mark is cut.
      *
      * @return  string[]  A list of XML document strings (possibly empty).
      *
@@ -85,7 +87,7 @@ final class ReportArchive
      */
     public static function extract(string $payload, string $filename = '', ?array &$stats = null): array
     {
-        $stats = ['reason' => '', 'dropped' => 0, 'oversized' => 0, 'discarded' => 0];
+        $stats = ['reason' => '', 'dropped' => 0, 'oversized' => 0, 'discarded' => 0, 'unpacked' => 0];
 
         if ($payload === '') {
             $stats['reason'] = 'empty';
@@ -169,6 +171,7 @@ final class ReportArchive
                 // at most one input block of output per internal step, so peak
                 // memory stays bounded no matter how high the compression ratio.
                 $data = stream_get_contents($stream, self::MAX_BYTES + 1);
+                $stats['unpacked'] += \is_string($data) ? \strlen($data) : 0;
             } finally {
                 restore_error_handler();
                 fclose($stream);
@@ -211,6 +214,8 @@ final class ReportArchive
 
                 return [];
             }
+
+            $stats['unpacked'] += \strlen($payload);
 
             return [self::clean($payload)];
         }
@@ -329,6 +334,7 @@ final class ReportArchive
                 $total += (int) $entry['size'];
 
                 $content = $zip->getFromIndex($i);
+                $stats['unpacked'] += \is_string($content) ? \strlen($content) : 0;
 
                 if (\is_string($content) && $content !== '') {
                     $documents[] = self::clean($content);

@@ -134,7 +134,7 @@ final class ImapClient
      *                                            username, password, folder, limit,
      *                                            delete_after_import, uidvalidity,
      *                                            last_uid, deferred_uids.
-     * @param   callable(array{uid: int, raw: string}): string  $onMessage
+     * @param   callable(array{uid: int, raw: string, retry?: bool}): string  $onMessage
      *
      * @return  array{seen: int, ingested: int, skipped: int, transport_skipped: int, deferred: int, blocked: int, uidvalidity: int, last_uid: int, deferred_uids: int[]}
      *
@@ -220,18 +220,17 @@ final class ImapClient
             $highWater    = $lastUid;
             $progressOpen = true;
 
-            // Set once the ingestion limits postpone a message: nothing more is
-            // fetched or inspected in this run.
-            $postponed = false;
-
             // Share of one run the retry pass may use, so retries and fresh
             // mail cannot starve each other: at most half the messages per run
-            // and at most half the raw byte budget go to retries. The rest is
+            // and at most half the raw byte budget go to retries, and the
+            // callback sees 'retry' => true so the ingestor gives them only half
+            // of each ingestion limit. The rest is
             // always left for the scan, and every run starts with at least one
             // retry, so a retry is never starved by fresh mail either.
-            $retryCount = 0;
-            $retryLimit = max(1, intdiv($limit, 2));
-            $retryFloor = intdiv(self::MAX_TOTAL_BYTES, 2);
+            $retryCount   = 0;
+            $retryStopped = false;
+            $retryLimit   = max(1, intdiv($limit, 2));
+            $retryFloor   = intdiv(self::MAX_TOTAL_BYTES, 2);
 
             // Re-try reports an earlier run could not decode for lack of a PHP
             // extension. They sit below the cursor, so the UID scan below never
@@ -247,8 +246,8 @@ final class ImapClient
                     continue;
                 }
 
-                if ($postponed || $retryCount >= $retryLimit || ($retryCount > 0 && $budget < $retryFloor)) {
-                    // The run limits are reached or the retry share is used:
+                if ($retryStopped || $retryCount >= $retryLimit || ($retryCount > 0 && $budget < $retryFloor)) {
+                    // The retry share of the run limits is used up:
                     // keep every unvisited retry UID for the next run without
                     // fetching it.
                     $deferred[] = $uid;
@@ -274,7 +273,7 @@ final class ImapClient
 
                 $stats['seen']++;
                 $budget -= \strlen($raw);
-                $result = (string) $onMessage(['uid' => $uid, 'raw' => $raw]);
+                $result = (string) $onMessage(['uid' => $uid, 'raw' => $raw, 'retry' => true]);
                 unset($raw);
 
                 if ($result === 'blocked') {
@@ -295,10 +294,10 @@ final class ImapClient
                     // re-fetching it.
                     $held[] = $uid;
                 } elseif ($result === 'postpone') {
-                    // The run limits are reached; keep it for the next run and
-                    // stop the run here.
-                    $deferred[] = $uid;
-                    $postponed  = true;
+                    // The retry share is used up; keep it for the next run and
+                    // stop retrying. New mail still gets its own share below.
+                    $deferred[]   = $uid;
+                    $retryStopped = true;
                 } else {
                     $stats['skipped']++;
                     $touched[] = $uid;
@@ -306,12 +305,6 @@ final class ImapClient
             }
 
             foreach ($ids as $id) {
-                if ($postponed) {
-                    // A retry above already reached the run limits; the cursor
-                    // stays where it is and the scan resumes next run.
-                    break;
-                }
-
                 $raw = $this->fetchBody($id);
 
                 if ($raw === '') {
@@ -395,7 +388,6 @@ final class ImapClient
                     // The run limits are reached. Leave this message untouched
                     // and stop here; the next run starts with it.
                     $progressOpen = false;
-                    $postponed    = true;
                     break;
                 } else {
                     $stats['skipped']++;

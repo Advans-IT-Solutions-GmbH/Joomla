@@ -179,11 +179,16 @@ final class Ingestor
         $blocked     = false;
         $uid         = (int) ($message['uid'] ?? 0);
 
+        // A message from the retry set (reports that waited for a PHP
+        // extension) may only use the retry share of the run limits, so
+        // retries cannot use up the run and starve new mail.
+        $isRetry = !empty($message['retry']);
+
         if ($this->limits !== null) {
             // Once the run budget is spent (also by held messages and
             // discarded bombs), do not even unpack the next message: postpone
             // it and every later one to the next run.
-            $reason = $this->limits->runExhausted();
+            $reason = $this->limits->runExhausted() ?? ($isRetry ? $this->limits->retryShareExhausted() : null);
 
             if ($reason !== null) {
                 return $this->postpone($summary, $sourceId, $uid, $reason, 0, 0);
@@ -203,11 +208,10 @@ final class Ingestor
         // Pass 1: extract every attachment and measure the message before
         // anything is stored, so a message over a limit is held as a whole and
         // never half imported.
-        $prepared  = [];
-        $reports   = 0;
-        $bytes     = 0;
-        $discarded = 0; // inflated by an extractor and thrown away (bomb, corrupt stream)
-        $cache     = true;
+        $prepared = [];
+        $reports  = 0;
+        $bytes    = 0; // every unpacked byte, also those an extractor threw away
+        $cache    = true;
 
         foreach ($attachments as $index => $attachment) {
             $stats   = [];
@@ -248,9 +252,11 @@ final class Ingestor
                 $size += \strlen($document);
             }
 
-            $reports   += \count($documents) + $dropped;
-            $bytes     += $size;
-            $discarded += (int) ($stats['discarded'] ?? 0);
+            // Count what the extractor unpacked, not only what it returned: a
+            // document can shrink when its byte order mark is cut, and a
+            // rejected gzip stream returns nothing although it was inflated.
+            $reports += \count($documents) + $dropped;
+            $bytes   += max($size, (int) ($stats['unpacked'] ?? 0));
 
             if ($this->limits !== null) {
                 // A document over the archive helper's size ceiling would be
@@ -262,9 +268,9 @@ final class Ingestor
                     : $this->limits->checkMessage($reports, $bytes);
 
                 if ($reason !== null) {
-                    $this->limits->chargeInspected($bytes + $discarded);
+                    $this->limits->chargeInspected($bytes, $isRetry);
 
-                    return $this->hold($summary, $sourceId, $uid, $reason, \count($attachments), $reports, $bytes + $discarded);
+                    return $this->hold($summary, $sourceId, $uid, $reason, \count($attachments), $reports, $bytes);
                 }
             }
 
@@ -289,22 +295,22 @@ final class Ingestor
         }
 
         if ($this->limits !== null) {
-            $reason = $this->limits->checkRun($reports, $bytes);
+            $reason = ($isRetry ? $this->limits->checkRetry($reports, $bytes) : null)
+                ?? $this->limits->checkRun($reports, $bytes);
 
             if ($reason !== null) {
                 // Unpacked already, so the work counts, although the message is
-                // left for the next run. The run stops here in any case.
-                $this->limits->chargeInspected($bytes + $discarded);
+                // left for the next run.
+                $this->limits->chargeInspected($bytes, $isRetry);
 
                 return $this->postpone($summary, $sourceId, $uid, $reason, $reports, $bytes);
             }
 
-            $this->limits->charge($reports, $bytes);
+            $this->limits->charge($reports, $bytes, $isRetry);
 
-            // Every unpacked byte of this run counts: data inflated and thrown
-            // away in pass 1, and the second extraction pass 2 needs when the
-            // documents were too large to keep in memory.
-            $this->limits->chargeInspected($discarded + ($cache ? 0 : $bytes));
+            // The second extraction pass 2 needs when the documents were too
+            // large to keep in memory counts as well.
+            $this->limits->chargeInspected($cache ? 0 : $bytes, $isRetry);
         }
 
         // Pass 2: store what pass 1 measured.

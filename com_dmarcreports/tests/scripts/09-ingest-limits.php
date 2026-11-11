@@ -225,7 +225,7 @@ class IngestLimitsIntegrationTest
         // Each bomb inflates just over 8 MiB before it is discarded. With a
         // 10 MiB run budget the second bomb is still inspected (and held), the
         // third is postponed without being unpacked.
-        $ingestor = $this->ingestor(new IngestLimits(10, 20, 32 * self::MIB, 1000, 10 * self::MIB));
+        $ingestor = $this->ingestor(new IngestLimits(10, 20, 5 * self::MIB, 1000, 10 * self::MIB));
         $summary  = $ingestor->newSummary();
         $results  = [];
 
@@ -296,7 +296,7 @@ class IngestLimitsIntegrationTest
             $messages[$uid] = $this->message([$this->gz('run-' . $uid . '-' . $this->suffix)]);
         }
 
-        $ingestor = $this->ingestor(new IngestLimits(10, 20, 32 * self::MIB, 2, 256 * self::MIB));
+        $ingestor = $this->ingestor(new IngestLimits(10, 1, 32 * self::MIB, 2, 256 * self::MIB));
         $summary  = $ingestor->newSummary();
         $results  = [];
 
@@ -309,7 +309,7 @@ class IngestLimitsIntegrationTest
         $this->test('the postponement is counted and logged', $summary['postponed'] === 1 && $this->logContains('UID 73 postponed'));
 
         // The next run has a fresh budget and imports the postponed message.
-        $next    = $this->ingestor(new IngestLimits(10, 20, 32 * self::MIB, 2, 256 * self::MIB));
+        $next    = $this->ingestor(new IngestLimits(10, 1, 32 * self::MIB, 2, 256 * self::MIB));
         $summary = $next->newSummary();
         $result  = $next->ingestMessage(['uid' => 73, 'raw' => $messages[73]], null, $this->domainId, $summary);
 
@@ -396,7 +396,7 @@ class IngestLimitsIntegrationTest
         fwrite($serverEnd, $script);
 
         $client   = new ImapClient(5, static fn () => $clientEnd);
-        $ingest   = $this->ingestor(new IngestLimits(10, 20, 32 * self::MIB, 2, 256 * self::MIB));
+        $ingest   = $this->ingestor(new IngestLimits(10, 1, 32 * self::MIB, 2, 256 * self::MIB));
         $sum      = $ingest->newSummary();
         $domainId = $this->domainId;
 

@@ -88,11 +88,15 @@ Streaming design (do not revert to loading all messages into an array):
   `RESULT_HELD`: the client advances the cursor, never marks it `\Seen` or deletes it, and flags it
   `\Flagged` (best effort). Over a run limit it returns `RESULT_POSTPONE`: the client stops the run
   like the byte budget, the next run starts with it. The first message of a run is always admitted.
-  Held and discarded gzip bytes (`stats['discarded']`) count against the run size; once a run limit
+  Run size counts `stats['unpacked']` (every byte inflated or read, before the BOM is cut), also for held
+  messages and discarded gzip data; once a run limit
   is spent (`runExhausted()`) further messages are postponed unread. A second extraction in pass 2 is
   charged too. The retry set runs before the UID scan with at most half the messages and half the raw
   budget of a run, and a postponement stops it with every unvisited retry UID kept. The retry set is
-  stored in round-robin order (unvisited first, retried last, not sorted), so the quota rotates.
+  stored in round-robin order (unvisited first, retried last, not sorted), so the quota rotates. The
+  callback gets `'retry' => true`; the ingestor then allows only half of each run limit
+  (`checkRetry()`), and a postponed retry stops only the retry pass, not the scan. Run limits are
+  clamped to at least twice the per-message limits.
   `IngestLog` writes UID, limit and counts to `com_dmarcreports.php`, never content or addresses.
   Rationale and defaults: component `README.md`, "Mailbox ingestion limits".
 - `advance()` flags a processed message `\Seen` with `UID STORE +FLAGS.SILENT (\Seen)`. When

@@ -24,7 +24,9 @@ defined('_JEXEC') or die;
  * fits its own ceilings but would push the run over a per-run ceiling is
  * "postponed": it is left untouched and the next run starts with it. The first
  * message a run inspects is always admitted to the run, so a run always makes
- * progress and a postponed message is never starved.
+ * progress and a postponed message is never starved. Messages from the retry
+ * set may use at most half of each run limit, so retries and new mail cannot
+ * starve each other.
  *
  * Pure PHP without Joomla dependencies, so the decisions are unit-tested.
  *
@@ -69,13 +71,25 @@ final class IngestLimits
     /** Unpacked bytes inspected in this run so far (admitted and held messages). */
     private int $runBytes = 0;
 
+    /** Reports of retried messages (the retry set) admitted to this run so far. */
+    private int $retryReports = 0;
+
+    /** Unpacked bytes of retried messages inspected in this run so far. */
+    private int $retryBytes = 0;
+
+    /**
+     * The run limits are raised to at least twice the per-message limits. Every
+     * message within its own limits then fits into half a run, which is the
+     * share retries may use, so a retry is never starved and new mail always
+     * keeps the other half.
+     */
     public function __construct(int $maxAttachments, int $maxMessageReports, int $maxMessageBytes, int $maxRunReports, int $maxRunBytes)
     {
         $this->maxAttachments    = max(1, $maxAttachments);
         $this->maxMessageReports = max(1, $maxMessageReports);
         $this->maxMessageBytes   = max(1, $maxMessageBytes);
-        $this->maxRunReports     = max(1, $maxRunReports);
-        $this->maxRunBytes       = max(1, $maxRunBytes);
+        $this->maxRunReports     = max($maxRunReports, 2 * $this->maxMessageReports);
+        $this->maxRunBytes       = max($maxRunBytes, 2 * $this->maxMessageBytes);
     }
 
     /**
@@ -201,24 +215,74 @@ final class IngestLimits
     }
 
     /**
-     * Charge an admitted message to the run budget.
+     * Whether a retried message (from the retry set) still fits the retry share:
+     * half of each run limit. The share is checked in addition to
+     * {@see checkRun()}. Because the run limits are at least twice the
+     * per-message limits, a message within its own limits always fits an
+     * unused share, so every run retries at least one message.
+     *
+     * @return  string|null  A REASON_RUN_* constant, or null when admitted.
      */
-    public function charge(int $reports, int $bytes): void
+    public function checkRetry(int $reports, int $bytes): ?string
+    {
+        if ($this->retryReports + $reports > intdiv($this->maxRunReports, 2)) {
+            return self::REASON_RUN_REPORTS;
+        }
+
+        if ($this->retryBytes + $bytes > intdiv($this->maxRunBytes, 2)) {
+            return self::REASON_RUN_SIZE;
+        }
+
+        return null;
+    }
+
+    /**
+     * Whether the retry share is already spent, so the next retried message
+     * must not even be unpacked.
+     *
+     * @return  string|null  A REASON_RUN_* constant, or null while share remains.
+     */
+    public function retryShareExhausted(): ?string
+    {
+        if ($this->retryReports >= intdiv($this->maxRunReports, 2)) {
+            return self::REASON_RUN_REPORTS;
+        }
+
+        if ($this->retryBytes >= intdiv($this->maxRunBytes, 2)) {
+            return self::REASON_RUN_SIZE;
+        }
+
+        return null;
+    }
+
+    /**
+     * Charge an admitted message to the run budget, and to the retry share
+     * when it came from the retry set.
+     */
+    public function charge(int $reports, int $bytes, bool $retry = false): void
     {
         $this->runReports += max(0, $reports);
         $this->runBytes   += max(0, $bytes);
+
+        if ($retry) {
+            $this->retryReports += max(0, $reports);
+            $this->retryBytes   += max(0, $bytes);
+        }
     }
 
     /**
      * Charge unpacked bytes that were not stored to the run budget: those of a
-     * held message and those an extractor inflated and then discarded (a gzip
-     * bomb or a corrupt stream). Nothing of them is stored, but the
-     * decompression work counts, so a flood of such messages cannot make one
-     * run unpack without bound.
+     * held or postponed message and a second extraction. Nothing of them is
+     * stored, but the decompression work counts, so a flood of such messages
+     * cannot make one run unpack without bound.
      */
-    public function chargeInspected(int $bytes): void
+    public function chargeInspected(int $bytes, bool $retry = false): void
     {
         $this->runBytes += max(0, $bytes);
+
+        if ($retry) {
+            $this->retryBytes += max(0, $bytes);
+        }
     }
 
     public function maxAttachments(): int

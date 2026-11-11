@@ -237,7 +237,8 @@ final class TlsReportArchive
      * @param   array|null  $stats     Optional out-parameter filled with 'reason'
      *          ('' | 'empty' | 'format' | 'bomb'), 'dropped' and 'oversized' (zip
      *          entries skipped for exceeding a size ceiling) and 'discarded' (gzip
-     *          bytes inflated and then thrown away).
+     *          bytes inflated and then thrown away) and 'unpacked' (every byte
+     *          decompressed or read for a document, before any trimming).
      *
      * @return  string[]  A list of JSON document strings (possibly empty).
      *
@@ -249,7 +250,7 @@ final class TlsReportArchive
      */
     public static function extract(string $payload, string $filename = '', ?array &$stats = null): array
     {
-        $stats = ['reason' => '', 'dropped' => 0, 'oversized' => 0, 'discarded' => 0];
+        $stats = ['reason' => '', 'dropped' => 0, 'oversized' => 0, 'discarded' => 0, 'unpacked' => 0];
 
         if ($payload === '') {
             $stats['reason'] = 'empty';
@@ -289,6 +290,8 @@ final class TlsReportArchive
 
                 return [];
             }
+
+            $stats['unpacked'] += \strlen($payload);
 
             return [$trimmed];
         }
@@ -351,6 +354,7 @@ final class TlsReportArchive
 
         try {
             $data = stream_get_contents($stream, self::MAX_BYTES + 1);
+            $stats['unpacked'] += \is_string($data) ? \strlen($data) : 0;
         } finally {
             restore_error_handler();
             fclose($stream);
@@ -465,6 +469,7 @@ final class TlsReportArchive
 
                 $total  += (int) $entry['size'];
                 $content = $zip->getFromIndex($i);
+                $stats['unpacked'] += \is_string($content) ? \strlen($content) : 0;
 
                 if (\is_string($content) && ltrim($content) !== '') {
                     $documents[] = ltrim($content, "\xEF\xBB\xBF");
