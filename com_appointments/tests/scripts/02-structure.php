@@ -468,6 +468,8 @@ class StructureTest
                 && preg_match('/\.com-appointments-booking-details\s*>\s*dd\s*\{[^}]*overflow-wrap:\s*anywhere/', $css);
         });
 
+        $this->testDeviceRemovalMigration();
+
         echo "\n=== Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
@@ -920,6 +922,78 @@ class StructureTest
 
         $this->test('Every calendar field was checked', function () use ($checked) {
             return $checked >= 3;
+        });
+    }
+
+    /**
+     * «When removed or blocked» (`removal_mode`): the column with «Clean up» as its default, and
+     * the update path. An installation from before the setting is simulated by dropping the
+     * column; a real update through the Joomla CLI must add it again, with `cleanup` (the
+     * behaviour so far) for every existing device. The column is put back whatever happens.
+     */
+    private function testDeviceRemovalMigration(): void
+    {
+        $table = "{$this->dbPrefix}appointments_devices";
+        $column = function () use ($table): ?array {
+            $result = $this->db->query("SHOW COLUMNS FROM {$table} LIKE 'removal_mode'");
+
+            return $result ? ($result->fetch_assoc() ?: null) : null;
+        };
+
+        $this->test('Devices carry «When removed or blocked» with «Clean up» as the default', function () use ($column) {
+            $row = $column();
+
+            return $row !== null && strtolower((string) $row['Type']) === 'varchar(16)' && $row['Null'] === 'NO'
+                && trim((string) $row['Default'], "'") === 'cleanup';
+        });
+
+        $package = getenv('INSTALL_MESSAGES_PACKAGE') ?: '/tmp/extension.zip';
+
+        $this->test('An update adds «When removed or blocked» to existing devices with «Clean up»', function () use ($table, $column, $package) {
+            if (!is_file($package)) {
+                echo "    update: package {$package} missing\n";
+
+                return false;
+            }
+
+            defined('JOOMLA_ROOT') or define('JOOMLA_ROOT', '/var/www/html');
+            require_once __DIR__ . '/shared-test-helpers.php';
+            $id = 0;
+
+            try {
+                $this->db->query("ALTER TABLE {$table} DROP COLUMN removal_mode");
+
+                if ($column() !== null) {
+                    return false;
+                }
+
+                // A device of a version before the setting, an Outlook device. Owner 0 and a
+                // random MAC: it never authenticates.
+                $this->db->query("INSERT INTO {$table} (user_id, name, client, secret_hash, kek_salt, user_key_version, state,"
+                    . " rule_version, rule_accepted_utc, created_utc, row_mac) VALUES (0, 'Legacy Outlook', 'outlook-caldavsynchronizer',"
+                    . " X'" . bin2hex(random_bytes(32)) . "', X'" . bin2hex(random_bytes(16)) . "', 1, 1, '1', UTC_TIMESTAMP(), UTC_TIMESTAMP(),"
+                    . " X'" . bin2hex(random_bytes(32)) . "')");
+                $id = (int) $this->db->insert_id;
+                [$code, $output] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, $package);
+                $row = $column();
+                $mode = $this->db->query("SELECT removal_mode FROM {$table} WHERE id = {$id}");
+                $mode = $mode ? ($mode->fetch_assoc()['removal_mode'] ?? null) : null;
+
+                if ($code !== 0 || $row === null || $mode !== 'cleanup') {
+                    echo '    update: exit ' . $code . ', column ' . ($row === null ? 'missing' : 'present') . ', mode ' . var_export($mode, true)
+                        . "\n    " . str_replace("\n", "\n    ", substr(trim($output), -1500)) . "\n";
+                }
+
+                return $code === 0 && $row !== null && trim((string) $row['Default'], "'") === 'cleanup' && $mode === 'cleanup';
+            } finally {
+                if ($id > 0) {
+                    $this->db->query("DELETE FROM {$table} WHERE id = {$id}");
+                }
+
+                if ($column() === null) {
+                    $this->db->query("ALTER TABLE {$table} ADD COLUMN removal_mode VARCHAR(16) NOT NULL DEFAULT 'cleanup' AFTER client");
+                }
+            }
         });
     }
 

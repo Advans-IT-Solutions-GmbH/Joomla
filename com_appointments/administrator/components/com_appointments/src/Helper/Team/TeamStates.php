@@ -40,6 +40,20 @@ final class TeamStates
     /** Revoked: every request is refused with 401. */
     public const DEVICE_REVOKED = 0;
 
+    /**
+     * `#__appointments_devices.removal_mode`, «When removed or blocked»: the device goes through the
+     * clean-up (its calendars empty, then hidden, then 401), so the client deletes its local copy.
+     * For phones and tablets. The value of every device created before the setting existed.
+     */
+    public const REMOVAL_CLEANUP = 'cleanup';
+
+    /**
+     * «Block only»: the device is revoked at once (401 for every request) and never receives an
+     * empty calendar, so a client that synchronises two ways into a calendar of its own (Outlook with
+     * CalDav Synchronizer) reports an error and deletes nothing.
+     */
+    public const REMOVAL_BLOCK = 'block';
+
     /** `#__appointments_invitations.state` (account activation links). */
     public const INVITATION_OPEN = 1;
     public const INVITATION_COMPLETED = 2;

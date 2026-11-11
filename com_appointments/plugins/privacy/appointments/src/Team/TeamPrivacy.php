@@ -681,7 +681,7 @@ final class TeamPrivacy
         $db = $this->services->db();
         $sets = [
             ['appointments_staff_devices', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_DEVICES', '#__appointments_devices',
-                ['id', 'name', 'client', 'state', 'rule_version', 'rule_accepted_utc', 'created_utc', 'last_sync_utc',
+                ['id', 'name', 'client', 'removal_mode', 'state', 'rule_version', 'rule_accepted_utc', 'created_utc', 'last_sync_utc',
                     'cleanup_started_utc', 'revoked_utc', 'revoke_reason']],
             ['appointments_staff_grants', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_GRANTS', '#__appointments_calendar_grants',
                 ['id', 'calendar_id', 'role', 'state', 'audience', 'created_utc', 'modified_utc']],

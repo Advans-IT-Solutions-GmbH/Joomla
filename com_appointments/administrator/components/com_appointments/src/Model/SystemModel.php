@@ -12,6 +12,7 @@ use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
+use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\FeedService;
 use Advans\Component\Appointments\Administrator\Service\Team\AuditService;
 use Advans\Component\Appointments\Administrator\Service\Team\EpochAnchorInterface;
@@ -211,6 +212,16 @@ class SystemModel extends BaseDatabaseModel
             : (int) $params->get('legacy_feeds', 0) === 1;
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_LEGACY_FEEDS', !$legacy,
             Text::_($legacy ? 'COM_APPOINTMENTS_TEAM_F_SYSTEM_LEGACY_ON' : 'JDISABLED'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_LEGACY_FIX');
+
+        // Outlook devices that would receive an empty calendar when removed or blocked. Devices
+        // from before the setting existed have «Clean up»; one that synchronises two ways with
+        // the main calendar would delete the person's own appointments there.
+        $outlook = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_devices'))
+            ->where($db->quoteName('client') . ' = ' . $db->quote('outlook-caldavsynchronizer'))
+            ->where($db->quoteName('state') . ' = ' . TeamStates::DEVICE_ACTIVE)
+            ->where($db->quoteName('removal_mode') . ' <> ' . $db->quote(TeamStates::REMOVAL_BLOCK)))->loadResult();
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_OUTLOOK_CLEANUP', $outlook === 0, (string) $outlook,
+            'COM_APPOINTMENTS_TEAM_F_SYSTEM_OUTLOOK_CLEANUP_FIX');
 
         foreach (['teamcleanup' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_CLEANUP', 'teamlog' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_LOG',
             'teaminvitations' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_INVITATIONS', 'teamretention' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_RETENTION'] as $routine => $label) {

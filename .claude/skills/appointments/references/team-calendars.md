@@ -43,8 +43,10 @@ package; a deviation is a change to this file in the same pull request, agreed w
 - **Log:** sign-ins and changes only (no read access), 12 months, hash chain, checksum visible in
   the administrator only.
 - **Failed sign-ins:** temporary lock after 10 failures with a growing delay, never permanent.
-- **Blocking a user:** clean-up mode. The device sees the calendar as deleted on its next
-  synchronisation and removes its local copy; after that it is blocked completely. Tested per client.
+- **Blocking a user:** per device setting «When removed or blocked» (`removal_mode`, section 11).
+  «Clean up»: the device sees the calendar as deleted on its next synchronisation and removes its
+  local copy, after that it is blocked completely. «Block only»: 401 at once, never an empty
+  calendar, so a two-way client (Outlook with the main calendar) deletes nothing. Tested per client.
 - **Encryption B:** calendar contents are encrypted on the server so that only authorised users can
   decrypt them. One recovery key for the whole site, kept offline by the owner as two printouts in
   separate places. After a password reset a manager grants again, or the recovery key is used.
@@ -301,7 +303,7 @@ calendar means losing that calendar's contents: by design.
 - Change by the same user in an unlocked session (profile edit): rewrap with the new password.
 - Anything else (reset by e-mail, password set by an administrator, unlocked session missing):
   `resetUserKey()`: new key pair, all wraps of the user deleted, all grants `GRANT_SUSPENDED`, all
-  devices into clean-up, mail to the user and to the managers concerned. A manager re-grants, or an
+  devices blocked by their `removal_mode` (section 11), mail to the user and to the managers concerned. A manager re-grants, or an
   administrator uses the recovery key. This is the requirement, and it also means that a password
   reset by e-mail can never give anybody calendar access on its own.
 
@@ -641,8 +643,10 @@ or the external group and, when `team_viewlevel` is set, holding that access lev
 with Joomla's «not authorised» page). The view and every device task (`devices.create`, `rename`,
 `remove`) check this on the server for every request, also at an address without a menu item; the
 menu item's access level only hides the link. Super Users have no exception. Content: calendars
-with role, devices with client, state and last synchronisation, «Add device» (name, client, checkbox with the usage rule
-text and its version, `TeamStates::DEVICE_RULE_VERSION`), «Remove device» (starts the clean-up). The
+with role, devices with client, state, «When removed or blocked» and last synchronisation, «Add device» (name, client,
+«When removed or blocked» with «Recommended» preselected, checkbox with the usage rule text and its version,
+`TeamStates::DEVICE_RULE_VERSION`), the device page (rename, change «When removed or blocked», task
+`devices.removalMode`, owner only), «Remove device» (by the device's setting, section 11). The
 created page shows the app password once (copy button, no autocomplete, `Cache-Control: no-store`),
 the server address, the user name and the client-specific instructions (section 16). The app
 password is never in a URL, a log, a mail or the session.
@@ -668,6 +672,28 @@ blocked; password reset. An account without an active second factor is refused o
 Grants of a blocked user are suspended. Client behaviour per client is part of the manual test plan, because clients
 differ (Outlook with CalDav Synchronizer in two-way mode must delete the Outlook items, not upload
 them again; one-way «Outlook → server» would try to upload, which the refused writes stop).
+
+**«When removed or blocked»** (`#__appointments_devices.removal_mode`, decided by the maintainer):
+- `cleanup` («Clean up»): the phases above. For phones and tablets.
+- `block` («Block only»): every trigger revokes the device at once (`DeviceService::revoke()`, log
+  `device.blocked` with the actor, then `device.revoked`), 401 for every request, never the empty
+  view. For desktop clients with two-way synchronisation: an empty calendar would make Outlook
+  delete the items of the folder it is assigned to, the user's own appointments when that is the
+  main calendar. Authentication also refuses a `block` device found in a clean-up state (race with a
+  change of the setting), and setting `block` on a device in clean-up revokes it.
+- Each device follows its own setting. Removing one device never touches the others. User-wide
+  triggers (password reset, blocked account or calendar access, revoked access, discarded key)
+  block every device of the user, each by its setting.
+- A withdrawn grant of one calendar is never an empty view for an active device: the calendar is
+  no longer listed and answers 404 (PROPFIND and REPORT). Only a `cleanup` device that is cleaned up
+  later receives it empty (`calendarsInCleanup()`).
+- Recommendation by client (`DeviceService::REMOVAL_DEFAULTS`, preselected as «Recommended»): Outlook,
+  Thunderbird, eM Client and «Other» `block`, iOS and DAVx⁵ `cleanup`. Changed by the owner in «My
+  calendars» or by `core.admin` in the backend devices view (`devices.modeCleanup`, `devices.modeBlock`),
+  logged as `device.removal_mode`. Not part of the row MAC: it grants no access, both values end in
+  revocation.
+- Update: `script.php` adds the column independent of the schema version, existing devices get
+  `cleanup` (unchanged behaviour). The system check reports active Outlook devices with `cleanup`.
 
 ## 12. Mails (work package D)
 
@@ -707,7 +733,7 @@ off, they learn of new bookings only through the calendar.
   dashboard (C).
 - Retention per calendar (F): Scheduler routine «calendar retention» calls
   `CalendarObjectStoreInterface::deleteEndedBefore()` for each calendar with `retention_days > 0`.
-- `invitations` (C, `appointments.team.external`: activation links, the revoke page), `devices` (F: all devices, «last synchronised», block with clean-up, revoke),
+- `invitations` (C, `appointments.team.external`: activation links, the revoke page), `devices` (F: all devices, «last synchronised», «When removed or blocked», block by that setting, revoke, change the setting),
   `teamlog` (F: events, verify, checksum).
 - System view (F): libsodium, HTTPS, Authorization header, well-known reachability, plugins enabled,
   MFA enforcement, recovery key present, site secret fingerprint changed.
@@ -775,7 +801,8 @@ appearing by itself within the interval, a revoked grant disappearing, and the c
   write and busy blocking; log chain; schema pinned (column sets).
 - CalDAV clients in the CI (G): Python `caldav` and `vdirsyncer` in a container against the J6 lane
   over HTTPS (self-signed certificate in the test image): discovery via well-known, sync-token
-  incremental sync, ETag preconditions, free/busy redaction, clean-up deletes the local copy.
+  incremental sync, ETag preconditions, free/busy redaction, clean-up deletes the local copy, a
+  removed «Block only» device gets 401 for PROPFIND and REPORT and keeps its local copy.
 - Manual (G), Hyper-V test VM, only when nobody works on the machine: Outlook LTSC 2024 with CalDav
   Synchronizer, plus iOS/macOS, DAVx⁵, Thunderbird, eM Client; per client the checklist of
   section 16. Never against a production site.

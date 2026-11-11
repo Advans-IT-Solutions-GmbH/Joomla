@@ -38,6 +38,10 @@ defined('_JEXEC') or die;
  *   {@see self::startForUser()}, which also suspends the user's grants (the grant service logs
  *   each `grant.suspended` itself). Only {@see self::onUserBlocked()} mails the user; the password
  *   reset mails through work package B.
+ * - Every trigger follows the device's «When removed or blocked» (`removal_mode`): `cleanup` runs
+ *   the phases above, `block` revokes the device at once (401), so it never receives an empty
+ *   calendar. Only the device concerned changes; the user's other devices keep running unless the
+ *   trigger covers the whole user.
  *
  * @since  1.4.0
  */
@@ -61,6 +65,22 @@ final class CleanupService implements CleanupServiceInterface
         $device = $this->device($deviceId);
 
         if ($device === null || (int) $device['state'] !== TeamStates::DEVICE_ACTIVE) {
+            return;
+        }
+
+        // «Block only»: revoked at once, never an empty calendar, so a client that synchronises two
+        // ways into a calendar of its own reports an error instead of deleting its items. The
+        // device service checks no permission here (null actor): every caller decided already.
+        if ((string) ($device['removal_mode'] ?? '') === TeamStates::REMOVAL_BLOCK) {
+            $this->services->devices()->revoke(null, $deviceId, self::reason($reason));
+            // The revocation records no actor (null above); this entry says who removed or blocked.
+            $this->services->audit()->log(AuditEvent::DEVICE_BLOCKED, [
+                'actor_user_id'   => $actorUserId,
+                'subject_user_id' => (int) $device['user_id'],
+                'object_ref'      => 'device:' . $deviceId,
+                'details'         => ['device_id' => $deviceId, 'reason' => self::reason($reason)],
+            ]);
+
             return;
         }
 
@@ -558,7 +578,7 @@ final class CleanupService implements CleanupServiceInterface
     {
         $db = $this->db();
 
-        return $db->setQuery($this->query()->select($db->quoteName(['id', 'user_id', 'state', 'cleanup_started_utc']))
+        return $db->setQuery($this->query()->select($db->quoteName(['id', 'user_id', 'state', 'removal_mode', 'cleanup_started_utc']))
             ->from($db->quoteName('#__appointments_devices'))
             ->where($db->quoteName('id') . ' = ' . $deviceId))->loadAssoc() ?: null;
     }

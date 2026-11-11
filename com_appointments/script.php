@@ -225,6 +225,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->encryptExistingBookings($type);
         $this->convertLegacyFeedTokens();
         $this->cleanPageCache();
+        $this->ensureDeviceRemovalMode();
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
@@ -729,6 +730,29 @@ class Com_appointmentsInstallerScript extends InstallerScript
         } catch (\Throwable $e) {
             // Nothing to do: the page cache expires on its own after the configured cache time.
         }
+    }
+
+    /**
+     * The setting «When removed or blocked» of each device (see install.mysql.utf8.sql), also on
+     * an update from a version without it. Every existing device gets `cleanup`, the behaviour it
+     * had so far; the system check then asks to review Outlook devices. Idempotent and
+     * independent of the schema version on purpose, so the release number does not matter.
+     */
+    private function ensureDeviceRemovalMode(): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $table = $db->replacePrefix('#__appointments_devices');
+
+        if (!\in_array($table, $db->getTableList(), true)) {
+            return;
+        }
+
+        if (\array_key_exists('removal_mode', $db->getTableColumns($table, false))) {
+            return;
+        }
+
+        $db->setQuery('ALTER TABLE ' . $db->quoteName($table) . ' ADD COLUMN ' . $db->quoteName('removal_mode')
+            . " VARCHAR(16) NOT NULL DEFAULT 'cleanup' AFTER " . $db->quoteName('client'))->execute();
     }
 
     /**
