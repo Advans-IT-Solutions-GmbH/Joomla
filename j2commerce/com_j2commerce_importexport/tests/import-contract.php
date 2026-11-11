@@ -1059,6 +1059,22 @@ namespace {
             })(), "An invalid $column value is rejected before anything is stored");
         }
 
+        // A JSON import file keeps the structure of the article JSON columns.
+        foreach ([false, true] as $wrapped) {
+            $jsonFile = tempnam(sys_get_temp_dir(), 'j2ie-json-') . '.json';
+            $items = '[{"title":"A","attribs":{"empty":{},"list":[],"keyed":{"0":"a"}},"metadata":{"0":"x","1":"y"},"urls":{}}]';
+            file_put_contents($jsonFile, $wrapped ? '{"products":' . $items . '}' : $items);
+            try {
+                $parseFile = new \ReflectionMethod(ImportModel::class, 'parseImportFile');
+                $parseFile->setAccessible(true);
+                $parsed = $parseFile->invoke(new ContractModel(), $jsonFile);
+                check($parsed[0]['attribs'] === '{"empty":{},"list":[],"keyed":{"0":"a"}}'
+                    && $parsed[0]['metadata'] === '{"0":"x","1":"y"}' && $parsed[0]['urls'] === '{}',
+                    'A JSON import file keeps empty and numeric-keyed objects in article columns' . ($wrapped ? ' (products wrapper)' : ''));
+            } finally {
+                unlink($jsonFile);
+            }
+        }
         // CSV injection: the export neutralizes formulas, the import restores the cell.
         $exportClass = Advans\Component\J2CommerceImportExport\Administrator\Controller\ExportController::class;
         foreach (['=1+1', '+SUM(A1)', '-2+3', '@SUM(A1)', "\tcmd", "\rcmd", '-cmd|calc'] as $cell) {

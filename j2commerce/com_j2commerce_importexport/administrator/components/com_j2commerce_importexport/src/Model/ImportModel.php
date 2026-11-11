@@ -1483,8 +1483,26 @@ class ImportModel extends BaseDatabaseModel
                 throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'), 0, $e);
             }
 
+            // The associative decoding above turns {} into [] and {"0":..} into a list. The four
+            // article JSON columns are kept as their original JSON text, so the structure survives.
+            $raw = json_decode($content, false, 512);
+
             if (isset($data['products'])) {
                 $data = $data['products'];
+                $raw  = is_object($raw) ? ($raw->products ?? null) : null;
+            }
+
+            if (is_array($data) && is_array($raw) && array_is_list($raw)) {
+                foreach ($raw as $index => $rawItem) {
+                    if (!is_object($rawItem) || !isset($data[$index]) || !is_array($data[$index])) {
+                        continue;
+                    }
+                    foreach (['article_images', 'urls', 'attribs', 'metadata'] as $column) {
+                        if (isset($rawItem->$column) && (is_object($rawItem->$column) || is_array($rawItem->$column))) {
+                            $data[$index][$column] = json_encode($rawItem->$column, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                        }
+                    }
+                }
             }
         } elseif ($ext === 'csv') {
             $data = $this->parseCSV($filePath);
