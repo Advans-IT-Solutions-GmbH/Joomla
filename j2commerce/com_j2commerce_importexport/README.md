@@ -247,7 +247,7 @@ JSON exports include a `_documentation` section with field descriptions:
 
 ### CSV Export Structure
 
-Against CSV injection (formulas in spreadsheets), a text cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is exported with a leading apostrophe, which spreadsheets treat as a text marker. Plain numbers, including negative ones, are not changed. A text that already starts with apostrophes followed by such a character gets one more, so the CSV import can remove exactly one apostrophe and restore every value; an export can be imported without changes.
+Against CSV injection (formulas in spreadsheets), a text cell that starts with `=`, `+`, `-`, `@` (also their full-width forms), a tab, a carriage return or a line feed is exported with a leading apostrophe, which spreadsheets treat as a text marker. Plain numbers, including negative ones, are not changed. A text that already starts with apostrophes followed by such a character gets one more, so the CSV import can remove exactly one apostrophe and restore every value; an export can be imported without changes.
 
 CSV exports include a comment line (starting with `#`) above the headers with field descriptions:
 

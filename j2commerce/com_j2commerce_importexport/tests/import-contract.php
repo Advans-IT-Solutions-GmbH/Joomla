@@ -1040,6 +1040,12 @@ namespace {
             && $stored->metadata === '{"robots":"noindex"}',
             'Imported JSON columns are stripped of markup and re-encoded');
         $authDb->resetAuthorizationScenario([], []);
+        $authModel->importArticleData([
+            'title' => 'Structure', 'alias' => 'structure',
+            'attribs' => '{"empty":{},"list":[],"keyed":{"0":"a","1":"b"},"n":1}',
+        ], 2, ['update_existing' => false]);
+        check($authDb->inserted['#__content']->attribs === '{"empty":{},"list":[],"keyed":{"0":"a","1":"b"},"n":1}',
+            'Empty and numeric-keyed JSON objects keep their structure');        $authDb->resetAuthorizationScenario([], []);
         $authModel->importArticleData(['title' => 'Plain', 'alias' => 'plain'], 2, ['update_existing' => false]);
         $stored = $authDb->inserted['#__content'];
         check($stored->introtext === '' && $stored->urls === '{}' && $stored->attribs === '{}' && $stored->images === '{}' && $stored->metadata === '{}',
@@ -1053,14 +1059,30 @@ namespace {
             })(), "An invalid $column value is rejected before anything is stored");
         }
 
+        // A JSON import file keeps the structure of the article JSON columns.
+        foreach ([false, true] as $wrapped) {
+            $jsonFile = tempnam(sys_get_temp_dir(), 'j2ie-json-') . '.json';
+            $items = '[{"title":"A","attribs":{"empty":{},"list":[],"keyed":{"0":"a"}},"metadata":{"0":"x","1":"y"},"urls":{}}]';
+            file_put_contents($jsonFile, $wrapped ? '{"products":' . $items . '}' : $items);
+            try {
+                $parseFile = new \ReflectionMethod(ImportModel::class, 'parseImportFile');
+                $parseFile->setAccessible(true);
+                $parsed = $parseFile->invoke(new ContractModel(), $jsonFile);
+                check($parsed[0]['attribs'] === '{"empty":{},"list":[],"keyed":{"0":"a"}}'
+                    && $parsed[0]['metadata'] === '{"0":"x","1":"y"}' && $parsed[0]['urls'] === '{}',
+                    'A JSON import file keeps empty and numeric-keyed objects in article columns' . ($wrapped ? ' (products wrapper)' : ''));
+            } finally {
+                unlink($jsonFile);
+            }
+        }
         // CSV injection: the export neutralizes formulas, the import restores the cell.
         $exportClass = Advans\Component\J2CommerceImportExport\Administrator\Controller\ExportController::class;
-        foreach (['=1+1', '+SUM(A1)', '-2+3', '@SUM(A1)', "\tcmd", "\rcmd", '-cmd|calc'] as $cell) {
+        foreach (['=1+1', '+SUM(A1)', '-2+3', '@SUM(A1)', "\tcmd", "\rcmd", "\ncmd", '-cmd|calc', "\u{FF1D}1+1", "\u{FF0B}1", "\u{FF0D}1", "\u{FF20}SUM(A1)"] as $cell) {
             check($exportClass::neutralizeFormula($cell) === "'" . $cell && ImportModel::restoreFormulaCell("'" . $cell) === $cell,
                 'A formula cell is prefixed and restored: ' . json_encode($cell));
         }
         // A literal leading apostrophe must survive the round trip as well.
-        foreach (["'=1+1", "''-x", "'-5", "'@a", "'abc", "'", "''"] as $cell) {
+        foreach (["'=1+1", "'\u{FF1D}1", "''-x", "'-5", "'@a", "'abc", "'", "''"] as $cell) {
             $exported = $exportClass::neutralizeFormula($cell);
             check(ImportModel::restoreFormulaCell($exported) === $cell,
                 'A literal apostrophe value survives export and import: ' . json_encode($cell));
