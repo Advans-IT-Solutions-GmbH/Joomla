@@ -72,11 +72,11 @@ function isCleanupCandidate(object $ext): bool
 
         case 'template':
         case 'library':
-        case 'file':
-            return preg_match('/^(?:j2store|j2commerce)(?:[_\\/]|$)/', $element) === 1
-                || preg_match('/^files_(?:j2store|j2commerce)(?:_|$)/', $element) === 1;
+            return preg_match('/^(?:j2store|j2commerce)(?:[_\\/]|$)/', $element) === 1;
     }
 
+    // File extensions have no single install path, so missing files cannot be
+    // verified and a database-only removal could orphan their payload.
     return false;
 }
 
@@ -348,7 +348,7 @@ function cleanupExtensions(\Joomla\Database\DatabaseInterface $db, array $ids): 
             } else {
                 $result['error']++;
                 $details = $fallbackError
-                    ? $e->getMessage() . ' (database fallback failed: ' . $fallbackError->getMessage() . ')'
+                    ? Text::sprintf('COM_J2STORE_CLEANUP_MSG_FALLBACK_FAILED', $e->getMessage(), $fallbackError->getMessage())
                     : $e->getMessage();
                 $errors[] = $ext->element . ': ' . $details;
             }

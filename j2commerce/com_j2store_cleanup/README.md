@@ -71,7 +71,7 @@ The component displays:
 3. **No Files Found** - Extensions registered in `#__extensions` whose folder is missing on disk (selectable for removal)
 4. **Compatible Extensions** - Extensions without findings, plus the core component (not selectable)
 
-Only J2Store/J2Commerce-related components, plugins, modules, templates, libraries and file extensions in the supported extension namespaces can be removed. Protected records, the shop core components, this cleanup component, other extension types, compatible extensions and out-of-scope records are rejected even when submitted directly. A mixed valid/invalid selection is rejected without removing any item.
+Only J2Store/J2Commerce-related components, plugins, modules, templates and libraries in the supported extension namespaces can be removed. File extensions are out of scope: they have no single install path, so missing files cannot be verified and a database-only removal could leave their files behind. Protected records, the shop core components, this cleanup component, other extension types, compatible extensions and out-of-scope records are rejected even when submitted directly. A mixed valid/invalid selection is rejected without removing any item.
 
 The **Remove Selected Extensions** button is only shown to users with both `core.manage` and `core.delete` when at least one eligible extension is *Incompatible* or *No files*. Users with only `core.manage` can still inspect the scan. Users without `core.manage` on this component are denied the page and every task, including direct requests.
 
