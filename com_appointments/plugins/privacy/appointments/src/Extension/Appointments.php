@@ -93,7 +93,8 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         // owned schedules), whether or not the internet calendars are on. Joomla finds the account
         // with the database collation; only an exactly matching address makes it the requester's.
         $account = $event->getUser();
-        $staff = $account !== null && PrivacyAddress::matches((string) $account->email, (string) $event->getRequest()->email)
+        $staff = $account !== null && (int) $account->id > 0 && (string) $account->email !== ''
+            && PrivacyAddress::matches((string) $account->email, (string) $event->getRequest()->email)
             ? $this->staffDomains($account) : [];
         if ($staff !== []) {
             $event->addResult($staff);
