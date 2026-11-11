@@ -404,8 +404,8 @@ final class BookingInput
 
         if (isset(self::NATIONAL_LENGTH[$code])) {
             foreach (self::NATIONAL_LENGTH_BY_PREFIX[$code] ?? [] as $prefix => $longer) {
-                if (str_starts_with($digits, (string) $prefix) && $length === $longer) {
-                    return true;
+                if (str_starts_with($digits, (string) $prefix)) {
+                    return $length === $longer;
                 }
             }
 

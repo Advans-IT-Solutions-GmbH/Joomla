@@ -210,6 +210,7 @@ final class BookingInputTest extends TestCase
         yield 'Switzerland, ten digits' => [['country' => '41', 'number' => '61 000 00 000']];
         yield 'Switzerland, ten digits after a trunk zero' => [['country' => '', 'number' => '+41 0 61 000 00 000']];
         yield 'Switzerland, voicemail one digit short' => [['country' => '', 'number' => '+41 860 79 123 45 6']];
+        yield 'Switzerland, voicemail prefix with only nine digits' => [['country' => '', 'number' => '+41 860791234']];
         yield 'Switzerland, twelve digits without the voicemail prefix' => [['country' => '41', 'number' => '79 123 45 67 891']];
         yield 'North America, nine digits' =>[['country' => '1', 'number' => '202 555 010']];
         yield 'North America, eleven digits' => [['country' => '', 'number' => '+1 202 555 01000']];
