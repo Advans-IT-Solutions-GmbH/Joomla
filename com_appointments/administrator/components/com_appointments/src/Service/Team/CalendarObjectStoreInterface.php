@@ -69,11 +69,14 @@ interface CalendarObjectStoreInterface
 
     /**
      * Create or replace the object of a booking, sealed to the calendar's public
-     * key (no user key involved). The URI is derived from the booking's UID.
+     * key (no user key involved). The URI is derived from the booking's UID. An
+     * object with the same UID becomes the booking's (an accepted booking mail);
+     * with `$adopt` false an object of the calendar's own with that UID stays
+     * untouched, checked under the calendar lock, and nothing is written.
      *
-     * @return  string  The new ETag.
+     * @return  string  The new ETag, or an empty string when an own entry kept the copy out.
      */
-    public function putSealed(int $calendarId, string $ics, int $bookingId): string;
+    public function putSealed(int $calendarId, string $ics, int $bookingId, bool $adopt = true): string;
 
     public function delete(int $calendarId, string $uri, ?string $ifMatch, ?int $actorDeviceId): void;
 

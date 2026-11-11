@@ -327,7 +327,7 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         return $etag;
     }
 
-    public function putSealed(int $calendarId, string $ics, int $bookingId): string
+    public function putSealed(int $calendarId, string $ics, int $bookingId, bool $adopt = true): string
     {
         $uid = self::inspect($ics);
         $keys = $this->services->keys();
@@ -344,11 +344,21 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
             // booking mail's ICS there): that object becomes the booking's, so the
             // event never shows twice.
             $query = $this->query()
-                ->select($db->quoteName('uri'))
+                ->select($db->quoteName(['uri', 'booking_id']))
                 ->from($db->quoteName('#__appointments_calendar_objects'))
                 ->where($db->quoteName('calendar_id') . ' = ' . (int) $calendarId)
                 ->where($db->quoteName('uid_hash') . ' = ' . $db->quoteBinary($uidHash));
-            $uri = (string) ($db->setQuery((string) $query . ' FOR UPDATE')->loadResult() ?: $this->bookingUri($calendarId, $uid));
+            $same = $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null;
+
+            // Without adoption an entry of the calendar's own with this UID stays as it is:
+            // nothing is written, and the caller is told so with an empty ETag.
+            if (!$adopt && $same !== null && $same['booking_id'] === null) {
+                $db->transactionCommit();
+
+                return '';
+            }
+
+            $uri = (string) ($same['uri'] ?? '') ?: $this->bookingUri($calendarId, $uid);
             $existing = $this->lockObject($calendarId, $uri);
 
             // The derived address may belong to another event by now (a writer reused it after

@@ -189,6 +189,20 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             return;
         }
 
+        $this->write($bookingId, true);
+        $this->removeOrphans(self::ORPHAN_BATCH);
+    }
+
+    /**
+     * Write a booking's copy as it is now, or remove its copies when the booking no longer
+     * needs one; see onBookingSaved(). `$adopt` false: an entry of the target's own with the
+     * booking's UID is never taken over (decided by the object store under its calendar lock).
+     *
+     * @return  array{done: bool, etag: ?string, own: bool}  `done` true when committed; `etag` of
+     *                the copy written in this call; `own` when an own entry kept the copy out.
+     */
+    private function write(int $bookingId, bool $adopt): array
+    {
         $db = $this->services->db();
         // The booking row stays locked while its copy is written: two refreshes of the same
         // booking (a reschedule, a new conference link, a guest removal) are serialised, and
@@ -203,7 +217,7 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                 $this->remove($bookingId);
                 $db->transactionCommit(true);
 
-                return;
+                return ['done' => $this->calendarsHolding($bookingId) === [], 'etag' => null, 'own' => false];
             }
 
             $event = $this->event((int) $row['eventtype_id']);
@@ -216,18 +230,34 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                 $this->remove($bookingId);
             }
 
+            $etag = null;
+            $own = false;
+
             if ($writable) {
-                $this->services->objects()->putSealed($target, self::objectIcs($row, $event), $bookingId);
-                $this->log(AuditEvent::BOOKING_WRITTEN, $target, $bookingId);
+                $etag = $this->services->objects()->putSealed($target, self::objectIcs($row, $event), $bookingId, $adopt);
+
+                if ($etag === '') {
+                    // An own entry with this UID stays; the booking's own copies go everywhere.
+                    $this->remove($bookingId);
+                    $etag = null;
+                    $own = true;
+                } else {
+                    $this->log(AuditEvent::BOOKING_WRITTEN, $target, $bookingId);
+                }
             }
 
             $db->transactionCommit(true);
         } catch (\Throwable $e) {
             $db->transactionRollback(true);
             $this->failure('write', $bookingId, $e);
+
+            return ['done' => false, 'etag' => null, 'own' => false];
         }
 
-        $this->removeOrphans(self::ORPHAN_BATCH);
+        // Done: the copy written now lies in the target alone, or no copy is left.
+        $holding = $this->calendarsHolding($bookingId);
+
+        return ['done' => $etag !== null ? $holding === [$target] : $holding === [], 'etag' => $etag, 'own' => $own];
     }
 
     /**
@@ -365,36 +395,22 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                 $ids = array_map('intval', $db->setQuery($this->restoreCandidates($type, $after, $now)->setLimit($budget))->loadColumn() ?: []);
 
                 foreach ($ids as $bookingId) {
-                    // An entry of the target's own with the booking's UID (an imported mail
-                    // attachment, perhaps with notes) is never adopted by a restore: it stays.
-                    if ($this->ownEntryInTarget($bookingId)) {
-                        // The booking's copies in other calendars still go (the own entry has
-                        // no booking id and stays); done only when none is left.
-                        $this->remove($bookingId);
-                        $handled++;
-                        $after = $bookingId;
-
-                        if ($this->calendarsHolding($bookingId) === []) {
-                            $restored++;
-                        } else {
-                            $failed = true;
-                        }
-
-                        continue;
-                    }
-
-                    $before = $this->copyEtags($bookingId);
-                    $this->onBookingSaved(['id' => $bookingId]);
+                    // Never adopting an entry of the target's own with the booking's UID (an
+                    // imported mail attachment, perhaps with notes): checked by the object store
+                    // under its lock. Only a write committed in this call counts; a failed one is
+                    // retried in the next pass.
+                    $result = $this->write($bookingId, false);
                     $handled++;
                     $after = $bookingId;
 
-                    // Only a copy that is really in place counts; a failed write is retried.
-                    if ($this->restored($bookingId, $before)) {
+                    if ($result['done']) {
                         $restored++;
                     } else {
                         $failed = true;
                     }
                 }
+
+                $this->removeOrphans(self::ORPHAN_BATCH);
 
                 // Changed only while it is still the request that was read: a new request
                 // in the meantime starts again from the first booking.
@@ -459,99 +475,6 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
 
             return -1;
         }
-    }
-
-    /**
-     * Whether the event type's target calendar holds an entry without a booking id that has
-     * the booking's UID. A restore leaves such an entry alone instead of adopting it.
-     */
-    private function ownEntryInTarget(int $bookingId): bool
-    {
-        $db = $this->services->db();
-        $row = $db->setQuery($this->query()
-            ->select($db->quoteName(['b.uid', 'e.calendar_id']))
-            ->from($db->quoteName('#__appointments_bookings', 'b'))
-            ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
-            ->where($db->quoteName('b.id') . ' = ' . $bookingId))->loadAssoc();
-        $target = (int) ($row['calendar_id'] ?? 0);
-
-        if ($target < 1 || (string) ($row['uid'] ?? '') === '') {
-            return false;
-        }
-
-        $hash = $this->services->keys()->uidHash($target, (string) $row['uid']);
-
-        return (int) $db->setQuery($this->query()->select('COUNT(*)')
-            ->from($db->quoteName('#__appointments_calendar_objects'))
-            ->where($db->quoteName('calendar_id') . ' = ' . $target)
-            ->where($db->quoteName('uid_hash') . ' = ' . $db->quoteBinary($hash))
-            ->where($db->quoteName('booking_id') . ' IS NULL'))->loadResult() > 0;
-    }
-
-    /**
-     * The ETags of a booking's copies per calendar. A write gives a new random ETag, so a
-     * changed ETag proves that a refresh was committed.
-     *
-     * @return  array<int, string>
-     */
-    private function copyEtags(int $bookingId): array
-    {
-        $db = $this->services->db();
-        $rows = $db->setQuery($this->query()->select($db->quoteName(['calendar_id', 'etag']))
-            ->from($db->quoteName('#__appointments_calendar_objects'))
-            ->where($db->quoteName('booking_id') . ' = ' . $bookingId))->loadAssocList() ?: [];
-        $etags = [];
-
-        foreach ($rows as $row) {
-            $etags[(int) $row['calendar_id']] = (string) $row['etag'];
-        }
-
-        return $etags;
-    }
-
-    /**
-     * Whether the write just done for a booking was committed: its copy lies in the event
-     * type's target calendar alone, with an ETag other than before the write (`$before`, from
-     * {@see self::copyEtags()}). Without a target, or when the target cannot take the
-     * booking, it is done when no copy is left. A booking that is no longer active needs no
-     * copy and counts as done.
-     *
-     * @param   array<int, string>  $before
-     */
-    private function restored(int $bookingId, array $before): bool
-    {
-        $db = $this->services->db();
-        $row = $db->setQuery($this->query()
-            ->select($db->quoteName(['b.state', 'b.anonymised_utc', 'b.host_user_id', 'e.calendar_id']))
-            ->select($db->quoteName('e.host_user_id', 'event_host'))
-            ->from($db->quoteName('#__appointments_bookings', 'b'))
-            ->join('LEFT', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
-            ->where($db->quoteName('b.id') . ' = ' . $bookingId))->loadAssoc();
-
-        if (!$row || (int) $row['state'] === 2 || $row['anonymised_utc'] !== null) {
-            return true;
-        }
-
-        $target = (int) ($row['calendar_id'] ?? 0);
-        $holding = $this->calendarsHolding($bookingId);
-
-        // As in onBookingSaved(): a booking the target cannot take (no target, another host, no Write
-        // access) is done when it has no copy left.
-        try {
-            $writable = $target > 0 && (int) $row['event_host'] === (int) $row['host_user_id'] && $this->canWrite((int) $row['host_user_id'], $target);
-        } catch (\Throwable $e) {
-            // Access unknown: not done, the next pass tries again.
-            return false;
-        }
-
-        if (!$writable) {
-            return $holding === [];
-        }
-
-        $after = $this->copyEtags($bookingId);
-
-        return $holding === [$target] && isset($after[$target])
-            && (!isset($before[$target]) || !hash_equals($before[$target], $after[$target]));
     }
 
     /**
