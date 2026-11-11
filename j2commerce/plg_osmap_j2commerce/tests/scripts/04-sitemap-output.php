@@ -364,6 +364,85 @@ class SitemapOutputTest
             return in_array('test-product-alpha', $this->aliases($this->collect('view=product&id=9001')), true)
                 && in_array('test-product-beta', $this->aliases($this->collect()), true);
         });
+        // The category check covers every ancestor: a public category below an unpublished or
+        // guest-inaccessible parent or grandparent is hidden by Joomla as well. The fixture is a
+        // separate nested-set branch (grandparent > parent > child) that article 9001 moves into.
+        $this->test('Products below an unpublished or protected ancestor category are excluded', function () {
+            $stamp = date('YmdHis');
+            $ids   = [];
+            $views = ['view=products', 'view=product&id=9001'];
+
+            try {
+                $ids['g'] = $this->insertCategory('zz-grand-' . $stamp, 1, 90000, 90009, 1);
+                $ids['p'] = $this->insertCategory('zz-parent-' . $stamp, $ids['g'], 90001, 90008, 2);
+                $ids['c'] = $this->insertCategory('zz-child-' . $stamp, $ids['p'], 90002, 90003, 3);
+                $views[]  = 'view=products&catid=' . $ids['c'];
+                $this->db->setQuery('UPDATE #__content SET catid = ' . $ids['c'] . ' WHERE id = 9001')->execute();
+
+                $listed = function (string $query): bool {
+                    return in_array('test-product-alpha', $this->aliases($this->collect($query)), true);
+                };
+
+                foreach ($views as $query) {
+                    if (!$listed($query)) {
+                        return false; // the public branch must list the product first
+                    }
+                }
+
+                foreach (['p', 'g'] as $level) {
+                    foreach ([['published = 0', 'published = 1'], ['access = 2', 'access = 1']] as [$hide, $restore]) {
+                        $this->db->setQuery('UPDATE #__categories SET ' . $hide . ' WHERE id = ' . $ids[$level])->execute();
+
+                        try {
+                            foreach ($views as $query) {
+                                if ($listed($query)) {
+                                    return false;
+                                }
+                            }
+                            // The sibling branch (category 2) stays listed.
+                            if (!in_array('test-product-beta', $this->aliases($this->collect()), true)) {
+                                return false;
+                            }
+                        } finally {
+                            $this->db->setQuery('UPDATE #__categories SET ' . $restore . ' WHERE id = ' . $ids[$level])->execute();
+                        }
+                    }
+                }
+
+                return $listed('view=products');
+            } finally {
+                $this->db->setQuery('UPDATE #__content SET catid = 2 WHERE id = 9001')->execute();
+                if ($ids) {
+                    $this->db->setQuery('DELETE FROM #__categories WHERE id IN (' . implode(',', $ids) . ')')->execute();
+                }
+            }
+        });
+
+        if (!$sefJ6) {
+            // Hidden menu children use the path of their menu item, so a distinct path tells the
+            // hidden-child URL from the direct-query URL of the same product.
+            $this->test('A hidden child menu item that guests cannot read is not emitted', function () {
+                $original = $this->db->setQuery('SELECT id, path FROM #__menu WHERE id IN (9002, 9003)')->loadAssocList('id', 'path');
+                $this->db->setQuery("UPDATE #__menu SET path = CONCAT('shop/zz-hidden-', id) WHERE id IN (9002, 9003)")->execute();
+
+                try {
+                    $before = $this->aliases($this->collect());
+                    if (!in_array('zz-hidden-9002', $before, true) || !in_array('zz-hidden-9003', $before, true)) {
+                        return false;
+                    }
+
+                    $this->db->setQuery('UPDATE #__menu SET access = 2 WHERE id IN (9002, 9003)')->execute();
+                    $after = $this->aliases($this->collect());
+
+                    return $after === $this->expectedAliases();
+                } finally {
+                    $this->db->setQuery('UPDATE #__menu SET access = 1 WHERE id IN (9002, 9003)')->execute();
+                    foreach ($original as $menuId => $path) {
+                        $this->db->setQuery('UPDATE #__menu SET path = ' . $this->db->quote($path) . ' WHERE id = ' . (int) $menuId)->execute();
+                    }
+                }
+            });
+        }
         $this->test('Products stay in getTree(view=products) when a hidden child menu item is removed', function () {
             $this->db->setQuery('UPDATE #__menu SET published = 0 WHERE id = 9003')->execute();
 
@@ -389,6 +468,37 @@ class SitemapOutputTest
         echo "\n=== Sitemap Output Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;
+    }
+
+    private function insertCategory(string $alias, int $parentId, int $lft, int $rgt, int $level): int
+    {
+        $now = date('Y-m-d H:i:s');
+        $row = (object) [
+            'parent_id'        => $parentId,
+            'lft'              => $lft,
+            'rgt'              => $rgt,
+            'level'            => $level,
+            'path'             => $alias,
+            'extension'        => 'com_content',
+            'title'            => $alias,
+            'alias'            => $alias,
+            'note'             => '',
+            'description'      => '',
+            'published'        => 1,
+            'access'           => 1,
+            'params'           => '{}',
+            'metadata'         => '{}',
+            'created_user_id'  => 0,
+            'created_time'     => $now,
+            'modified_user_id' => 0,
+            'modified_time'    => $now,
+            'hits'             => 0,
+            'language'         => '*',
+            'version'          => 1,
+        ];
+        $this->db->insertObject('#__categories', $row, 'id');
+
+        return (int) $this->db->insertid();
     }
 
     private function test(string $name, callable $fn): void
