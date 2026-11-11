@@ -6,8 +6,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+use Advans\Component\Appointments\Site\Helper\BackLink;
 use Joomla\CMS\Language\Text;
-use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 
@@ -40,11 +40,15 @@ defined('_JEXEC') or die;
  * which a site template sets to its own colours and fonts.
  */
 [$action, $hidden] = $this->formTarget();
+// The way back, '' on a menu item of this one event type unless its options show it (BackLink).
+$back = BackLink::resolve(true);
 $details = $this->step === 'details';
 ?>
 <div class="com-appointments com-appointments-eventtype" data-appointments-booking>
     <div class="com-appointments-container" data-appointments-view data-step="<?php echo $details ? 'details' : 'time'; ?>">
-        <p><a class="btn btn-outline-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtypes'); ?>"><?php echo Text::_($details ? 'JCANCEL' : 'COM_APPOINTMENTS_BACK_TO_OVERVIEW'); ?></a></p>
+        <?php if ($back !== '') : ?>
+            <p><a class="btn btn-outline-secondary com-appointments-return" href="<?php echo $back; ?>"><?php echo Text::_($details ? 'JCANCEL' : 'COM_APPOINTMENTS_BACK_TO_OVERVIEW'); ?></a></p>
+        <?php endif; ?>
         <?php if ($this->titleAbove) : ?>
             <h1 class="com-appointments-heading com-appointments-page-title"><?php echo $this->escape($this->pageHeading); ?></h1>
         <?php endif; ?>

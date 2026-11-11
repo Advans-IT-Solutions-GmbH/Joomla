@@ -7,9 +7,9 @@
  */
 
 use Advans\Component\Appointments\Administrator\Helper\DateDisplay;
+use Advans\Component\Appointments\Site\Helper\BackLink;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
-use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 
@@ -55,6 +55,6 @@ $page = $this->page;
                 </div>
             </form>
         <?php endif; ?>
-        <p><a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtypes'); ?>"><?php echo Text::_($page['completed'] ? 'COM_APPOINTMENTS_BACK_TO_OVERVIEW' : 'JCANCEL'); ?></a></p>
+        <p><a class="btn btn-secondary com-appointments-return" href="<?php echo BackLink::resolve(false); ?>"><?php echo Text::_($page['completed'] ? 'COM_APPOINTMENTS_BACK_TO_OVERVIEW' : 'JCANCEL'); ?></a></p>
     </div>
 </div>
