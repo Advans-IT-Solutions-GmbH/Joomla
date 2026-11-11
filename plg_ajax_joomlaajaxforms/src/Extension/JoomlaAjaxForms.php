@@ -300,7 +300,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     protected function handleLogin(): string
     {
         if (!$this->params->get('enable_login', 1)) {
-            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+            return $this->jsonDisabled();
         }
 
         $user = $this->getApplication()->getIdentity();
@@ -522,7 +522,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     protected function handleRegistration(): string
     {
         if (!$this->params->get('enable_registration', 1)) {
-            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+            return $this->jsonDisabled();
         }
 
         $usersConfig = ComponentHelper::getParams('com_users');
@@ -925,7 +925,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     protected function handleReset(): string
     {
         if (!$this->params->get('enable_reset', 1)) {
-            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+            return $this->jsonDisabled();
         }
 
         $input = $this->getApplication()->getInput();
@@ -1023,7 +1023,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     protected function handleRemind(): string
     {
         if (!$this->params->get('enable_remind', 1)) {
-            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+            return $this->jsonDisabled();
         }
 
         $input = $this->getApplication()->getInput();
@@ -1070,7 +1070,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     protected function handleRemoveCartItem(): string
     {
         if (!$this->params->get('enable_j2store_cart', 1)) {
-            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+            return $this->jsonDisabled();
         }
 
         $user = $this->getApplication()->getIdentity();
@@ -1155,7 +1155,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     protected function handleGetCartCount(): string
     {
         if (!$this->params->get('enable_j2store_cart', 1)) {
-            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+            return $this->jsonDisabled();
         }
 
         $user = $this->getApplication()->getIdentity();
@@ -1405,7 +1405,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     protected function handleSaveProfile(): string
     {
         if (!$this->params->get('enable_profile', 1)) {
-            return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'));
+            return $this->jsonDisabled();
         }
 
         $user = $this->getApplication()->getIdentity();
@@ -2436,9 +2436,24 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Return a JSON error response
+     * The answer for a task whose option is switched off. The flag "disabled"
+     * tells the script to submit the form to com_users the normal way.
      *
-     * @param   string  $message  Error message
+     * @return  string
+     */
+    protected function jsonDisabled(): string
+    {
+        return json_encode([
+            'success'  => false,
+            'message'  => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED'),
+            'disabled' => true,
+        ]);
+    }
+
+    /**
+     * JSON error response
+     *
+     * @param   string  $message  The error message
      *
      * @return  string
      */

@@ -327,6 +327,18 @@ class InstallationTest
             $passed = false;
         }
 
+        // A "disabled" answer hands the form to com_users in every form handler
+        // (login, registration, reset/remind, profile), also while the map of
+        // enabled forms is still loading or could not be loaded.
+        echo "Test: A disabled answer hands the form over to com_users... ";
+        if (substr_count($source, 'JoomlaAjaxForms.handOverIfDisabled(data, form)') === 4
+            && str_contains($source, 'HTMLFormElement.prototype.submit.call(form)')) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL\n";
+            $passed = false;
+        }
+
         return $passed;
     }
 

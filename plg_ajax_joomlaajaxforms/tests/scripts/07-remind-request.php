@@ -233,9 +233,9 @@ class RemindRequestTest
                 }
             }
 
-            // A captcha chosen in the Users options whose plugin is missing must
-            // not let the request through without a check.
-            ajaxforms_set_component_params('com_users', ['captcha' => 'ajaxformsmissing']);
+            // A captcha chosen in the Users options whose field cannot be set up
+            // must not let the request through without a check.
+            ajaxforms_set_component_params('com_users', ['captcha' => 'ajaxformsbroken']);
 
             foreach (['remind', 'reset'] as $task) {
                 [$cookies, $token] = $this->sessionAndToken();
@@ -248,7 +248,7 @@ class RemindRequestTest
                 $data = ajaxforms_decode_response($body);
 
                 $this->test(
-                    ucfirst($task) . ' is refused while the configured captcha plugin is missing',
+                    ucfirst($task) . ' is refused while the configured captcha cannot be set up',
                     $code < 500 && $data !== null && ($data['success'] ?? null) === false,
                     "HTTP $code, body: " . substr($body, 0, 200)
                 );
@@ -257,6 +257,29 @@ class RemindRequestTest
             ajaxforms_restore_component_params('com_users', $original);
             ajaxforms_remove_test_captcha();
         }
+    }
+
+    /**
+     * A task whose option is off answers with the flag "disabled", so the
+     * script can hand the form to com_users even when it did not know the
+     * state of the option yet.
+     */
+    private function testDisabledAnswerCarriesTheFlag(): void
+    {
+        echo "\n--- Disabled task answer ---\n";
+
+        $plugin = ajaxforms_plugin_instance();
+        $plugin->params->set('enable_remind', 0);
+
+        $method = new ReflectionMethod($plugin, 'handleRemind');
+        $method->setAccessible(true);
+        $answer = json_decode((string) $method->invoke($plugin), true);
+
+        $this->test(
+            'Remind switched off answers success:false with disabled:true',
+            is_array($answer) && ($answer['success'] ?? null) === false && ($answer['disabled'] ?? null) === true,
+            'answer: ' . var_export($answer, true)
+        );
     }
 
     private function testLanguageKeys(): void
@@ -415,6 +438,7 @@ class RemindRequestTest
         $this->testInvalidEmail();
         $this->testUnknownEmail();
         $this->testCaptchaOfTheUsersOptions();
+        $this->testDisabledAnswerCarriesTheFlag();
         $this->testLanguageKeys();
         $this->testFormDetection();
         $this->testRemindMailCarriesTheSiteDesign();

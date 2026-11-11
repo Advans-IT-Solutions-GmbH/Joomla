@@ -130,6 +130,28 @@ const JoomlaAjaxForms = {
     },
 
     /**
+     * The server answers "disabled" for a form whose option is switched off.
+     * When the script did not know that yet (configuration still loading or
+     * not loadable), it submits the form to com_users the normal way instead
+     * of showing the message, and remembers the state for the page.
+     *
+     * @param {object} data - Unwrapped plugin answer
+     * @param {HTMLFormElement} form - The form that was sent
+     * @returns {boolean} True when the form was handed over
+     */
+    handOverIfDisabled: function(data, form) {
+        if (!data || data.success || data.disabled !== true) {
+            return false;
+        }
+
+        form.dataset.joomlaajaxformsNative = '1';
+        // The prototype method, because a field named "submit" shadows form.submit.
+        HTMLFormElement.prototype.submit.call(form);
+
+        return true;
+    },
+
+    /**
      * Fetch the translated texts once when the page loaded the script without
      * them (script options missing). Read-only request without a token.
      */
@@ -469,6 +491,9 @@ const JoomlaAjaxForms = {
                 var serverErrorMsg = JoomlaAjaxForms.extractAndClearMessages(rawData);
                 JoomlaAjaxForms.clearSystemMessages();
                 const data = JoomlaAjaxForms.unwrapResponse(rawData);
+                if (JoomlaAjaxForms.handOverIfDisabled(data, form)) {
+                    return;
+                }
 
                 if (data.success) {
                     JoomlaAjaxForms.showMessage(messageContainer, data.message, 'success');
@@ -621,6 +646,9 @@ const JoomlaAjaxForms = {
                 var serverErrorMsg = JoomlaAjaxForms.extractAndClearMessages(rawData);
                 JoomlaAjaxForms.clearSystemMessages();
                 const data = JoomlaAjaxForms.unwrapResponse(rawData);
+                if (JoomlaAjaxForms.handOverIfDisabled(data, form)) {
+                    return;
+                }
 
                 if (data.success) {
                     JoomlaAjaxForms.showMessage(messageContainer, data.message, 'success');
@@ -705,6 +733,9 @@ const JoomlaAjaxForms = {
                 var serverErrorMsg = JoomlaAjaxForms.extractAndClearMessages(rawData);
                 JoomlaAjaxForms.clearSystemMessages();
                 const data = JoomlaAjaxForms.unwrapResponse(rawData);
+                if (JoomlaAjaxForms.handOverIfDisabled(data, form)) {
+                    return;
+                }
 
                 // Empty data[] from com_ajax means plugin was not reached (token/session issue)
                 if (rawData.data && Array.isArray(rawData.data) && rawData.data.length === 0) {
@@ -1076,6 +1107,9 @@ const JoomlaAjaxForms = {
                 var serverErrorMsg = JoomlaAjaxForms.extractAndClearMessages(rawData);
                 JoomlaAjaxForms.clearSystemMessages();
             var data = JoomlaAjaxForms.unwrapResponse(rawData);
+            if (JoomlaAjaxForms.handOverIfDisabled(data, form)) {
+                return;
+            }
             if (data.success) {
                 var msg = data.message || getFormsLang('PROFILE_SAVED');
                 JoomlaAjaxForms.showMessage(messageContainer, msg, 'success');

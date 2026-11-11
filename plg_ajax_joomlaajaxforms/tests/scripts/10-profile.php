@@ -198,6 +198,18 @@ class ProfileTest
                 . ' WHERE id = ' . (int) $user->id
             )->execute();
 
+            // The account has given the privacy consent, as a real account on a
+            // site with the privacy consent plugin would: without it that plugin
+            // redirects every request of the signed-in user to the profile form.
+            $consent = (object) [
+                'user_id' => (int) $user->id,
+                'state'   => 1,
+                'created' => \Joomla\CMS\Factory::getDate()->toSql(),
+                'subject' => 'PLG_SYSTEM_PRIVACYCONSENT_SUBJECT',
+                'body'    => 'Test consent',
+            ];
+            $db->insertObject('#__privacy_consents', $consent);
+
             $token = $this->tokenFrom('/index.php?option=com_users&view=login', $jar);
             $login = $this->ajax('login', ['username' => $user->username, 'password' => $oldPass, $token => '1'], $jar);
             $this->test('Test account signs in', ($login['success'] ?? null) === true, var_export($login, true));
@@ -226,6 +238,7 @@ class ProfileTest
             $this->test('A save with jform[email] instead of jform[email1] is accepted', ($alias['success'] ?? null) === true, $this->lastAnswer);
             $this->test('That save stores the name', $nameOf() === 'Alias User', 'stored: ' . $nameOf());
         } finally {
+            $db->setQuery('DELETE FROM #__privacy_consents WHERE user_id = ' . (int) $user->id)->execute();
             ajaxforms_restore_component_params('com_users', $original);
             ajaxforms_delete_test_user('profile');
             @unlink($jar);
