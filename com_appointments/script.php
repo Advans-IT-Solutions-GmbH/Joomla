@@ -224,6 +224,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->initialiseLegacyFeedSetting($type);
         $this->encryptExistingBookings($type);
         $this->convertLegacyFeedTokens();
+        $this->cleanPageCache();
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
@@ -707,6 +708,26 @@ class Com_appointmentsInstallerScript extends InstallerScript
             $app = Factory::getApplication();
             $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
             $app->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_FEED_TOKENS_FAILED'), 'warning');
+        }
+    }
+
+    /**
+     * «System - Page Cache» answers a stored page without running the component, so a page that
+     * an earlier version let it store (the booking page with a visitor's refused entries, the
+     * activation page) would still be served after the update. Empty the site's page cache group;
+     * the pages are stored again on demand. A failure never fails the installation.
+     */
+    private function cleanPageCache(): void
+    {
+        try {
+            $app = Factory::getApplication();
+            $cache = Factory::getContainer()->get(\Joomla\CMS\Cache\CacheControllerFactoryInterface::class)->createCacheController('callback', [
+                'defaultgroup' => 'page',
+                'cachebase'    => (string) $app->get('cache_path', JPATH_SITE . '/cache'),
+            ]);
+            $cache->clean('page');
+        } catch (\Throwable $e) {
+            // Nothing to do: the page cache expires on its own after the configured cache time.
         }
     }
 

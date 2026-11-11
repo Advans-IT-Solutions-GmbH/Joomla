@@ -304,12 +304,19 @@ function upgrade_seed(): void
         . " BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Upgrade fixture holds automatic migration'; END") === true,
         'automatic migration hold is installed for the upgrade fixture');
 
+    // A page the previous version let «System - Page Cache» store (file cache handler of the image).
+    $pageCacheEntry = JOOMLA_ROOT . '/cache/page/upgrade-v130-' . bin2hex(random_bytes(6)) . '.php';
+    upgrade_require((is_dir(dirname($pageCacheEntry)) || mkdir(dirname($pageCacheEntry), 0755, true))
+        && file_put_contents($pageCacheEntry, "<?php die(\"Direct Access Not Permitted\"); ?>\n#x#cached page") !== false,
+        'a page cached by the previous version is present before the update');
+
     $fixture = [
         'extension_id' => $extensionId,
         'schedule_id' => $scheduleId,
         'eventtype_id' => $eventtypeId,
         'feed_token' => $feedToken,
         'migration_trigger' => $migrationTrigger,
+        'page_cache_entry' => $pageCacheEntry,
         'bookings' => $bookings,
     ];
     $fixturePath = sys_get_temp_dir() . '/appointments-upgrade-v1.3.0.json';
@@ -360,6 +367,10 @@ function upgrade_verify(): void
         'upgrade fixture has a valid migration hold trigger');
     upgrade_require($db->query("DROP TRIGGER IF EXISTS `$migrationTrigger`") === true,
         'automatic migration hold is removed before post-upgrade behavior checks');
+    $pageCacheEntry = (string) ($fixture['page_cache_entry'] ?? '');
+    clearstatcache(true);
+    upgrade_check('the update empties the page cache, so no page stored by the previous version is served',
+        str_starts_with($pageCacheEntry, JOOMLA_ROOT . '/cache/page/') && !is_file($pageCacheEntry));
     $candidateHash = hash_file('sha256', $candidatePackage);
     upgrade_check('candidate package digest remains unchanged',
         $candidateHash !== false && hash_equals($expectedCandidateHash, $candidateHash));

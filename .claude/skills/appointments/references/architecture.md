@@ -185,8 +185,11 @@ simultaneous submissions for two overlapping slots of one host, across two event
   administrator interface. A rotated token invalidates the old URL immediately.
 - All output escaped. All queries through `quoteName()` and `quote()` or bound parameters.
 - No secret is ever written to a log, a URL in an e-mail body, or an error message.
-- Rate limiting on the public booking endpoint and on the feed endpoint, counted per IP in a small
+- Rate limiting on the public booking endpoint and on the feed endpoint, counted per IPv4 address
+  or per IPv6 /64 (`RateLimiter::subject()`, the grouping of the sign-in lock-out) in a small
   table with a short retention, so a blocked feed URL cannot be brute forced.
+- Every public page that renders session data (entries of a refused submission, form tokens, signed
+  links) calls `NoPageCache::apply()`: «System - Page Cache» ignores the browser cache headers.
 
 ## What an installation adds on top
 

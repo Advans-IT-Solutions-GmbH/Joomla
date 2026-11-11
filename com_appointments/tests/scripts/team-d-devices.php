@@ -499,6 +499,7 @@ return static function (TeamSuite $suite): void {
             'D: «Rename device» refuses a signed-in account outside the groups with 403 and changes nothing',
             'D: «Remove device» refuses a signed-in account outside the groups with 403 and changes nothing',
             'D: A member without the configured access level gets 403 for the page and every device task',
+            'D: With the page cache on, another browser never receives the token-free activation page',
         ];
 
         if ($stubs !== []) {
@@ -1095,38 +1096,70 @@ return static function (TeamSuite $suite): void {
         $activation = new TeamDBrowser($suite->base);
         $activationForm = null;
 
-        $suite->test($flow[10], static function () use ($activation, $linkPath, &$activationForm) {
-            if ($linkPath === '' || str_contains($linkPath, 'index.php/index.php')) {
-                return false;
-            }
+        // With «System - Page Cache» on, the token-free activation page of one browser must never be
+        // stored and handed to another browser.
+        $pageCache = (int) $db->query("SELECT enabled FROM {$p}extensions WHERE type='plugin' AND folder='system' AND element='cache'")->fetch_row()[0];
+        $db->query("UPDATE {$p}extensions SET enabled=1 WHERE type='plugin' AND folder='system' AND element='cache'");
+        $activationLocation = '';
 
-            $activation->request($linkPath, null, 0);
-            $location = $activation->header('Location');
+        try {
+            $suite->test($flow[10], static function () use ($activation, $linkPath, &$activationForm, &$activationLocation) {
+                if ($linkPath === '' || str_contains($linkPath, 'index.php/index.php')) {
+                    return false;
+                }
 
-            // A canonical-address redirect (e.g. strict SEF routing) keeps the query; a browser follows it.
-            for ($hop = 0; $hop < 3 && \in_array($activation->status, [301, 302, 307, 308], true) && str_contains($location, 'token='); $hop++) {
-                $activation->request($location, null, 0);
+                $activation->request($linkPath, null, 0);
                 $location = $activation->header('Location');
-            }
 
-            if ($activation->status !== 303 || $location === '' || str_contains($location, 'token=')) {
-                // Never the token itself: only where the answer points to.
-                echo '    activation: exchange answered ' . $activation->status . ' to '
-                    . (preg_replace('/token=[^&\s]*/', 'token=[masked]', $location) ?: 'no Location') . "\n";
+                // A canonical-address redirect (e.g. strict SEF routing) keeps the query; a browser follows it.
+                for ($hop = 0; $hop < 3 && \in_array($activation->status, [301, 302, 307, 308], true) && str_contains($location, 'token='); $hop++) {
+                    $activation->request($location, null, 0);
+                    $location = $activation->header('Location');
+                }
 
-                return false;
-            }
+                if ($activation->status !== 303 || $location === '' || str_contains($location, 'token=')) {
+                    // Never the token itself: only where the answer points to.
+                    echo '    activation: exchange answered ' . $activation->status . ' to '
+                        . (preg_replace('/token=[^&\s]*/', 'token=[masked]', $location) ?: 'no Location') . "\n";
 
-            $html = $activation->request($location);
-            $activationForm = TeamDBrowser::form($html, 'activation.complete');
+                    return false;
+                }
 
-            if ($activationForm === null) {
-                echo '    activation: page answered ' . $activation->status . " without the activation form\n";
-            }
+                $html = $activation->request($location);
+                $activationForm = TeamDBrowser::form($html, 'activation.complete');
+                $activationLocation = $location;
 
-            return $activationForm !== null && !isset($activationForm['fields']['token']) && isset($activationForm['fields']['nonce'])
-                && str_contains($activation->header('Cache-Control'), 'no-store') && $activation->header('Referrer-Policy') === 'no-referrer';
-        });
+                if ($activationForm === null) {
+                    echo '    activation: page answered ' . $activation->status . " without the activation form\n";
+                }
+
+                return $activationForm !== null && !isset($activationForm['fields']['token']) && isset($activationForm['fields']['nonce'])
+                    && str_contains($activation->header('Cache-Control'), 'no-store') && $activation->header('Referrer-Policy') === 'no-referrer';
+            });
+
+            $suite->test($flow[29], static function () use ($suite, &$activationForm, &$activationLocation) {
+                if ($activationForm === null || $activationLocation === '') {
+                    return false;
+                }
+
+                $other = new TeamDBrowser($suite->base);
+                $nonce = (string) $activationForm['fields']['nonce'];
+
+                foreach ([1, 2] as $attempt) {
+                    $html = $other->request($activationLocation);
+
+                    if ($other->status !== 404 || str_contains($html, $nonce) || TeamDBrowser::form($html, 'activation.complete') !== null) {
+                        echo '    activation: another browser got ' . $other->status . " on request {$attempt}\n";
+
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+        } finally {
+            $db->query("UPDATE {$p}extensions SET enabled={$pageCache} WHERE type='plugin' AND folder='system' AND element='cache'");
+        }
 
         $suite->test($flow[11], static function () use ($suite, &$activationForm, $db, $p, $fresh, $hashBefore) {
             if ($activationForm === null) {

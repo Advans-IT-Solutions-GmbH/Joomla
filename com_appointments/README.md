@@ -885,11 +885,17 @@ open, submission returns to the times of the same day with a friendly message an
 choices; an address of step 2 whose time is no longer offered shows the times of its day with the
 same message. A refusal the visitor can fix in a field returns to step 2 of the same time.
 Confirmation pages require the submitting browser's session and are not public booking lookups.
-The confirmation, the signed pages, their receipts and the guest removal page are kept out of
-Joomla's page cache (they exclude themselves from **System - Page Cache**, which ignores the
-browser cache headers), so a cached copy never hands their links or form tokens to another visitor.
+The booking page (which shows a refused submission again with the visitor's own entries), the
+confirmation, the signed pages, their receipts, the guest removal page and the activation page of
+the internet calendars are kept out of Joomla's page cache (they exclude themselves from
+**System - Page Cache**, which ignores the browser cache headers), so a cached copy never hands
+their entries, links or form tokens to another visitor. The list of event types stays cacheable.
+Installing or updating the component empties the site's page cache, so no page that an earlier
+version let it store is served afterwards.
 Public requests use the directly connected address for rate limiting, not untrusted forwarding
-headers. Only its keyed hash is stored; no raw address is added to a booking.
+headers: an IPv4 address counts on its own, an IPv6 address counts together with its whole /64
+network (one connection usually holds all of it), an IPv4-mapped IPv6 address as its IPv4 address.
+Only a keyed hash is stored; no raw address is added to a booking.
 
 ### Page markup and styling
 
