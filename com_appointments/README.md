@@ -506,7 +506,7 @@ the real key pair and its calendar wrap exist.
 | Team groups | the group created by the installer | Members may receive grants from a calendar's managers. |
 | Group of external users | the group created by the installer | Accounts of external users belong here. Only users with the permission «Share with external users» grant to them, at most the write role, and only on calendars that allow externals. A member of both groups counts as external. |
 | Create user groups | on | Create missing groups and the access level on installation and update, and enforce MFA for both groups. |
-| Access level of «My calendars» | the level created by the installer | Shows the menu item to calendar users only. |
+| Access level of «My calendars» | the level created by the installer | Shows the menu item to calendar users only. The page and its device actions check it on the server too, together with membership of a team group or the external group, also at an address without a menu item: any other signed-in account gets 403, a guest 404. |
 | Days per clean-up phase | 14 | Longest duration of each clean-up phase of a blocked device (see below). |
 | Subscription feeds with token | off on a new installation, on after an update | The previous token feeds, replaced by the internet calendars. |
 

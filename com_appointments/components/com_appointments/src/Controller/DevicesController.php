@@ -25,8 +25,9 @@ defined('_JEXEC') or die;
 /**
  * Internet calendars, «My calendars»: add a device, rename it, remove it.
  *
- * Every task takes POST only with the form token (403 otherwise) and a
- * signed-in user with the feature on (404 otherwise). «Add device»
+ * Every task takes POST only with the form token (403 otherwise), a
+ * signed-in user with the feature on (404 otherwise) and an account that may
+ * use internet calendars (403 otherwise, HtmlView::requireAccess()). «Add device»
  * additionally needs a session that passed the second factor with the key
  * unlocked (423 otherwise), the one-time form value, the confirmed usage rule
  * and an effective grant; its response renders the app password directly,
@@ -228,7 +229,7 @@ class DevicesController extends BaseController
     }
 
     /**
-     * POST with the form token, a signed-in user, the feature on.
+     * POST with the form token, a signed-in user who may use internet calendars, the feature on.
      */
     private function guard(): TeamServices
     {
@@ -237,12 +238,9 @@ class DevicesController extends BaseController
             throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
         }
 
-        $services = TeamServices::fromApplication();
-        $user = $this->app->getIdentity();
-
-        if ($user === null || $user->guest || !$services->enabled()) {
-            throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
-        }
+        // The same gate as the page: 404 for a guest or a disabled feature, 403 for an
+        // account that may not use internet calendars, before any device is looked up.
+        $services = HtmlView::requireAccess();
 
         HtmlView::privateHeaders();
 

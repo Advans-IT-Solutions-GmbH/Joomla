@@ -17,6 +17,7 @@ use Advans\Component\Appointments\Site\View\PageTitleTrait;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
+use Joomla\CMS\User\User;
 
 defined('_JEXEC') or die;
 
@@ -27,9 +28,10 @@ defined('_JEXEC') or die;
  * «Add device», rendered only by the controller in the response to the POST
  * that created the device, because the app password exists nowhere else).
  *
- * Reachable only signed in and only with the internet calendars switched on; a
- * guest and a disabled feature both get 404, so the page does not reveal
- * whether the feature exists. Every response is `no-store`.
+ * Reachable only signed in, only with the internet calendars switched on and
+ * only for an account that may use them (requireAccess()); a guest and a
+ * disabled feature both get 404, so the page does not reveal whether the
+ * feature exists, any other account 403. Every response is `no-store`.
  *
  * @since  1.4.0
  */
@@ -88,11 +90,7 @@ class HtmlView extends BaseHtmlView
     {
         $app = Factory::getApplication();
         $user = $app->getIdentity();
-        $services = TeamServices::fromApplication();
-
-        if ($user === null || $user->guest || !$services->enabled()) {
-            throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
-        }
+        $services = self::requireAccess();
 
         self::privateHeaders();
         $assets = $this->getDocument()->getWebAssetManager();
@@ -179,6 +177,57 @@ class HtmlView extends BaseHtmlView
             'mail_sent' => (bool) ($result['mail_sent'] ?? true),
         ];
         $this->setLayout('created');
+    }
+
+    /**
+     * The gate of this page and of every device task, checked on the server for
+     * every request, with or without a menu item: a guest and a disabled feature
+     * get 404 (the page does not reveal whether the feature exists); a signed-in
+     * account that may not use internet calendars gets 403.
+     *
+     * @throws  \RuntimeException  404 or 403.
+     */
+    public static function requireAccess(): TeamServices
+    {
+        $user = Factory::getApplication()->getIdentity();
+        $services = TeamServices::fromApplication();
+
+        if ($user === null || $user->guest || !$services->enabled()) {
+            throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
+        }
+
+        if (!self::mayUse($services, $user)) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
+        return $services;
+    }
+
+    /**
+     * Default deny: only a member of a team group or of the external group may use
+     * internet calendars (the same eligibility the grants require), and, when the
+     * option names one, only with the access level «Internet calendars» of the menu
+     * item. Super Users have no exception. A check that cannot be made refuses.
+     */
+    public static function mayUse(TeamServices $services, User $user): bool
+    {
+        $userId = (int) $user->id;
+
+        if ($userId <= 0) {
+            return false;
+        }
+
+        try {
+            if (!\in_array($services->grants()->audienceOf($userId), [TeamStates::AUDIENCE_TEAM, TeamStates::AUDIENCE_EXTERNAL], true)) {
+                return false;
+            }
+
+            $level = (int) $services->params()->get('team_viewlevel', 0);
+
+            return $level <= 0 || \in_array($level, array_map('intval', $user->getAuthorisedViewLevels()), true);
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     /**
