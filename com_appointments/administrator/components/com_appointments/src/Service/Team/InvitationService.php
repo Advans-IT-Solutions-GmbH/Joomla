@@ -10,15 +10,14 @@
 namespace Advans\Component\Appointments\Administrator\Service\Team;
 
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Joomla\CMS\Access\Access;
-use Joomla\CMS\Application\ConsoleApplication;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Log\Log;
-use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\User;
 
 defined('_JEXEC') or die;
@@ -181,22 +180,12 @@ final class InvitationService implements InvitationServiceInterface
     }
 
     /**
-     * The component's public_site_url, then live_site, then the request root outside the CLI.
+     * The component's public_site_url, then live_site (PublicSiteUrl), never the address of the
+     * request. Without one, no activation link is built and no invitation is sent (fail closed).
      */
     private static function siteBase(): string
     {
-        $app = Factory::getApplication();
-        $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
-
-        if ($base === '') {
-            $base = (string) $app->get('live_site', '');
-        }
-
-        if ($base === '' && !$app instanceof ConsoleApplication) {
-            $base = Uri::root();
-        }
-
-        return $base;
+        return PublicSiteUrl::current() ?? throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_SITE_URL', 503);
     }
 
     /**
@@ -313,6 +302,9 @@ final class InvitationService implements InvitationServiceInterface
     public function invite(int $actorUserId, int $userId): int
     {
         $this->assertEnabled();
+        // Before anything is stored: without a configured public site URL the activation mail
+        // could not be sent (fail closed), so the invitation is refused with that reason.
+        self::siteBase();
         $user = GrantService::user($userId);
 
         if ($user === null) {

@@ -243,6 +243,48 @@ try {
         && str_contains($system, 'Latest enabled retention task') && !str_contains($system, $config->secret),
         'System checks report task/audit health without exposing signing credentials');
 
+    // Without a valid public site URL or live_site the component sends no mail and takes no booking (fail closed).
+    $siteUrlRow = static fn (string $html, string $status): bool => preg_match('#Public site URL for e-mail links</th>\s*<td class="text-'
+        . ($status === 'ok' ? 'success">OK' : 'danger fw-bold">Error') . '#', $html) === 1;
+    $withSiteUrl = static function (string $url) use ($db, $prefix, $componentParams): void {
+        $params = json_decode($componentParams, true) ?: [];
+        $params['public_site_url'] = $url;
+        $encoded = $db->real_escape_string(json_encode($params));
+        $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
+    };
+    try {
+        if (trim((string) ($config->live_site ?? '')) === '') {
+            $withSiteUrl('');
+            $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
+            $check($admin->status === 200 && $siteUrlRow($system, 'attention') && str_contains($system, 'Not set')
+                && str_contains($system, 'Host header'),
+                'Without a public site URL and live_site, the system checks report an error naming the public site URL');
+        }
+        if (trim((string) ($config->live_site ?? '')) === '') {
+            $dashboard = $admin->request('/administrator/index.php?option=com_appointments');
+            $check($admin->status === 200 && str_contains($dashboard, 'id="appointments-site-url-missing"') && str_contains($dashboard, 'alert-danger'),
+                'Without a public site URL the dashboard shows an error that no mails are sent and no bookings taken');
+        }
+        $withSiteUrl('https://www.example.test/site');
+        $dashboard = $admin->request('/administrator/index.php?option=com_appointments');
+        $check($admin->status === 200 && !str_contains($dashboard, 'id="appointments-site-url-missing"'),
+            'With a valid public site URL the dashboard shows no error');
+        $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
+        $check($admin->status === 200 && $siteUrlRow($system, 'ok') && str_contains($system, 'https://www.example.test/site'),
+            'A configured public site URL satisfies the system check and is shown');
+        // The same values that NotificationService::linkBase() refuses: a query, an upper-case scheme,
+        // surrounding spaces, and an option of spaces only (which mail links use instead of live_site).
+        foreach (['https://www.example.test/?x=1', 'HTTPS://www.example.test', ' https://www.example.test ', '   '] as $refused) {
+            $withSiteUrl($refused);
+            $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
+            $check($admin->status === 200 && $siteUrlRow($system, 'attention'),
+                'A public site URL that mail links refuse is an error: ' . json_encode($refused));
+        }
+    } finally {
+        $encoded = $db->real_escape_string($componentParams);
+        $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
+    }
+
     $parent = $db->query("SELECT rgt FROM {$prefix}usergroups WHERE id=6")->fetch_assoc();
     $right = (int) $parent['rgt'];
     $db->begin_transaction();

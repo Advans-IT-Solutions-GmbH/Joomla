@@ -34,6 +34,16 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
             <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=system'); ?>"><?php echo Text::_('COM_APPOINTMENTS_SYSTEM_TITLE'); ?></a>
         <?php endif; ?>
     </nav>
+    <?php if (\Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl::current() === null) : ?>
+        <?php // Fail closed: without a valid public site URL no mail is sent and no booking is taken. ?>
+        <div class="alert alert-danger" role="alert" id="appointments-site-url-missing">
+            <p><strong><?php echo Text::_('COM_APPOINTMENTS_SITE_URL_MISSING_TITLE'); ?></strong></p>
+            <p class="mb-0"><?php echo Text::_('COM_APPOINTMENTS_SYSTEM_SITE_URL_FIX'); ?></p>
+            <?php if ($user->authorise('core.admin', 'com_appointments')) : ?>
+                <p class="mt-2 mb-0"><a class="btn btn-danger" href="<?php echo Route::_('index.php?option=com_config&view=component&component=com_appointments'); ?>"><?php echo Text::_('COM_APPOINTMENTS_SITE_URL_MISSING_OPTIONS'); ?></a></p>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
     <div class="row">
         <div class="col-md-6 mb-3">
             <div class="card h-100">
