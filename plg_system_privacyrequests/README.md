@@ -202,13 +202,21 @@ all data classes. Operators must assess account mismatches, additional identity 
 legal blockers and retained data. Accent-distinct addresses are not interchangeable;
 database collation is only a candidate prefilter, never ownership proof.
 
-Atomic admission reserves a maximum of five attempts per normalized address and twenty
-per client IP in each 15-minute window, separately for submission and confirmation.
+Atomic admission reserves a maximum of twenty attempts per client IP in each 15-minute
+window, separately for submission and confirmation, and for submission also five per
+normalized address. Confirmation has no address bucket: wrong codes sent by anyone else
+must not lock the data subject's genuine code out until it expires, and the keyed code is
+not guessable within the client limit.
 Each bucket reservation is independently transactional, not an all-or-none pair:
 the IP is charged first and remains charged when the address is refused or fails.
 An IP refusal does not allocate or charge a fresh address bucket. A refused submission
 does not create a Core receipt. Session binding is CSRF protection, not a third
 session-rate bucket.
+
+Only dot-atom addresses of at most 100 bytes are accepted: quoted local parts, address
+literals, whitespace and the RFC 5322 specials (`"`, `<`, `>`, `\`, `(`, `)`, `[`, `]`,
+`,`, `;`, `:`) are refused before Core stores anything, because Core's administrator
+request view prints the stored address unescaped.
 Counters hold HMAC identifiers, not raw addresses/IPs; these are pseudonymous, not
 anonymous. Old counters are purged on later admissions. Concurrent subject changes and
 administrator operations are serialized; confirmation pins and rechecks the native
@@ -263,7 +271,8 @@ route, its genuine user audit, native user pseudonymisation and separate complet
 database; an unsupported native Unicode-mail positive remains explicitly open and
 returns a nonzero exit rather than making partial acceptance green.
 `tests/admission.cjs` uses independent HTTP sessions on two actual PHP processes to
-exercise both operations' five-address/twenty-client thresholds, charged denials,
+exercise the five-address submission and twenty-client thresholds of both operations,
+a genuine code that wrong codes of others cannot lock out, charged denials,
 no-fake-receipt refusal and the persistent API's exact 900-second clock boundary.
 `tests/operator.cjs` exercises the configured native public Contact form, real
 captured operator communication and authorized refusal of premature Remove/Complete,

@@ -271,13 +271,15 @@ CSS;
     {
         $app = $this->getApplication();
         $input = $app->getInput();
+        $command = self::coreCommand($input);
         if (!$app->isClient('administrator') || $input->getCmd('option') !== 'com_privacy'
-            || !in_array(strtolower($input->getCmd('task', '')), ['request.remove', 'request.complete'], true)
+            || !in_array($command, ['request.remove', 'request.complete'], true)
             || !$app->getIdentity()->authorise('core.admin', 'com_privacy')) {
             return;
         }
-        $remove = strtolower($input->getCmd('task', '')) === 'request.remove';
-        $id = $input->getInt('id', 0);
+        $remove = $command === 'request.remove';
+        // The same filters as Core's RequestController: remove reads uint, complete reads int.
+        $id = $remove ? (int) $input->getUint('id', 0) : $input->getInt('id', 0);
         if ($id < 1 || !Session::checkToken($remove ? 'request' : 'post')) {
             return;
         }
@@ -304,6 +306,24 @@ CSS;
         } else {
             $this->completing = $id;
         }
+    }
+
+    /**
+     * The controller.task Core's ComponentDispatcher will execute: `task=request.remove`,
+     * `task=request.remove.x` and `controller=request&task=remove` all reach the same
+     * method, and BaseController matches the task case-insensitively.
+     */
+    private static function coreCommand(\Joomla\Input\Input $input): string
+    {
+        $command = (string) $input->getCmd('task', 'display');
+        if (str_contains($command, '.')) {
+            [$controller, $task] = explode('.', $command);
+        } else {
+            $controller = (string) $input->get('controller', 'display');
+            $task = $command;
+        }
+
+        return strtolower($controller . '.' . $task);
     }
 
     public function onBeforeRespond(): void
