@@ -94,12 +94,11 @@ run_suite() {
     fi
 }
 
-# Suites without the existing shop privacy plugins enabled first.
-for suite in browser lifecycle registered admission concurrency operator; do
-    run_suite "$suite"
-done
+# The coupled site runs the existing shop privacy plugins as an upgraded shop
+# would: privacy and mail-hook plugins enabled, their Scheduler task plugin off.
+# The registered listener-order and legacy/export suites need them active.
 fixture legacy-enable > "$PRIVACY_RESULTS/legacy-enable.json"
-for suite in legacy export appointments; do
+for suite in browser lifecycle registered admission concurrency operator legacy export appointments; do
     run_suite "$suite"
 done
 

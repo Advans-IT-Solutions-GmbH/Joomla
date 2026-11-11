@@ -131,7 +131,7 @@ async function main() {
             await admin.goto(`${root}/administrator/index.php?option=com_privacy&view=request&id=${failed.requests[0].id}`);
             check('Authorized native request view exposes the Unicode native-mail failure and actionable original receipt',
                 (await admin.locator('body').innerText()).includes('Confirmation delivery failed.')
-                && (await admin.locator('body').innerText()).includes('Do not bypass confirmation.'));
+                && (await admin.locator('body').innerText()).includes('Do not bypass confirmation, Remove or Complete.'));
             console.log('OPEN_CORE_LIMITATION', JSON.stringify({requirement: 'Unicode local-part mail and positive confirmation',
                 ...unicodeTransport}));
             // A native transport limit must not turn a partial acceptance run green.
