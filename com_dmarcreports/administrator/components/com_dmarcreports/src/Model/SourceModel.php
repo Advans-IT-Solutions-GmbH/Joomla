@@ -13,6 +13,7 @@ use Advans\Component\DmarcReports\Administrator\Helper\CryptoHelper;
 use Advans\Component\DmarcReports\Administrator\Helper\ReportProvenance;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceIdentity;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceLock;
+use Advans\Component\DmarcReports\Administrator\Table\SourceTable;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\AdminModel;
@@ -27,6 +28,14 @@ defined('_JEXEC') or die;
  */
 class SourceModel extends AdminModel
 {
+    /**
+     * Credential target and ciphertext the current blank-password save was
+     * validated against, or null.
+     *
+     * @var  array<string, mixed>|null
+     */
+    private ?array $credentialSnapshot = null;
+
     public function getTable($name = 'Source', $prefix = 'Administrator', $options = [])
     {
         return parent::getTable($name, $prefix, $options);
@@ -104,17 +113,21 @@ class SourceModel extends AdminModel
             // Keep the existing credential when the field is left blank on edit,
             // but only for the same server and account. Otherwise a user who may
             // edit sources could point the source at a server of their own and
-            // receive the stored password at the next LOGIN.
-            $existing = $this->getExistingIdentity($pk);
+            // receive the stored password at the next LOGIN. Target and
+            // ciphertext come from one snapshot, and SourceTable::store()
+            // re-checks that snapshot under a row lock: a concurrent save that
+            // changed the target or the password in between makes this save
+            // fail instead of pairing one server's password with another target.
+            $snapshot = $this->getExistingCredential($pk);
 
-            if ($existing !== null && SourceIdentity::credentialTargetChanged($existing, $data)) {
+            if ($snapshot !== null && SourceIdentity::credentialTargetChanged($snapshot, $data)) {
                 $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_PASSWORD_REENTER'));
 
                 return false;
             }
 
-            $current = $this->getExistingPassword($pk);
-            $data['password_enc'] = $current;
+            $data['password_enc']     = (string) ($snapshot['password_enc'] ?? '');
+            $this->credentialSnapshot = $snapshot;
         } else {
             // A new source must carry a credential. The blank-means-unchanged
             // shortcut above only applies to edits; a create saved with an empty
@@ -150,7 +163,11 @@ class SourceModel extends AdminModel
             }
         }
 
-        return parent::save($data);
+        try {
+            return parent::save($data);
+        } finally {
+            $this->credentialSnapshot = null;
+        }
     }
 
     /**
@@ -231,15 +248,40 @@ class SourceModel extends AdminModel
         }
     }
 
-    private function getExistingPassword(int $pk): string
+    /**
+     * Read the credential target and the stored ciphertext of a source in one
+     * query, so both come from the same row version.
+     *
+     * @return  array<string, mixed>|null
+     */
+    private function getExistingCredential(int $pk): ?array
     {
         $db    = $this->getDatabase();
         $query = (method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true))
-            ->select($db->quoteName('password_enc'))
+            ->select($db->quoteName(array_merge(SourceIdentity::CREDENTIAL_TARGET_FIELDS, ['password_enc'])))
             ->from($db->quoteName('#__dmarc_sources'))
             ->where($db->quoteName('id') . ' = :id')
             ->bind(':id', $pk, \Joomla\Database\ParameterType::INTEGER);
 
-        return (string) $db->setQuery($query)->loadResult();
+        $row = $db->setQuery($query)->loadAssoc();
+
+        return \is_array($row) ? $row : null;
+    }
+
+    /**
+     * Hand the validated credential snapshot to the table, which re-checks it
+     * under a row lock right before the write.
+     *
+     * @param   \Joomla\CMS\Table\Table  $table  The table about to be stored.
+     *
+     * @return  void
+     */
+    protected function prepareTable($table)
+    {
+        parent::prepareTable($table);
+
+        if ($this->credentialSnapshot !== null && $table instanceof SourceTable) {
+            $table->requireUnchangedCredential($this->credentialSnapshot);
+        }
     }
 }

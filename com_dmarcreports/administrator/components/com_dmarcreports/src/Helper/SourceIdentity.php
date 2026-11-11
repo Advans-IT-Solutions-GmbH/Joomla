@@ -94,4 +94,22 @@ abstract class SourceIdentity
 
         return false;
     }
+
+    /**
+     * Whether two rows carry the same credential: the same target and the same
+     * stored ciphertext. A save that keeps the stored password re-checks its
+     * snapshot with this under a row lock, so a concurrent change of the target
+     * or of the password makes it fail instead of pairing them wrongly.
+     *
+     * @param   array<string, mixed>|object  $snapshot
+     * @param   array<string, mixed>|object  $current
+     */
+    public static function sameCredential($snapshot, $current): bool
+    {
+        $a = \is_object($snapshot) ? get_object_vars($snapshot) : (array) $snapshot;
+        $b = \is_object($current) ? get_object_vars($current) : (array) $current;
+
+        return !self::credentialTargetChanged($a, $b)
+            && (string) ($a['password_enc'] ?? '') === (string) ($b['password_enc'] ?? '');
+    }
 }

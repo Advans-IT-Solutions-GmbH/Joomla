@@ -109,6 +109,19 @@ class SourceIdentityTest extends TestCase
         }
     }
 
+    public function testSameCredentialNeedsTargetAndCiphertext(): void
+    {
+        // The snapshot a blank-password save keeps must match the row it writes:
+        // another target, or the same target with another password, means a
+        // concurrent save changed it.
+        $snapshot = $this->source();
+
+        $this->assertTrue(SourceIdentity::sameCredential($snapshot, (object) $this->source(['port' => '993', 'folder' => 'Archive'])));
+        $this->assertFalse(SourceIdentity::sameCredential($snapshot, $this->source(['host' => 'imap.other.example', 'password_enc' => 'other'])));
+        $this->assertFalse(SourceIdentity::sameCredential($snapshot, $this->source(['password_enc' => 'other'])));
+        $this->assertFalse(SourceIdentity::sameCredential($snapshot, $this->source(['host' => 'imap.other.example'])));
+    }
+
     public function testFolderOrPasswordChangeKeepsTheCredentialTarget(): void
     {
         $this->assertFalse(

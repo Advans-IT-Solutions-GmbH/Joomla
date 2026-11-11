@@ -261,6 +261,8 @@ class ConfigFormsTest
                     && $afterFolder['secret'] === $before['secret']
                     && $before['secret'] !== '';
             });
+
+            $this->testOverlappingSourceSaves($before['id'], $validSource);
         } else {
             $this->test('Saved source row can be read back', static fn () => false);
         }
@@ -523,6 +525,85 @@ class ConfigFormsTest
         $row     = $result ? $result->fetch_assoc() : null;
 
         return $row ? (int) $row['c'] : 0;
+    }
+
+    /**
+     * A blank-password save that overlaps a save of another target and password
+     * must not pair the other password with its own target. The test holds the
+     * source row locked from a second connection while the HTTP save runs, then
+     * commits the other save and releases the lock. The HTTP save must then be
+     * refused and the committed pair must stay intact.
+     */
+    private function testOverlappingSourceSaves(int $id, string $name): void
+    {
+        $config = new JConfig();
+        $other  = new mysqli($config->host, $config->user, $config->password, $config->db);
+        $table  = "{$this->dbPrefix}dmarc_sources";
+
+        $edit        = $this->request($this->baseUrl . '/administrator/index.php?option=com_dmarcreports&task=source.edit&id=' . $id, [], true);
+        $this->token = $this->extractToken($edit['body']) ?: $this->token;
+
+        $post = ['option' => 'com_dmarcreports', 'task' => 'source.save', 'id' => (string) $id];
+        foreach ([
+            'id' => (string) $id, 'name' => $name, 'domain_id' => '0', 'delete_after_import' => '0',
+            'protocol' => 'imap', 'host' => 'imap.example.org', 'port' => '993', 'security' => 'ssl',
+            'username' => 'ci@example.org', 'password' => '', 'folder' => 'Archive', 'published' => '1',
+        ] as $key => $value) {
+            $post["jform[{$key}]"] = $value;
+        }
+        if ($this->token !== null) {
+            $post[$this->token] = '1';
+        }
+
+        $other->begin_transaction();
+        $other->query("SELECT id FROM {$table} WHERE id = {$id} FOR UPDATE");
+
+        $ch = curl_init($this->baseUrl . '/administrator/index.php');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT        => 90,
+            CURLOPT_COOKIEJAR      => $this->cookieJar,
+            CURLOPT_COOKIEFILE     => $this->cookieJar,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => http_build_query($post),
+        ]);
+        $multi = curl_multi_init();
+        curl_multi_add_handle($multi, $ch);
+
+        $running  = 0;
+        $deadline = microtime(true) + 4;
+        do {
+            curl_multi_exec($multi, $running);
+            curl_multi_select($multi, 0.2);
+        } while ($running > 0 && microtime(true) < $deadline);
+
+        $waited = $running > 0;
+
+        // The other save commits another target with another password.
+        $other->query("UPDATE {$table} SET host = 'imap.other.example', password_enc = 'concurrent-other' WHERE id = {$id}");
+        $other->commit();
+        $other->close();
+
+        do {
+            curl_multi_exec($multi, $running);
+            curl_multi_select($multi, 0.2);
+        } while ($running > 0);
+
+        $body = (string) curl_multi_getcontent($ch);
+        curl_multi_remove_handle($multi, $ch);
+        curl_multi_close($multi);
+        curl_close($ch);
+
+        $after = $this->sourceRow($name);
+
+        $this->test('A blank-password save waits while the source row is locked', static fn () => $waited);
+        $this->test('An overlapping save of another target and password is not paired with the old target', function () use ($body, $after) {
+            return $this->containsString($body, 'COM_DMARCREPORTS_SOURCE_ERROR_PASSWORD_REENTER')
+                && $after !== null
+                && $after['host'] === 'imap.other.example'
+                && $after['secret'] === hash('sha256', 'concurrent-other');
+        });
     }
 
     /**
