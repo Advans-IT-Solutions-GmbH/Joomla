@@ -33,7 +33,11 @@ test('cleanup page follows the Atum color scheme and fits the viewport', async (
     // The logout link exists only once the administrator session is established.
     await expect(page.locator('a[href*="task=logout"]').first()).toBeAttached({ timeout: 30_000 });
 
+    // Let any post-login client navigation settle before opening the page.
+    await page.waitForLoadState('networkidle');
     await page.goto('/administrator/index.php?option=com_j2store_cleanup');
+    await page.waitForLoadState('networkidle');
+    expect(page.url(), 'the cleanup page stays open').toContain('option=com_j2store_cleanup');
     await expect(page.locator('.j2cleanup')).toBeVisible();
     await expect(page.locator('.j2cleanup code', { hasText: fixture.probeElement })).toHaveCount(1);
 

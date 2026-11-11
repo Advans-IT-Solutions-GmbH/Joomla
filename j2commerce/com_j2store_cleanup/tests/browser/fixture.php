@@ -42,6 +42,15 @@ $db->insertObject('#__users', $user, 'id');
 $membership = (object) ['user_id' => (int) $user->id, 'group_id' => 8];
 $db->insertObject('#__user_usergroup_map', $membership);
 
+// Guided tours may start on a new user's first pages and navigate away; they are
+// not part of this test.
+$db->setQuery(
+    'UPDATE ' . $db->quoteName('#__extensions') . ' SET ' . $db->quoteName('enabled') . ' = 0'
+    . ' WHERE ' . $db->quoteName('type') . ' = ' . $db->quote('plugin')
+    . ' AND ' . $db->quoteName('folder') . ' = ' . $db->quote('system')
+    . ' AND ' . $db->quoteName('element') . ' = ' . $db->quote('guidedtours')
+)->execute();
+
 // A long element name stresses the table width on narrow screens.
 $probe = (object) [
     'name'           => 'plg_j2store_layoutprobe',
