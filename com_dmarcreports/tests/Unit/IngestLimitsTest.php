@@ -163,6 +163,25 @@ class IngestLimitsTest extends TestCase
         $this->assertNull($limits->checkRun(1, 100));
     }
 
+    public function testExhaustedRunStopsInspectingFurtherMessages(): void
+    {
+        $limits = new IngestLimits(10, 100, 10000, 5, 1000);
+
+        // A fresh run is never exhausted, so its first message is inspected.
+        $this->assertNull($limits->runExhausted());
+
+        // Two discarded gzip bombs spend the size budget although nothing was
+        // stored; the next message is then postponed without being unpacked.
+        $limits->chargeInspected(600);
+        $this->assertNull($limits->runExhausted());
+        $limits->chargeInspected(600);
+        $this->assertSame(IngestLimits::REASON_RUN_SIZE, $limits->runExhausted());
+
+        $reports = new IngestLimits(10, 100, 10000, 5, 1000);
+        $reports->charge(5, 10);
+        $this->assertSame(IngestLimits::REASON_RUN_REPORTS, $reports->runExhausted());
+    }
+
     public function testNewRunStartsWithAFullBudget(): void
     {
         // Every poll builds a fresh limits object, so a message postponed by

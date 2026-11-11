@@ -178,6 +178,18 @@ final class Ingestor
         $retry       = false;
         $blocked     = false;
         $uid         = (int) ($message['uid'] ?? 0);
+
+        if ($this->limits !== null) {
+            // Once the run budget is spent (also by held messages and
+            // discarded bombs), do not even unpack the next message: postpone
+            // it and every later one to the next run.
+            $reason = $this->limits->runExhausted();
+
+            if ($reason !== null) {
+                return $this->postpone($summary, $sourceId, $uid, $reason, 0, 0);
+            }
+        }
+
         $attachments = MimeMessage::attachments((string) ($message['raw'] ?? ''));
 
         if ($this->limits !== null) {
@@ -191,10 +203,11 @@ final class Ingestor
         // Pass 1: extract every attachment and measure the message before
         // anything is stored, so a message over a limit is held as a whole and
         // never half imported.
-        $prepared = [];
-        $reports  = 0;
-        $bytes    = 0;
-        $cache    = true;
+        $prepared  = [];
+        $reports   = 0;
+        $bytes     = 0;
+        $discarded = 0; // inflated by an extractor and thrown away (bomb, corrupt stream)
+        $cache     = true;
 
         foreach ($attachments as $index => $attachment) {
             $stats   = [];
@@ -235,8 +248,9 @@ final class Ingestor
                 $size += \strlen($document);
             }
 
-            $reports += \count($documents) + $dropped;
-            $bytes   += $size;
+            $reports   += \count($documents) + $dropped;
+            $bytes     += $size;
+            $discarded += (int) ($stats['discarded'] ?? 0);
 
             if ($this->limits !== null) {
                 // A document over the archive helper's size ceiling would be
@@ -248,9 +262,9 @@ final class Ingestor
                     : $this->limits->checkMessage($reports, $bytes);
 
                 if ($reason !== null) {
-                    $this->limits->chargeInspected($bytes);
+                    $this->limits->chargeInspected($bytes + $discarded);
 
-                    return $this->hold($summary, $sourceId, $uid, $reason, \count($attachments), $reports, $bytes);
+                    return $this->hold($summary, $sourceId, $uid, $reason, \count($attachments), $reports, $bytes + $discarded);
                 }
             }
 
@@ -278,13 +292,11 @@ final class Ingestor
             $reason = $this->limits->checkRun($reports, $bytes);
 
             if ($reason !== null) {
-                $summary['postponed'] = (int) ($summary['postponed'] ?? 0) + 1;
-                IngestLog::postponed((int) $sourceId, $uid, $reason, $reports, $bytes);
-
-                return self::RESULT_POSTPONE;
+                return $this->postpone($summary, $sourceId, $uid, $reason, $reports, $bytes);
             }
 
             $this->limits->charge($reports, $bytes);
+            $this->limits->chargeInspected($discarded);
         }
 
         // Pass 2: store what pass 1 measured.
@@ -356,6 +368,21 @@ final class Ingestor
         return $isTlsRpt
             ? TlsReportArchive::extract($content, $name, $stats)
             : ReportArchive::extract($content, $name, $stats);
+    }
+
+    /**
+     * Count and log a message the run limits leave for the next run.
+     *
+     * @param   DmarcIngestSummary  $summary
+     *
+     * @return  self::RESULT_POSTPONE
+     */
+    private function postpone(array &$summary, ?int $sourceId, int $uid, string $reason, int $reports, int $bytes): string
+    {
+        $summary['postponed'] = (int) ($summary['postponed'] ?? 0) + 1;
+        IngestLog::postponed((int) $sourceId, $uid, $reason, $reports, $bytes);
+
+        return self::RESULT_POSTPONE;
     }
 
     /**

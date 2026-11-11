@@ -160,6 +160,50 @@ class ReportArchiveTest extends TestCase
         $this->assertSame(1, $stats['oversized']);
     }
 
+    public function testZipCountsAnOversizedEntryBehindTheDocumentCap(): void
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            $this->markTestSkipped('zip extension not available');
+        }
+
+        $tmp = tempnam(sys_get_temp_dir(), 'dmarc_test_zip_');
+        $zip = new \ZipArchive();
+        $zip->open($tmp, \ZipArchive::OVERWRITE);
+
+        // Exactly the 256-document cap of small reports, then one entry over
+        // the 8 MiB document ceiling. The cap branch stops extraction first;
+        // the oversized entry must still be counted.
+        for ($i = 0; $i < 256; $i++) {
+            $zip->addFromString('report-' . $i . '.xml', self::XML);
+        }
+
+        $zip->addFromString('large.xml', '<?xml version="1.0"?><feedback>' . str_repeat('A', 9437184) . '</feedback>');
+        $zip->close();
+        $payload = file_get_contents($tmp);
+        @unlink($tmp);
+
+        $documents = ReportArchive::extract($payload, 'capped.zip', $stats);
+
+        $this->assertCount(256, $documents);
+        $this->assertSame(0, $stats['dropped']);
+        $this->assertSame(1, $stats['oversized']);
+    }
+
+    public function testGzipBombReportsTheDiscardedBytes(): void
+    {
+        if (!\function_exists('gzencode')) {
+            $this->markTestSkipped('zlib extension not available');
+        }
+
+        $payload = gzencode('<?xml version="1.0"?><feedback>' . str_repeat('A', 9437184) . '</feedback>');
+
+        $this->assertSame([], ReportArchive::extract($payload, 'bomb.xml.gz', $stats));
+        $this->assertSame('bomb', $stats['reason']);
+        // The inflated bytes are thrown away, but the caller can charge them
+        // to its run budget: the read stops one byte past the 8 MiB ceiling.
+        $this->assertSame(8388609, $stats['discarded']);
+    }
+
     public function testZipDocumentCountIsCapped(): void
     {
         if (!class_exists(\ZipArchive::class)) {

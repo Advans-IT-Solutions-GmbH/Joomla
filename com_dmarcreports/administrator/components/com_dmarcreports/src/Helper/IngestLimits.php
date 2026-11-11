@@ -181,6 +181,26 @@ final class IngestLimits
     }
 
     /**
+     * Whether the run budget is already spent, so the next message must not
+     * even be unpacked. A fresh run is never exhausted, so the first message
+     * of a run is always inspected.
+     *
+     * @return  string|null  A REASON_RUN_* constant, or null while budget remains.
+     */
+    public function runExhausted(): ?string
+    {
+        if ($this->runReports >= $this->maxRunReports) {
+            return self::REASON_RUN_REPORTS;
+        }
+
+        if ($this->runBytes >= $this->maxRunBytes) {
+            return self::REASON_RUN_SIZE;
+        }
+
+        return null;
+    }
+
+    /**
      * Charge an admitted message to the run budget.
      */
     public function charge(int $reports, int $bytes): void
@@ -190,9 +210,11 @@ final class IngestLimits
     }
 
     /**
-     * Charge the unpacked bytes of a held message to the run budget. Nothing
-     * of it is stored, but the decompression work counts, so a flood of held
-     * messages cannot make one run unpack without bound.
+     * Charge unpacked bytes that were not stored to the run budget: those of a
+     * held message and those an extractor inflated and then discarded (a gzip
+     * bomb or a corrupt stream). Nothing of them is stored, but the
+     * decompression work counts, so a flood of such messages cannot make one
+     * run unpack without bound.
      */
     public function chargeInspected(int $bytes): void
     {

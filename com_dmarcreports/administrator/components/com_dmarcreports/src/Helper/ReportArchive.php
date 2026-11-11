@@ -69,7 +69,9 @@ final class ReportArchive
      *          'dropped' is the number of valid XML reports skipped because the
      *          archive held more than {@see self::MAX_DOCUMENTS}; 'oversized'
      *          is the number of XML entries of a zip skipped because they exceed
-     *          the per-document or the per-archive size ceiling.
+     *          the per-document or the per-archive size ceiling; 'discarded' is
+     *          the number of gzip bytes inflated and then thrown away (corrupt
+     *          stream or over the size ceiling), so a caller can charge that work.
      *
      * @return  string[]  A list of XML document strings (possibly empty).
      *
@@ -83,7 +85,7 @@ final class ReportArchive
      */
     public static function extract(string $payload, string $filename = '', ?array &$stats = null): array
     {
-        $stats = ['reason' => '', 'dropped' => 0, 'oversized' => 0];
+        $stats = ['reason' => '', 'dropped' => 0, 'oversized' => 0, 'discarded' => 0];
 
         if ($payload === '') {
             $stats['reason'] = 'empty';
@@ -175,12 +177,14 @@ final class ReportArchive
             if ($data === false || $corrupt || $data === '') {
                 // Not a decodable gzip stream: corrupt or not actually gzip.
                 $stats['reason'] = 'format';
+                $stats['discarded'] = \is_string($data) ? \strlen($data) : 0;
 
                 return [];
             }
 
             if (\strlen($data) > self::MAX_BYTES) {
                 $stats['reason'] = 'bomb';
+                $stats['discarded'] = \strlen($data);
 
                 return [];
             }
@@ -279,7 +283,7 @@ final class ReportArchive
                     // The per-archive document cap is reached. Count the valid XML
                     // reports still ahead so the caller can report how many were
                     // dropped instead of letting them disappear silently.
-                    $stats['dropped'] += self::countRemainingXml($zip, $i);
+                    $stats['dropped'] += self::countRemainingXml($zip, $i, $stats);
 
                     break;
                 }
@@ -353,9 +357,12 @@ final class ReportArchive
      * per-archive document cap is reached. Only entries that meet the same
      * per-entry criteria as the extraction loop (a non-empty .xml within the
      * per-document size ceiling) are counted, so the "dropped" figure reflects
-     * real reports and does not over-count empty or oversized entries.
+     * real reports and does not over-count empty or oversized entries. Oversized
+     * entries are added to $stats['oversized'] instead.
+     *
+     * @param   array  $stats  Diagnostics out-parameter shared with extract().
      */
-    private static function countRemainingXml(\ZipArchive $zip, int $from): int
+    private static function countRemainingXml(\ZipArchive $zip, int $from, array &$stats): int
     {
         $dropped = 0;
 
@@ -372,7 +379,16 @@ final class ReportArchive
 
             $size = (int) $entry['size'];
 
-            if ($size <= 0 || $size > self::MAX_BYTES) {
+            if ($size > self::MAX_BYTES) {
+                // An oversized entry behind the cap is still counted, so the
+                // mailbox path holds the message instead of importing only
+                // the reports in front of it.
+                $stats['oversized']++;
+
+                continue;
+            }
+
+            if ($size <= 0) {
                 continue;
             }
 

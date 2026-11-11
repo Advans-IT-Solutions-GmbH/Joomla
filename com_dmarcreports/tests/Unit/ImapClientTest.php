@@ -633,6 +633,88 @@ class ImapClientTest extends TestCase
         $this->assertStringNotContainsString('UID STORE', $result['sent']);
     }
 
+    public function testPendingRetriesRunBeforeFreshMail(): void
+    {
+        // UID 1 waits in the retry set below the cursor; UIDs 6 and 7 are fresh
+        // mail. The run admits one report. The retry runs first, so fresh mail
+        // cannot use up the run limit every poll and starve it.
+        $limits = new IngestLimits(10, 10, 1000, 1, 100000);
+
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 6 7\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, "Subject: Late\r\n\r\nlate", 'A0005')
+            . $this->fetchResponse(2, 6, "Subject: Fresh\r\n\r\nfresh", 'A0006')
+            . "A0007 OK STORE completed\r\n"
+            . "* BYE\r\nA0008 OK LOGOUT completed\r\n";
+
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0, 'last_uid' => 5, 'deferred_uids' => [1]],
+            $this->limitedIngest($limits)
+        );
+
+        $sent = $result['sent'];
+        $this->assertLessThan(strpos($sent, 'UID FETCH 6 '), strpos($sent, 'UID FETCH 1 '));
+        $this->assertStringNotContainsString('UID FETCH 7 ', $sent);
+        $this->assertSame(1, $result['stats']['ingested']);
+        // The retry is done, the fresh mail stays above the unchanged cursor.
+        $this->assertSame([], $result['stats']['deferred_uids']);
+        $this->assertSame(5, $result['stats']['last_uid']);
+        $this->assertStringContainsString('UID STORE 1 +FLAGS.SILENT (\\Seen)', $sent);
+    }
+
+    public function testPostponedRetryStopsFurtherRetriesAndKeepsThem(): void
+    {
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 6\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, "Subject: Late\r\n\r\nlate", 'A0005')
+            . "* BYE\r\nA0006 OK LOGOUT completed\r\n";
+
+        $called = 0;
+
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0, 'last_uid' => 5, 'deferred_uids' => [1, 2, 3]],
+            static function () use (&$called): string {
+                $called++;
+
+                return 'postpone';
+            }
+        );
+
+        // Only the first retry is fetched; the others and the fresh mail are
+        // not touched, and every retry UID is kept for the next run.
+        $this->assertSame(1, $called);
+        $this->assertStringNotContainsString('UID FETCH 2 ', $result['sent']);
+        $this->assertStringNotContainsString('UID FETCH 3 ', $result['sent']);
+        $this->assertStringNotContainsString('UID FETCH 6 ', $result['sent']);
+        $this->assertSame([1, 2, 3], $result['stats']['deferred_uids']);
+        $this->assertSame(5, $result['stats']['last_uid']);
+    }
+
+    /**
+     * A callback that decides like the ingestor: postpone once the run is
+     * exhausted or a message would exceed it, otherwise store one report.
+     */
+    private function limitedIngest(IngestLimits $limits): callable
+    {
+        return static function () use ($limits): string {
+            if ($limits->runExhausted() !== null || $limits->checkRun(1, 100) !== null) {
+                return 'postpone';
+            }
+
+            $limits->charge(1, 100);
+
+            return 'new';
+        };
+    }
+
     public function testRejectsPlaintextTransport(): void
     {
         // The client must refuse an unencrypted session before opening any

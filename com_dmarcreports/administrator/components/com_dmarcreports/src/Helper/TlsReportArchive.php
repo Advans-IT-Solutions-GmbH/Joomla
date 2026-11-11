@@ -236,7 +236,8 @@ final class TlsReportArchive
      * @param   string      $filename  The attachment file name (used as a hint).
      * @param   array|null  $stats     Optional out-parameter filled with 'reason'
      *          ('' | 'empty' | 'format' | 'bomb'), 'dropped' and 'oversized' (zip
-     *          entries skipped for exceeding a size ceiling).
+     *          entries skipped for exceeding a size ceiling) and 'discarded' (gzip
+     *          bytes inflated and then thrown away).
      *
      * @return  string[]  A list of JSON document strings (possibly empty).
      *
@@ -248,7 +249,7 @@ final class TlsReportArchive
      */
     public static function extract(string $payload, string $filename = '', ?array &$stats = null): array
     {
-        $stats = ['reason' => '', 'dropped' => 0, 'oversized' => 0];
+        $stats = ['reason' => '', 'dropped' => 0, 'oversized' => 0, 'discarded' => 0];
 
         if ($payload === '') {
             $stats['reason'] = 'empty';
@@ -357,12 +358,14 @@ final class TlsReportArchive
 
         if ($data === false || $corrupt || $data === '') {
             $stats['reason'] = 'format';
+            $stats['discarded'] = \is_string($data) ? \strlen($data) : 0;
 
             return null;
         }
 
         if (\strlen($data) > self::MAX_BYTES) {
             $stats['reason'] = 'bomb';
+            $stats['discarded'] = \strlen($data);
 
             return null;
         }
@@ -429,7 +432,7 @@ final class TlsReportArchive
 
             for ($i = 0; $i < $zip->numFiles; $i++) {
                 if (\count($documents) >= self::MAX_DOCUMENTS) {
-                    $stats['dropped'] += self::countRemainingJson($zip, $i);
+                    $stats['dropped'] += self::countRemainingJson($zip, $i, $stats);
 
                     break;
                 }
@@ -481,8 +484,11 @@ final class TlsReportArchive
     /**
      * Count the JSON entries from index $from onward that would be extractable,
      * used to report how many reports were dropped once the document cap hits.
+     * Oversized entries are added to $stats['oversized'] instead.
+     *
+     * @param   array  $stats  Diagnostics out-parameter shared with extract().
      */
-    private static function countRemainingJson(\ZipArchive $zip, int $from): int
+    private static function countRemainingJson(\ZipArchive $zip, int $from, array &$stats): int
     {
         $dropped = 0;
 
@@ -499,7 +505,16 @@ final class TlsReportArchive
 
             $size = (int) $entry['size'];
 
-            if ($size <= 0 || $size > self::MAX_BYTES) {
+            if ($size > self::MAX_BYTES) {
+                // An oversized entry behind the cap is still counted, so the
+                // mailbox path holds the message instead of importing only
+                // the reports in front of it.
+                $stats['oversized']++;
+
+                continue;
+            }
+
+            if ($size <= 0) {
                 continue;
             }
 

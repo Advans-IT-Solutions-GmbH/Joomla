@@ -93,6 +93,7 @@ class IngestLimitsIntegrationTest
             $this->testAttachmentLimit();
             $this->testReportsPerArchive();
             $this->testGzipBomb();
+            $this->testConsecutiveBombsStopAtTheRunBudget();
             $this->testZipBomb();
             $this->testUnpackedSizePerMessage();
             $this->testRunLimitAndContinuation();
@@ -215,6 +216,28 @@ class IngestLimitsIntegrationTest
         $this->test('gzip bomb is small on the wire', \strlen($bomb) < 64 * 1024);
         $this->test('gzip bomb is held for review, not marked read', $result === Ingestor::RESULT_HELD, $result);
         $this->test('log names the archive limit', $this->logContains('UID 41 held') && $this->logContains('limit: archive_limit'));
+    }
+
+    private function testConsecutiveBombsStopAtTheRunBudget(): void
+    {
+        echo "\n--- Consecutive held messages and the run budget ---\n";
+
+        // Each bomb inflates just over 8 MiB before it is discarded. With a
+        // 10 MiB run budget the second bomb is still inspected (and held), the
+        // third is postponed without being unpacked.
+        $ingestor = $this->ingestor(new IngestLimits(10, 20, 32 * self::MIB, 1000, 10 * self::MIB));
+        $summary  = $ingestor->newSummary();
+        $results  = [];
+
+        foreach ([81, 82, 83] as $uid) {
+            $bomb          = gzencode('<?xml version="1.0"?><feedback><!--' . str_repeat('B', 9 * self::MIB) . '--></feedback>', 9);
+            $results[$uid] = $ingestor->ingestMessage(['uid' => $uid, 'raw' => $this->message([['name' => 'bomb-' . $uid . '.xml.gz', 'type' => 'application/gzip', 'data' => $bomb]])], null, $this->domainId, $summary);
+        }
+
+        $this->test('first two bombs are held', $results[81] === Ingestor::RESULT_HELD && $results[82] === Ingestor::RESULT_HELD, json_encode($results));
+        $this->test('the discarded bytes spend the run budget, the third is postponed', $results[83] === Ingestor::RESULT_POSTPONE, json_encode($results));
+        $this->test('held and postponed are counted', $summary['held'] === 2 && $summary['postponed'] === 1);
+        $this->test('log names the postponed UID and the run size', $this->logContains('UID 83 postponed') && $this->logContains('limit: run_size'));
     }
 
     private function testZipBomb(): void

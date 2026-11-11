@@ -207,7 +207,7 @@ final class ImapClient
             $touched = []; // processed but no new report (empty, duplicate or invalid)
             $held    = []; // over a per-message limit, flagged for manual review
             $deferred = []; // UIDs still awaiting decode support, re-tried next run
-            $idsSet   = array_flip($ids); // UIDs seen in the scan below, to skip in the retry pass
+            $idsSet   = array_flip($ids); // UIDs the scan below handles, skipped in the retry pass
             $budget  = self::MAX_TOTAL_BYTES;
 
             // Contiguous high-water mark: advanced to a UID only while every
@@ -218,7 +218,86 @@ final class ImapClient
             $highWater    = $lastUid;
             $progressOpen = true;
 
+            // Set once the ingestion limits postpone a message: nothing more is
+            // fetched or inspected in this run.
+            $postponed = false;
+
+            // Re-try reports an earlier run could not decode for lack of a PHP
+            // extension. They sit below the cursor, so the UID scan below never
+            // returns them; fetch each one explicitly. They run before the scan
+            // so fresh mail cannot use up the run limits every time and starve
+            // them. Skip any the scan will see itself (a UID blocked again there
+            // is re-added). A fetch that returns nothing means the message was
+            // expunged or is empty, so stop tracking it. On success it is stored
+            // and dropped from the retry set; while it still cannot be decoded it
+            // stays.
+            foreach ($pending as $uid) {
+                if (isset($idsSet[$uid])) {
+                    continue;
+                }
+
+                if ($postponed) {
+                    // The run limits are reached: keep every unvisited retry
+                    // UID for the next run without fetching it.
+                    $deferred[] = $uid;
+
+                    continue;
+                }
+
+                $raw = $this->fetchBody($uid);
+
+                if ($raw === '') {
+                    continue;
+                }
+
+                if (\strlen($raw) > $budget) {
+                    // No run budget left; keep it for the next run.
+                    $deferred[] = $uid;
+                    unset($raw);
+
+                    continue;
+                }
+
+                $stats['seen']++;
+                $budget -= \strlen($raw);
+                $result = (string) $onMessage(['uid' => $uid, 'raw' => $raw]);
+                unset($raw);
+
+                if ($result === 'blocked') {
+                    $stats['blocked']++;
+                    $deferred[] = $uid;
+                    $touched[]  = $uid;
+                } elseif ($result === 'retry') {
+                    // A transient failure on a below-cursor message: the UID scan
+                    // cannot re-reach it, so keep it in the retry set rather than
+                    // relying on the cursor to re-present it next run.
+                    $stats['deferred']++;
+                    $deferred[] = $uid;
+                } elseif ($result === 'new') {
+                    $stats['ingested']++;
+                    $handled[] = $uid;
+                } elseif ($result === 'held') {
+                    // Now over a per-message limit: flag it for review and stop
+                    // re-fetching it.
+                    $held[] = $uid;
+                } elseif ($result === 'postpone') {
+                    // The run limits are reached; keep it for the next run and
+                    // stop the run here.
+                    $deferred[] = $uid;
+                    $postponed  = true;
+                } else {
+                    $stats['skipped']++;
+                    $touched[] = $uid;
+                }
+            }
+
             foreach ($ids as $id) {
+                if ($postponed) {
+                    // A retry above already reached the run limits; the cursor
+                    // stays where it is and the scan resumes next run.
+                    break;
+                }
+
                 $raw = $this->fetchBody($id);
 
                 if ($raw === '') {
@@ -302,6 +381,7 @@ final class ImapClient
                     // The run limits are reached. Leave this message untouched
                     // and stop here; the next run starts with it.
                     $progressOpen = false;
+                    $postponed    = true;
                     break;
                 } else {
                     $stats['skipped']++;
@@ -310,63 +390,6 @@ final class ImapClient
                     if ($progressOpen) {
                         $highWater = $id;
                     }
-                }
-            }
-
-            // Re-try reports an earlier run could not decode for lack of a PHP
-            // extension. They sit below the cursor, so the UID scan above never
-            // returns them; fetch each one explicitly. Skip any already seen in
-            // this run's scan (a UID blocked again above is re-added there). A
-            // fetch that returns nothing means the message was expunged or is
-            // empty, so stop tracking it. On success it is stored and dropped
-            // from the retry set; while it still cannot be decoded it stays.
-            foreach ($pending as $uid) {
-                if (isset($idsSet[$uid])) {
-                    continue;
-                }
-
-                $raw = $this->fetchBody($uid);
-
-                if ($raw === '') {
-                    continue;
-                }
-
-                if (\strlen($raw) > $budget) {
-                    // No run budget left; keep it for the next run.
-                    $deferred[] = $uid;
-                    unset($raw);
-
-                    continue;
-                }
-
-                $stats['seen']++;
-                $budget -= \strlen($raw);
-                $result = (string) $onMessage(['uid' => $uid, 'raw' => $raw]);
-                unset($raw);
-
-                if ($result === 'blocked') {
-                    $stats['blocked']++;
-                    $deferred[] = $uid;
-                    $touched[]  = $uid;
-                } elseif ($result === 'retry') {
-                    // A transient failure on a below-cursor message: the UID scan
-                    // cannot re-reach it, so keep it in the retry set rather than
-                    // relying on the cursor to re-present it next run.
-                    $stats['deferred']++;
-                    $deferred[] = $uid;
-                } elseif ($result === 'new') {
-                    $stats['ingested']++;
-                    $handled[] = $uid;
-                } elseif ($result === 'held') {
-                    // Now over a per-message limit: flag it for review and stop
-                    // re-fetching it.
-                    $held[] = $uid;
-                } elseif ($result === 'postpone') {
-                    // No run budget left; keep it for the next run.
-                    $deferred[] = $uid;
-                } else {
-                    $stats['skipped']++;
-                    $touched[] = $uid;
                 }
             }
 
