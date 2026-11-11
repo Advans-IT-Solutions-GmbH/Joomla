@@ -84,6 +84,37 @@ class ProfileTest
         }
     }
 
+    /**
+     * Custom fields: the fields plugin marks every editable custom field missing
+     * from the request with false, which the save turns into a cleared value.
+     * Only fields the submitted form rendered may be cleared that way; a partial
+     * override must keep the values it never displayed.
+     */
+    private function testOnlyRenderedCustomFieldsAreCleared(): void
+    {
+        echo "\n--- Custom fields of partial and complete profile forms ---\n";
+
+        $class = \Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms::class;
+
+        // Partial override: shows one field, another stored field is not rendered.
+        $partial = $class::keepRenderedClears(
+            ['name' => 'A', 'com_fields' => ['shown' => 'value', 'stored' => false]],
+            ['shown']
+        );
+        $this->test(
+            'A field the partial form did not render keeps its stored value',
+            !array_key_exists('stored', $partial['com_fields'] ?? []) && ($partial['com_fields']['shown'] ?? null) === 'value'
+        );
+
+        // Complete form: a rendered checkbox field with every box unticked is cleared.
+        $complete = $class::keepRenderedClears(['com_fields' => ['boxes' => false]], ['boxes']);
+        $this->test('A rendered field missing from the request is saved as cleared', ($complete['com_fields']['boxes'] ?? null) === false);
+
+        // Legacy request: no rendered fields, nothing is cleared.
+        $legacy = $class::keepRenderedClears(['name' => 'B', 'com_fields' => ['one' => false, 'two' => false]], []);
+        $this->test('A legacy request clears no custom field', !array_key_exists('com_fields', $legacy) && $legacy['name'] === 'B');
+    }
+
     private function testUnauthenticatedRejected(): void
     {
         echo "\n--- HTTP: unauthenticated profile save → rejected ---\n";
@@ -274,6 +305,7 @@ class ProfileTest
         echo "=== Profile Tests ===\n";
 
         $this->testMethodsViaReflection();
+        $this->testOnlyRenderedCustomFieldsAreCleared();
         $this->testUnauthenticatedRejected();
         $this->testNoTokenRejected();
         $this->testSignedInSaveUsesTheCoreProfileForm();

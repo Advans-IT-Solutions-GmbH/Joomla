@@ -848,6 +848,38 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Undo the clearing of custom fields the submitted form did not render.
+     *
+     * The fields plugin marks every editable custom field missing from the
+     * request with false, so the save clears it. That is right for a field the
+     * form showed (all checkboxes unticked), but a partial form of a template
+     * override would otherwise erase values it never displayed.
+     *
+     * @param   array     $data      Request data after onContentNormaliseRequestData
+     * @param   string[]  $rendered  Names of the custom fields the form rendered
+     *
+     * @return  array
+     */
+    public static function keepRenderedClears(array $data, array $rendered): array
+    {
+        if (!isset($data['com_fields']) || !\is_array($data['com_fields'])) {
+            return $data;
+        }
+
+        foreach ($data['com_fields'] as $name => $value) {
+            if ($value === false && !\in_array((string) $name, $rendered, true)) {
+                unset($data['com_fields'][$name]);
+            }
+        }
+
+        if ($data['com_fields'] === []) {
+            unset($data['com_fields']);
+        }
+
+        return $data;
+    }
+
+    /**
      * A request value as a string, or an empty string for an array or other
      * non-scalar input.
      *
@@ -1426,12 +1458,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $data = $input->post->get('jform', [], 'array');
             $data = \is_array($data) ? $data : [];
 
-            // Only a request that carries the whole profile form represents
-            // every editable field. The script marks it (profile_form=1) because
-            // it sends every field of the form. A legacy or partial request from
-            // a template override does not, so its missing custom fields must
-            // not count as cleared and keep their stored values.
-            $carriesForm = $data !== [] && $input->post->getInt('profile_form', 0) === 1;
+            // The custom fields the submitted form rendered. The script lists
+            // them (profile_rendered_fields), so only those may be saved as
+            // cleared when they are missing from the request (all checkboxes
+            // unticked). A field the form never showed keeps its stored value.
+            $rendered = $input->post->get('profile_rendered_fields', [], 'array');
+            $rendered = \is_array($rendered) ? array_values(array_filter($rendered, 'is_string')) : [];
 
             // Template overrides that post jform[email] or plain field names
             // keep working, as with the former handler.
@@ -1481,20 +1513,17 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             // As ProfileController::save(): plugins normalise the request data
             // first. The fields plugin turns an editable custom field missing
             // from the request (all checkboxes cleared) into a cleared value.
-            // Only for a request that carries the form, see above.
-            if ($carriesForm) {
-                $objData = (object) $data;
-                $app->getDispatcher()->dispatch(
-                    'onContentNormaliseRequestData',
-                    new NormaliseRequestDataEvent('onContentNormaliseRequestData', [
-                        'context' => 'com_users.user',
-                        'data'    => $objData,
-                        'subject' => $form,
-                    ])
-                );
-                $data       = (array) $objData;
-                $data['id'] = $userId;
-            }
+            $objData = (object) $data;
+            $app->getDispatcher()->dispatch(
+                'onContentNormaliseRequestData',
+                new NormaliseRequestDataEvent('onContentNormaliseRequestData', [
+                    'context' => 'com_users.user',
+                    'data'    => $objData,
+                    'subject' => $form,
+                ])
+            );
+            $data       = self::keepRenderedClears((array) $objData, $rendered);
+            $data['id'] = $userId;
 
             $validated = $model->validate($form, $data);
 
