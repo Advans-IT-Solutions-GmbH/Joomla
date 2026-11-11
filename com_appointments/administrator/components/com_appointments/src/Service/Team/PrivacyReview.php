@@ -48,8 +48,11 @@ final class PrivacyReview
 
     /**
      * Whether an address belongs to a user of the internet calendars (a grant,
-     * a device, a personal key, an owned calendar or an activation link): such
-     * an address is never handled automatically by a privacy request.
+     * a device, a personal key, an owned calendar or an activation link, or a
+     * row of the internet calendar log about the account, which outlives the
+     * staff clean-up of a privacy request for twelve months): such an address
+     * is never handled automatically by a privacy request, also not on a retry
+     * after the account's devices, keys and grants were removed.
      */
     public static function calendarUser(DatabaseInterface $db, string $email, int $userId = 0): bool
     {
@@ -67,7 +70,8 @@ final class PrivacyReview
         foreach (array_unique($ids) as $id) {
             foreach ([['#__appointments_calendar_grants', 'user_id'], ['#__appointments_devices', 'user_id'],
                 ['#__appointments_user_keys', 'user_id'], ['#__appointments_calendars', 'owner_user_id'],
-                ['#__appointments_invitations', 'user_id']] as [$table, $column]) {
+                ['#__appointments_invitations', 'user_id'], ['#__appointments_teamlog', 'actor_user_id'],
+                ['#__appointments_teamlog', 'subject_user_id']] as [$table, $column]) {
                 $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
 
                 if ((int) $db->setQuery($query->select('COUNT(*)')->from($db->quoteName($table))
