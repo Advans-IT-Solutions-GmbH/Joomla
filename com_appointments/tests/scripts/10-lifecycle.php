@@ -72,6 +72,9 @@ try {
     $check($client->status === 200 && str_contains($reloaded, $newSignature($fixture->link($moved, 'cancel'))),
         'The receipt keeps the new links on reload in the browser that made the change');
 
+    // The mails of the reschedule above, before the next fixture books and reschedules again.
+    $messages = AppointmentsMail::messagesSince($before);
+
     // A completed receipt bypasses the signature check, so its links depend on the version guard:
     // after a later change by someone else, a cancellation, an anonymisation or a deletion, a
     // reload of the same receipt in the same browser shows neither link (another event type and
@@ -114,7 +117,6 @@ try {
         'The receipt shows no links after the booking was deleted');
     // Test clean-up: the fixture removes audit rows only for bookings that still exist.
     $fixture->db->query("DELETE FROM {$fixture->prefix}appointments_audit WHERE booking_id={$guardedId}");
-    $messages = AppointmentsMail::messagesSince($before);
     $check(count($messages) === 3, 'Reschedule sends actual mail to invitee, guest and host');
     foreach ($messages as $mime) {
         $decoded = AppointmentsMail::decoded($mime);
