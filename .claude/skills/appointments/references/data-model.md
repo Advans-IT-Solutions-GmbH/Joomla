@@ -18,7 +18,7 @@ type's `host_user_id` is not required to be the owner of its schedule.
 | Column | Type | Notes |
 |---|---|---|
 | `user_id` | `INT UNSIGNED NOT NULL` | primary key, the Joomla user id |
-| `feed_token` | `CHAR(64) NOT NULL` | hex, 32 random bytes, **no default** |
+| `feed_token` | `CHAR(67) NOT NULL` | `h1:` plus HMAC-SHA256 (hex) of `host:<user_id>:<token>` (token of 32 random bytes), never the token (`FeedToken`), **no default** |
 | `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
 
 Unique `feed_token`.
@@ -68,7 +68,7 @@ The bookable thing.
 | `language` | `CHAR(7) NOT NULL DEFAULT '*'` | |
 | `published` | `TINYINT(1) NOT NULL DEFAULT 1` | |
 | `ordering` | `INT NOT NULL DEFAULT 0` | |
-| `feed_token` | `CHAR(64) NOT NULL` | hex, 32 random bytes, **no default**: a default of `''` would give the first row inserted by a forgetful code path an empty bearer credential, and the unique index would only catch the second one |
+| `feed_token` | `CHAR(67) NOT NULL` | `h1:` plus HMAC-SHA256 (hex) of `event:<id>:<token>` (token of 32 random bytes), never the token (`FeedToken`), **no default**: a default of `''` would give the first row inserted by a forgetful code path an empty bearer credential, and the unique index would only catch the second one |
 | `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
 | `checked_out`, `checked_out_time` | Joomla standard | |
 

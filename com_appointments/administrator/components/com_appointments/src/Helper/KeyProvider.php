@@ -47,6 +47,13 @@ final class KeyProvider
     public const PURPOSE_RATE_LIMIT = 'rate-limit';
 
     /**
+     * Keys the digest of a token feed credential (FeedToken), so the database
+     * holds no usable credential and a row written without the site secret
+     * matches no token.
+     */
+    public const PURPOSE_FEED_TOKEN = 'feed-token';
+
+    /**
      * Team calendars, one key per purpose. See
      * `.claude/skills/appointments/references/team-calendars.md`, section
      * "Server keys". Changing the site secret invalidates every one of them.

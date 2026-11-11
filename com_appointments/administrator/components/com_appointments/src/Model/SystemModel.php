@@ -64,7 +64,7 @@ class SystemModel extends BaseDatabaseModel
         $invalid = 0;
         foreach (['eventtypes', 'hosts'] as $table) {
             $query = $this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_' . $table))
-                ->where($db->quoteName('feed_token') . " NOT REGEXP '^[a-f0-9]{64}$'");
+                ->where($db->quoteName('feed_token') . " NOT REGEXP '^h1:[a-f0-9]{64}$'");
             $invalid += (int) $db->setQuery($query)->loadResult();
         }
         $checks[] = ['label' => 'COM_APPOINTMENTS_SYSTEM_FEEDS', 'ok' => $invalid === 0, 'value' => (string) $invalid];

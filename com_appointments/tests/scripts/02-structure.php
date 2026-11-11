@@ -400,6 +400,7 @@ class StructureTest
             'Schema migration'        => $this->admin . '/sql/updates/mysql/1.0.0.sql',
             'Display migration'       => $this->admin . '/sql/updates/mysql/1.3.0.sql',
             'Team calendar migration' => $this->admin . '/sql/updates/mysql/1.4.0.sql',
+            'Feed digest migration'   => $this->admin . '/sql/updates/mysql/1.5.0.sql',
             'Access rules'            => $this->admin . '/access.xml',
             'Administrator LICENSE'   => $this->admin . '/LICENSE.txt',
             'Site provider'           => $this->site . '/services/provider.php',

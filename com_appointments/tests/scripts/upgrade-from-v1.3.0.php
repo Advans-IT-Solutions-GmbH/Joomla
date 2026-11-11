@@ -404,16 +404,21 @@ function upgrade_verify(): void
         $result = $db->query("SELECT version_id FROM `$schemasTable` WHERE extension_id = " . (int) $fixture['extension_id']);
         $schemaVersions = $result ? array_map('strval', array_column($result->fetch_all(MYSQLI_ASSOC), 'version_id')) : [];
     }
-    upgrade_check('Joomla records the 1.4.0 database schema update',
-        in_array('1.4.0', $schemaVersions, true), implode(', ', $schemaVersions));
+    upgrade_check('Joomla records the newest (1.5.0) database schema update',
+        in_array('1.5.0', $schemaVersions, true), implode(', ', $schemaVersions));
 
     $eventId = (int) $fixture['eventtype_id'];
     $event = $db->query("SELECT schedule_id, host_user_id, feed_token, calendar_id FROM `$eventtypesTable` WHERE id = $eventId")->fetch_assoc();
-    upgrade_check('event type, schedule, host, and legacy feed token are preserved',
+    require_once __DIR__ . '/appointments-bookingdata.php';
+    // "h1:" plus HMAC-SHA256 over scope, id and token under the feed-token server key, derived here
+    // independently of the component.
+    $feedKey = hash_hmac('sha256', 'com_appointments:feed-token', (string) (new JConfig())->secret, true);
+    upgrade_check('event type, schedule and host are preserved, the legacy feed credential is stored only as its keyed digest',
         $event !== null
         && (int) $event['schedule_id'] === (int) $fixture['schedule_id']
         && (int) $event['host_user_id'] === (int) ($fixture['bookings']['confirmed']['core']['host_user_id'])
-        && hash_equals((string) $fixture['feed_token'], (string) $event['feed_token'])
+        && hash_equals('h1:' . hash_hmac('sha256', 'event:' . $eventId . ':' . (string) $fixture['feed_token'], $feedKey), (string) $event['feed_token'])
+        && !str_contains((string) $event['feed_token'], (string) $fixture['feed_token'])
         && $event['calendar_id'] === null);
     $rulesTable = $prefix . 'appointments_schedule_rules';
     $ruleCount = (int) $db->query("SELECT COUNT(*) FROM `$rulesTable` WHERE schedule_id = " . (int) $fixture['schedule_id'])->fetch_row()[0];
@@ -506,6 +511,15 @@ function upgrade_verify(): void
     }
 
     require_once __DIR__ . '/appointments-http.php';
+    // An existing subscription keeps working: its address still carries the pre-upgrade token.
+    $subscriber = new AppointmentsHttp('http://localhost', 'upgrade-v130-feed');
+    $feedQuery = ['option' => 'com_appointments', 'task' => 'feed.download', 'scope' => 'event', 'id' => $eventId];
+    $feed = $subscriber->request('/index.php?' . http_build_query($feedQuery + ['token' => (string) $fixture['feed_token']]));
+    upgrade_check('the pre-upgrade feed address keeps working after the credential is hashed',
+        $subscriber->status === 200 && str_starts_with($feed, "BEGIN:VCALENDAR\r\n"), 'HTTP ' . $subscriber->status);
+    $subscriber->request('/index.php?' . http_build_query($feedQuery + ['token' => substr((string) $event['feed_token'], 3)]));
+    upgrade_check('the stored digest itself does not open the feed', $subscriber->status === 404, 'HTTP ' . $subscriber->status);
+
     $admin = new AppointmentsHttp('http://localhost', 'upgrade-v130-admin');
     $admin->login();
     $list = $admin->request('/administrator/index.php?option=com_appointments&view=bookings&filter_eventtype_id=' . (int) $fixture['eventtype_id']);

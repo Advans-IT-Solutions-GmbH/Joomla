@@ -45,7 +45,7 @@ class FeedController extends BaseController
         }
         $token = $this->input->get('token', '', 'raw');
         try {
-            $calendar = (new FeedService($db))->download(
+            $calendar = (new FeedService($db, $keys))->download(
                 $this->input->getString('scope', ''), $this->input->getInt('id', 0),
                 is_string($token) ? $token : '', $now
             );

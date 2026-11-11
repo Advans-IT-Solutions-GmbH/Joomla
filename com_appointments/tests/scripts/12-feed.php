@@ -108,10 +108,40 @@ $http = new AppointmentsFeedHttp();
 $admin = new AppointmentsFeedHttp();
 $feedPath = static fn (string $scope, int $id, string $token): string => '/index.php?'
     . http_build_query(['option' => 'com_appointments', 'task' => 'feed.download', 'scope' => $scope, 'id' => $id, 'token' => $token]);
-$tokens = static function (int $event) use ($fixture): array {
+// The database holds only a keyed digest of each credential: $digests reads them.
+$digests = static function (int $event) use ($fixture): array {
     $eventRow = $fixture->db->query("SELECT feed_token FROM {$fixture->prefix}appointments_eventtypes WHERE id={$event}")->fetch_assoc();
     $hostRow = $fixture->db->query("SELECT feed_token FROM {$fixture->prefix}appointments_hosts WHERE user_id={$fixture->host}")->fetch_assoc();
     return [$eventRow['feed_token'], $hostRow['feed_token']];
+};
+// The expected digest, derived independently of the component: "h1:" plus HMAC-SHA256 under
+// the server key of purpose feed-token (HMAC of "com_appointments:feed-token" with the site secret),
+// over scope, id and token.
+$feedKey = hash_hmac('sha256', 'com_appointments:feed-token', (string) (new JConfig())->secret, true);
+$digest = static fn (string $scope, int $id, string $token): string => 'h1:' . hash_hmac('sha256', $scope . ':' . $id . ':' . $token, $feedKey);
+// Writes a stored value straight into the database.
+$store = static function (string $scope, int $id, string $value) use ($fixture): void {
+    $table = $scope === 'event' ? 'appointments_eventtypes' : 'appointments_hosts';
+    $column = $scope === 'event' ? 'id' : 'user_id';
+    $fixture->db->query("UPDATE {$fixture->prefix}{$table} SET feed_token='{$value}' WHERE {$column}={$id}");
+    if ($fixture->db->affected_rows !== 1) {
+        throw new RuntimeException('The feed fixture credential was not stored.');
+    }
+};
+// A known credential, stored as its keyed digest.
+$seed = static function (string $scope, int $id) use ($store, $digest): string {
+    $token = bin2hex(random_bytes(32));
+    $store($scope, $id, $digest($scope, $id, $token));
+    return $token;
+};
+// The address a rotation response shows once, for exactly the rotated feed.
+$issued = static function (string $page, string $scope, int $id): ?string {
+    $page = html_entity_decode($page, ENT_QUOTES | ENT_HTML5);
+    if (substr_count($page, 'task=feed.download') !== 1
+        || !preg_match('/task=feed\.download&scope=' . $scope . '&id=' . $id . '&token=([a-f0-9]{64})"/', $page, $match)) {
+        return null;
+    }
+    return $match[1];
 };
 $noStore = static fn (array $headers): bool => str_contains($headers['cache-control'] ?? '', 'no-store')
     && str_contains($headers['cache-control'] ?? '', 'private')
@@ -146,10 +176,32 @@ try {
     $created = $fixture->booking($event, $day . ' 10:00:00', ['guests' => 'guest@example.test']);
     $other = $fixture->booking($otherEvent, $day . ' 12:00:00')['booking'];
     $booking = $created['booking'];
-    [$eventToken, $hostToken] = $tokens($event);
-    [$otherToken] = $tokens($otherEvent);
-    $check(preg_match('/^[a-f0-9]{64}$/D', $hostToken) === 1 && $eventToken !== $hostToken && $otherToken !== $eventToken,
-        'Both scopes and different events have independent random credentials');
+    $check(preg_match('/^h1:[a-f0-9]{64}$/D', $digests($event)[1]) === 1,
+        'A host created by the booking flow gets an unissued credential digest, never a clear-text credential');
+    // A clear-text credential written into the database after the 1.5.0 migration (a database
+    // writer without the site secret) never authenticates, and nothing ever converts it.
+    $planted = bin2hex(random_bytes(32));
+    $store('event', $event, $planted);
+    $http->request($feedPath('event', $event, $planted));
+    $check($http->status === 404, 'A clear-text credential planted in the database does not authenticate');
+    $admin->login();
+    $admin->request('/administrator/index.php?option=com_appointments&view=feeds');
+    $http->request($feedPath('event', $event, $planted));
+    $check($admin->status === 200 && $digests($event)[0] === $planted && $http->status === 404,
+        'Opening the feeds view does not convert a planted clear-text credential into a valid one');
+    $eventToken = $seed('event', $event);
+    $hostToken = $seed('host', $fixture->host);
+    $otherToken = $seed('event', $otherEvent);
+    [$eventDigest, $hostDigest] = $digests($event);
+    $http->request($feedPath('event', $event, substr($eventDigest, 3)));
+    $check($http->status === 404, 'The stored digest itself does not open the feed');
+    // A database writer copies the digest of a known event feed into the host row (another table,
+    // so its unique index does not stop it; within one table the unique index refuses a copy).
+    $store('host', $fixture->host, $eventDigest);
+    $http->request($feedPath('host', $fixture->host, $eventToken));
+    $transplanted = $http->status;
+    $store('host', $fixture->host, $hostDigest);
+    $check($transplanted === 404, 'A digest copied to another feed row opens nothing there: it is bound to its scope and id');
     $path = $feedPath('event', $event, $eventToken);
     $body = $http->request($path);
     $etag = $http->headers['etag'] ?? '';
@@ -208,19 +260,27 @@ try {
     $end = $fixture->db->real_escape_string($booking['end_utc']);
     $fixture->db->query("UPDATE {$fixture->prefix}appointments_bookings SET start_utc='{$start}',end_utc='{$end}' WHERE id=" . (int) $booking['id']);
 
-    $admin->login();
     $page = $admin->request('/administrator/index.php?option=com_appointments&view=feeds');
     $csrf = $admin->token($page);
-    $check($admin->status === 200 && str_contains(html_entity_decode($page), $path)
-        && str_contains($page, 'password') && str_contains($page, 'old URL'), 'Privileged feed UI shows URLs and the password/immediate revocation warning');
+    $check($admin->status === 200 && str_contains($page, 'id="feed-row-event-' . $event . '"')
+        && str_contains($page, 'id="feed-row-host-' . $fixture->host . '"') && !str_contains($page, 'task=feed.download')
+        && !str_contains($page, $eventToken) && !str_contains($page, $hostToken) && !str_contains($page, $eventDigest)
+        && str_contains($page, 'password') && str_contains($page, 'old URL') && str_contains($page, 'only a digest'),
+        'Privileged feed UI lists the feeds without any address or digest, with the password/immediate revocation warning');
     $rotate = '/administrator/index.php?option=com_appointments&task=feeds.rotate';
     $admin->request($rotate . '&scope=event&id=' . $event . '&confirm=1&' . $csrf . '=1');
-    $check($admin->status === 403 && $tokens($event)[0] === $eventToken, 'Rotation rejects GET even with a form token');
+    $check($admin->status === 403 && $digests($event)[0] === $eventDigest, 'Rotation rejects GET even with a form token');
     $admin->request($rotate, ['scope' => 'event', 'id' => $event, 'confirm' => 1]);
-    $check($admin->status === 403 && $tokens($event)[0] === $eventToken, 'Rotation rejects a POST without CSRF');
-    $admin->request($rotate, ['scope' => 'event', 'id' => $event, 'confirm' => 1, $csrf => 1]);
-    [$newEventToken, $sameHostToken] = $tokens($event);
-    $check($admin->status === 200 && $newEventToken !== $eventToken && $sameHostToken === $hostToken, 'Event rotation changes only its own credential');
+    $check($admin->status === 403 && $digests($event)[0] === $eventDigest, 'Rotation rejects a POST without CSRF');
+    $rotated = $admin->request($rotate, ['scope' => 'event', 'id' => $event, 'confirm' => 1, $csrf => 1]);
+    $newEventToken = (string) $issued($rotated, 'event', $event);
+    [$newEventDigest, $sameHostDigest] = $digests($event);
+    $check($admin->status === 200 && $newEventToken !== '' && $newEventDigest === $digest('event', $event, $newEventToken)
+        && $newEventDigest !== $eventDigest && $sameHostDigest === $hostDigest && $noStore($admin->headers),
+        'Event rotation changes only its own credential and shows its new address once, in a no-store response');
+    $again = $admin->request('/administrator/index.php?option=com_appointments&view=feeds');
+    $check($admin->status === 200 && !str_contains($again, $newEventToken) && !str_contains($again, 'task=feed.download'),
+        'The issued address is not shown again');
     $http->request($path);
     $check($http->status === 404, 'Old event credential is immediately revoked');
     $http->request($feedPath('event', $event, $newEventToken));
@@ -231,9 +291,11 @@ try {
     $check($http->status === 200, 'Event rotation leaves other event credentials untouched');
     $page = $admin->request('/administrator/index.php?option=com_appointments&view=feeds');
     $csrf = $admin->token($page);
-    $admin->request($rotate, ['scope' => 'host', 'id' => $fixture->host, 'confirm' => 1, $csrf => 1]);
-    [$sameEventToken, $newHostToken] = $tokens($event);
-    $check($admin->status === 200 && $sameEventToken === $newEventToken && $newHostToken !== $hostToken, 'Host rotation does not alter the event credential');
+    $rotated = $admin->request($rotate, ['scope' => 'host', 'id' => $fixture->host, 'confirm' => 1, $csrf => 1]);
+    $newHostToken = (string) $issued($rotated, 'host', $fixture->host);
+    [$sameEventDigest, $newHostDigest] = $digests($event);
+    $check($admin->status === 200 && $newHostToken !== '' && $newHostDigest === $digest('host', $fixture->host, $newHostToken)
+        && $sameEventDigest === $newEventDigest && $newHostDigest !== $hostDigest, 'Host rotation does not alter the event credential');
     $http->request($hostPath);
     $check($http->status === 404, 'Old host credential is immediately revoked');
     $http->request($feedPath('host', $fixture->host, $newHostToken));
@@ -275,7 +337,7 @@ try {
     $check($low->status === 200, 'Restricted Manager has explicit component management access but no options permission');
     $token = $low->token($allowed);
     $low->request($rotate, ['scope' => 'event', 'id' => $event, 'confirm' => 1, $token => 1]);
-    $check($low->status === 403 && $tokens($event)[0] === $newEventToken, 'Lower-privileged Manager cannot rotate credentials');
+    $check($low->status === 403 && $digests($event)[0] === $newEventDigest, 'Lower-privileged Manager cannot rotate credentials');
     $rules['core.options']['6'] = 1;
     $rules['core.edit']['6'] = 1;
     $fixture->db->query("UPDATE {$fixture->prefix}assets SET rules='"
@@ -284,18 +346,20 @@ try {
     $fixture->db->query("UPDATE {$fixture->prefix}assets SET rules='{\"core.edit\":{\"6\":0}}'"
         . " WHERE name='com_appointments.eventtype.{$otherEvent}'");
     $page = $low->request('/administrator/index.php?option=com_appointments&view=feeds');
-    $check($low->status === 200 && str_contains($page, $newEventToken)
-        && !str_contains($page, $newHostToken) && !str_contains($page, $otherToken),
-        'Options permission does not expose a combined host credential containing an explicitly denied event');
+    $check($low->status === 200 && str_contains($page, 'id="feed-row-event-' . $event . '"')
+        && !str_contains($page, 'id="feed-row-host-' . $fixture->host . '"') && !str_contains($page, 'id="feed-row-event-' . $otherEvent . '"')
+        && !str_contains($page, $newEventToken) && !str_contains($page, $newHostToken) && !str_contains($page, $otherToken),
+        'Options permission does not list a combined host feed containing an explicitly denied event');
     $token = $low->token($page);
     $low->request($rotate, ['scope' => 'host', 'id' => $fixture->host, 'confirm' => 1, $token => 1]);
-    $check($low->status === 403 && $tokens($event)[1] === $newHostToken,
+    $check($low->status === 403 && $digests($event)[1] === $newHostDigest,
         'Host rotation also requires access to every event in that combined feed');
 
     // Switched on: the view says that the feeds are deprecated and what replaces them.
     $page = $admin->request('/administrator/index.php?option=com_appointments&view=feeds');
     $check($admin->status === 200 && str_contains($page, 'deprecated') && str_contains($page, 'internet calendars')
-        && str_contains(html_entity_decode($page), $feedPath('event', $event, $newEventToken)), 'Switched on, the feeds stay as they are, with a deprecation notice');
+        && str_contains($page, 'id="feed-row-event-' . $event . '"') && !str_contains($page, $newEventToken),
+        'Switched on, the feeds stay as they are, with a deprecation notice');
 
     // Switched off (the default of a new installation): no feed answers, none is listed or rotated.
     $legacy('0');
@@ -309,7 +373,7 @@ try {
         'Switched off, the feeds view explains the replacement and shows no address');
     $csrf = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
     $admin->request($rotate, ['scope' => 'event', 'id' => $event, 'confirm' => 1, $csrf => 1]);
-    $check($admin->status === 404 && $tokens($event)[0] === $newEventToken, 'Switched off, no credential can be rotated');
+    $check($admin->status === 404 && $digests($event)[0] === $newEventDigest, 'Switched off, no credential can be rotated');
     $export = $admin->request($exportPath);
     $check($admin->status === 200 && str_contains($export, 'UID:' . $booking['uid']), 'The single booking export is not a token feed and stays');
 } finally {

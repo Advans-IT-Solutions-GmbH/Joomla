@@ -13,7 +13,6 @@ use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
-use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
 use Joomla\Database\DatabaseInterface;
 
@@ -52,12 +51,18 @@ class FeedsController extends BaseController
             }
         }
         try {
-            $service->rotate($scope, $id, new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+            $credential = $service->rotate($scope, $id, new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
         } catch (\DomainException $e) {
             throw new \RuntimeException(Text::_('COM_APPOINTMENTS_FEEDS_ERROR_NOT_FOUND'), 404, $e);
         }
+        // Only the digest is stored, so the new address is shown in this response and
+        // nowhere else: no redirect, no session and no message queue holds the token.
+        $this->input->set('view', 'feeds');
+        $this->input->set('layout', 'default');
+        $view = $this->getView('feeds', $this->app->getDocument()->getType(), '', ['base_path' => $this->basePath, 'layout' => 'default']);
+        $view->issue($scope, $id, $credential);
         $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_FEEDS_ROTATED'), 'message');
-        $this->setRedirect(Route::_('index.php?option=com_appointments&view=feeds', false));
+        $this->display();
 
         return true;
     }
