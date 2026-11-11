@@ -20,6 +20,7 @@ final class Client
     private const STATES = [0 => 'pending', 1 => 'confirmed', 2 => 'cancelled'];
 
     private ?array $typeData = null;
+    private ?string $organization = null;
     /** @var array<string, bool> lead cf_ ID => accepts multiple values */
     private array $leadFields = [];
 
@@ -54,6 +55,30 @@ final class Client
         } catch (\Throwable $e) {
             throw new DeliveryException($create ? 'uncertain' : 'retry', 'invalid_response');
         }
+    }
+
+    /**
+     * The organisation the configured key actually authenticates. It is read before any personal data
+     * is sent, so a replaced key of another organisation is detected first.
+     */
+    public function organization(): string
+    {
+        if ($this->organization === null) {
+            $me = $this->request('GET', '/api/v1/me/');
+            $ids = [];
+            foreach (is_array($me['organizations'] ?? null) ? $me['organizations'] : [] as $organization) {
+                $ids[] = is_array($organization) ? (string) ($organization['id'] ?? '') : '';
+            }
+            $ids = array_values(array_unique($ids));
+            if (count($ids) !== 1 || !preg_match('/^orga_[A-Za-z0-9]{1,100}$/D', $ids[0])) {
+                throw new DeliveryException('blocked', 'organization_ambiguous');
+            }
+            if ($this->profile->organization !== '' && !hash_equals($this->profile->organization, $ids[0])) {
+                throw new DeliveryException('blocked', 'organization_mismatch');
+            }
+            $this->organization = $ids[0];
+        }
+        return $this->organization;
     }
 
     /** Exact e-mail match, like the scheduling integration: one match is reused unchanged. */

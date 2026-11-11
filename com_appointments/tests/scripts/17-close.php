@@ -261,6 +261,9 @@ $transport = static function (\Advans\Component\Appointments\Administrator\Servi
         $profile, &$requests, &$notes, &$timeout, &$raceId, &$raceProcess, &$racePipes, &$raceSignal, &$raceReadiness, $fixture
     ): array {
         $requests[] = [$profile->key, $method, $path, $payload];
+        if ($method === 'GET' && $path === '/api/v1/me/') {
+            return ['code' => 200, 'data' => ['organizations' => [['id' => 'orga_' . $profile->key]]]];
+        }
         if ($path === '/api/v1/data/search/') {
             return ['code' => 200, 'data' => ['data' => [['id' => 'cont_' . $profile->key, 'lead_id' => 'lead_' . $profile->key,
                 'emails' => [['email' => 'invitee@example.test']]]], 'cursor' => null]];
@@ -395,7 +398,7 @@ try {
     $qr = $book($eventQr);
     $queue->run();
     $qrRequests = array_filter($requests, static fn ($request) => $request[0] === 'qr');
-    $check(count($qrRequests) === 2 && $link((int) $qr['id'])['profile'] === 'qr' && $link((int) $qr['id'])['state'] === 'done',
+    $check(count($qrRequests) === 3 && array_values($qrRequests)[0][2] === '/api/v1/me/' && $link((int) $qr['id'])['profile'] === 'qr' && $link((int) $qr['id'])['state'] === 'done',
         'A second event type is delivered through its own profile');
 
     $before = count($requests);

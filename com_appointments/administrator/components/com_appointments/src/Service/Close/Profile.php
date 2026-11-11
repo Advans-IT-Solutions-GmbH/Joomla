@@ -24,6 +24,8 @@ final class Profile
     public readonly string $key;
     public readonly string $origin;
     public readonly string $credential;
+    /** Optional expected organisation; the authenticated one is always bound per transfer record. */
+    public readonly string $organization;
     public readonly string $mode;
     public readonly string $type;
     /** @var array<string, string> activity value name => cf_ ID */
@@ -70,7 +72,9 @@ final class Profile
         if (!in_array($this->mode, [self::MODE_NOTE, self::MODE_ACTIVITY], true)) {
             throw new \InvalidArgumentException('Invalid Close delivery mode.');
         }
-        $this->eventTypes = self::ids($entry['eventtypes'] ?? []);
+        $organization = trim((string) ($entry['organization_id'] ?? ''));
+        $this->organization = $organization === '' ? '' : Settings::id($organization, 'orga');
+        $this->eventTypes = self::ids($entry['eventtypes'] ?? [], true);
         if ($this->eventTypes === []) {
             throw new \InvalidArgumentException('A Close profile needs at least one event type.');
         }
@@ -116,7 +120,7 @@ final class Profile
             $this->fields = [];
             $this->activityAnswers = [];
         }
-        $this->binding = hash('sha256', json_encode([$this->origin, $this->credential, $this->mode, $this->type], JSON_THROW_ON_ERROR));
+        $this->binding = hash('sha256', json_encode([$this->origin, $this->credential, $this->organization, $this->mode, $this->type], JSON_THROW_ON_ERROR));
     }
 
     /** All questions whose answers this profile may read; nothing else leaves the website. */
@@ -127,7 +131,8 @@ final class Profile
     }
 
     /** @return list<int> */
-    private static function ids(mixed $value): array
+    /** Keeps the configured order (the first non-empty answer wins) unless sorting is requested. */
+    private static function ids(mixed $value, bool $sort = false): array
     {
         if (is_string($value) || is_int($value)) {
             $value = trim((string) $value) === '' ? [] : preg_split('/\s*,\s*/', trim((string) $value));
@@ -143,7 +148,9 @@ final class Profile
             $ids[] = (int) $id;
         }
         $ids = array_values(array_unique($ids));
-        sort($ids);
+        if ($sort) {
+            sort($ids);
+        }
         return $ids;
     }
 

@@ -63,14 +63,15 @@ campaign. Each profile has:
 | Profile key | Short unique name. Changing it, the origin, the key variable, the delivery mode or the activity type stops updates of records already transferred with the old destination. |
 | Event types | New bookings of these event types use this profile. An event type belongs to at most one profile; an event type without a profile is **never transferred**. |
 | API origin, key variable | The HTTPS origin and the **name** of a server environment variable holding that organisation's API key. The key itself is never stored in the options, the database, screenshots or reports. Use one variable per organisation. |
+| Expected organisation ID | Optional `orga_…`. Before any personal data is sent, the worker reads the organisation of the configured key (`GET /api/v1/me/`, exactly one organisation required) and binds every transfer record to it. A key of another organisation blocks the affected records, and a configured expected ID that differs blocks the profile. |
 | Booking record | Note (all plans) or Custom Activity (plans with custom activities), with its type ID, field mapping and answer mapping. |
 | Answers in the note | Comma-separated local form field IDs. Nothing else from the form is transferred. Guests, conference links, cancellation reasons, consent records and capability links are never sent. |
 | Campaign, source | Fixed texts written into every Note or Activity of the profile. |
 | Lead name, contact title | Comma-separated form field IDs, for example the company field of each event type. The first non-empty answer is used. |
-| Lead fields from answers, fixed lead fields | JSON objects `{"<field ID>": "cf_…"}` and `{"cf_…": "<text>"}`. Every Lead field is fetched before any personal data is sent; an unknown field blocks the transfer. Multi-value fields receive all selected options. |
+| Lead fields from answers, fixed lead fields | JSON objects `{"<field ID>": "cf_…"}` and `{"cf_…": "<text>"}`. Every Lead field is fetched before any personal data, including the e-mail search, is sent; an unknown field blocks the transfer. Multi-value fields receive all selected options. |
 
 Each profile has its own **rate-limit pause**: a `429` with `Retry-After` pauses only that
-organisation, other profiles continue. Enable transfer and, separately, the scheduled task
+organisation, and its bookings do not occupy the batch of the other profiles. Enable transfer and, separately, the scheduled task
 **Appointments: deliver approved bookings to Close**, which is created **disabled**, including on fresh
 installations. An invalid configuration never breaks a booking: the booking is recorded for later
 routing and the dashboard shows the configuration warning; no call is made until it is fixed.
@@ -82,6 +83,8 @@ deletes or anonymises anything in Close**, and nothing on the website waits for 
 
 - Retention, self-service erasure, administrator erasure and native privacy **Remove** only delete the
   local transfer record (the link to the remote IDs). A booking erased before it was sent is not sent.
+  Records already in Close keep their last transferred status, and an uncertain creation of an erased
+  booking is no longer followed up from the website; check it in Close if needed.
 - A privacy request is never blocked or left incomplete because of Close.
 - **Data subject requests for Close are handled separately in Close** by the operator (access,
   correction, deletion there), using Close's own tools.
@@ -90,7 +93,7 @@ deletes or anonymises anything in Close**, and nothing on the website waits for 
 
 The administrator dashboard lists the transfer records of current bookings, 100 per page, with the
 profile and a diagnostic code but no payloads or credentials. Failed rechecks rotate behind other due
-records; authentication, mapping, unknown-field and ambiguous-contact errors block visibly. The
+records; authentication, organisation, mapping, unknown-field and ambiguous-contact errors block visibly. The
 dashboard's safe retry action rechecks blocked records, never uncertain creations. The HTTPS transport
 uses verified TLS, no redirect, a bounded response, five-second timeouts and **no transport-level
 retry**, and it only issues GET, POST and PUT. A database advisory lock serializes workers on this

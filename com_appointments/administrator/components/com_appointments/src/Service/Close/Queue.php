@@ -55,6 +55,7 @@ final class Queue
             operation VARCHAR(24) NOT NULL DEFAULT \'\',
             reason VARCHAR(48) NOT NULL DEFAULT \'\',
             binding CHAR(64) NOT NULL DEFAULT \'\',
+            organization_id VARCHAR(110) NOT NULL DEFAULT \'\',
             lead_id VARCHAR(110) NOT NULL DEFAULT \'\',
             contact_id VARCHAR(110) NOT NULL DEFAULT \'\',
             contact_created TINYINT NOT NULL DEFAULT 0,
@@ -99,7 +100,7 @@ final class Queue
             }
             $values = ['booking_id' => $id, 'profile' => $key, 'uid' => (string) $booking['uid'],
                 'target_sequence' => (int) $booking['sequence'], 'state' => 'pending', 'operation' => '', 'reason' => '',
-                'binding' => '', 'lead_id' => '', 'contact_id' => '', 'contact_created' => 0, 'activity_id' => '',
+                'binding' => '', 'organization_id' => '', 'lead_id' => '', 'contact_id' => '', 'contact_created' => 0, 'activity_id' => '',
                 'attempts' => 0, 'next_attempt' => 0, 'last_attempt' => 0];
             $row = (object) ($values + ['mac' => self::mac($values)]);
             if (!$db->insertObject(self::TABLE, $row)) {
@@ -164,6 +165,9 @@ final class Queue
                 }
                 $this->profileKey = $profile->key;
                 $client = $this->client($profile);
+                if ($row['organization_id'] === '' || !hash_equals($row['organization_id'], $client->organization())) {
+                    throw new DeliveryException('blocked', 'organization_changed');
+                }
                 if ($row['operation'] === 'create_activity') {
                     $note = $profile->mode === Profile::MODE_NOTE;
                     $remoteId = Settings::id($remoteId, 'acti');
@@ -225,8 +229,16 @@ final class Queue
         try {
             $settings = new Settings($this->params);
             $states = $retryBlocked ? "'pending','retry','blocked'" : "'pending','retry'";
-            $rows = $this->db->setQuery('SELECT * FROM ' . $this->table() . ' WHERE state IN (' . $states . ')'
-                . ' AND (next_attempt <= ' . time() . ($retryBlocked ? " OR state = 'blocked'" : '') . ')'
+            $due = ' WHERE state IN (' . $states . ')'
+                . ' AND (next_attempt <= ' . time() . ($retryBlocked ? " OR state = 'blocked'" : '') . ')';
+            // Paused profiles must not fill the batch and starve the other organisations.
+            $paused = array_map(fn (string $key): string => $this->db->quote($key), array_keys($this->limits()));
+            if ($paused !== []) {
+                $counts['deferred'] = (int) $this->db->setQuery('SELECT COUNT(*) FROM ' . $this->table() . $due
+                    . ' AND profile IN (' . implode(',', $paused) . ')')->loadResult();
+                $due .= ' AND profile NOT IN (' . implode(',', $paused) . ')';
+            }
+            $rows = $this->db->setQuery('SELECT * FROM ' . $this->table() . $due
                 . ' ORDER BY last_attempt ASC, booking_id ASC LIMIT ' . max(1, min(100, $limit)))->loadAssocList();
             foreach ($rows as $row) {
                 $counts['processed']++;
@@ -324,7 +336,17 @@ final class Queue
                 throw new DeliveryException('blocked', 'unverified_booking');
             }
             $client = $this->client($profile);
+            // Prove the destination before any personal data leaves: the authenticated organisation
+            // must be the one this record is bound to.
+            $organization = $client->organization();
+            if ($row['organization_id'] === '') {
+                $this->save($id, ['organization_id' => $organization]);
+                $row['organization_id'] = $organization;
+            } elseif (!hash_equals($row['organization_id'], $organization)) {
+                throw new DeliveryException('blocked', 'organization_changed');
+            }
             if ($row['contact_id'] === '') {
+                $client->validateLeadFields();
                 $match = $client->contact((string) ($opened['invitee_email'] ?? ''));
                 if ($match !== null) {
                     // Existing leads and contacts are never changed.
@@ -332,7 +354,6 @@ final class Queue
                     $db->transactionCommit();
                     return 'next';
                 }
-                $client->validateLeadFields();
                 $payload = $client->lead($opened);
                 $method = 'POST';
                 $path = '/api/v1/lead/';

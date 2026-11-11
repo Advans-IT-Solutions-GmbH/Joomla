@@ -71,7 +71,7 @@ namespace {
             $this->pdo = new \PDO('sqlite::memory:', null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
             $this->pdo->exec('CREATE TABLE test_appointments_close_delivery (
                 booking_id INTEGER PRIMARY KEY, profile TEXT, uid TEXT, target_sequence INTEGER, state TEXT, operation TEXT,
-                reason TEXT, binding TEXT, lead_id TEXT, contact_id TEXT, contact_created INTEGER, activity_id TEXT,
+                reason TEXT, binding TEXT, organization_id TEXT, lead_id TEXT, contact_id TEXT, contact_created INTEGER, activity_id TEXT,
                 attempts INTEGER, next_attempt INTEGER, last_attempt INTEGER, mac TEXT)');
             $this->pdo->exec('CREATE TABLE test_appointments_close_limits (profile TEXT PRIMARY KEY, until INTEGER)');
             $this->pdo->exec('CREATE TABLE test_appointments_bookings (
@@ -152,6 +152,7 @@ namespace {
         public array $contacts = [];
         public array $objects = [];
         public string $mode = 'ok';
+        public ?string $orgId = null;
         public array $leadFields = ['cf_origin' => false, 'cf_funnel' => false, 'cf_systems' => true, 'cf_product' => false];
         private int $next = 0;
         public function __construct(public string $org) {}
@@ -163,6 +164,9 @@ namespace {
             }
             if ($this->mode === '429') {
                 return ['code' => 429, 'retry_after' => 60];
+            }
+            if ($method === 'GET' && $path === '/api/v1/me/') {
+                return ['code' => 200, 'data' => ['id' => 'user_synthetic', 'organizations' => [['id' => $this->orgId ?? 'orga_' . $this->org]]]];
             }
             if ($path === '/api/v1/data/search/') {
                 $email = $payload['query']['queries'][1]['related_query']['condition']['value'];
@@ -329,7 +333,8 @@ namespace {
     // Existing contact: reused, never changed.
     $qrNote = $remote['qr']->objects['acti_qr1'];
     $check($qrNote['lead_id'] === 'lead_known' && $qrNote['contact_id'] === 'cont_known'
-        && $remote['qr']->count('PUT') === 0 && $remote['qr']->count('GET', '/api/v1/custom_field/lead/cf_product/') === 0
+        && $remote['qr']->count('PUT') === 0 && $remote['qr']->count('GET', '/api/v1/custom_field/lead/cf_product/') === 1
+        && $remote['qr']->requests[0][1] === '/api/v1/me/' && $remote['qr']->requests[1][1] === '/api/v1/custom_field/lead/cf_product/'
         && str_contains($qrNote['note'], 'COM_APPOINTMENTS_CLOSE_NOTE_NEW_CONTACT: COM_APPOINTMENTS_CLOSE_NOTE_NO'),
         'known e-mail reuses contact and lead without any write to them');
 
@@ -391,8 +396,11 @@ namespace {
     $remote['main']->mode = 'ok';
     $before = count($remote['main']->requests);
     $late = $enrol($booking(9, 2, 'late@example.test', ['11' => 'Late AG']));
-    $result = $queue->run();
+    $enrol($booking(19, 3, 'healthy@example.test', ['31' => 'Healthy Club']));
+    $result = $queue->run(1);
     $check(count($remote['main']->requests) === $before && $result['deferred'] >= 1, 'the paused profile waits for Retry-After, also for new bookings');
+    $check($state(19)['state'] === 'done' && $state(9)['state'] === 'pending',
+        'paused bookings do not fill the batch, other profiles still progress');
     $GLOBALS['close_mock_time'] = time() + 61;
     $queue->run();
     $check($state(7)['state'] === 'done' && $state(9)['state'] === 'done', 'delivery resumes after Retry-After');
@@ -460,8 +468,33 @@ namespace {
     $before = $remote['main']->count('POST', '/api/v1/lead/');
     $enrol($booking(16, 2, 'unknown-field@example.test', $lifeSciences));
     $queue->run();
-    $check($state(16)['reason'] === 'http_404' && $remote['main']->count('POST', '/api/v1/lead/') === $before,
-        'an unknown lead field blocks before any personal data is sent');
+    $check($state(16)['reason'] === 'http_404' && $remote['main']->count('POST', '/api/v1/lead/') === $before
+        && !str_contains(json_encode($all()), 'unknown-field@example.test'),
+        'an unknown lead field blocks before any personal data, including the e-mail search, is sent');
+    $remote['main']->leadFields = ['cf_origin' => false, 'cf_funnel' => false, 'cf_systems' => true];
+
+    // The authenticated organisation is bound per record and checked before personal data.
+    $remote['main']->orgId = 'orga_replaced';
+    $late = $mutate($late, ['sequence' => 1, 'state' => 2]);
+    $before = count($remote['main']->requests);
+    $queue->run();
+    $after = array_slice($remote['main']->requests, $before);
+    $check($state(9)['state'] === 'blocked' && $state(9)['reason'] === 'organization_changed'
+        && array_column($after, 1) === ['/api/v1/me/'], 'a key of another organisation is detected before any booking data is sent');
+    $remote['main']->orgId = null;
+    $queue->run(20, true);
+    $check($state(9)['state'] === 'done' && str_contains($remote['main']->objects[$state(9)['activity_id']]['title'], 'CANCELLED'),
+        'the original organisation resumes the bound record');
+    $params->values['close_profiles']['close_profiles1']['organization_id'] = 'orga_expected';
+    $before = count($remote['qr']->requests);
+    $enrol($booking(18, 3, 'expected@example.test', ['31' => 'Expected Club']));
+    $queue->run();
+    $check($state(18)['reason'] === 'organization_mismatch'
+        && array_column(array_slice($remote['qr']->requests, $before), 1) === ['/api/v1/me/'],
+        'an expected organisation that differs blocks before any personal data');
+    unset($params->values['close_profiles']['close_profiles1']['organization_id']);
+    $check((new Profile(array_replace($profileMain, ['lead_name' => '20,10,20'])))->leadName === [20, 10],
+        'field selectors keep their configured precedence');
 
     // Optional custom activity, only where the plan offers it.
     $params->values['close_profiles']['close_profiles2'] = ['key' => 'activity', 'eventtypes' => ['5'],
