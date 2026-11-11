@@ -319,10 +319,10 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
             // A new request starts the walk through the bookings from the beginning again.
             $db->setQuery('INSERT INTO ' . $db->quoteName(self::RESTORE_TABLE)
-                . ' (' . implode(', ', $db->quoteName(['eventtype_id', 'requested_utc', 'generation', 'after_booking_id', 'failed', 'passes'])) . ')'
-                . ' VALUES (' . max(0, $eventTypeId) . ', ' . $db->quote($now) . ', 1, 0, 0, 0)'
+                . ' (' . implode(', ', $db->quoteName(['eventtype_id', 'requested_utc', 'token', 'after_booking_id', 'failed', 'passes'])) . ')'
+                . ' VALUES (' . max(0, $eventTypeId) . ', ' . $db->quote($now) . ', ' . $db->quote(bin2hex(random_bytes(16))) . ', 0, 0, 0)'
                 . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('requested_utc') . ' = VALUES(' . $db->quoteName('requested_utc') . '), '
-                . $db->quoteName('generation') . ' = ' . $db->quoteName('generation') . ' + 1, '
+                . $db->quoteName('token') . ' = VALUES(' . $db->quoteName('token') . '), '
                 . $db->quoteName('after_booking_id') . ' = 0, ' . $db->quoteName('failed') . ' = 0, ' . $db->quoteName('passes') . ' = 0')->execute();
         } catch (\Throwable $e) {
             // A booking or a saved event type never fails because of this.
@@ -338,11 +338,24 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
 
         $handled = 0;
         $restored = 0;
+        $db = $this->services->db();
+        // One worker at a time: two Scheduler runs never walk the same request.
+        $lock = $db->getPrefix() . 'appointments_copy_restore';
 
         try {
-            $db = $this->services->db();
+            if ((int) $db->setQuery('SELECT GET_LOCK(' . $db->quote($lock) . ', 0)')->loadResult() !== 1) {
+                return 0;
+            }
+        } catch (\Throwable $e) {
+            $this->failure('restore-lock', 0, $e);
+
+            return 0;
+        }
+
+        try {
+            $started = $this->services->now()->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
             $requests = $db->setQuery($this->query()
-                ->select($db->quoteName(['eventtype_id', 'generation', 'after_booking_id', 'failed', 'passes']))
+                ->select($db->quoteName(['eventtype_id', 'token', 'after_booking_id', 'failed', 'passes']))
                 ->from($db->quoteName(self::RESTORE_TABLE))
                 ->order($db->quoteName('eventtype_id') . ' ASC'))->loadAssocList() ?: [];
             $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
@@ -355,7 +368,7 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                 }
 
                 $type = (int) $request['eventtype_id'];
-                $generation = (int) $request['generation'];
+                $token = (string) $request['token'];
                 $after = (int) $request['after_booking_id'];
                 $failed = (int) $request['failed'] === 1;
                 $passes = (int) $request['passes'];
@@ -367,7 +380,7 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                     $after = $bookingId;
 
                     // Only a copy that is really in place counts; a failed write is retried.
-                    if ($this->restored($bookingId)) {
+                    if ($this->restored($bookingId, $started)) {
                         $restored++;
                     } else {
                         $failed = true;
@@ -377,7 +390,7 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                 // Changed only while it is still the request that was read: a new request
                 // in the meantime starts again from the first booking.
                 $table = $db->quoteName(self::RESTORE_TABLE);
-                $where = ' WHERE ' . $db->quoteName('eventtype_id') . ' = ' . $type . ' AND ' . $db->quoteName('generation') . ' = ' . $generation;
+                $where = ' WHERE ' . $db->quoteName('eventtype_id') . ' = ' . $type . ' AND ' . $db->quoteName('token') . ' = ' . $db->quote($token);
 
                 if (\count($ids) === $budget) {
                     // The walk goes on at the next run.
@@ -398,21 +411,28 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             }
         } catch (\Throwable $e) {
             $this->failure('restore', 0, $e);
+        } finally {
+            try {
+                $db->setQuery('SELECT RELEASE_LOCK(' . $db->quote($lock) . ')')->loadResult();
+            } catch (\Throwable $e) {
+                // The lock ends with the connection anyway.
+            }
         }
 
         return $restored;
     }
 
     /**
-     * Whether a booking's copies are as they should be after a write: only in the event
-     * type's target calendar, or none without a target. A booking that is no longer active
-     * needs no copy and counts as done.
+     * Whether a booking's copy was written anew in this run (`$since`) and lies only in the
+     * event type's target calendar, or whether there is none without a target. A booking
+     * that is no longer active needs no copy and counts as done.
      */
-    private function restored(int $bookingId): bool
+    private function restored(int $bookingId, string $since): bool
     {
         $db = $this->services->db();
         $row = $db->setQuery($this->query()
-            ->select($db->quoteName(['b.state', 'b.anonymised_utc', 'e.calendar_id']))
+            ->select($db->quoteName(['b.state', 'b.anonymised_utc', 'b.host_user_id', 'e.calendar_id']))
+            ->select($db->quoteName('e.host_user_id', 'event_host'))
             ->from($db->quoteName('#__appointments_bookings', 'b'))
             ->join('LEFT', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
             ->where($db->quoteName('b.id') . ' = ' . $bookingId))->loadAssoc();
@@ -424,18 +444,37 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
         $target = (int) ($row['calendar_id'] ?? 0);
         $holding = $this->calendarsHolding($bookingId);
 
-        return $target > 0 ? $holding === [$target] : $holding === [];
+        // As in onBookingSaved(): a booking the target cannot take (no target, another host, no Write
+        // access) is done when it has no copy left.
+        try {
+            $writable = $target > 0 && (int) $row['event_host'] === (int) $row['host_user_id'] && $this->canWrite((int) $row['host_user_id'], $target);
+        } catch (\Throwable $e) {
+            // Access unknown: not done, the next pass tries again.
+            return false;
+        }
+
+        if (!$writable) {
+            return $holding === [];
+        }
+
+        $fresh = (int) $db->setQuery($this->query()->select('COUNT(*)')
+            ->from($db->quoteName('#__appointments_calendar_objects'))
+            ->where($db->quoteName('booking_id') . ' = ' . $bookingId)
+            ->where($db->quoteName('calendar_id') . ' = ' . $target)
+            ->where($db->quoteName('modified_utc') . ' >= ' . $db->quote($since)))->loadResult();
+
+        return $holding === [$target] && $fresh > 0;
     }
 
     /**
-     * Future, active bookings after `$after` (of one event type, or of all with 0) whose
-     * copy is missing in the event type's target calendar or lies in another calendar.
+     * Future, active bookings after `$after` (of one event type, or of all with 0). All of
+     * them are written anew, not only those without a copy in the target: a copy that
+     * survived a switched-off period (its removal failed) may hold old times or a guest
+     * that was removed meanwhile.
      */
     private function restoreCandidates(int $eventTypeId, int $after, string $now)
     {
         $db = $this->services->db();
-        $target = 'COALESCE(' . $db->quoteName('e.calendar_id') . ', 0)';
-        $copies = $db->quoteName('#__appointments_calendar_objects');
         $query = $this->query()->select($db->quoteName('b.id'))
             ->from($db->quoteName('#__appointments_bookings', 'b'))
             ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
@@ -443,9 +482,6 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             ->where($db->quoteName('b.state') . ' <> 2')
             ->where($db->quoteName('b.anonymised_utc') . ' IS NULL')
             ->where($db->quoteName('b.end_utc') . ' > ' . $db->quote($now))
-            ->where('((' . $target . ' > 0 AND NOT EXISTS (SELECT 1 FROM ' . $copies . ' o WHERE o.booking_id = ' . $db->quoteName('b.id')
-                . ' AND o.calendar_id = ' . $target . ')) OR EXISTS (SELECT 1 FROM ' . $copies . ' x WHERE x.booking_id = ' . $db->quoteName('b.id')
-                . ' AND x.calendar_id <> ' . $target . '))')
             ->order($db->quoteName('b.id') . ' ASC');
 
         if ($eventTypeId > 0) {

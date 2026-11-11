@@ -690,15 +690,15 @@ CREATE TABLE IF NOT EXISTS `#__appointments_eventtype_calendars` (
 -- Requests to write the calendar copies of future bookings anew: after the
 -- target calendar of an event type changed (`eventtype_id`), or after the
 -- copies were removed while the internet calendars were switched off (`0`, all
--- event types). The Scheduler works through them in batches; `generation`
--- rises with every new request, `after_booking_id` is where the walk stands,
+-- event types). The Scheduler works through them in batches; `token` is new
+-- for every request and never reused, `after_booking_id` is where the walk stands,
 -- `failed` says a write of the current pass failed, `passes` counts the passes
 -- that ended with failed writes. Created by script.php on an update as well.
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_copy_restore` (
     `eventtype_id` INT UNSIGNED NOT NULL,
     `requested_utc` DATETIME NOT NULL,
-    `generation` INT UNSIGNED NOT NULL DEFAULT 1,
+    `token` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     `after_booking_id` INT UNSIGNED NOT NULL DEFAULT 0,
     `failed` TINYINT UNSIGNED NOT NULL DEFAULT 0,
     `passes` TINYINT UNSIGNED NOT NULL DEFAULT 0,
