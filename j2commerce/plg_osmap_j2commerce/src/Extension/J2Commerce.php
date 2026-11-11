@@ -232,7 +232,34 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Logs a real query failure. OSMap swallows every exception thrown by a
+     * Restricts an article query (alias `a`) to articles whose category, and every
+     * ancestor category, is published and readable by a guest. Joomla hides the
+     * articles of an unpublished or access-restricted category, so the sitemap
+     * must not list their titles and URLs either.
+     */
+    private function applyCategoryVisibility(\Joomla\Database\QueryInterface $query): void
+    {
+        $db     = $this->getDb();
+        $levels = implode(',', $this->guestViewLevels());
+
+        $query->join(
+            'INNER',
+            $db->quoteName('#__categories', 'cv')
+            . ' ON ' . $db->quoteName('cv.id') . ' = ' . $db->quoteName('a.catid')
+            . ' AND ' . $db->quoteName('cv.extension') . ' = ' . $db->quote('com_content')
+        )->where(
+            'NOT EXISTS (SELECT 1 FROM ' . $db->quoteName('#__categories', 'anc')
+            . ' WHERE ' . $db->quoteName('anc.extension') . ' = ' . $db->quote('com_content')
+            . ' AND ' . $db->quoteName('anc.lft') . ' <= ' . $db->quoteName('cv.lft')
+            . ' AND ' . $db->quoteName('anc.rgt') . ' >= ' . $db->quoteName('cv.rgt')
+            . ' AND (' . $db->quoteName('anc.published') . ' <> 1'
+            . ' OR ' . $db->quoteName('anc.access') . ' NOT IN (' . $levels . ')))'
+        );
+    }
+
+    /**
+     * Logs a real query failure.
+ OSMap swallows every exception thrown by a
      * plugin (General.php catch (\Exception) — ignored), so without this a
      * failing query produces a silent, shop-less sitemap with no trace.
      */
@@ -374,6 +401,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 . ' AND ' . $db->quoteName('p.visibility') . ' = 1'
             )
             ->where($db->quoteName('m.published') . ' = -2')
+            ->whereIn($db->quoteName('m.access'), $this->guestViewLevels())
             ->where($db->quoteName('m.parent_id') . ' = :parentId')
             ->where($db->quoteName('m.client_id') . ' = 0')
             ->where($db->quoteName('a.state') . ' = 1')
@@ -381,6 +409,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ->bind(':parentId', $parentId, ParameterType::INTEGER)
             ->order($db->quoteName('a.title') . ' ASC');
         $this->applyPublicationWindow($query);
+        $this->applyCategoryVisibility($query);
 
         // For a category-filtered menu item keep only hidden children whose
         // article lives in that category subtree, so products from sibling
@@ -430,6 +459,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ->whereIn($db->quoteName('a.access'), $this->guestViewLevels())
             ->bind(':id', $articleId, ParameterType::INTEGER);
         $this->applyPublicationWindow($query);
+        $this->applyCategoryVisibility($query);
 
         try {
             $product = $db->setQuery($query)->loadObject();
@@ -541,6 +571,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ->whereIn($db->quoteName('a.access'), $this->guestViewLevels())
             ->order($db->quoteName('a.title') . ' ASC');
         $this->applyPublicationWindow($query);
+        $this->applyCategoryVisibility($query);
 
         $this->applyCategorySubtreeFilter($query, $catid);
 
