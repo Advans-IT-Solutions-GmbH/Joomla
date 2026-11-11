@@ -402,46 +402,64 @@ class ImportModel extends BaseDatabaseModel
      */
     protected function sanitizeArticleJson($value, array $linkKeys = []): string
     {
-        if (is_string($value)) {
-            $value = trim($value) === '' ? [] : json_decode($value, true, 16);
+        if (is_array($value)) {
+            // Already decoded by the file parser: back to the object form.
+            $value = json_decode(json_encode($value, JSON_THROW_ON_ERROR), false, 16);
+        } elseif (is_string($value)) {
+            $value = trim($value) === '' ? new \stdClass() : json_decode($value, false, 16);
         }
 
-        if (!is_array($value) || ($value !== [] && array_is_list($value))) {
+        if ($value === [] && is_array($value)) {
+            $value = new \stdClass();
+        }
+
+        if (!$value instanceof \stdClass) {
             throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
         }
 
-        $clean = $this->sanitizeJsonValues($value, $linkKeys);
-
-        return $clean === [] ? '{}' : json_encode($clean, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        return json_encode($this->sanitizeJsonValue($value, '', $linkKeys), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     }
 
-    private function sanitizeJsonValues(array $values, array $linkKeys): array
+    /**
+     * Cleans one decoded JSON value. Objects stay objects and lists stay lists, so empty
+     * and numeric-keyed objects keep their structure.
+     *
+     * @return  mixed
+     */
+    private function sanitizeJsonValue($item, string $key, array $linkKeys)
     {
-        $clean = [];
-        foreach ($values as $key => $item) {
-            if (is_array($item)) {
-                $clean[$key] = $this->sanitizeJsonValues($item, $linkKeys);
-            } elseif (is_string($item)) {
-                $item = (string) InputFilter::getInstance()->clean($item, 'string');
-                if (in_array($key, $linkKeys, true)) {
-                    // Browsers ignore control characters inside a scheme ("java\tscript:"), so
-                    // the scheme is read from a copy without them. The stored value keeps its spaces.
-                    $item = trim($item);
-                    $probe = preg_replace('/[\x00-\x20\x7F]+/', '', $item);
-                    if (preg_match('/^([a-z][a-z0-9+.\-]*):/i', $probe, $scheme)
-                        && !in_array(strtolower($scheme[1]), ['http', 'https', 'mailto', 'tel', 'ftp', 'ftps', 'sftp'], true)) {
-                        $item = '';
-                    }
-                }
-                $clean[$key] = $item;
-            } elseif (is_scalar($item) || $item === null) {
-                $clean[$key] = $item;
+        if ($item instanceof \stdClass) {
+            $clean = new \stdClass();
+            foreach (get_object_vars($item) as $name => $child) {
+                $clean->{$name} = $this->sanitizeJsonValue($child, (string) $name, $linkKeys);
+            }
+
+            return $clean;
+        }
+
+        if (is_array($item)) {
+            return array_map(fn ($child) => $this->sanitizeJsonValue($child, $key, $linkKeys), $item);
+        }
+
+        if (!is_string($item)) {
+            return $item;
+        }
+
+        $item = (string) InputFilter::getInstance()->clean($item, 'string');
+
+        if (in_array($key, $linkKeys, true)) {
+            // Browsers ignore control characters inside a scheme ("java\tscript:"), so
+            // the scheme is read from a copy without them. The stored value keeps its spaces.
+            $item  = trim($item);
+            $probe = preg_replace('/[\x00-\x20\x7F]+/', '', $item);
+            if (preg_match('/^([a-z][a-z0-9+.\-]*):/i', $probe, $scheme)
+                && !in_array(strtolower($scheme[1]), ['http', 'https', 'mailto', 'tel', 'ftp', 'ftps', 'sftp'], true)) {
+                $item = '';
             }
         }
 
-        return $clean;
+        return $item;
     }
-
     protected function findExistingArticle(array $data, string $alias): ?object
     {
         $db = $this->getDatabase();

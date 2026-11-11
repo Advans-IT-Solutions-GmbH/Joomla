@@ -1040,6 +1040,12 @@ namespace {
             && $stored->metadata === '{"robots":"noindex"}',
             'Imported JSON columns are stripped of markup and re-encoded');
         $authDb->resetAuthorizationScenario([], []);
+        $authModel->importArticleData([
+            'title' => 'Structure', 'alias' => 'structure',
+            'attribs' => '{"empty":{},"list":[],"keyed":{"0":"a","1":"b"},"n":1}',
+        ], 2, ['update_existing' => false]);
+        check($authDb->inserted['#__content']->attribs === '{"empty":{},"list":[],"keyed":{"0":"a","1":"b"},"n":1}',
+            'Empty and numeric-keyed JSON objects keep their structure');        $authDb->resetAuthorizationScenario([], []);
         $authModel->importArticleData(['title' => 'Plain', 'alias' => 'plain'], 2, ['update_existing' => false]);
         $stored = $authDb->inserted['#__content'];
         check($stored->introtext === '' && $stored->urls === '{}' && $stored->attribs === '{}' && $stored->images === '{}' && $stored->metadata === '{}',
