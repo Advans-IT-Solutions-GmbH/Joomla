@@ -377,9 +377,17 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                     // An entry of the target's own with the booking's UID (an imported mail
                     // attachment, perhaps with notes) is never adopted by a restore: it stays.
                     if ($this->ownEntryInTarget($bookingId)) {
+                        // The booking's copies in other calendars still go (the own entry has
+                        // no booking id and stays); done only when none is left.
+                        $this->remove($bookingId);
                         $handled++;
-                        $restored++;
                         $after = $bookingId;
+
+                        if ($this->calendarsHolding($bookingId) === []) {
+                            $restored++;
+                        } else {
+                            $failed = true;
+                        }
 
                         continue;
                     }
@@ -430,6 +438,19 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
         }
 
         return $restored;
+    }
+
+    public function restorePending(): int
+    {
+        try {
+            $db = $this->services->db();
+
+            return (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName(self::RESTORE_TABLE))->loadResult();
+        } catch (\Throwable $e) {
+            $this->failure('restore-pending', 0, $e);
+
+            return -1;
+        }
     }
 
     /**
