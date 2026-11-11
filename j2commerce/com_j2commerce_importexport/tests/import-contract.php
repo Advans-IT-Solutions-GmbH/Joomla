@@ -22,6 +22,9 @@ namespace Joomla\CMS {
     {
         public static object $application;
         public static function getApplication(): object { return self::$application; }
+        public static function getDate(): object {
+            return new class { public function toSql(): string { return '2026-01-01 00:00:00'; } };
+        }
     }
 }
 namespace Joomla\CMS\Language {
@@ -65,6 +68,12 @@ namespace Joomla\CMS\Table {
             return true;
         }
         public function getError(): string { return 'Menu fixture validation failed'; }
+        public function __get(string $name): mixed { return $this->row->$name ?? null; }
+    }
+    class Category
+    {
+        public function __construct(private object $db) {}
+        public function rebuild(): void {}
     }
 }
 namespace Joomla\Database {
@@ -91,6 +100,107 @@ namespace {
             $this->received[] = ['data' => $data, 'options' => $options];
             return ['success' => true];
         }
+    }
+    class AuthorizationUser
+    {
+        public int $id = 7;
+        public array $permissions = [];
+        public array $authorizedCategories = [];
+        public function authorise(string $action, string $asset): bool
+        {
+            return $this->permissions[$action . ':' . $asset] ?? false;
+        }
+        public function getAuthorisedCategories(string $extension, string $action): array
+        {
+            return $this->authorizedCategories[$extension] ?? [];
+        }
+    }
+    class AuthorizationQuery implements \Joomla\Database\QueryInterface
+    {
+        public function __call(string $name, array $arguments): self { return $this; }
+    }
+    class AuthorizationDatabase
+    {
+        public object $article;
+        public int $result = 0;
+        public array $results = [];
+        public array $objectResults = [];
+        public array $inserted = [];
+        public array $updated = [];
+        public int $objectLoads = 0;
+        public int $transactionsStarted = 0;
+        public int $transactionsRolledBack = 0;
+        public function transactionStart(): void { $this->transactionsStarted++; }
+        public function transactionCommit(): void {}
+        public function transactionRollback(): void { $this->transactionsRolledBack++; }
+        public function createQuery(): \Joomla\Database\QueryInterface { return new AuthorizationQuery(); }
+        public function quoteName(string $name): string { return $name; }
+        public function quote(string $value): string { return "'" . $value . "'"; }
+        public function setQuery($query): self { return $this; }
+        public function loadObject(): ?object {
+            $this->objectLoads++;
+            $result = $this->objectResults ? array_shift($this->objectResults) : $this->article;
+            return $result ? clone $result : null;
+        }
+        public function loadResult(): int { return $this->results ? array_shift($this->results) : $this->result; }
+        public function insertObject(string $table, object $row): void { $this->inserted[$table] = clone $row; }
+        public function updateObject(string $table, object $row, string $key): void { $this->updated[$table] = clone $row; }
+        public function insertid(): int { return 42; }
+        public function execute(): bool { return true; }
+        public function resetAuthorizationScenario(array $results, array $objects = []): void {
+            $this->results = $results;
+            $this->objectResults = $objects;
+            $this->inserted = [];
+            $this->updated = [];
+            $this->objectLoads = 0;
+            $this->transactionsStarted = 0;
+            $this->transactionsRolledBack = 0;
+        }
+    }
+    class AuthorizationModel extends ImportModel
+    {
+        public object $identity;
+        public ?string $activeShop = 'j2commerce';
+        protected function getImportIdentity(): object { return $this->identity; }
+        protected function getActiveShop(): ?string { return $this->activeShop; }
+        public function authorize(?object $article, int $categoryId, array $data): array
+        {
+            return $this->authorizeArticleImport($article, $categoryId, $data);
+        }
+        public function find(array $data, string $alias): ?object
+        {
+            return $this->findExistingArticle($data, $alias);
+        }
+        public function importArticleData(array $data, int $categoryId, array $options): int
+        {
+            return $this->importArticle($data, $categoryId, $options);
+        }
+        public function category(array $data, array $options = []): int
+        {
+            return $this->ensureCategory($data, $options);
+        }
+        public function schedule(?object $article, int $categoryId, array $data): array
+        {
+            return $this->authorizeArticleSchedule($article, $categoryId, $data, '2026-01-01 00:00:00');
+        }
+        public function menu(string $menutype, bool $exists, int $published, int $currentPublished): void
+        {
+            $this->authorizeMenuItem($menutype, $exists, $published, $currentPublished);
+        }
+        public function tag(array $tag): int
+        {
+            return $this->ensureTag($tag);
+        }
+        public function fields(array $fields, int $articleId): void
+        {
+            $this->importCustomFields($fields, $articleId);
+        }
+    }
+    function denied(callable $call): bool
+    {
+        try { $call(); }
+        catch (\RuntimeException $e) { return $e->getCode() === 403; }
+        return false;
     }
     function check(bool $condition, string $message): void
     {
@@ -122,7 +232,11 @@ namespace {
     };
     $input->files = new class { public function get(...$args) { return null; } };
     Factory::$application = new class ($session, $input) {
+        public int $categoryAccess = 1;
         public function __construct(private object $session, private object $input) {}
+        public function get(string $key): mixed {
+            return $key === 'access' ? $this->categoryAccess : null;
+        }
         public function getIdentity(): object {
             return new class { public function authorise(...$args): bool { return true; } };
         }
@@ -379,6 +493,449 @@ namespace {
         } finally {
             \Joomla\CMS\Table\Menu::$failStore = false;
         }
+
+        $user = new AuthorizationUser();
+        $authModel = new AuthorizationModel();
+        $authModel->identity = $user;
+        $existingArticle = (object) ['id' => 80, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1];
+        $authDb = new AuthorizationDatabase();
+        $authDb->article = clone $existingArticle;
+        $authModel->database = $authDb;
+        $user->permissions = ['core.edit.own:com_content.article.80' => true];
+        $authorized = $authModel->authorize($existingArticle, 2, []);
+        check($authorized === ['state' => 1, 'access' => 1], 'Article owners may use core.edit.own without changing protected fields');
+        check((function () use ($authModel, $existingArticle): bool {
+            try { $authModel->authorize((object) ['id' => 80, 'created_by' => 8, 'catid' => 2, 'state' => 1, 'access' => 1], 2, []); }
+            catch (\RuntimeException $e) { return $e->getCode() === 403; }
+            return false;
+        })(), 'Foreign article updates are denied without core.edit');
+
+        check((function () use ($authModel, $existingArticle): bool {
+            try { $authModel->authorize($existingArticle, 2, ['article_state' => 0]); }
+            catch (\RuntimeException $e) { return $e->getCode() === 403; }
+            return false;
+        })(), 'Publication changes require core.edit.state');
+        check((function () use ($authModel, $existingArticle): bool {
+            try { $authModel->authorize($existingArticle, 2, ['access' => 2]); }
+            catch (\RuntimeException $e) { return $e->getCode() === 403; }
+            return false;
+        })(), 'Access-level changes require core.edit.state');
+        $user->permissions['core.edit.state:com_content.article.80'] = true;
+        check($authModel->authorize($existingArticle, 2, ['article_state' => 0, 'access' => 2])
+            === ['state' => 0, 'access' => 2], 'core.edit.state permits authorized publication and access changes');
+
+        check((function () use ($authModel): bool {
+            try { $authModel->authorize(null, 2, []); }
+            catch (\RuntimeException $e) { return $e->getCode() === 403; }
+            return false;
+        })(), 'New articles require core.create on the target category');
+        $user->permissions['core.create:com_content.category.2'] = true;
+        check($authModel->authorize(null, 2, []) === ['state' => 0, 'access' => 1],
+            'New articles default to unpublished when core.edit.state is absent');
+        $user->permissions['core.edit.state:com_content.category.2'] = true;
+        check($authModel->authorize(null, 2, []) === ['state' => 1, 'access' => 1],
+            'New articles retain the published default for users with core.edit.state');
+        $authDb->resetAuthorizationScenario([], []);
+        check($authModel->importArticleData(
+            ['title' => 'Authorized publisher default', 'alias' => 'authorized-publisher-default'],
+            2,
+            ['update_existing' => false]
+        ) === 42
+            && $authDb->inserted['#__content']->state === 1,
+            'An authorized publisher importing without article_state preserves the published default');
+        $user->permissions['core.edit.state:com_content.category.2'] = false;
+        $authDb->resetAuthorizationScenario([], []);
+        check($authModel->importArticleData(
+            ['title' => 'Restricted publisher default', 'alias' => 'restricted-publisher-default'],
+            2,
+            ['update_existing' => false]
+        ) === 42
+            && $authDb->inserted['#__content']->state === 0,
+            'A creator without core.edit.state importing without article_state gets an unpublished article');
+        check((function () use ($authModel): bool {
+            try { $authModel->authorize(null, 2, ['article_state' => 1]); }
+            catch (\RuntimeException $e) { return $e->getCode() === 403; }
+            return false;
+        })(), 'Publishing a new article requires core.edit.state');
+        check((function () use ($authModel): bool {
+            try { $authModel->authorize(null, 2, ['access' => 2]); }
+            catch (\RuntimeException $e) { return $e->getCode() === 403; }
+            return false;
+        })(), 'Assigning a non-default access level requires core.edit.state');
+
+        $authDb->result = 0;
+        check((function () use ($authModel): bool {
+            try { $authModel->find(['article_id' => 80], 'unrelated'); }
+            catch (\RuntimeException $e) { return $e->getCode() === 403; }
+            return false;
+        })(), 'An ID match without an active-shop product link cannot be updated');
+        check((function () use ($authModel): bool {
+            try { $authModel->find([], 'colliding-alias'); }
+            catch (\RuntimeException $e) { return $e->getCode() === 403; }
+            return false;
+        })(), 'An alias collision without an active-shop product link cannot be updated');
+        $authDb->result = 1;
+        check($authModel->find(['article_id' => 80], 'existing')?->id === 80,
+            'A linked active-shop article remains eligible for update resolution');
+        check($authModel->find(['variants' => [['sku' => 'ACTIVE-SKU']]], 'new-alias')?->id === 80,
+            'SKU resolution accepts a product linked in the active shop');
+        $user->permissions = ['core.edit.own:com_content.article.80' => true];
+        check($authModel->importArticleData(
+            ['title' => 'Authorized update', 'alias' => 'existing', 'article_id' => 80],
+            2,
+            ['update_existing' => true]
+        ) === 80
+            && isset($authDb->updated['#__content'])
+            && $authDb->updated['#__content']->id === 80,
+            'An owned active-shop article updates through the guarded import path');
+        $authDb->updated = [];
+        $authModel->activeShop = null;
+        check((function () use ($authModel): bool {
+            try { $authModel->find(['article_id' => 80], 'existing'); }
+            catch (\RuntimeException $e) { return $e->getCode() === 403; }
+            return false;
+        })(), 'A product linked only in the inactive-shop fallback is not accepted');
+
+        $authModel->activeShop = 'j2commerce';
+        $authDb->resetAuthorizationScenario([1, 0], [$existingArticle]);
+        check((function () use ($authModel, $authDb): bool {
+            try {
+                $authModel->importProductFull(
+                    ['title' => 'Forged target', 'alias' => 'forged-target', 'article_id' => 80, 'catid' => 2],
+                    ['update_existing' => true]
+                );
+            } catch (\RuntimeException $e) {
+                return $e->getCode() === 403
+                    && $authDb->transactionsStarted === 1
+                    && $authDb->transactionsRolledBack === 1
+                    && $authDb->inserted === []
+                    && $authDb->updated === [];
+            }
+            return false;
+        })(), 'Denied linked-article resolution rolls back before article or product mutation');
+
+        $authDb->result = 0;
+        $authDb->results = [];
+        $authModel->activeShop = 'j2commerce';
+        $user->permissions = ['core.create:com_content.category.2' => true];
+        check($authModel->importArticleData(
+            ['title' => 'Create instead of update', 'alias' => 'create-instead-of-update', 'article_id' => 80],
+            2,
+            ['update_existing' => false]
+        ) === 42
+            && $authDb->updated === []
+            && $authDb->inserted['#__content']->state === 0,
+            'update_existing=false preserves create-new behavior without updating the matched article');
+
+        $authDb->inserted = [];
+        $authDb->updated = [];
+        $user->permissions = [];
+        check((function () use ($authModel, $authDb): bool {
+            try { $authModel->category(['category_path' => 'new-path', 'category_title' => 'New', 'category_alias' => 'new']); }
+            catch (\RuntimeException $e) { return $e->getCode() === 403 && $authDb->inserted === []; }
+            return false;
+        })(), 'Category creation is denied without Joomla Content creation permission');
+        check((function () use ($authModel): bool {
+            try { $authModel->category(['catid' => 42]); }
+            catch (\InvalidArgumentException $e) { return true; }
+            return false;
+        })(), 'A supplied category ID must identify a Content category');
+        check((function () use ($authModel): bool {
+            try { $authModel->category([], ['default_category' => 42]); }
+            catch (\InvalidArgumentException $e) { return true; }
+            return false;
+        })(), 'The configured default category must identify a Content category');
+        $user->permissions['core.create:com_content'] = true;
+        $user->permissions['core.edit.state:com_content'] = true;
+        Factory::$application->categoryAccess = 2;
+        check($authModel->category(['category_path' => 'new-path', 'category_title' => 'New', 'category_alias' => 'new']) === 42
+            && isset($authDb->inserted['#__categories'])
+            && $authDb->inserted['#__categories']->published === 1
+            && $authDb->inserted['#__categories']->access === 2,
+            'Component-level core.create and core.edit.state permit published categories at the site access default');
+        $authDb->inserted = [];
+        $user->permissions = [];
+        $user->permissions['core.create:com_content'] = true;
+        check($authModel->category(['category_path' => 'component-only-path', 'category_title' => 'Component only', 'category_alias' => 'component-only']) === 42
+            && isset($authDb->inserted['#__categories'])
+            && $authDb->inserted['#__categories']->published === 0
+            && $authDb->inserted['#__categories']->access === 2,
+            'Component creator without component core.edit.state creates unpublished categories at the site access default');
+        $authDb->inserted = [];
+        $user->permissions = [];
+        $user->authorizedCategories = ['com_content' => [2]];
+        $user->permissions['core.edit.state:com_content.category.2'] = true;
+        check($authModel->category(['category_path' => 'category-scoped-path', 'category_title' => 'Scoped', 'category_alias' => 'scoped']) === 42
+            && isset($authDb->inserted['#__categories'])
+            && $authDb->inserted['#__categories']->published === 0
+            && $authDb->inserted['#__categories']->access === 2,
+            'Category-scoped core.edit.state does not grant new-category publication without component core.edit.state');
+        $authDb->inserted = [];
+        $user->permissions = [];
+        $user->authorizedCategories = ['com_content' => [2]];
+        check($authModel->category(['category_path' => 'category-only-path', 'category_title' => 'Category only', 'category_alias' => 'category-only']) === 42
+            && isset($authDb->inserted['#__categories'])
+            && $authDb->inserted['#__categories']->published === 0
+            && $authDb->inserted['#__categories']->access === 2,
+            'Category-scoped creator without state permission creates unpublished categories at the site access default');
+        $authDb->inserted = [];
+        Factory::$application->categoryAccess = 1;
+        $user->authorizedCategories = [];
+
+        $assertDeniedImportHasNoMutations = function (
+            string $name,
+            array $data,
+            array $options,
+            array $permissions,
+            array $dbResults,
+            array $dbObjects = [],
+            ?int $expectedObjectLoads = null
+        ) use ($authDb, $authModel, $user): void {
+            $authDb->resetAuthorizationScenario($dbResults, $dbObjects);
+            $user->permissions = $permissions;
+            try {
+                $authModel->importProductFull($data, $options);
+                throw new \RuntimeException('Denied import unexpectedly succeeded: ' . $name);
+            } catch (\RuntimeException $e) {
+                check($e->getCode() === 403
+                    && $authDb->transactionsStarted === 1
+                    && $authDb->transactionsRolledBack === 1
+                    && $authDb->inserted === []
+                    && $authDb->updated === []
+                    && ($expectedObjectLoads === null || $authDb->objectLoads === $expectedObjectLoads),
+                    $name . ' rolls back without article, product, category, or related-row writes');
+            }
+        };
+
+        $nonProductArticle = (object) [
+            'id' => 80, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1,
+        ];
+        $productArticle = (object) [
+            'id' => 81, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1,
+        ];
+        $collisionPermissions = ['core.create:com_content.category.2' => true];
+        $allMatchKeys = [
+            'title' => 'Collision candidate',
+            'alias' => 'collision-alias',
+            'article_id' => 80,
+            'catid' => 2,
+            'variants' => [['sku' => 'COLLISION-SKU']],
+            'product_images' => [['image' => 'fixture.jpg']],
+            'options' => [['option_name' => 'fixture']],
+        ];
+        $assertDeniedImportHasNoMutations(
+            'Combined ID, alias and SKU stops at the first non-product ID match',
+            $allMatchKeys,
+            ['update_existing' => true],
+            $collisionPermissions,
+            [1, 0],
+            [$nonProductArticle],
+            1
+        );
+        $aliasFirst = $allMatchKeys;
+        unset($aliasFirst['article_id']);
+        $assertDeniedImportHasNoMutations(
+            'Combined alias and SKU stops at the first unrelated alias match',
+            $aliasFirst,
+            ['update_existing' => true],
+            $collisionPermissions,
+            [1, 0],
+            [null, $nonProductArticle],
+            2
+        );
+        $skuFirst = $allMatchKeys;
+        unset($skuFirst['article_id']);
+        $skuFirst['alias'] = 'no-alias-match';
+        $assertDeniedImportHasNoMutations(
+            'SKU candidate without an active-shop product association is rejected',
+            $skuFirst,
+            ['update_existing' => true],
+            $collisionPermissions,
+            [1, 0],
+            [null, $nonProductArticle],
+            2
+        );
+
+        $assertDeniedImportHasNoMutations(
+            'Category creation denial leaves all rows untouched',
+            [
+                'title' => 'Category permission denial',
+                'alias' => 'category-permission-denial',
+                'category_path' => 'new-category-path',
+                'category_title' => 'New category',
+                'category_alias' => 'new-category',
+            ],
+            ['update_existing' => false],
+            [],
+            [0]
+        );
+        $assertDeniedImportHasNoMutations(
+            'Category move denial leaves all rows untouched',
+            [
+                'title' => 'Category move denial',
+                'alias' => 'category-move-denial',
+                'article_id' => 80,
+                'catid' => 3,
+            ],
+            ['update_existing' => true],
+            ['core.edit.own:com_content.article.80' => true],
+            [1, 1, 1],
+            [$nonProductArticle],
+            1
+        );
+        $assertDeniedImportHasNoMutations(
+            'Publication denial leaves all rows untouched',
+            [
+                'title' => 'Publication permission denial',
+                'alias' => 'publication-permission-denial',
+                'catid' => 2,
+                'article_state' => 1,
+            ],
+            ['update_existing' => false],
+            ['core.create:com_content.category.2' => true],
+            [1]
+        );
+        $assertDeniedImportHasNoMutations(
+            'Access-level denial leaves all rows untouched',
+            [
+                'title' => 'Access permission denial',
+                'alias' => 'access-permission-denial',
+                'catid' => 2,
+                'access' => 2,
+            ],
+            ['update_existing' => false],
+            ['core.create:com_content.category.2' => true],
+            [1]
+        );
+        $assertDeniedImportHasNoMutations(
+            'Existing article publication denial leaves all rows untouched',
+            [
+                'title' => 'Existing publication denial',
+                'alias' => 'existing-publication-denial',
+                'article_id' => 81,
+                'catid' => 2,
+                'article_state' => 0,
+            ],
+            ['update_existing' => true],
+            ['core.edit.own:com_content.article.81' => true],
+            [1, 1],
+            [$productArticle],
+            1
+        );
+        $assertDeniedImportHasNoMutations(
+            'Existing article access denial leaves all rows untouched',
+            [
+                'title' => 'Existing access denial',
+                'alias' => 'existing-access-denial',
+                'article_id' => 81,
+                'catid' => 2,
+                'access' => 2,
+            ],
+            ['update_existing' => true],
+            ['core.edit.own:com_content.article.81' => true],
+            [1, 1],
+            [$productArticle],
+            1
+        );
+
+        // Featured flag and publishing window follow core.edit.state.
+        $user->permissions = ['core.create:com_content.category.2' => true];
+        check($authModel->schedule(null, 2, ['featured' => '0', 'publish_up' => '', 'publish_down' => ''])
+            === ['featured' => 0, 'publish_up' => '2026-01-01 00:00:00', 'publish_down' => null],
+            'New articles without core.edit.state accept default featured and publishing values');
+        check(denied(fn () => $authModel->schedule(null, 2, ['featured' => 1])),
+            'Featuring a new article requires core.edit.state');
+        check(denied(fn () => $authModel->schedule(null, 2, ['publish_up' => '2030-01-01 00:00:00'])),
+            'Scheduling a new article requires core.edit.state');
+        check(denied(fn () => $authModel->schedule(null, 2, ['publish_down' => '2030-01-01 00:00:00'])),
+            'An end date for a new article requires core.edit.state');
+        $user->permissions['core.edit.state:com_content.category.2'] = true;
+        check($authModel->schedule(null, 2, ['featured' => 1, 'publish_up' => '2030-01-01 00:00:00', 'publish_down' => '2031-01-01 00:00:00'])
+            === ['featured' => 1, 'publish_up' => '2030-01-01 00:00:00', 'publish_down' => '2031-01-01 00:00:00'],
+            'core.edit.state permits featured and publishing-window values on new articles');
+        $scheduledArticle = (object) [
+            'id' => 81, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1, 'featured' => 1,
+            'publish_up' => '2030-01-01 00:00:00', 'publish_down' => null,
+        ];
+        $user->permissions = ['core.edit.own:com_content.article.81' => true];
+        check($authModel->schedule($scheduledArticle, 2, ['featured' => '1', 'publish_up' => '2030-01-01 00:00:00', 'publish_down' => ''])
+            === ['featured' => 1, 'publish_up' => '2030-01-01 00:00:00', 'publish_down' => null],
+            'Unchanged featured and publishing values of an existing article need no core.edit.state');
+        check($authModel->schedule($scheduledArticle, 2, [])
+            === ['featured' => 1, 'publish_up' => '2030-01-01 00:00:00', 'publish_down' => null],
+            'Omitted featured and publishing values keep the existing article values');
+        check(denied(fn () => $authModel->schedule($scheduledArticle, 2, ['publish_up' => '2026-01-01 00:00:00'])),
+            'Moving the start of an existing article requires core.edit.state');
+        check(denied(fn () => $authModel->schedule($scheduledArticle, 2, ['featured' => 0])),
+            'Unfeaturing an existing article requires core.edit.state');
+        $authDb->resetAuthorizationScenario([1, 1], [$scheduledArticle]);
+        check(denied(fn () => $authModel->importProductFull(
+            ['title' => 'Schedule denial', 'alias' => 'schedule-denial', 'article_id' => 81, 'catid' => 2, 'publish_down' => '2026-02-01 00:00:00'],
+            ['update_existing' => true]
+        )) && $authDb->transactionsRolledBack === 1 && $authDb->inserted === [] && $authDb->updated === [],
+            'Existing article end-date denial rolls back without writes');
+        $user->permissions['core.edit.state:com_content.article.81'] = true;
+        check($authModel->schedule($scheduledArticle, 2, ['featured' => 0, 'publish_down' => '2031-01-01 00:00:00'])
+            === ['featured' => 0, 'publish_up' => '2030-01-01 00:00:00', 'publish_down' => '2031-01-01 00:00:00'],
+            'core.edit.state permits featured and publishing-window changes on existing articles');
+        check((function () use ($authModel): bool {
+            try { $authModel->schedule(null, 2, ['featured' => 'yes']); }
+            catch (\InvalidArgumentException $e) { return true; }
+            return false;
+        })(), 'A malformed featured value is rejected');
+
+        // Menu items follow the Menus permissions of the target site menu.
+        $authDb->resetAuthorizationScenario([]);
+        $authDb->result = 5;
+        $user->permissions = [];
+        check(denied(fn () => $authModel->menu('fixture', false, 0, 0)),
+            'Creating a menu item requires core.create on the target menu');
+        $user->permissions = ['core.create:com_menus.menu.5' => true];
+        $authModel->menu('fixture', false, 0, 0);
+        check(true, 'core.create on the target menu permits an unpublished menu item');
+        check(denied(fn () => $authModel->menu('fixture', false, 1, 0)),
+            'Publishing a new menu item requires core.edit.state on the target menu');
+        check(denied(fn () => $authModel->menu('fixture', true, 1, 1)),
+            'Updating an existing menu item requires core.edit on the target menu');
+        $user->permissions = ['core.edit:com_menus.menu.5' => true];
+        $authModel->menu('fixture', true, 1, 1);
+        check(true, 'core.edit permits an existing menu item update without a state change');
+        check(denied(fn () => $authModel->menu('fixture', true, 0, 1)),
+            'Unpublishing an existing menu item requires core.edit.state');
+        $user->permissions = ['core.create:com_menus.menu.5' => true, 'core.edit.state:com_menus.menu.5' => true];
+        $authModel->menu('fixture', false, 1, 0);
+        check(true, 'core.create and core.edit.state permit a published menu item');
+        $authDb->result = 0;
+        check((function () use ($authModel): bool {
+            try { $authModel->menu('missing', false, 0, 0); }
+            catch (\InvalidArgumentException $e) { return true; }
+            return false;
+        })(), 'An unknown site menu type is rejected');
+
+        // New tags need core.create on com_tags; existing tags are only assigned.
+        $authDb->resetAuthorizationScenario([0]);
+        $user->permissions = [];
+        check(denied(fn () => $authModel->tag(['title' => 'New tag'])) && $authDb->inserted === [],
+            'Creating a tag requires core.create on com_tags');
+        $authDb->resetAuthorizationScenario([7]);
+        check($authModel->tag(['title' => 'Existing tag']) === 7 && $authDb->inserted === [],
+            'An existing tag is assigned without tag creation permission');
+        $authDb->resetAuthorizationScenario([0]);
+        $user->permissions = ['core.create:com_tags' => true];
+        check($authModel->tag(['title' => 'New tag', 'alias' => 'new-tag']) === 42 && isset($authDb->inserted['#__tags']),
+            'core.create on com_tags permits tag creation');
+
+        // Custom field values need core.edit.value on the field.
+        $authDb->resetAuthorizationScenario([9]);
+        $user->permissions = [];
+        check(denied(fn () => $authModel->fields([['name' => 'fixture-field', 'value' => 'x']], 80))
+            && $authDb->inserted === [],
+            'Writing a custom field value requires core.edit.value on the field');
+        $authDb->resetAuthorizationScenario([9]);
+        $user->permissions = ['core.edit.value:com_content.field.9' => true];
+        $authModel->fields([['name' => 'fixture-field', 'value' => 'x']], 80);
+        check(isset($authDb->inserted['#__fields_values']) && $authDb->inserted['#__fields_values']->field_id === 9,
+            'core.edit.value permits writing the custom field value');
     } finally {
         foreach ([$file, $csv, $otherFile, $base] as $owned) {
             if (is_file($owned)) unlink($owned);
