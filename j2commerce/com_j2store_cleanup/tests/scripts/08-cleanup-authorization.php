@@ -343,6 +343,12 @@ namespace {
                 ['component', 'com_j2store_/../com_j2store', ''],
                 ['plugin', 'payment <b>x</b>', 'j2store'],
                 ['plugin', 'Payment_upper', 'j2store'],
+                ['plugin', '.', 'j2store'],
+                ['plugin', '.hidden', 'j2store'],
+                ['plugin', 'j2store_sync', ''],
+                ['plugin', 'j2store_sync', '.'],
+                ['library', 'j2store/.', ''],
+                ['module', 'mod_j2store/.', ''],
             ] as [$type, $element, $folder]) {
                 $this->check("Unsafe {$type} element or folder is out of scope: {$folder}/{$element}",
                     !isCleanupCandidate((object) $this->row(16, $type, $element, $folder)));
