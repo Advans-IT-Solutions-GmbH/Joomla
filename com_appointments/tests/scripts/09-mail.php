@@ -309,8 +309,10 @@ try {
     // Cache» on: a page rendered while the address was valid must not be served from the cache afterwards.
     $pageCache = (int) $db->query("SELECT enabled FROM {$prefix}extensions WHERE type='plugin' AND folder='system' AND element='cache'")->fetch_row()[0];
     $db->query("UPDATE {$prefix}extensions SET enabled=1 WHERE type='plugin' AND folder='system' AND element='cache'");
+    // Fresh request limits for the page and booking requests below (16:00 is a time no earlier step booked).
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
     $client = new AppointmentsHttp('http://localhost', 'mail-site-url');
-    [$browser, $path, $form] = $client->bookingForm($event, $day . ' 13:00:00');
+    [$browser, $path, $form] = $client->bookingForm($event, $day . ' 16:00:00');
     $guestPage = '/index.php?option=com_appointments&view=eventtype&id=' . $event;
     $earlier = new AppointmentsHttp('http://localhost', 'mail-site-url-earlier');
     $earlier->request($guestPage);
@@ -328,7 +330,7 @@ try {
         sleep(2);
         $before = $spool();
         $html = $browser->request($path, $form);
-        $saved = (int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 13:00:00'")->fetch_row()[0];
+        $saved = (int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 16:00:00'")->fetch_row()[0];
         $check($saved === 0 && $before === $spool() && str_contains($html, 'Booking is currently not possible'),
             'Without a public site URL a submitted booking is not saved and no mail is sent');
     } finally {
