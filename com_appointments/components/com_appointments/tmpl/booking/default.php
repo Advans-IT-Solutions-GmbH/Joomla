@@ -8,8 +8,8 @@
 
 use Advans\Component\Appointments\Administrator\Helper\DateDisplay;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Site\Helper\BackLink;
 use Joomla\CMS\Language\Text;
-use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 
@@ -93,6 +93,6 @@ $describedBy = trim(($this->notices ? 'appointment-notices' : '') . ($conference
                 <p class="form-text com-appointments-confirmation-note"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_CONFIRMATION_NOTE'); ?></p>
             <?php endif; ?>
         </div>
-        <p><a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtypes'); ?>"><?php echo Text::_('COM_APPOINTMENTS_BACK_TO_OVERVIEW'); ?></a></p>
+        <p><a class="btn btn-secondary com-appointments-return" href="<?php echo BackLink::resolve(false); ?>"><?php echo Text::_('COM_APPOINTMENTS_BACK_TO_OVERVIEW'); ?></a></p>
     </div>
 </div>

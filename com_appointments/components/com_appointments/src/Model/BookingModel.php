@@ -82,7 +82,7 @@ class BookingModel extends BaseDatabaseModel
 
         $db = $this->getDatabase();
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(array_merge(['b.id', 'b.start_utc', 'b.end_utc', 'b.state', 'b.invitee_timezone', 'b.conference_state', 'b.modified_utc'],
+        $query->select($db->quoteName(array_merge(['b.id', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state', 'b.invitee_timezone', 'b.conference_state', 'b.modified_utc'],
             \Advans\Component\Appointments\Administrator\Helper\BookingData::readColumns('b'))))
             ->select($db->quoteName('e.title'))->select($db->quoteName('e.location_text'))
             ->from($db->quoteName('#__appointments_bookings', 'b'))

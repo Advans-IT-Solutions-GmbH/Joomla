@@ -46,7 +46,77 @@ try {
         && $moved['invitee_timezone'] === 'Europe/Zurich', 'Reschedule updates the same UID/id, sequence and displayed zone');
     $check((int) $fixture->db->query("SELECT COUNT(*) AS n FROM {$fixture->prefix}appointments_bookings WHERE uid='" . $booking['uid'] . "'")->fetch_assoc()['n'] === 1,
         'Exactly one row remains for the calendar UID');
+    // The receipt gives this browser the new signed links, like the confirmation of a booking:
+    // the earlier links no longer apply, and without the mail the appointment stays manageable.
+    $receipt = new DOMXPath((static function (string $html): DOMDocument {
+        $document = new DOMDocument();
+        @$document->loadHTML($html);
+
+        return $document;
+    })($html));
+    $receiptLink = static function (string $class) use ($receipt): string {
+        $node = $receipt->query('//*[@id="appointment-result"]//a[contains(concat(" ", normalize-space(@class), " "), " ' . $class . ' ")]')->item(0);
+
+        return $node instanceof DOMElement ? html_entity_decode($node->getAttribute('href'), ENT_QUOTES | ENT_HTML5) : '';
+    };
+    $newSignature = static function (string $url): string {
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+
+        return (string) ($query['signature'] ?? '');
+    };
+    $check($newSignature($receiptLink('com-appointments-reschedule')) === $newSignature($fixture->link($moved, 'reschedule'))
+        && $newSignature($receiptLink('com-appointments-cancel')) === $newSignature($fixture->link($moved, 'cancel'))
+        && $newSignature($fixture->link($moved, 'cancel')) !== $newSignature($cancel),
+        'The receipt of a reschedule shows the new signed reschedule and cancel links of the moved appointment');
+    $reloaded = $client->request($reschedule);
+    $check($client->status === 200 && str_contains($reloaded, $newSignature($fixture->link($moved, 'cancel'))),
+        'The receipt keeps the new links on reload in the browser that made the change');
+
+    // The mails of the reschedule above, before the next fixture books and reschedules again.
     $messages = AppointmentsMail::messagesSince($before);
+
+    // A completed receipt bypasses the signature check, so its links depend on the version guard:
+    // after a later change by someone else, a cancellation, an anonymisation or a deletion, a
+    // reload of the same receipt in the same browser shows neither link (another event type and
+    // day, so the bookings above stay untouched).
+    $laterDay = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+5 days')->format('Y-m-d');
+    $guarded = $fixture->booking($fixture->event(), $laterDay . ' 10:00:00');
+    $guardedLink = $fixture->link($guarded['booking'], 'reschedule');
+    $guardedId = (int) $guarded['booking']['id'];
+    $receiptLinks = static function (string $html): int {
+        $document = new DOMDocument();
+        @$document->loadHTML($html);
+
+        return (new DOMXPath($document))->query('//*[@id="appointment-result"]//a[contains(concat(" ", normalize-space(@class), " "), " com-appointments-reschedule ")'
+            . ' or contains(concat(" ", normalize-space(@class), " "), " com-appointments-cancel ")]')->length;
+    };
+    $html = $fixture->apply($guarded['browser'], $guardedLink, ['start' => $laterDay . ' 11:00:00', 'month' => substr($laterDay, 0, 7), 'timezone' => 'UTC']);
+    $check($guarded['browser']->landedAt($html, 'appointment-result') && $receiptLinks($html) === 2,
+        'Fixture: the receipt of a second reschedule shows both new links');
+    $version = (string) $fixture->stored($guardedId)['modified_utc'];
+    $bookings = $fixture->prefix . 'appointments_bookings';
+    $escapedVersion = $fixture->db->real_escape_string($version);
+    foreach ([
+        'a later change by someone else' => "modified_utc=DATE_ADD(modified_utc, INTERVAL 1 SECOND)",
+        'a cancellation' => "state=2",
+        'an anonymisation' => "anonymised_utc=UTC_TIMESTAMP()",
+    ] as $label => $change) {
+        $fixture->db->query("UPDATE {$bookings} SET {$change} WHERE id={$guardedId}");
+        $html = $guarded['browser']->request($guardedLink);
+        $check($guarded['browser']->status === 200 && str_contains($html, 'appointment-result') && $receiptLinks($html) === 0,
+            'The receipt shows no links after ' . $label);
+        // Back to the version this browser made, so the next case tests its own guard alone.
+        $fixture->db->query("UPDATE {$bookings} SET modified_utc='{$escapedVersion}', state=1, anonymised_utc=NULL WHERE id={$guardedId}");
+    }
+    $html = $guarded['browser']->request($guardedLink);
+    $check($receiptLinks($html) === 2, 'Fixture: restored to its own version, the receipt shows the links again');
+    // The audit rows stay: they may point at a booking that no longer exists, as after an erasure.
+    $fixture->db->query("DELETE FROM {$bookings} WHERE id={$guardedId}");
+    $html = $guarded['browser']->request($guardedLink);
+    $check($guarded['browser']->status === 200 && str_contains($html, 'appointment-result') && $receiptLinks($html) === 0,
+        'The receipt shows no links after the booking was deleted');
+    // Test clean-up: the fixture removes audit rows only for bookings that still exist.
+    $fixture->db->query("DELETE FROM {$fixture->prefix}appointments_audit WHERE booking_id={$guardedId}");
     $check(count($messages) === 3, 'Reschedule sends actual mail to invitee, guest and host');
     foreach ($messages as $mime) {
         $decoded = AppointmentsMail::decoded($mime);

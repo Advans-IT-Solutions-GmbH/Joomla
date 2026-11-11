@@ -141,6 +141,50 @@ final class InvitationService implements InvitationServiceInterface
      */
     public static function link(string $token): string
     {
+        return self::activationLink(self::siteBase(), $token);
+    }
+
+    /**
+     * A direct entry point, independent of SEF/menu state and CLI router roots.
+     */
+    public static function activationLink(string $base, string $token): string
+    {
+        if (!self::tokenFormatValid($token)) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_INVALID', 400);
+        }
+
+        return self::normalisedBase($base) . '/index.php?' . http_build_query([
+            'option' => 'com_appointments', 'view' => 'activation', 'token' => $token,
+        ], '', '&', PHP_QUERY_RFC3986);
+    }
+
+    /**
+     * The administrator page that revokes a completed activation in one step.
+     * It shows the account and asks for a confirmation (POST with token).
+     * Built from the same configured site address as the activation link, so the Host
+     * header of the activating request does not decide where the administrators' link points.
+     */
+    public static function revokeUrl(int $invitationId): string
+    {
+        return self::revokeLink(self::siteBase(), $invitationId);
+    }
+
+    public static function revokeLink(string $base, int $invitationId): string
+    {
+        if ($invitationId < 1) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_INVALID', 400);
+        }
+
+        return self::normalisedBase($base) . '/administrator/index.php?' . http_build_query([
+            'option' => 'com_appointments', 'view' => 'invitations', 'layout' => 'revoke', 'id' => $invitationId,
+        ], '', '&', PHP_QUERY_RFC3986);
+    }
+
+    /**
+     * The component's public_site_url, then live_site, then the request root outside the CLI.
+     */
+    private static function siteBase(): string
+    {
         $app = Factory::getApplication();
         $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
 
@@ -152,37 +196,25 @@ final class InvitationService implements InvitationServiceInterface
             $base = Uri::root();
         }
 
-        return self::activationLink($base, $token);
+        return $base;
     }
 
     /**
-     * A direct entry point, independent of SEF/menu state and CLI router roots.
+     * An absolute HTTPS site root without a trailing slash or index.php. Anything else is refused.
      */
-    public static function activationLink(string $base, string $token): string
+    private static function normalisedBase(string $base): string
     {
         $parts = parse_url($base);
 
-        if (!self::tokenFormatValid($token) || !filter_var($base, FILTER_VALIDATE_URL) || !\is_array($parts)
+        if (!filter_var($base, FILTER_VALIDATE_URL) || !\is_array($parts)
             || !\in_array($parts['scheme'] ?? '', ['http', 'https'], true)
             || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_INVALID', 400);
         }
 
         $base = preg_replace('#(?:/index\.php)+/*$#', '', rtrim($base, '/'));
-        $base = preg_replace('#\Ahttp://#', 'https://', $base);
 
-        return $base . '/index.php?' . http_build_query([
-            'option' => 'com_appointments', 'view' => 'activation', 'token' => $token,
-        ], '', '&', PHP_QUERY_RFC3986);
-    }
-
-    /**
-     * The administrator page that revokes a completed activation in one step.
-     * It shows the account and asks for a confirmation (POST with token).
-     */
-    public static function revokeUrl(int $invitationId): string
-    {
-        return rtrim(Uri::root(), '/') . '/administrator/index.php?option=com_appointments&view=invitations&layout=revoke&id=' . $invitationId;
+        return preg_replace('#\Ahttp://#', 'https://', $base);
     }
 
     // ------------------------------------------------------------------
