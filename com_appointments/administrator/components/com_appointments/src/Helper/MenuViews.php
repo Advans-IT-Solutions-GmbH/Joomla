@@ -208,6 +208,29 @@ final class MenuViews
     }
 
     /**
+     * URL code of the content language of a menu item (for example "de" for a de-DE item, the
+     * `lang` parameter of Joomla's language filter), or '' for an item in "All" or an unknown or
+     * unpublished content language. A link to a language-specific item carries it, so the page opens
+     * in that item's language instead of the one the visitor's cookie or browser names.
+     */
+    public static function languageCode(DatabaseInterface $db, int $itemId): string
+    {
+        if ($itemId < 1) {
+            return '';
+        }
+
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName('l.sef'))
+            ->from($db->quoteName('#__menu', 'm'))
+            ->join('INNER', $db->quoteName('#__languages', 'l'), $db->quoteName('l.lang_code') . ' = ' . $db->quoteName('m.language'))
+            ->where($db->quoteName('m.id') . ' = ' . $itemId)
+            ->where($db->quoteName('l.published') . ' = 1');
+        $code = (string) $db->setQuery($query)->loadResult();
+
+        return preg_match('/\A[a-z0-9_-]{1,7}\z/i', $code) === 1 ? $code : '';
+    }
+
+    /**
      * A layout name for comparison: no layout and "_:name" (the component's own layout, as Joomla
      * writes it into a menu link) are the plain name. A layout of a template ("template:name") stays
      * as it is, so a request cannot pick a layout of another template.

@@ -419,12 +419,16 @@ try {
         $html = $page($path);
         $leaks = array_filter($events, static fn (array $event): bool => str_contains($html, htmlspecialchars($event['title'], ENT_QUOTES)));
         $ok = $site->status === 404 && $leaks === [] && !str_contains($html, 'com-appointments-');
-        $moved = $site->locations !== [] && preg_replace('#^https?://[^/]+#', '', (string) end($site->locations)) !== $path;
-        if ($strictOn && !$ok) {
-            $ok = $moved && in_array($site->status, [200, 404], true);
+        $final = $site->locations !== [] ? (string) preg_replace('#^https?://[^/]+#', '', (string) end($site->locations)) : $path;
+        $moved = $final !== $path;
+        // Strict routing only redirects to an address without a query: the canonical address of a
+        // menu item, which the dispatcher answers by the same rules. Never the refused page itself,
+        // and a 404 never with a page of the component (checked above).
+        if ($strictOn && !$ok && $moved) {
+            $ok = $site->status === 200 && !str_contains($final, '?') && !str_contains($final, 'component/');
         }
         $check($ok, ($strictOn ? '[strict routing] ' : '') . 'Refused: ' . $label . ' (' . $path . ')'
-            . ($moved ? ' -> ' . end($site->locations) : ''));
+            . ($moved ? ' -> ' . $final : ''));
         if (!$ok) {
             $dump($path, $site, $html);
         }

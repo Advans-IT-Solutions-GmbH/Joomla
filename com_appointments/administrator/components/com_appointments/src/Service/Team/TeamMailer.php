@@ -496,7 +496,8 @@ final class TeamMailer implements TeamMailerInterface
      * Address of «My calendars» through its menu item: the page opens only through a published menu
      * item of its type (MenuViews), so without one the link has no Itemid and the page answers 404.
      * The item the recipient may open, in the recipient's language or in "All" (MenuViews::itemFor()),
-     * looked up once per language and set of view levels.
+     * looked up once per language and set of view levels. A language-specific item adds its `lang`
+     * code, so the page opens in that language whatever the reader's cookie or browser names.
      */
     private function myCalendarsUrl(object $recipient, string $tag): string
     {
@@ -505,8 +506,11 @@ final class TeamMailer implements TeamMailerInterface
         $key = $tag . '|' . implode(',', $levels);
 
         if (!isset($this->myCalendarsUrls[$key])) {
-            $itemId = MenuViews::itemFor($this->services->db(), 'mycalendars', $tag, $levels);
-            $this->myCalendarsUrls[$key] = $this->siteUrl('index.php?option=com_appointments&view=mycalendars' . ($itemId > 0 ? '&Itemid=' . $itemId : ''));
+            $db = $this->services->db();
+            $itemId = MenuViews::itemFor($db, 'mycalendars', $tag, $levels);
+            $code = MenuViews::languageCode($db, $itemId);
+            $this->myCalendarsUrls[$key] = $this->siteUrl('index.php?option=com_appointments&view=mycalendars'
+                . ($itemId > 0 ? '&Itemid=' . $itemId : '') . ($code !== '' ? '&lang=' . urlencode($code) : ''));
         }
 
         return $this->myCalendarsUrls[$key];
