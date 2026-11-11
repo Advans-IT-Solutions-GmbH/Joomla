@@ -1581,7 +1581,7 @@ defines each stage's binding acceptance criteria. Versions are managed by the re
 
 ## Manual Acceptance Testing
 
-The [manual acceptance plan](tests/manual/README.md) contains 228 identified cases and a complete
+The [manual acceptance plan](tests/manual/README.md) contains 240 identified cases and a complete
 end-to-end scenario, including negative, boundary, concurrency and fault cases, real calendar
 clients, conferencing and all three erasure paths. Use its
 [blank report template](tests/manual/report-template.md) to record the actual tested commit and

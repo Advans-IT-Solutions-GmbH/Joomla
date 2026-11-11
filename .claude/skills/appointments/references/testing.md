@@ -7,7 +7,7 @@ are here.
 ## Manual acceptance
 
 The complete, reusable [manual plan](../../../../com_appointments/tests/manual/README.md)
-contains 228 identified cases and the end-to-end acceptance scenario. It preserves positive,
+contains 240 identified cases and the end-to-end acceptance scenario. It preserves positive,
 negative, boundary, concurrency, controlled-fault and integration coverage, including real
 calendar clients, conferencing and the three erasure paths. Use the
 [blank report template](../../../../com_appointments/tests/manual/report-template.md) in private
