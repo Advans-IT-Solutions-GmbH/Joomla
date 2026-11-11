@@ -15,6 +15,7 @@ defined('_JEXEC') or die;
 
 use Joomla\CMS\Authentication\Authentication;
 use Joomla\CMS\Component\ComponentHelper;
+use Joomla\CMS\Event\Model\NormaliseRequestDataEvent;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Form;
 use Joomla\CMS\Language\Language;
@@ -804,14 +805,23 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 return Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC');
             }
 
-            // The plugin is set first: the field reads it while it is set up,
-            // and outside of com_users it would read the options of com_ajax.
-            // A field that cannot be set up (captcha plugin not installed) drops
-            // out of the form and is not validated, as in com_users.
+            // A form without a captcha field (a changed core form) has nothing
+            // to check.
+            if ($form->getFieldAttribute('captcha', 'type', null) === null) {
+                return null;
+            }
+
+            // The plugin is set before the field is loaded: the field reads it
+            // while it is set up, and outside of com_users it would read the
+            // options of com_ajax or the Global Configuration instead.
             $form->setFieldAttribute('captcha', 'plugin', $plugin);
 
+            // A captcha is configured but its field cannot be set up (plugin
+            // missing or disabled): refuse instead of sending without a check.
             if (!$form->getField('captcha')) {
-                return null;
+                Log::add($modelName . ' captcha "' . $plugin . '" could not be set up', Log::WARNING, 'plg_ajax_joomlaajaxforms');
+
+                return Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC');
             }
 
             $data = $app->getInput()->post->get('jform', [], 'array');
@@ -1416,7 +1426,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $data = $input->post->get('jform', [], 'array');
             $data = \is_array($data) ? $data : [];
 
-            // Template overrides that post plain field names keep working.
+            // Template overrides that post jform[email] or plain field names
+            // keep working, as with the former handler.
+            if (!isset($data['email1']) && isset($data['email'])) {
+                $data['email1'] = $data['email'];
+            }
+
             foreach (['name' => 'name', 'email1' => 'email', 'email2' => 'email2', 'password1' => 'password1', 'password2' => 'password2'] as $field => $plain) {
                 if (!isset($data[$field]) && $input->post->get($plain, null, 'RAW') !== null) {
                     $data[$field] = $input->post->get($plain, '', 'RAW');
@@ -1449,6 +1464,21 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             if (!$form) {
                 return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVE_FAILED'));
             }
+
+            // As ProfileController::save(): plugins normalise the request data
+            // first. The fields plugin turns an editable custom field missing
+            // from the request (all checkboxes cleared) into a cleared value.
+            $objData = (object) $data;
+            $app->getDispatcher()->dispatch(
+                'onContentNormaliseRequestData',
+                new NormaliseRequestDataEvent('onContentNormaliseRequestData', [
+                    'context' => 'com_users.user',
+                    'data'    => $objData,
+                    'subject' => $form,
+                ])
+            );
+            $data       = (array) $objData;
+            $data['id'] = $userId;
 
             $validated = $model->validate($form, $data);
 

@@ -232,6 +232,27 @@ class RemindRequestTest
                     );
                 }
             }
+
+            // A captcha chosen in the Users options whose plugin is missing must
+            // not let the request through without a check.
+            ajaxforms_set_component_params('com_users', ['captcha' => 'ajaxformsmissing']);
+
+            foreach (['remind', 'reset'] as $task) {
+                [$cookies, $token] = $this->sessionAndToken();
+                $fields = ['task' => $task, 'email' => 'nobody_' . $task . '_' . time() . '@example.com', 'jform' => ['captcha' => 'ajaxforms-ok']];
+                if ($token !== '') {
+                    $fields[$token] = '1';
+                }
+
+                [$code, $body] = $this->http($this->baseUrl . $this->ajaxPath . '&task=' . $task, $fields, $cookies);
+                $data = ajaxforms_decode_response($body);
+
+                $this->test(
+                    ucfirst($task) . ' is refused while the configured captcha plugin is missing',
+                    $code < 500 && $data !== null && ($data['success'] ?? null) === false,
+                    "HTTP $code, body: " . substr($body, 0, 200)
+                );
+            }
         } finally {
             ajaxforms_restore_component_params('com_users', $original);
             ajaxforms_remove_test_captcha();

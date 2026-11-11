@@ -314,6 +314,19 @@ class InstallationTest
             $passed = false;
         }
 
+        // Texts from a template without the map of enabled forms must not stop
+        // the request: the map tells the script which forms to leave alone.
+        echo "Test: The map of enabled forms is fetched when the options lack it... ";
+        $body = $this->jsFunctionBody($source, 'loadTexts: function');
+        if ($body !== null
+            && str_contains($body, "getFormsLang('ERROR_GENERIC') !== '' && opts.enabled")
+            && str_contains($body, 'JoomlaAjaxForms.enabled = data.enabled')) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL\n";
+            $passed = false;
+        }
+
         return $passed;
     }
 

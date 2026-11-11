@@ -146,10 +146,18 @@ class ProfileTest
         curl_setopt($ch, CURLOPT_COOKIEFILE, $jar);
         curl_setopt($ch, CURLOPT_COOKIEJAR, $jar);
         $body = (string) curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
+
+        // Kept for the failure message: a body that is not JSON (a PHP notice,
+        // an error page or a redirect) is otherwise only reported as NULL.
+        $this->lastAnswer = "HTTP $code, body: " . substr(trim(strip_tags($body)), 0, 600);
 
         return ajaxforms_decode_response($body);
     }
+
+    /** Raw status and start of the body of the last endpoint answer. */
+    private string $lastAnswer = '';
 
     /**
      * A signed-in profile save applies the profile form of com_users: the
@@ -205,13 +213,18 @@ class ProfileTest
             ];
 
             $weak = $this->ajax('saveProfile', ['jform' => $form + ['password1' => 'short1!A', 'password2' => 'short1!A'], $token => '1'], $jar);
-            $this->test('A password below the rules of the Users options is refused', ($weak['success'] ?? null) === false, var_export($weak, true));
+            $this->test('A password below the rules of the Users options is refused', ($weak['success'] ?? null) === false, $this->lastAnswer);
             $this->test('The refused password is not stored', \Joomla\CMS\User\UserHelper::verifyPassword($oldPass, $hashOf()));
 
             $saved = $this->ajax('saveProfile', ['jform' => $form + ['password1' => $newPass, 'password2' => $newPass], $token => '1'], $jar);
-            $this->test('A valid profile save is accepted', ($saved['success'] ?? null) === true, var_export($saved, true));
+            $this->test('A valid profile save is accepted', ($saved['success'] ?? null) === true, $this->lastAnswer);
             $this->test('The password is stored exactly as typed', \Joomla\CMS\User\UserHelper::verifyPassword($newPass, $hashOf()));
             $this->test('The name is filtered like com_users (no markup)', $nameOf() === 'Renamed User', 'stored: ' . $nameOf());
+
+            // Overrides that post jform[email] instead of jform[email1] keep working.
+            $alias = $this->ajax('saveProfile', ['jform' => ['name' => 'Alias User', 'username' => $user->username, 'email' => $user->email], $token => '1'], $jar);
+            $this->test('A save with jform[email] instead of jform[email1] is accepted', ($alias['success'] ?? null) === true, $this->lastAnswer);
+            $this->test('That save stores the name', $nameOf() === 'Alias User', 'stored: ' . $nameOf());
         } finally {
             ajaxforms_restore_component_params('com_users', $original);
             ajaxforms_delete_test_user('profile');

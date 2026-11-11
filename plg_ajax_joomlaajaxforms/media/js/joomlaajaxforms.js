@@ -134,7 +134,18 @@ const JoomlaAjaxForms = {
      * them (script options missing). Read-only request without a token.
      */
     loadTexts: function() {
-        if (getFormsLang('ERROR_GENERIC') !== '') {
+        var opts = {};
+
+        try {
+            opts = Joomla.getOptions('plg_ajax_joomlaajaxforms') || {};
+        } catch (e) {
+            opts = {};
+        }
+
+        // Texts and the map of enabled forms are both needed. A template may
+        // supply the texts without the map, so the map alone also triggers the
+        // request.
+        if (getFormsLang('ERROR_GENERIC') !== '' && opts.enabled && typeof opts.enabled === 'object') {
             return;
         }
 
@@ -153,7 +164,7 @@ const JoomlaAjaxForms = {
         .then(function(rawData) {
             var data = JoomlaAjaxForms.unwrapResponse(rawData);
 
-            if (data && data.success && data.data && typeof data.data === 'object') {
+            if (data && data.success && data.data && typeof data.data === 'object' && getFormsLang('ERROR_GENERIC') === '') {
                 JoomlaAjaxForms.texts = data.data;
             }
 
