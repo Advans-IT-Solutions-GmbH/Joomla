@@ -185,6 +185,19 @@ try {
     $full = ba_request($page);
     ba_check('With core.manage and core.delete the record is selectable',
         $full['code'] === 200 && str_contains($full['body'], 'name="cid[]" value="' . $probeId . '"'));
+
+    // The page as Atum really renders it: theme variables and responsive table containers.
+    $html = $full['body'];
+    ba_check('The page renders inside the Atum administrator template',
+        str_contains($html, 'templates/administrator/atum'));
+    ba_check('The rendered component surface uses Atum color variables with Bootstrap fallbacks',
+        str_contains($html, '<div class="j2cleanup">')
+        && str_contains($html, 'var(--body-bg, var(--bs-body-bg, #fff))')
+        && str_contains($html, 'var(--body-color, var(--bs-body-color, #212529))'));
+    ba_check('The rendered extension tables scroll inside responsive containers',
+        preg_match('/\.j2cleanup \.table-responsive\s*\{[^}]*overflow-x:\s*auto/s', $html) === 1
+        && preg_match('#<div class="table-responsive">\s*<table#', $html) === 1);
+
     ba_request($page, ['task' => 'cleanup', 'cid' => [$probeId]]);
     ba_check('A cleanup request without the form token removes nothing', ba_has_extension($db, $probeId));
     ba_request($page, ['task' => 'cleanup', 'cid' => [$probeId], (string) ba_token($full['body']) => '1']);
