@@ -93,8 +93,8 @@ final class DeletionRulesTest extends TestCase
         self::assertGreaterThan(60, \count($keys));
 
         foreach ($keys as $key) {
-            // Swiss High German, no semicolons, no long dashes.
-            self::assertDoesNotMatchRegularExpression('/[;ß\x{2013}\x{2014}]/u', $german[$key], $key);
+            // Swiss High German, no semicolons (HTML entities of a link aside), no long dashes.
+            self::assertDoesNotMatchRegularExpression('/[;ß\x{2013}\x{2014}]/u', (string) preg_replace('/&[a-z]+;/', '', $german[$key]), $key);
         }
     }
 }
