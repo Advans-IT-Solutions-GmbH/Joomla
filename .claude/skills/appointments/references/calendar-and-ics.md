@@ -230,9 +230,10 @@ installations from 1.4.0, removed in 2.0.0. See `references/team-calendars.md`, 
 
 The feed URL is a bearer secret: anyone holding it sees the bookings. Treat it as a credential.
 
-- 32 random bytes, hex encoded, in the query. The database stores only `h1:` plus HMAC-SHA256 of the
-  token under the server key of purpose `feed-token` (`FeedToken`, from 1.5.0), never the token, so a
-  database copy alone opens no feed and a row written without the site secret matches no token. The
+- 32 random bytes, hex encoded, in the query. The database stores only `h1:` plus HMAC-SHA256 of
+  `scope:id:token` under the server key of purpose `feed-token` (`FeedToken`, from 1.5.0), never the
+  token, so a database copy alone opens no feed, a row written without the site secret matches no
+  token and a digest copied to another feed matches nothing there. The
   digests are compared with `hash_equals()`. A stored value without the prefix is a clear-text token
   from before 1.5.0: it never authenticates. The installer replaces it with its digest once, when it
   finds the `CHAR(64)` columns of up to 1.4 (update, or new installation over kept tables), with

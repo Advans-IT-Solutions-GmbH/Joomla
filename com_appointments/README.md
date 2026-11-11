@@ -750,8 +750,9 @@ available and rotatable only when you may edit every event type included in that
 Each credential controls only that feed; rotating a host URL does not rotate its event-type URLs,
 and vice versa. Rotation requires explicit confirmation and revokes the old URL immediately.
 
-The database stores only a keyed digest of each credential ("h1:" plus HMAC-SHA256, with a key
-derived from the site secret), never the URL itself. Therefore the view cannot show an existing
+The database stores only a keyed digest of each credential ("h1:" plus HMAC-SHA256 over the
+feed's scope, id and token, with a key derived from the site secret), never the URL itself, so a
+digest copied to another feed opens nothing there. Therefore the view cannot show an existing
 URL: **Rotate credential** issues a new URL and shows it once, in that response only (no redirect,
 session or message stores it). Copy it into your calendar client's subscription settings right
 away; reloading the response rotates again. A new event type or host starts with a credential that

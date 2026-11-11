@@ -410,13 +410,14 @@ function upgrade_verify(): void
     $eventId = (int) $fixture['eventtype_id'];
     $event = $db->query("SELECT schedule_id, host_user_id, feed_token, calendar_id FROM `$eventtypesTable` WHERE id = $eventId")->fetch_assoc();
     require_once __DIR__ . '/appointments-bookingdata.php';
-    // "h1:" plus HMAC-SHA256 under the feed-token server key, derived here independently of the component.
+    // "h1:" plus HMAC-SHA256 over scope, id and token under the feed-token server key, derived here
+    // independently of the component.
     $feedKey = hash_hmac('sha256', 'com_appointments:feed-token', (string) (new JConfig())->secret, true);
     upgrade_check('event type, schedule and host are preserved, the legacy feed credential is stored only as its keyed digest',
         $event !== null
         && (int) $event['schedule_id'] === (int) $fixture['schedule_id']
         && (int) $event['host_user_id'] === (int) ($fixture['bookings']['confirmed']['core']['host_user_id'])
-        && hash_equals('h1:' . hash_hmac('sha256', (string) $fixture['feed_token'], $feedKey), (string) $event['feed_token'])
+        && hash_equals('h1:' . hash_hmac('sha256', 'event:' . $eventId . ':' . (string) $fixture['feed_token'], $feedKey), (string) $event['feed_token'])
         && !str_contains((string) $event['feed_token'], (string) $fixture['feed_token'])
         && $event['calendar_id'] === null);
     $rulesTable = $prefix . 'appointments_schedule_rules';

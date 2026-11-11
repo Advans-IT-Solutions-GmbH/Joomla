@@ -192,7 +192,7 @@ class UninstallTest
             $row = $this->db->query("SELECT feed_token FROM {$this->dbPrefix}appointments_eventtypes WHERE id = {$aclFixture['eventtype_id']}")->fetch_assoc();
             $key = hash_hmac('sha256', 'com_appointments:feed-token', $this->siteSecret, true);
 
-            return $row && $row['feed_token'] === 'h1:' . hash_hmac('sha256', $legacyFeedToken, $key);
+            return $row && $row['feed_token'] === 'h1:' . hash_hmac('sha256', 'event:' . $aclFixture['eventtype_id'] . ':' . $legacyFeedToken, $key);
         });
         $this->test('Component can be reinstalled with retained data and its stable epoch anchor', function () use ($exitCode, $anchorPath, $legacyAnchorPath, $anchorContent) {
             return $exitCode === 0 && $this->extensionId() > 0

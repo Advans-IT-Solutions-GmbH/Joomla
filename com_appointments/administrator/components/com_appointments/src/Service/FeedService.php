@@ -49,14 +49,14 @@ final class FeedService
         $key = $this->key();
         $converted = 0;
 
-        foreach (['#__appointments_eventtypes' => 'id', '#__appointments_hosts' => 'user_id'] as $table => $column) {
+        foreach (['#__appointments_eventtypes' => ['id', 'event'], '#__appointments_hosts' => ['user_id', 'host']] as $table => [$column, $scope]) {
             $db->transactionStart();
             try {
                 $query = $this->query()->select($db->quoteName([$column, 'feed_token']))->from($db->quoteName($table))
                     ->where($db->quoteName('feed_token') . ' NOT LIKE ' . $db->quote(FeedToken::PREFIX . '%'));
                 foreach ($db->setQuery((string) $query . ' FOR UPDATE')->loadAssocList() as $row) {
                     $stored = (string) $row['feed_token'];
-                    $digest = preg_match('/\A[a-f0-9]{64}\z/D', $stored) === 1 ? FeedToken::digest($key, $stored) : FeedToken::unissued();
+                    $digest = preg_match('/\A[a-f0-9]{64}\z/D', $stored) === 1 ? FeedToken::digest($key, $scope, (int) $row[$column], $stored) : FeedToken::unissued();
                     $query = $this->query()->update($db->quoteName($table))
                         ->set($db->quoteName('feed_token') . ' = ' . $db->quote($digest))
                         ->where($db->quoteName($column) . ' = ' . (int) $row[$column]);
@@ -89,7 +89,7 @@ final class FeedService
         $scope = $validScope ? $scope : 'event';
         $id = $validScope && $id > 0 ? $id : 0;
         $credential = $this->credential($scope, $id);
-        $authenticated = FeedToken::verify($this->key(), (string) ($credential['feed_token'] ?? ''), $token);
+        $authenticated = FeedToken::verify($this->key(), $scope, $id, (string) ($credential['feed_token'] ?? ''), $token);
 
         if (!$authenticated || !$validScope || $id === 0) {
             return null;
@@ -144,9 +144,9 @@ final class FeedService
                 throw new \DomainException('COM_APPOINTMENTS_FEEDS_ERROR_NOT_FOUND');
             }
             $key = $this->key();
-            $token = FeedToken::rotate($key, (string) $stored);
+            $token = FeedToken::rotate($key, $scope, $id, (string) $stored);
             $query = $this->query()->update($db->quoteName($table))
-                ->set($db->quoteName('feed_token') . ' = ' . $db->quote(FeedToken::digest($key, $token)))
+                ->set($db->quoteName('feed_token') . ' = ' . $db->quote(FeedToken::digest($key, $scope, $id, $token)))
                 ->set($db->quoteName('modified_utc') . ' = ' . $db->quote($now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')))
                 ->where($db->quoteName($column) . ' = ' . $id);
             $db->setQuery($query)->execute();

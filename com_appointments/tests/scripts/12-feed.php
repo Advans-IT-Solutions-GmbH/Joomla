@@ -115,9 +115,10 @@ $digests = static function (int $event) use ($fixture): array {
     return [$eventRow['feed_token'], $hostRow['feed_token']];
 };
 // The expected digest, derived independently of the component: "h1:" plus HMAC-SHA256 under
-// the server key of purpose feed-token (HMAC of "com_appointments:feed-token" with the site secret).
+// the server key of purpose feed-token (HMAC of "com_appointments:feed-token" with the site secret),
+// over scope, id and token.
 $feedKey = hash_hmac('sha256', 'com_appointments:feed-token', (string) (new JConfig())->secret, true);
-$digest = static fn (string $token): string => 'h1:' . hash_hmac('sha256', $token, $feedKey);
+$digest = static fn (string $scope, int $id, string $token): string => 'h1:' . hash_hmac('sha256', $scope . ':' . $id . ':' . $token, $feedKey);
 // Writes a stored value straight into the database.
 $store = static function (string $scope, int $id, string $value) use ($fixture): void {
     $table = $scope === 'event' ? 'appointments_eventtypes' : 'appointments_hosts';
@@ -130,7 +131,7 @@ $store = static function (string $scope, int $id, string $value) use ($fixture):
 // A known credential, stored as its keyed digest.
 $seed = static function (string $scope, int $id) use ($store, $digest): string {
     $token = bin2hex(random_bytes(32));
-    $store($scope, $id, $digest($token));
+    $store($scope, $id, $digest($scope, $id, $token));
     return $token;
 };
 // The address a rotation response shows once, for exactly the rotated feed.
@@ -194,6 +195,13 @@ try {
     [$eventDigest, $hostDigest] = $digests($event);
     $http->request($feedPath('event', $event, substr($eventDigest, 3)));
     $check($http->status === 404, 'The stored digest itself does not open the feed');
+    // A database writer copies the digest of a known event feed into the host row (another table,
+    // so its unique index does not stop it; within one table the unique index refuses a copy).
+    $store('host', $fixture->host, $eventDigest);
+    $http->request($feedPath('host', $fixture->host, $eventToken));
+    $transplanted = $http->status;
+    $store('host', $fixture->host, $hostDigest);
+    $check($transplanted === 404, 'A digest copied to another feed row opens nothing there: it is bound to its scope and id');
     $path = $feedPath('event', $event, $eventToken);
     $body = $http->request($path);
     $etag = $http->headers['etag'] ?? '';
@@ -267,7 +275,7 @@ try {
     $rotated = $admin->request($rotate, ['scope' => 'event', 'id' => $event, 'confirm' => 1, $csrf => 1]);
     $newEventToken = (string) $issued($rotated, 'event', $event);
     [$newEventDigest, $sameHostDigest] = $digests($event);
-    $check($admin->status === 200 && $newEventToken !== '' && $newEventDigest === $digest($newEventToken)
+    $check($admin->status === 200 && $newEventToken !== '' && $newEventDigest === $digest('event', $event, $newEventToken)
         && $newEventDigest !== $eventDigest && $sameHostDigest === $hostDigest && $noStore($admin->headers),
         'Event rotation changes only its own credential and shows its new address once, in a no-store response');
     $again = $admin->request('/administrator/index.php?option=com_appointments&view=feeds');
@@ -286,7 +294,7 @@ try {
     $rotated = $admin->request($rotate, ['scope' => 'host', 'id' => $fixture->host, 'confirm' => 1, $csrf => 1]);
     $newHostToken = (string) $issued($rotated, 'host', $fixture->host);
     [$sameEventDigest, $newHostDigest] = $digests($event);
-    $check($admin->status === 200 && $newHostToken !== '' && $newHostDigest === $digest($newHostToken)
+    $check($admin->status === 200 && $newHostToken !== '' && $newHostDigest === $digest('host', $fixture->host, $newHostToken)
         && $sameEventDigest === $newEventDigest && $newHostDigest !== $hostDigest, 'Host rotation does not alter the event credential');
     $http->request($hostPath);
     $check($http->status === 404, 'Old host credential is immediately revoked');

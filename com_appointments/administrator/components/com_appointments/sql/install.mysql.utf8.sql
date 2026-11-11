@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_hosts` (
 -- means the component default applies.
 --
 -- `feed_token` has no default on purpose. It holds a keyed digest ("h1:" plus
--- HMAC-SHA256 in hex, key derived from the site secret) of a bearer credential
+-- HMAC-SHA256 in hex over scope, id and token, key derived from the site secret) of a bearer credential
 -- of 32 random bytes, never the credential itself (FeedToken), and a
 -- default of '' would hand an empty one to the first row inserted by a code
 -- path that forgot to generate it; the unique index would only catch the

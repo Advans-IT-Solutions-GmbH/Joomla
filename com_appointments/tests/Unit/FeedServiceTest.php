@@ -34,7 +34,7 @@ final class FeedServiceTest extends TestCase
     public static function invalidCredentials(): array
     {
         $key = (new KeyProvider('feed-service-test-secret'))->key(KeyProvider::PURPOSE_FEED_TOKEN);
-        $digest = FeedToken::digest($key, str_repeat('a', 64));
+        $digest = FeedToken::digest($key, 'event', 1, str_repeat('a', 64));
         $stored = ['feed_token' => $digest, 'title' => 'Fixture'];
         $legacy = ['feed_token' => str_repeat('a', 64), 'title' => 'Fixture'];
 
@@ -47,6 +47,7 @@ final class FeedServiceTest extends TestCase
             'invalid scope' => ['invalid', 1, str_repeat('a', 64), $stored],
             'missing ID' => ['event', 0, str_repeat('a', 64), $stored],
             'wrong host' => ['host', 1, str_repeat('b', 64), $stored],
+            'digest of another scope' => ['host', 1, str_repeat('a', 64), $stored],
         ];
     }
 }

@@ -14,9 +14,10 @@ defined('_JEXEC') or die;
 /**
  * The secret of a token feed address. The database holds only a keyed digest
  * of it, "h1:" plus HMAC-SHA256 (hex) under the server key of
- * KeyProvider::PURPOSE_FEED_TOKEN, never the token itself: a copy of the
- * database alone cannot open a feed, and a value written into the database
- * without the site secret matches no token.
+ * KeyProvider::PURPOSE_FEED_TOKEN over the feed's scope, its id and the token,
+ * never the token itself: a copy of the database alone cannot open a feed, a
+ * value written into the database without the site secret matches no token,
+ * and a digest copied to another feed's row matches nothing there.
  *
  * A stored value without the prefix is a clear-text token from before 1.5.0.
  * It never authenticates. The installer converts the values of tables from up to 1.4
@@ -31,10 +32,15 @@ final class FeedToken
         return bin2hex(random_bytes(32));
     }
 
-    /** The stored form of a token. */
-    public static function digest(string $key, string $token): string
+    /**
+     * The stored form of a token of one feed.
+     *
+     * @param   string  $scope  "event" or "host".
+     * @param   int     $id     The event type id or the host's user id.
+     */
+    public static function digest(string $key, string $scope, int $id, string $token): string
     {
-        return self::PREFIX . hash_hmac('sha256', $token, $key);
+        return self::PREFIX . hash_hmac('sha256', $scope . ':' . $id . ':' . $token, $key);
     }
 
     /**
@@ -55,22 +61,22 @@ final class FeedToken
      * A new token whose digest differs from the stored one. The caller stores
      * the digest of the result and shows the token itself once.
      */
-    public static function rotate(string $key, string $stored): string
+    public static function rotate(string $key, string $scope, int $id, string $stored): string
     {
         do {
             $replacement = self::generate();
-        } while (hash_equals($stored, self::digest($key, $replacement)));
+        } while (hash_equals($stored, self::digest($key, $scope, $id, $replacement)));
 
         return $replacement;
     }
 
     /** Compares digests in constant time, so the comparison reveals nothing about the stored value. */
-    public static function verify(string $key, string $stored, string $supplied): bool
+    public static function verify(string $key, string $scope, int $id, string $stored, string $supplied): bool
     {
         // Even a missing/malformed stored value or token goes through the comparison.
         $valid = self::isDigest($stored);
         $wellFormed = preg_match('/\A[a-f0-9]{64}\z/D', $supplied) === 1;
-        $matches = hash_equals($valid ? $stored : self::PREFIX . str_repeat('0', 64), self::digest($key, $supplied));
+        $matches = hash_equals($valid ? $stored : self::PREFIX . str_repeat('0', 64), self::digest($key, $scope, $id, $supplied));
 
         return $valid && $wellFormed && $matches;
     }

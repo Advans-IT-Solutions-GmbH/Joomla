@@ -675,14 +675,11 @@ class Com_appointmentsInstallerScript extends InstallerScript
      */
     private function convertLegacyFeedTokens(): void
     {
-        $class = '\\Advans\\Component\\Appointments\\Administrator\\Service\\FeedService';
-
-        if (!$this->hasLegacyFeedTokens || !class_exists($class) || !method_exists($class, 'convertLegacy')) {
+        if (!$this->hasLegacyFeedTokens) {
             return;
         }
 
         $db = Factory::getContainer()->get(DatabaseInterface::class);
-        $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) Factory::getApplication()->get('secret', ''));
 
         try {
             // A new installation over kept tables does not run the schema update that widens them.
@@ -690,7 +687,22 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 $db->setQuery('ALTER TABLE ' . $db->quoteName($table) . ' MODIFY ' . $db->quoteName('feed_token') . ' CHAR(67) NOT NULL')->execute();
             }
 
-            (new $class($db, $keys))->convertLegacy();
+            // A new installation registers the component's namespace only after this script.
+            $source = JPATH_ADMINISTRATOR . '/components/com_appointments/src/';
+            $classes = [
+                '\\Advans\\Component\\Appointments\\Administrator\\Helper\\KeyProvider' => 'Helper/KeyProvider.php',
+                '\\Advans\\Component\\Appointments\\Administrator\\Helper\\FeedToken'   => 'Helper/FeedToken.php',
+                '\\Advans\\Component\\Appointments\\Administrator\\Service\\FeedService' => 'Service/FeedService.php',
+            ];
+
+            foreach ($classes as $class => $file) {
+                if (!class_exists($class)) {
+                    require_once $source . $file;
+                }
+            }
+
+            $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) Factory::getApplication()->get('secret', ''));
+            (new \Advans\Component\Appointments\Administrator\Service\FeedService($db, $keys))->convertLegacy();
         } catch (\Throwable $e) {
             $app = Factory::getApplication();
             $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
