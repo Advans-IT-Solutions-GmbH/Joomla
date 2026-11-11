@@ -858,6 +858,9 @@ open, submission returns to the times of the same day with a friendly message an
 choices; an address of step 2 whose time is no longer offered shows the times of its day with the
 same message. A refusal the visitor can fix in a field returns to step 2 of the same time.
 Confirmation pages require the submitting browser's session and are not public booking lookups.
+The confirmation, the signed pages, their receipts and the guest removal page are kept out of
+Joomla's page cache (they exclude themselves from **System - Page Cache**, which ignores the
+browser cache headers), so a cached copy never hands their links or form tokens to another visitor.
 Public requests use the directly connected address for rate limiting, not untrusted forwarding
 headers. Only its keyed hash is stored; no raw address is added to a booking.
 

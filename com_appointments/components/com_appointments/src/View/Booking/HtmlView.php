@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Site\View\Booking;
 
+use Advans\Component\Appointments\Site\Helper\NoPageCache;
 use Advans\Component\Appointments\Administrator\Service\NotificationException;
 use Advans\Component\Appointments\Administrator\Service\NotificationService;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
@@ -37,8 +38,8 @@ class HtmlView extends BaseHtmlView
     {
         $app = Factory::getApplication();
         $app->setHeader('Cache-Control', 'private, no-store', true);
-        // Nor Joomla's page cache: the page carries signed links of one browser session (like GuestController).
-        $app->allowCache(false);
+        // Nor Joomla's page cache: the page carries signed links and tokens of one browser session.
+        NoPageCache::apply($app);
         $this->item = $this->getModel()->getItem();
 
         // A cancelled appointment has nothing to add to a calendar and nothing left to change.
