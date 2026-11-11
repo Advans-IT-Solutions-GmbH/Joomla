@@ -520,7 +520,7 @@ the real key pair and its calendar wrap exist.
 | Team groups | the group created by the installer | Members may receive grants from a calendar's managers. |
 | Group of external users | the group created by the installer | Accounts of external users belong here. Only users with the permission «Share with external users» grant to them, at most the write role, and only on calendars that allow externals. A member of both groups counts as external. |
 | Create user groups | on | Create missing groups and the access level on installation and update, and enforce MFA for both groups. |
-| Access level of «My calendars» | the level created by the installer | Shows the menu item to calendar users only. |
+| Access level of «My calendars» | the level created by the installer | Shows the menu item to calendar users only. The page and its device actions check it on the server too, together with membership of a team group or the external group, also at an address without a menu item: any other signed-in account gets 403, a guest 404. |
 | Days per clean-up phase | 14 | Longest duration of each clean-up phase of a blocked device (see below). |
 | Subscription feeds with token | off on a new installation, on after an update | The previous token feeds, replaced by the internet calendars. |
 
@@ -559,7 +559,7 @@ for your site's address; the CalDAV address below assumes the default base addre
 
 | Client | Address | Refresh |
 |---|---|---|
-| Classic Outlook (Office LTSC 2024) with the CalDav Synchronizer add-in | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, then «Discover resources and assign to Outlook folders», each calendar to a new, empty folder | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
+| Classic Outlook (Office LTSC 2024) with the CalDav Synchronizer add-in | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, then «Discover resources and assign to Outlook folders», select the calendar and assign a new, empty Outlook calendar folder; after synchronising, the calendar appears under «My Calendars» in the Outlook calendar view and must be ticked there | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
 | iOS calendar | Settings → Calendar → Accounts → Add Account → Other → CalDAV account, server `<site>` | Fetch New Data → every 15 minutes |
 | DAVx⁵ (Android) | «Login with URL and user name», `https://<site>/` | calendar sync interval 15 minutes (the Android minimum) |
 | Thunderbird | New Calendar → On the Network, `https://<site>/dav/` | calendar properties → refresh every 5 minutes |
@@ -572,6 +572,8 @@ tested set.
 
 Clients refresh by polling; the server keeps the CTag and the sync token (RFC 6578) exact, so a
 refresh without changes transfers no events. Menu paths can differ between client versions.
+
+The setup page links the manufacturers' official download pages, opened in a new window: CalDav Synchronizer (`https://caldavsynchronizer.org/download-2/`, own installer, administrator rights, afterwards the «CalDav Synchronizer» tab in Outlook) and DAVx⁵ (`https://www.davx5.com/download/`). The addresses are language strings (`COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_URL`, `COM_APPOINTMENTS_TEAM_D_GUIDE_DAVX5_URL`), so an operator can change them with a language override; only `https://` addresses are rendered. They are plain links the visitor clicks, the server never contacts them. Thunderbird needs no download.
 
 #### Blocking and clean-up
 
@@ -823,6 +825,16 @@ Spaces, brackets, dots, slashes and hyphens are ignored, and a single national t
 dropped ("+41 079 …" is stored as `+4179…`), except for the calling codes whose national numbers
 keep it (Italy, San Marino, Vatican City, Côte d'Ivoire, Benin, Republic of the Congo). Numbers are
 stored in E.164 form, at most 15 digits.
+The number after the calling code must have a plausible length. For the calling codes whose
+national numbers have one fixed length it must have exactly that length: 10 digits for North
+America (+1) and for Russia and Kazakhstan (+7), 9 for France (+33), Spain (+34), Switzerland (+41)
+and Portugal (+351), 8 for Denmark (+45). Swiss voicemail numbers, 860 followed by a nine-digit
+number, have 12 digits after +41. Every other calling code needs at least 3 digits, and at most 15
+digits together with the code. A number that
+does not fit ("+41 123") is refused at its field with a message that the number has too few or too
+many digits for its calling code.
+With the default **Calling code choice** the preselected code is only a preselection: a visitor
+with a foreign number chooses another code or types the number with `+`.
 
 A telephone event type that collected the number through a custom telephone field (before the
 fixed field existed) asks twice after the update. Unpublish that custom field; do not delete it, so

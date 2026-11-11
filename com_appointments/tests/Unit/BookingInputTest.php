@@ -130,7 +130,8 @@ final class BookingInputTest extends TestCase
             [['id' => 5, 'type' => $type, 'required' => 1, 'options' => $options]]);
         self::assertSame(['field-5'], array_keys($error->fieldErrors));
         self::assertContains($error->fieldErrors['field-5'],
-            ['COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED', 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_INVALID']);
+            ['COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED', 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_INVALID',
+                'COM_APPOINTMENTS_BOOKING_ERROR_PHONE_LENGTH']);
     }
 
     public static function badFields(): iterable
@@ -184,8 +185,62 @@ final class BookingInputTest extends TestCase
             self::assertSame(['phone'], array_keys($error->fieldErrors));
         }
 
-        $error = $this->refusal($this->input() + ['phone' => ['country' => '41', 'number' => '12']], [], true);
+        $error = $this->refusal($this->input() + ['phone' => ['country' => '41', 'number' => 'call me']], [], true);
         self::assertSame('COM_APPOINTMENTS_BOOKING_ERROR_PHONE', $error->fieldErrors['phone']);
+        $error = $this->refusal($this->input() + ['phone' => ['country' => '41', 'number' => '12']], [], true);
+        self::assertSame('COM_APPOINTMENTS_BOOKING_ERROR_PHONE_LENGTH', $error->fieldErrors['phone']);
+    }
+
+    #[DataProvider('implausibleLengths')]
+    public function testNumberOfTheWrongLengthForItsCallingCodeIsRefusedWithItsOwnMessage(array $phone): void
+    {
+        $error = $this->refusal($this->input() + ['phone' => $phone], [], true);
+        self::assertSame(['phone' => 'COM_APPOINTMENTS_BOOKING_ERROR_PHONE_LENGTH'], $error->fieldErrors);
+
+        // A custom telephone field gets the same message.
+        $error = $this->refusal($this->input() + ['fields' => [7 => $phone]], [['id' => 7, 'type' => 'tel', 'required' => 0, 'options' => null]]);
+        self::assertSame(['field-7' => 'COM_APPOINTMENTS_BOOKING_ERROR_PHONE_LENGTH'], $error->fieldErrors);
+    }
+
+    public static function implausibleLengths(): iterable
+    {
+        yield 'Switzerland, three digits' => [['country' => '', 'number' => '+41 123']];
+        yield 'Switzerland, three digits with the selector' => [['country' => '41', 'number' => '123']];
+        yield 'Switzerland, eight digits' => [['country' => '41', 'number' => '061 000 00 0']];
+        yield 'Switzerland, ten digits' => [['country' => '41', 'number' => '61 000 00 000']];
+        yield 'Switzerland, ten digits after a trunk zero' => [['country' => '', 'number' => '+41 0 61 000 00 000']];
+        yield 'Switzerland, voicemail one digit short' => [['country' => '', 'number' => '+41 860 79 123 45 6']];
+        yield 'Switzerland, voicemail prefix with only nine digits' => [['country' => '', 'number' => '+41 860791234']];
+        yield 'Switzerland, twelve digits without the voicemail prefix' => [['country' => '41', 'number' => '79 123 45 67 891']];
+        yield 'North America, nine digits' =>[['country' => '1', 'number' => '202 555 010']];
+        yield 'North America, eleven digits' => [['country' => '', 'number' => '+1 202 555 01000']];
+        yield 'France, eight digits' => [['country' => '33', 'number' => '01 23 45 67 8']];
+        yield 'Denmark, nine digits' => [['country' => '45', 'number' => '123 456 789']];
+        yield 'calling code alone' => [['country' => '', 'number' => '+49']];
+        yield 'two digits for a code without a fixed length' => [['country' => '49', 'number' => '30']];
+        yield 'sixteen digits in all' => [['country' => '', 'number' => '+49 30 1234 5678 9012']];
+    }
+
+    #[DataProvider('internationalNumbers')]
+    public function testInternationalNumbersOfAPlausibleLengthAreAccepted(array $phone, string $expected): void
+    {
+        $row = (new BookingInput())->validate($this->input() + ['phone' => $phone], [], 'en-GB', true);
+        self::assertSame($expected, $row['invitee_phone']);
+    }
+
+    public static function internationalNumbers(): iterable
+    {
+        yield 'Switzerland' => [['country' => '41', 'number' => '+41 61 000 00 00'], '+41610000000'];
+        yield 'Switzerland, national with trunk zero' => [['country' => '41', 'number' => '061 000 00 00'], '+41610000000'];
+        yield 'Switzerland, voicemail' => [['country' => '', 'number' => '+41 860 79 123 45 67'], '+41860791234567'];
+        yield 'Switzerland, voicemail national with trunk zero' => [['country' => '41', 'number' => '0860 79 123 45 67'], '+41860791234567'];
+        yield 'Germany, short Berlin number' => [['country' => '41', 'number' => '+49 30 000000'], '+4930000000'];
+        yield 'Germany, chosen code' => [['country' => '49', 'number' => '030 000000'], '+4930000000'];
+        yield 'United States' => [['country' => '41', 'number' => '+1 202 555 0100'], '+12025550100'];
+        yield 'France' => [['country' => '', 'number' => '+33 1 23 45 67 89'], '+33123456789'];
+        yield 'Denmark' => [['country' => '45', 'number' => '12 34 56 78'], '+4512345678'];
+        yield 'Liechtenstein, no fixed length' => [['country' => '', 'number' => '+423 234 56 78'], '+4232345678'];
+        yield 'fifteen digits in all' => [['country' => '', 'number' => '+49 30 1234 5678 901'], '+493012345678901'];
     }
 
     #[DataProvider('phoneNumbers')]
