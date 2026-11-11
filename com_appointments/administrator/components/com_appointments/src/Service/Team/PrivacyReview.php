@@ -404,13 +404,34 @@ final class PrivacyReview
         $char = '(?:[\p{L}\p{N}]|%[0-9A-Fa-f]{2})';
         $label = $char . '(?:(?:[\p{L}\p{N}-]|%[0-9A-Fa-f]{2}){0,61}' . $char . ')?';
         $pattern = '/[\p{L}\p{N}.!#$%&\'*+\/=?^_`{|}~-]{1,192}(?:@|%40)' . $label . '(?:(?:\.|%2[Ee])' . $label . ')+/iu';
-        $result = preg_replace_callback($pattern, static function (array $match) use ($email, $replacement): string {
-            $found = rtrim(ltrim($match[0], '.'), '.');
-            $lead = substr($match[0], 0, strpos($match[0], $found));
-            $tail = substr($match[0], \strlen($lead) + \strlen($found));
+        $result = preg_replace_callback($pattern, static function (array $match) use ($email, $replacement, $line): string {
+            [$text, $offset] = $match[0];
+            $found = rtrim(ltrim($text, '.'), '.');
+            $lead = substr($text, 0, strpos($text, $found));
+            $tail = substr($text, \strlen($lead) + \strlen($found));
+            $inUri = false;
 
-            return mb_strtolower(rawurldecode($found), 'UTF-8') === $email ? $lead . $replacement . $tail : $match[0];
-        }, $line);
+            // An escaped line break (\n, \N) before the address is TEXT, not part of it.
+            if ($lead === '' && $offset > 0 && $line[$offset - 1] === '\\' && preg_match('/^[nN]/', $found) === 1) {
+                $lead = $found[0];
+                $found = substr($found, 1);
+            }
+
+            // A value in a URI query (?cc=…, &to=…) is the address, not the key before it.
+            if (mb_strtolower(rawurldecode($found), 'UTF-8') !== $email
+                && preg_match('/^(.*[?&][^=?&]*=)(.+)$/s', $found, $query) === 1) {
+                $lead .= $query[1];
+                $found = $query[2];
+                $inUri = true;
+            }
+
+            if (mb_strtolower(rawurldecode($found), 'UTF-8') !== $email) {
+                return $text;
+            }
+
+            // Inside a URI the placeholder is percent-encoded, so the URI stays valid.
+            return $lead . ($inUri ? rawurlencode($replacement) : $replacement) . $tail;
+        }, $line, -1, $count, PREG_OFFSET_CAPTURE);
 
         return $result ?? $line;
     }

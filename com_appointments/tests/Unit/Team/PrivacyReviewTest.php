@@ -88,6 +88,22 @@ final class PrivacyReviewTest extends TestCase
         self::assertSame(0, preg_match('/anna|an%6Ea|ann%61/i', $changed));
     }
 
+    public function testAddressesInUriQueriesAndAfterEscapedLineBreaksGo(): void
+    {
+        $ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:own-6\r\nSUMMARY:Call anna@example.test\r\n"
+            . "ATTENDEE:mailto:other@example.test?cc=anna%40example.test\r\n"
+            . "DESCRIPTION:Contact\\nanna@example.test\\NAlso\\Nanna@example.test and https://x.test/?to=anna%40example.test&x=1\r\n"
+            . "END:VEVENT\r\nEND:VCALENDAR\r\n";
+        $changed = str_replace("\r\n ", '', PrivacyReview::withoutAddress($ics, 'anna@example.test', '[removed]'));
+
+        self::assertStringContainsString('ATTENDEE:mailto:other@example.test?cc=%5Bremoved%5D', $changed);
+        self::assertStringContainsString('DESCRIPTION:Contact\\n[removed]\\NAlso\\N[removed] and https://x.test/?to=%5Bremoved%5D&x=1', $changed);
+        self::assertSame(0, preg_match('/anna/i', $changed));
+        // Another address with a key-like part stays.
+        self::assertStringContainsString('x=anna@example.test', PrivacyReview::withoutAddress(
+            "BEGIN:VCALENDAR\r\nDESCRIPTION:x=anna@example.test\r\nEND:VCALENDAR\r\n", 'anna@example.test', '[removed]'));
+    }
+
     public function testAnOrganiserAddressAndLongLines(): void
     {
         $ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:own-2\r\nORGANIZER:mailto:anna@example.test\r\n"
