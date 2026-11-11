@@ -1107,10 +1107,17 @@ sleep(3);
                 try {
                     $application->bootComponent("com_privacy");
                     $plugin = $application->bootPlugin("appointments", "privacy");
+                    // A stored removal request: the plugin locks it and checks its state, and CanRemove
+                    // captures the staff account the removals then use.
                     $request = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
-                    $request->id = 800000 + random_int(1, 99999);
                     $request->email = "$name@example.test";
+                    $request->request_type = "remove";
                     $request->status = 1;
+                    $request->requested_at = gmdate("Y-m-d H:i:s");
+                    if (!$request->store()) {
+                        throw new \RuntimeException("The privacy request fixture could not be stored.");
+                    }
+                    $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent("onPrivacyCanRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance($uid)]));
                     // First run with the account, then a retry in which Joomla no longer finds it.
                     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance($uid)]));
                     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => null]));
@@ -1118,6 +1125,12 @@ sleep(3);
 
                     return ["request" => (int) $request->id, "rows" => array_map(static fn ($d): ?array => AuditService::decodeDetails($d), $rows)];
                 } finally {
+                    if (!empty($request->id)) {
+                        foreach (["appointments_privacy_cleanup", "appointments_privacy_staff", "appointments_privacy_outcomes"] as $table) {
+                            $db->setQuery("DELETE FROM #__$table WHERE request_id = " . (int) $request->id)->execute();
+                        }
+                        $db->setQuery("DELETE FROM #__privacy_requests WHERE id = " . (int) $request->id)->execute();
+                    }
                     $db->setQuery("DELETE FROM #__user_usergroup_map WHERE user_id = $uid")->execute();
                     $db->setQuery("DELETE FROM #__users WHERE id = $uid")->execute();
                 }');

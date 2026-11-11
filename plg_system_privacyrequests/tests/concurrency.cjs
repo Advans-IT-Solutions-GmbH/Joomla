@@ -116,7 +116,8 @@ async function main() {
         check('A Unicode local-part address is cleanly rejected with a proper error: no 500, no receipt, no mail',
             rejected.every(reply => reply.status === 200 && reply.html.includes('Enter a valid email address')
                 && !reply.html.includes('does not confirm receipt') && !reply.html.includes('No data has been removed'))
-            && rejectedState.requests.length === 0 && rejectedState.deliveries.length === 0
+            // Without a receipt the snapshot has no delivery list at all.
+            && rejectedState.requests.length === 0 && (rejectedState.deliveries ?? []).length === 0
             && fs.readdirSync(mailDir).every(name => distinctBefore.has(name)));
         const accepted = await post(contexts[0], servers[0], asciiAddress, 'request');
         const asciiRow = fixture('snapshot', asciiAddress);
