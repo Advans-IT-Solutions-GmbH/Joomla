@@ -41,9 +41,12 @@ class UninstallTest
         'appointments_teamlog_head',
         'appointments_auth_failures',
         'appointments_eventtype_calendars',
+        'appointments_close_delivery',
+        'appointments_close_limits',
     ];
 
     private const TASK_TYPES = [
+        'plg_task_appointments.close',
         'plg_task_appointments.reminders',
         'plg_task_appointments.retention',
         'plg_task_appointments.teamcleanup',

@@ -7,9 +7,11 @@ out, for the booking core: hosted scheduling backends, cloud calendar APIs, remo
 scripts, map tiles, avatar services, error reporting services and analytics. Every asset ships in
 the package.
 
-Two deliberate exceptions exist, both opt-in and both inert until an operator configures them:
+Deliberate exceptions exist, all inert until an operator configures/enables them:
 
 - A conferencing adapter that has to call a provider (see `references/conferencing.md`).
+- The optional direct Close delivery worker, independent of the booking/CalDAV paths, with no
+  external origin or credential default (component README, "Optional direct Close transfer").
 - Joomla's own update server lookup, which is Joomla's behaviour and not the component's.
 
 If a feature cannot be built without a third-party call, it does not go into version 1. Record it in

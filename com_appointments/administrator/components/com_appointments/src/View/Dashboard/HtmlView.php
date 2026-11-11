@@ -29,6 +29,11 @@ class HtmlView extends BaseHtmlView
      */
     protected $counts = ['eventtypes' => 0, 'bookings' => 0];
     protected $eventCounts = [];
+    protected array $closeRows = [];
+    protected int $closeStart = 0;
+    protected int $closeTotal = 0;
+    protected bool $closeEnabled = false;
+    protected bool $closeConfigured = false;
 
     public function display($tpl = null)
     {
@@ -41,6 +46,23 @@ class HtmlView extends BaseHtmlView
 
         $this->counts = $this->getModel()->getCounts();
         $this->eventCounts = $this->getModel()->getEventCounts();
+        if (Factory::getApplication()->getIdentity()->authorise('core.admin', 'com_appointments')) {
+            $params = \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments');
+            $this->closeEnabled = (int) $params->get('close_enabled', 0) === 1;
+            $queue = new \Advans\Component\Appointments\Administrator\Service\Close\Queue(
+                Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class), $params);
+            $this->closeTotal = $queue->count();
+            $this->closeStart = min(max(0, Factory::getApplication()->getInput()->getInt('close_start')),
+                max(0, (int) (ceil($this->closeTotal / 100) - 1) * 100));
+            $this->closeStart = intdiv($this->closeStart, 100) * 100;
+            $this->closeRows = $queue->rows($this->closeStart);
+            try {
+                new \Advans\Component\Appointments\Administrator\Service\Close\Settings($params);
+                $this->closeConfigured = true;
+            } catch (\InvalidArgumentException|\JsonException $e) {
+                $this->closeConfigured = false;
+            }
+        }
 
         ToolbarHelper::title(Text::_('COM_APPOINTMENTS_DASHBOARD_TITLE'), 'calendar');
 

@@ -51,6 +51,10 @@ class Com_appointmentsInstallerScript extends InstallerScript
     ];
 
     private const APPOINTMENT_TABLES = [
+        'close_delivery',
+        'close_limits',
+        // Unreleased evaluation table; postflight already removes it on update.
+        'close',
         'privacy_staff',
         'privacy_cleanup',
         'privacy_outcomes',
@@ -83,6 +87,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
     ];
 
     private const SCHEDULER_TASK_TYPES = [
+        'plg_task_appointments.close',
         'plg_task_appointments.reminders',
         'plg_task_appointments.retention',
         'plg_task_appointments.teamcleanup',
@@ -224,6 +229,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
         $this->ensureUpdateSite();
         $db = Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
+        require_once JPATH_ADMINISTRATOR . '/components/com_appointments/src/Service/Close/Queue.php';
+        \Advans\Component\Appointments\Administrator\Service\Close\Queue::install($db);
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_privacy_outcomes')
             . ' (request_id INT UNSIGNED NOT NULL PRIMARY KEY, complete TINYINT NOT NULL DEFAULT 0)'
             . ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
@@ -953,6 +960,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $lang->load('plg_task_appointments', JPATH_ADMINISTRATOR)
             || $lang->load('plg_task_appointments', JPATH_PLUGINS . '/task/appointments');
         $routines = [
+            'plg_task_appointments.close' => ['PLG_TASK_APPOINTMENTS_CLOSE_TITLE', ['rule-type' => 'interval-minutes', 'interval-minutes' => 5]],
             'plg_task_appointments.reminders' => ['PLG_TASK_APPOINTMENTS_REMINDERS_TITLE', ['rule-type' => 'interval-minutes', 'interval-minutes' => 5]],
             'plg_task_appointments.retention' => ['PLG_TASK_APPOINTMENTS_RETENTION_TITLE', ['rule-type' => 'interval-hours', 'interval-hours' => 24]],
         ];
@@ -979,7 +987,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     'title' => Text::_($titleKey),
                     'type' => $type,
                     'execution_rules' => $rules + ['exec-day' => gmdate('d'), 'exec-time' => gmdate('H:i')],
-                    'state' => $enabled ? 1 : 0,
+                    'state' => $enabled && $type !== 'plg_task_appointments.close' ? 1 : 0,
                     'params' => ['batch_size' => 100],
                     'created_by' => (int) $identity->id,
                 ]);
@@ -988,7 +996,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     throw new \RuntimeException('The Scheduler task could not be saved.');
                 }
 
-                if (!$enabled) {
+                if (!$enabled || $type === 'plg_task_appointments.close') {
                     $app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_INSTALL_TASK_DISABLED', Text::_($titleKey)), 'notice');
                 }
             } catch (\Throwable $e) {

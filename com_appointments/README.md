@@ -24,6 +24,103 @@ blocked.
 > build a package from source as described below. Official packages and version changes will be
 > published only through the repository's reviewed release workflow.
 
+## Optional direct Close transfer
+
+Close transfer is **disabled by default**, has no API origin or credential default, and is separate
+from the booking and self-hosted CalDAV paths. Installing or updating this component does not
+configure Close, change an existing scheduling integration, subscribe anyone to marketing, connect a
+cloud calendar or send historical bookings. Only bookings **created after activation** are enrolled.
+
+### What is created in Close
+
+The transfer reproduces what Close's own Calendly integration does with its "Create Contacts"
+option, using only API features that every Close plan offers:
+
+- **Existing person:** the invitee is matched by exact e-mail address, not by domain. One match reuses
+  that Contact and its Lead **unchanged**. Several matches stop visibly for manual review.
+- **New person:** a new Lead with one Contact (name, e-mail, phone). Optionally the Lead name comes from
+  a form field such as the company, the Contact title from a field such as the job title, and Lead
+  custom fields from fixed values (for example the lead origin) or from answers. These values are set
+  on **new** Leads only; existing Leads and Contacts are never overwritten. No Opportunity is created.
+- **The booking itself:** one **Note** on that Lead and Contact per booking, with status, start and end
+  in the site time zone, event type, name, e-mail, phone, the configured answers with their field
+  labels, campaign, source, "new contact created" and the booking UID. Approval, rescheduling and
+  cancellation **update the same Note** (cancellation changes its title and status). Notes are written
+  in the site's default language.
+- **Optional Custom Activity** instead of a Note, only for Close plans that offer custom activities.
+  Its fields are single-valued text fields; the worker checks the type's field catalog first.
+
+The Close API has no endpoint to create a Meeting activity; Meetings come from Close's calendar
+sync. A synced calendar keeps working independently of this transfer.
+
+### Profiles: one Close organisation per event type
+
+Configure **Options > Close booking transfer**, then add one **profile** per Close organisation or
+campaign. Each profile has:
+
+| Setting | Meaning |
+|---|---|
+| Profile key | Short unique name. Changing it, the origin, the key variable, the delivery mode or the activity type stops updates of records already transferred with the old destination. |
+| Event types | New bookings of these event types use this profile. An event type belongs to at most one profile; an event type without a profile is **never transferred**. |
+| API origin, key variable | The HTTPS origin and the **name** of a server environment variable holding that organisation's API key. The key itself is never stored in the options, the database, screenshots or reports. Use one variable per organisation. |
+| Expected organisation ID | Optional `orga_…`. Before any personal data is sent, the worker reads the organisation of the configured key (`GET /api/v1/me/`, exactly one organisation required) and binds every transfer record to it. A key of another organisation blocks the affected records, and a configured expected ID that differs blocks the profile. |
+| Booking record | Note (all plans) or Custom Activity (plans with custom activities), with its type ID, field mapping and answer mapping. |
+| Answers in the note | Comma-separated local form field IDs. Nothing else from the form is transferred. Guests, conference links, cancellation reasons, consent records and capability links are never sent. |
+| Campaign, source | Fixed texts written into every Note or Activity of the profile. |
+| Lead name, contact title | Comma-separated form field IDs, for example the company field of each event type. The first non-empty answer is used. |
+| Lead fields from answers, fixed lead fields | JSON objects `{"<field ID>": "cf_…"}` and `{"cf_…": "<text>"}`. Every Lead field is fetched before any personal data, including the e-mail search, is sent; an unknown field blocks the transfer. Multi-value fields receive all selected options. |
+
+Each profile has its own **rate-limit pause**: a `429` with `Retry-After` pauses only that
+organisation, and its bookings do not occupy the batch of the other profiles. Enable transfer and, separately, the scheduled task
+**Appointments: deliver approved bookings to Close**, which is created **disabled**, including on fresh
+installations. An invalid configuration never breaks a booking: the booking is recorded for later
+routing and the dashboard shows the configuration warning; no call is made until it is fixed.
+
+### Nothing is deleted in Close
+
+Close is treated as a separate system with its own data protection handling. The component **never
+deletes or anonymises anything in Close**, and nothing on the website waits for Close:
+
+- Retention, self-service erasure, administrator erasure and native privacy **Remove** only delete the
+  local transfer record (the link to the remote IDs). A booking erased before it was sent is not sent.
+  Records already in Close keep their last transferred status, and an uncertain creation of an erased
+  booking is no longer followed up from the website; check it in Close if needed.
+- A privacy request is never blocked or left incomplete because of Close.
+- **Data subject requests for Close are handled separately in Close** by the operator (access,
+  correction, deletion there), using Close's own tools.
+
+### Failures and recovery
+
+The administrator dashboard lists the transfer records of current bookings, 100 per page, with the
+profile and a diagnostic code but no payloads or credentials. Failed rechecks rotate behind other due
+records; authentication, organisation, mapping, unknown-field and ambiguous-contact errors block visibly. The
+dashboard's safe retry action rechecks blocked records, never uncertain creations. The HTTPS transport
+uses verified TLS, no redirect, a bounded response, five-second timeouts and **no transport-level
+retry**, and it only issues GET, POST and PUT. A database advisory lock serializes workers on this
+installation; booking row locks serialize each send against erasure and rescheduling.
+
+Before a non-idempotent POST, the worker commits an uncertain intent. A timeout, server error, invalid
+create response, process crash or local persistence failure after remote success leaves that intent
+uncertain. **UID/sequence is correlation, not a remote idempotency guarantee.** Do not blindly resend.
+After locating the existing remote object, a component administrator enters its Contact, Note or
+Activity ID on the dashboard: reconciliation only GETs it and checks the e-mail, or the Lead, Contact
+and booking UID, before linking it. Duplicate prevention across independent installations is not
+guaranteed. The retry and reconciliation actions require a POST with a valid Joomla form token and
+component `core.admin` permission.
+
+Synthetic coverage without a network or credential: `php tests/close-mock.php` (PDO SQLite, sodium and
+mbstring required) runs two and three profiles against local fake Close organisations, including
+routing, new and existing contacts, enrichment, updates, rate limits per profile, uncertain creations,
+erasure without remote effect and the refusal of DELETE. The installed `close` integration suite
+exercises canonical booking mutations, native privacy Remove and a two-process erasure race with
+encrypted data and a mock transport on Joomla/MySQL/MariaDB. Neither replaces installed/browser
+acceptance or the later setup against the real accounts.
+The installed PHP harness defaults to `/var/www/html` and `http://localhost`. An exclusive native
+test lane may set `APPOINTMENTS_TEST_ROOT` to its absolute Joomla root and
+`APPOINTMENTS_TEST_BASE_URL` to its loopback HTTP(S) origin, including its port. Explicit invalid
+values fail instead of falling back. The race child inherits these variables and uses the same
+installation/database; no Joomla files or server ports need remapping.
+
 ## Requirements
 
 - [Joomla](https://github.com/joomla/joomla-cms) 5.4 or later (5.4.x, 6.x)
@@ -475,6 +572,26 @@ instead of deleting it. If a task cannot be created,
 the installation shows a warning and you create it by hand. Configure Joomla's Scheduler execution mechanism or
 invoke its CLI from the server's cron; a quiet website must not rely solely on visitor-triggered
 execution for timely reminders.
+
+The bundled task plugin advertises these routine IDs. An advertised routine is not automatically
+a running scheduled task.
+
+| Routine ID | Purpose | Installer-created task |
+|---|---|---|
+| `plg_task_appointments.reminders` | Due booking reminders | Five-minute rule; enabled only on a fresh component installation |
+| `plg_task_appointments.retention` | Ended-booking, booking-audit and expired rate-limit retention | Daily rule; enabled only on a fresh component installation |
+| `plg_task_appointments.teamcleanup` | Blocked-device cleanup and sign-in-counter expiry | Create/configure deliberately |
+| `plg_task_appointments.teamlog` | Internet-calendar audit retention | Create/configure deliberately |
+| `plg_task_appointments.teaminvitations` | Expired internet-calendar invitations | Create/configure deliberately |
+| `plg_task_appointments.teamretention` | Per-calendar retention plus booking-calendar upkeep | Create/configure deliberately |
+| `plg_task_appointments.close` | Queued Close delivery | Five-minute rule, **created disabled**, including on fresh install |
+
+Updates create missing seeded tasks disabled and preserve any existing task of the routine,
+including disabled/trashed tasks. Configure a real Scheduler trigger separately.
+Reminder/booking-retention `batch_size` defaults to 100 and accepts 1–1000; calendar and Close
+routines use their own service bounds, not that batch form. While internet calendars are disabled,
+`teamcleanup`, `teamlog` and `teaminvitations` do nothing, but `teamretention` still removes
+booking-calendar orphans and advances booking encryption.
 
 In the component options, set **Public site URL** to the canonical HTTP(S) site root, including a
 Joomla subdirectory if applicable. **This setting is required** (or Joomla's `live_site`). Every
@@ -1672,7 +1789,7 @@ defines each stage's binding acceptance criteria. Versions are managed by the re
 
 ## Manual Acceptance Testing
 
-The [manual acceptance plan](tests/manual/README.md) contains 228 identified cases and a complete
+The [manual acceptance plan](tests/manual/README.md) contains 240 identified cases and a complete
 end-to-end scenario, including negative, boundary, concurrency and fault cases, real calendar
 clients, conferencing and all three erasure paths. Use its
 [blank report template](tests/manual/report-template.md) to record the actual tested commit and
@@ -1729,10 +1846,17 @@ The authoritative list and order is [`tests/test.env`](tests/test.env):
 | Feeds / Scheduler | Credentials, conditional responses, independent rotation, reminders and bounded retention |
 | Conference | Automatic links, JWT separation, explicit failure, retry and lifecycle teardown |
 | Privacy | Real typed Joomla privacy events, Unicode isolation, export/removal and legal blocking |
-| Administration | Filters, CSV safety, reschedule, system checks and restricted event ACL |
+| Administration | Filters, CSV safety, reschedule, system checks, restricted event ACL by exact list/CSV row identity across pagination, Close action POST/token/component-administrator guards, and scoped mobile queue layout |
 | Backend views | Shared HTTP rendering checks for every administrator view |
 | Installer messages | Shared install/update checks in en-GB, de-DE and fr-FR |
 | Uninstall | Component removal and table cleanup |
+
+`node com_appointments/tests/close-queue-layout.cjs` (from the repository root) renders the actual
+dashboard template with synthetic data and checks all Close queue columns, the complete UID and
+ordinary reconciliation form interaction without horizontal scrolling. It uses the existing
+`shared/tests/browser` Playwright dependencies and installed Edge/Firefox browsers across all
+seven viewport widths, three locales and both themes; it makes no network requests or Joomla writes.
+This isolated layout regression complements, but does not replace, installed-site browser acceptance.
 
 PHPUnit covers the pure helpers without Joomla or a database, including DST, buffers, the slot
 grid, minimum notice, booking horizons and caps. CI treats skipped integration assertions as

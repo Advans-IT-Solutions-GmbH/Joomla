@@ -4,7 +4,7 @@ require __DIR__ . '/appointments-fixtures.php';
 require __DIR__ . '/appointments-joomla.php';
 
 $fixture = new AppointmentsFixture('administration');
-$admin = new AppointmentsHttp('http://localhost', 'administration-admin');
+$admin = new AppointmentsHttp(appointments_test_base_url(), 'administration-admin');
 $db = $fixture->db;
 $prefix = $fixture->prefix;
 $failed = 0;
@@ -30,6 +30,39 @@ $export = static function (AppointmentsHttp $client, array $filters = []) use ($
         'task' => 'bookings.exportCsv', $token => 1, 'filter_eventtype_id' => '',
         'filter_state' => '', 'filter_search' => '', 'filter_from' => '', 'filter_to' => '',
     ], $filters));
+};
+$listIds = static function (string $html): array {
+    $document = new DOMDocument();
+    @$document->loadHTML($html);
+    $ids = [];
+    foreach ((new DOMXPath($document))->query('//form[@id="adminForm"]//tbody/tr//input[@name="cid[]"]') as $input) {
+        $ids[] = (int) $input->getAttribute('value');
+    }
+
+    return $ids;
+};
+$csvIds = static function (string $csv): array {
+    $stream = fopen('php://temp', 'r+');
+    if ($stream === false) {
+        throw new RuntimeException('Cannot open the CSV assertion stream.');
+    }
+    try {
+        if (fwrite($stream, $csv) !== strlen($csv) || !rewind($stream)) {
+            throw new RuntimeException('Cannot prepare the CSV assertion stream.');
+        }
+        $header = fgetcsv($stream, 0, ',', '"', '');
+        if ($header === false || $header[0] !== 'id') {
+            throw new RuntimeException('The booking export has no CSV id column.');
+        }
+        $ids = [];
+        while (($row = fgetcsv($stream, 0, ',', '"', '')) !== false) {
+            $ids[] = (int) $row[0];
+        }
+
+        return $ids;
+    } finally {
+        fclose($stream);
+    }
 };
 
 try {
@@ -64,6 +97,7 @@ try {
         $id = $fixture->event();
         $events[] = $id;
         $row = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$id}")->fetch_assoc();
+        $row['title'] = $tag . ($index === 0 ? '-event-allowed' : '-event-denied');
         $row['conference_params'] = [];
         $admin->submit('eventtype', $row);
         $asset = $db->query("SELECT id FROM {$prefix}assets WHERE name='com_appointments.eventtype.{$id}'")->fetch_assoc();
@@ -81,7 +115,7 @@ try {
     // The last names sort opposite to the start times, so a list that still sorts by time fails the checks below.
     $first = $fixture->booking($eventA, $day . ' 10:00:00', ['first_name' => '=1+1', 'last_name' => 'zzz-' . $tag])['booking'];
     $second = $fixture->booking($eventA, $day . ' 11:00:00', ['first_name' => $tag . '-allowed', 'last_name' => 'aaa-' . $tag . '-surname'])['booking'];
-    $third = $fixture->booking($eventB, $day . ' 12:00:00', ['first_name' => $tag . '-denied', 'email' => 'other@example.test'])['booking'];
+    $third = $fixture->booking($eventB, $day . ' 12:00:00', ['first_name' => $tag . '-denied', 'email' => $tag . '-denied@example.test'])['booking'];
     $id = (int) $first['id'];
     $db->query("UPDATE {$prefix}appointments_bookings SET state=0 WHERE id={$id}");
     $html = $listing($admin, ['filter_state' => '0']);
@@ -151,6 +185,12 @@ try {
     $check((new DOMXPath($document))->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
         'Administrator navigation loads its local responsive styles outside event-type forms too');
     $styles = $admin->request('/media/com_appointments/css/admin.css');
+    $check((new DOMXPath($document))->query('//section[contains(concat(" ",normalize-space(@class)," ")," com-appointments-close ")]')->length === 1
+        && str_contains($styles, '.com-appointments-close-queue')
+        && preg_match('~\.com-appointments-close-queue\s*\{[^}]*table-layout:\s*fixed~', $styles) === 1
+        && preg_match('~\.com-appointments-close\s+code\s*\{[^}]*overflow-wrap:\s*anywhere~', $styles) === 1
+        && preg_match('~@media\s*\(max-width:\s*767\.98px\)[\s\S]*?\.com-appointments-close-queue\s+td\s*\{[^}]*display:\s*block~', $styles) === 1,
+        'The installed Close queue has scoped wrapping and a stacked mobile layout without hiding recovery fields');
     $check($admin->status === 200
         && preg_match('~#calendar-form\s+\.switcher\s*\{[^}]*max-inline-size:\s*100%~', $styles) === 1,
         'The installed stylesheet bounds native calendar switchers to their settings column without clipping');
@@ -309,6 +349,7 @@ try {
     $rules = json_decode($componentRules, true, 512, JSON_THROW_ON_ERROR);
     $rules['core.manage'][(string) $groupId] = 1;
     $rules['core.options'][(string) $groupId] = 0;
+    $rules['core.admin'][(string) $groupId] = 0;
     $db->query("UPDATE {$prefix}assets SET rules='" . $db->real_escape_string(json_encode($rules, JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR)) . "' WHERE name='com_appointments'");
     foreach ([$eventA => 1, $eventB => 0] as $event => $edit) {
         $rules = $db->real_escape_string(json_encode([
@@ -317,7 +358,7 @@ try {
         ], JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR));
         $db->query("UPDATE {$prefix}assets SET rules='{$rules}' WHERE name='com_appointments.eventtype.{$event}'");
     }
-    $restricted = new AppointmentsHttp('http://localhost', 'administration-restricted');
+    $restricted = new AppointmentsHttp(appointments_test_base_url(), 'administration-restricted');
     $oldUsername = getenv('JOOMLA_ADMIN_USERNAME');
     $oldPassword = getenv('JOOMLA_ADMIN_PASSWORD');
     try {
@@ -328,9 +369,86 @@ try {
         putenv($oldUsername === false ? 'JOOMLA_ADMIN_USERNAME' : 'JOOMLA_ADMIN_USERNAME=' . $oldUsername);
         putenv($oldPassword === false ? 'JOOMLA_ADMIN_PASSWORD' : 'JOOMLA_ADMIN_PASSWORD=' . $oldPassword);
     }
-    $html = $listing($restricted);
-    $check($restricted->status === 200 && str_contains($html, $tag . '-allowed') && !str_contains($html, $tag . '-denied'),
+    $closeParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
+    try {
+        $disabledClose = array_replace(json_decode($closeParams, true, 512, JSON_THROW_ON_ERROR), [
+            'close_enabled' => 0, 'close_profiles' => [],
+        ]);
+        $db->query("UPDATE {$prefix}extensions SET params='"
+            . $db->real_escape_string(json_encode($disabledClose, JSON_THROW_ON_ERROR))
+            . "' WHERE element='com_appointments' AND type='component'");
+        $closeDashboard = '/administrator/index.php?option=com_appointments&view=dashboard';
+        $closeHtml = $admin->request($closeDashboard);
+        $check($admin->status === 200 && str_contains($closeHtml, 'Transfer disabled: no CRM calls.')
+            && str_contains($closeHtml, 'Close configuration is incomplete or invalid.')
+            && str_contains($closeHtml, 'task=close.retry'),
+            'Administrator sees disabled Close status, configuration warning and safe retry form');
+        $adminToken = $admin->token($closeHtml);
+        $restrictedHtml = $restricted->request($closeDashboard);
+        $check($restricted->status === 200 && !str_contains($restrictedHtml, 'task=close.retry')
+            && !str_contains($restrictedHtml, 'task=close.reconcile')
+            && !str_contains($restrictedHtml, 'Close booking transfer'),
+            'Event editor with component access but no core.admin sees no Close controls');
+        $restrictedToken = $restricted->token($listing($restricted));
+        foreach (['retry', 'reconcile'] as $action) {
+            $endpoint = '/administrator/index.php?option=com_appointments&task=close.' . $action;
+            $admin->request($endpoint . '&' . $adminToken . '=1');
+            $check($admin->status === 403, 'Close ' . $action . ' rejects GET even with a valid token');
+            $admin->request($endpoint, ['booking_id' => 0, 'remote_id' => 'acti_fixture']);
+            $check($admin->status === 403, 'Close ' . $action . ' rejects a tokenless POST');
+            $admin->request($endpoint, [$adminToken => 'invalid', 'booking_id' => 0]);
+            $check($admin->status === 403, 'Close ' . $action . ' rejects an invalid POST token');
+            $admin->request($endpoint . '&' . $adminToken . '=1', ['booking_id' => 0]);
+            $check($admin->status === 403, 'Close ' . $action . ' does not accept a query token for POST');
+            $restricted->request($endpoint, [$restrictedToken => 1, 'booking_id' => 0, 'remote_id' => 'acti_fixture']);
+            $check($restricted->status === 403, 'Close ' . $action . ' rejects a valid-token event editor without core.admin');
+        }
+        $retryHtml = $admin->request('/administrator/index.php?option=com_appointments&task=close.retry', [$adminToken => 1]);
+        $check($admin->status === 200 && str_contains($retryHtml, 'Delivery pass finished.')
+            && str_contains($retryHtml, 'Transfer disabled: no CRM calls.'),
+            'Authorised token-protected retry returns to the dashboard without enabling delivery');
+        $invalidReconcile = $admin->request('/administrator/index.php?option=com_appointments&task=close.reconcile', [
+            $adminToken => 1, 'booking_id' => 0, 'remote_id' => 'acti_fixture',
+        ]);
+        $check($admin->status === 200 && str_contains($invalidReconcile, 'Close delivery could not run.'),
+            'Authorised reconciliation rejects an invalid booking locally with a visible error');
+    } finally {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($closeParams)
+            . "' WHERE element='com_appointments' AND type='component'");
+    }
+    // Joomla ignores the top-level limit once list options are supplied.
+    $scopeFilters = ['filter_search' => $tag, 'limit' => 100, 'limitstart' => 0,
+        'list' => ['limit' => 100, 'fullordering' => 'b.start_utc ASC']];
+    $expectedIds = [(int) $first['id'], (int) $second['id']];
+    sort($expectedIds);
+    $deniedId = (int) $third['id'];
+    $adminIds = $listIds($listing($admin, $scopeFilters));
+    sort($adminIds);
+    $allFixtureIds = [...$expectedIds, $deniedId];
+    sort($allFixtureIds);
+    $check($admin->status === 200 && $adminIds === $allFixtureIds,
+        'The scoped administrator control renders all three booking fixture rows');
+    $html = $listing($restricted, $scopeFilters);
+    $restrictedIds = $listIds($html);
+    sort($restrictedIds);
+    $check($restricted->status === 200 && $restrictedIds === $expectedIds,
         'Per-event editor sees only permitted booking contacts');
+    $pagedIds = [];
+    $pagesOk = true;
+    foreach ([0, 1] as $start) {
+        $pageIds = $listIds($listing($restricted, array_replace($scopeFilters, [
+            'limit' => 1, 'limitstart' => $start, 'list' => ['limit' => 1, 'fullordering' => 'b.start_utc ASC'],
+        ])));
+        $pagesOk = $pagesOk && $restricted->status === 200 && count($pageIds) === 1
+            && !in_array($deniedId, $pageIds, true);
+        $pagedIds = [...$pagedIds, ...$pageIds];
+    }
+    sort($pagedIds);
+    $check($pagesOk && $pagedIds === $expectedIds,
+        'Per-event booking permissions hold across single-row pages');
+    $deniedPageIds = $listIds($listing($restricted, array_replace($scopeFilters, ['filter_eventtype_id' => $eventB])));
+    $check($restricted->status === 200 && $deniedPageIds === [],
+        'An explicit denied-event booking filter cannot widen the editor scope');
     $calendarHub = $restricted->request('/administrator/index.php?option=com_appointments&view=calendars');
     $check($restricted->status === 200 && !str_contains($calendarHub, 'id="toolbar-devices"')
         && !str_contains($calendarHub, 'id="toolbar-teamlog"') && !str_contains($calendarHub, 'id="toolbar-invitations"'),
@@ -339,8 +457,12 @@ try {
         $restricted->request('/administrator/index.php?option=com_appointments&view=' . $view);
         $check($restricted->status === 403, 'Direct calendar branch access retains its permission boundary: ' . $view);
     }
-    $csv = $export($restricted);
-    $check(str_contains($csv, $tag . '-allowed') && !str_contains($csv, 'other@example.test'),
+    $csv = $export($restricted, $scopeFilters);
+    $exportedIds = $csvIds($csv);
+    sort($exportedIds);
+    $check($restricted->status === 200
+        && strtolower(trim(explode(';', $restricted->contentType, 2)[0])) === 'text/csv'
+        && $exportedIds === $expectedIds,
         'CSV cannot widen the editor scope');
     $dashboard = $restricted->request('/administrator/index.php?option=com_appointments&view=dashboard');
     $deniedTitle = $db->query("SELECT title FROM {$prefix}appointments_eventtypes WHERE id={$eventB}")->fetch_assoc()['title'];
@@ -348,8 +470,13 @@ try {
     $allowedTitle = $db->query("SELECT title FROM {$prefix}appointments_eventtypes WHERE id={$eventA}")->fetch_assoc()['title'];
     foreach (['eventtypes' => [$allowedTitle, $deniedTitle], 'fields' => [$tag . '-allowed-field', $tag . '-denied-field'],
         'templates' => [$tag . '-allowed-template', $tag . '-denied-template']] as $view => [$allowed, $denied]) {
-        $html = $restricted->request('/administrator/index.php?option=com_appointments&view=' . $view . '&limit=100&filter_eventtype_id=-1');
+        $html = $restricted->request('/administrator/index.php?' . http_build_query([
+            'option' => 'com_appointments', 'view' => $view, 'limit' => 100, 'limitstart' => 0,
+            'filter_eventtype_id' => -1, 'filter_search' => $tag, 'list' => ['limit' => 100],
+        ]));
+        $rowIds = $listIds($html);
         $check($restricted->status === 200 && str_contains($html, $allowed) && !str_contains($html, $denied)
+            && ($view !== 'eventtypes' || $rowIds === [$eventA])
             && ($view !== 'templates' || !str_contains($html, $tag . '-sitewide-template')),
             'Administrator list hides denied event metadata and site-wide template content: ' . $view);
     }
@@ -361,7 +488,10 @@ try {
     $denyAll = $db->real_escape_string(json_encode(['core.edit' => [(string) $groupId => 0]], JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR));
     $db->query("UPDATE {$prefix}assets SET rules='{$denyAll}' WHERE name='com_appointments.eventtype.{$eventA}'");
     foreach (['eventtypes', 'fields', 'templates'] as $view) {
-        $html = $restricted->request('/administrator/index.php?option=com_appointments&view=' . $view . '&limit=100&filter_eventtype_id=-1');
+        $html = $restricted->request('/administrator/index.php?' . http_build_query([
+            'option' => 'com_appointments', 'view' => $view, 'limit' => 100, 'limitstart' => 0,
+            'filter_eventtype_id' => -1, 'filter_search' => $tag, 'list' => ['limit' => 100],
+        ]));
         $check($restricted->status === 200 && !str_contains($html, $allowedTitle) && !str_contains($html, $deniedTitle)
             && !str_contains($html, $tag . '-allowed-field') && !str_contains($html, $tag . '-allowed-template')
             && !str_contains($html, $tag . '-sitewide-template'), 'An empty event ACL scope returns no list rows: ' . $view);

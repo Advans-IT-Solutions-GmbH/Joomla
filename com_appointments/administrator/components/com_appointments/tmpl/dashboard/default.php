@@ -89,6 +89,57 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
         </div>
     <?php endif; ?>
 
+    <?php if ($user->authorise('core.admin', 'com_appointments')) : ?>
+        <section class="card card-body mb-3 com-appointments-close">
+            <h2><?php echo Text::_('COM_APPOINTMENTS_CLOSE_TITLE'); ?></h2>
+            <p><?php echo Text::_($this->closeEnabled ? 'COM_APPOINTMENTS_CLOSE_ENABLED' : 'COM_APPOINTMENTS_CLOSE_DISABLED'); ?></p>
+            <?php if (!$this->closeConfigured) : ?>
+                <p class="alert alert-warning"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_CONFIG_MISSING'); ?></p>
+            <?php endif; ?>
+            <p><?php echo Text::_('COM_APPOINTMENTS_CLOSE_DELIVERY_HELP'); ?></p>
+            <form action="<?php echo Route::_('index.php?option=com_appointments&task=close.retry'); ?>" method="post">
+                <button class="btn btn-secondary" type="submit"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_RETRY'); ?></button>
+                <?php echo \Joomla\CMS\HTML\HTMLHelper::_('form.token'); ?>
+            </form>
+            <?php if ($this->closeRows) :
+                $deliveryStates = ['pending' => 'COM_APPOINTMENTS_CLOSE_PENDING', 'retry' => 'COM_APPOINTMENTS_CLOSE_RETRY_STATE',
+                    'done' => 'COM_APPOINTMENTS_CLOSE_DONE', 'blocked' => 'COM_APPOINTMENTS_CLOSE_BLOCKED',
+                    'uncertain' => 'COM_APPOINTMENTS_CLOSE_UNCERTAIN']; ?>
+                <table class="table com-appointments-close-queue">
+                    <caption><?php echo Text::_('COM_APPOINTMENTS_CLOSE_RECENT'); ?></caption>
+                    <thead><tr><th scope="col"><?php echo Text::_('JGRID_HEADING_ID'); ?></th><th scope="col"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_PROFILE'); ?></th><th scope="col"><?php echo Text::_('JSTATUS'); ?></th><th scope="col"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REASON'); ?></th></tr></thead>
+                    <tbody><?php foreach ($this->closeRows as $delivery) : ?><tr>
+                        <td><span class="com-appointments-close-label" aria-hidden="true"><?php echo Text::_('JGRID_HEADING_ID'); ?></span><?php echo (int) $delivery['booking_id']; ?></td>
+                        <td><span class="com-appointments-close-label" aria-hidden="true"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_PROFILE'); ?></span><code><?php echo $this->escape($delivery['profile'] !== '' ? $delivery['profile'] : '-'); ?></code></td>
+                        <td><span class="com-appointments-close-label" aria-hidden="true"><?php echo Text::_('JSTATUS'); ?></span><?php echo Text::_($deliveryStates[$delivery['state']] ?? 'COM_APPOINTMENTS_CLOSE_BLOCKED'); ?></td>
+                        <td><span class="com-appointments-close-label" aria-hidden="true"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REASON'); ?></span><code><?php echo $this->escape($delivery['reason']); ?></code>
+                            <?php if ($delivery['state'] === 'uncertain') : ?>
+                                <p><?php echo Text::_('COM_APPOINTMENTS_DETAIL_UID'); ?>:
+                                    <code class="text-break"><?php echo $this->escape($delivery['uid']); ?></code></p>
+                                <form action="<?php echo Route::_('index.php?option=com_appointments&task=close.reconcile'); ?>" method="post">
+                                    <label for="close-remote-<?php echo (int) $delivery['booking_id']; ?>"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REMOTE_ID'); ?></label>
+                                    <input class="form-control" id="close-remote-<?php echo (int) $delivery['booking_id']; ?>" name="remote_id" maxlength="110" required>
+                                    <input type="hidden" name="booking_id" value="<?php echo (int) $delivery['booking_id']; ?>">
+                                    <button class="btn btn-secondary" type="submit"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_RECONCILE'); ?></button>
+                                    <?php echo \Joomla\CMS\HTML\HTMLHelper::_('form.token'); ?>
+                                </form>
+                            <?php endif; ?>
+                        </td>
+                    </tr><?php endforeach; ?></tbody>
+                </table>
+                <nav aria-label="<?php echo Text::_('COM_APPOINTMENTS_CLOSE_PAGES'); ?>">
+                    <p><?php echo Text::sprintf('COM_APPOINTMENTS_CLOSE_PAGE', intdiv($this->closeStart, 100) + 1,
+                        max(1, (int) ceil($this->closeTotal / 100))); ?></p>
+                    <?php if ($this->closeStart > 0) : ?>
+                        <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=dashboard&close_start=' . ($this->closeStart - 100)); ?>"><?php echo Text::_('JPREV'); ?></a>
+                    <?php endif; ?>
+                    <?php if ($this->closeStart + 100 < $this->closeTotal) : ?>
+                        <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=dashboard&close_start=' . ($this->closeStart + 100)); ?>"><?php echo Text::_('JNEXT'); ?></a>
+                    <?php endif; ?>
+                </nav>
+            <?php endif; ?>
+        </section>
+    <?php endif; ?>
     <?php if ($isEmpty) : ?>
         <div class="card">
             <div class="card-header">
