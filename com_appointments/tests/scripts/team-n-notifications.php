@@ -12,7 +12,6 @@
  * settings and plugins it changes.
  */
 
-use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\NotificationSwitch;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
@@ -169,9 +168,8 @@ return static function (TeamSuite $suite): void {
         }
 
         $super = $user('super', [8], true);
-        // The host may open the administrator and the component (Administrator group: a Manager has no
-        // core.manage on the component by default), the reader may not.
-        $host = $user('host', [$teamGroup, 7], false, ['language' => 'en-GB']);
+        // The host may open the administrator (Super Users), the reader may not.
+        $host = $user('host', [$teamGroup, 8], false, ['language' => 'en-GB']);
         $reader = $user('reader', [$teamGroup], false, ['language' => 'fr-FR', 'timezone' => 'Europe/Paris']);
         $freebusy = $user('freebusy', [$teamGroup], true, ['language' => 'de-DE']);
         $external = $user('external', [$externalGroup], true);
@@ -246,20 +244,13 @@ return static function (TeamSuite $suite): void {
         $store = new BookingStore($joomla);
         $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
         $day = $now->modify('+6 days')->format('Y-m-d');
-        // The booking as the notification gets it after a booking (BookingModel, ConferenceService::provision()):
-        // the stored row, opened. The clear array that BookingStore::create() returns is not marked as opened,
-        // so the notification would refuse its personal fields as clear values.
-        $bookingData = BookingData::fromApplication();
-        $book = static function (array $row, string $hour, array $fields = []) use ($store, $now, $day, $joomla, $bookingData): array {
-            $created = $store->create($row, array_replace([
+        // The row as stored (personal fields sealed), as every caller of the notification service passes it.
+        $book = static function (array $row, string $hour, array $fields = []) use ($store, $now, $day, $fixture): array {
+            return $fixture->stored((int) $store->create($row, array_replace([
                 'invitee_name' => 'Notify Invitee', 'invitee_first_name' => 'Notify', 'invitee_last_name' => 'Invitee',
                 'invitee_email' => 'notify-invitee@example.test', 'invitee_phone' => '+41 44 555 01 01',
                 'guest_emails' => 'notify-guest@example.test', 'invitee_timezone' => 'UTC', 'invitee_language' => 'en-GB',
-            ], $fields), new DateTimeImmutable($day . ' ' . $hour, new DateTimeZone('UTC')), $now, [1, 2, 3, 5, 6], 'en-GB');
-            $stored = $joomla->setQuery('SELECT * FROM ' . $joomla->quoteName('#__appointments_bookings')
-                . ' WHERE ' . $joomla->quoteName('id') . ' = ' . (int) $created['id'])->loadAssoc();
-
-            return $bookingData->open($stored);
+            ], $fields), new DateTimeImmutable($day . ' ' . $hour, new DateTimeZone('UTC')), $now, [1, 2, 3, 5, 6], 'en-GB')['id']);
         };
         $notifier = new NotificationService($joomla, $team);
         $send = static function (array $booking, string $purpose, bool $hostOnly = false, ?NotificationService $service = null) use ($notifier, $now, $mails): array {
@@ -336,7 +327,7 @@ return static function (TeamSuite $suite): void {
             return true;
         });
 
-        $suite->test($names[4], static function () use ($booking, $send, $to, $address, $expect) {
+        $suite->test($names[4], static function () use ($booking, $send, $to, $address, $expect, $fixture, $db, $p, $event, &$state) {
             $templates = static function (array $mails) use ($to, $address): array {
                 $result = [];
 
@@ -359,11 +350,27 @@ return static function (TeamSuite $suite): void {
                 && str_starts_with((string) $reminded['host'], '1:Reminder:'), 'Reminder: ' . json_encode($reminded));
             $expect(\count($to($reminder, 'notify-invitee@example.test')) === 1 && $to($reminder, 'notify-invitee@example.test')[0]['ics'],
                 'The booking person keeps the reminder with invitation');
-            $cancelled = $booking;
+            // A cancellation reason and edited templates that try to show it, the telephone and the answers.
+            $fixture->update((int) $booking['id'], ['cancel_reason' => 'Private reason text']);
+            $cancelled = $fixture->stored((int) $booking['id']);
             $cancelled['state'] = 2;
-            $gone = $templates($send($cancelled, 'cancellation'));
+
+            foreach (['en-GB' => 'Cancelled in', 'fr-FR' => 'Annulé dans'] as $language => $subject) {
+                $db->query("INSERT INTO {$p}appointments_templates (eventtype_id,purpose,language,subject,body,published) VALUES ({$event},'calendar_cancelled','{$language}',"
+                    . "'{$subject} {calendar_title}','Reason {cancel_reason} {invitee_phone} {custom_fields} {invitee_name}',1)");
+                $state['templates'][] = (int) $db->insert_id;
+            }
+
+            $goneMails = $send($cancelled, 'cancellation');
+            $gone = $templates($goneMails);
             $expect(str_starts_with((string) $gone['freebusy'], '1:Zeit wieder frei') && str_starts_with((string) $gone['reader'], '1:Annulé dans'),
                 'Cancellation: ' . json_encode($gone));
+
+            foreach (['reader', 'external'] as $name) {
+                $body = $to($goneMails, $address($name))[0]['body'];
+                $expect(str_contains($body, 'Notify Invitee') && !str_contains($body, 'Private reason') && !str_contains($body, '555 01 01'),
+                    $name . ' must get what the calendar copy shows, not the cancellation reason or the telephone');
+            }
             $erased = $send($cancelled, 'erasure_notice', true);
             $erasedTemplates = $templates($erased);
             $expect(\count($to($erased, 'notify-invitee@example.test')) === 0 && str_starts_with((string) $erasedTemplates['host'], '1:Cancelled in')
