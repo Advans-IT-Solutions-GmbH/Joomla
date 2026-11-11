@@ -34,6 +34,13 @@ $export = static function (AppointmentsHttp $client, array $filters = []) use ($
 
 try {
     $admin->login();
+    foreach (['dashboard', 'bookings', 'eventtypes', 'schedules', 'blockeds', 'fields', 'templates', 'feeds', 'system',
+        'calendars', 'invitations', 'devices', 'teamlog'] as $view) {
+        $html = $admin->request('/administrator/index.php?option=com_appointments&view=' . $view);
+        $check($admin->status === 200 && str_contains($html, 'class="header-title')
+            && str_contains($html, '/media/com_appointments/css/admin-layout.css'),
+            'Administrator page loads the layout stylesheet that keeps the title and tables inside the screen: ' . $view);
+    }
     $options = $admin->request('/administrator/index.php?option=com_config&view=component&component=com_appointments');
     $document = new DOMDocument();
     @$document->loadHTML($options);

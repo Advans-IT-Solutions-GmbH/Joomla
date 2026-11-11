@@ -120,7 +120,9 @@ class BookingController extends BaseController
         $this->app->setUserState('com_appointments.booking.' . $eventId, null);
         $this->app->setUserState('com_appointments.booking_errors.' . $eventId, null);
         $this->app->setUserState('com_appointments.confirmation.id', (int) $booking['id']);
-        $this->setRedirect(Route::_('index.php?option=com_appointments&view=booking', false));
+        // The confirmation lands at its card, so modules a template places above the component
+        // do not push the outcome out of the first screen; the booking script focuses its status.
+        $this->setRedirect(Route::_('index.php?option=com_appointments&view=booking', false) . '#appointment-confirmation');
 
         return true;
     }
@@ -177,12 +179,18 @@ class BookingController extends BaseController
         $month = $this->input->getString('month', '');
         $zone = $this->input->getString('timezone', '');
         if ($month !== '') {
-            $url .= '&month=' . urlencode($month) . '&timezone=' . urlencode($zone);
+            $url .= '&month=' . urlencode($month);
+            if (in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
+                $url .= '&timezone=' . urlencode($zone);
+            }
         }
         $this->setRedirect(Route::_($url, false));
+        $focusKey = 'com_appointments.manage_focus_message.' . $this->input->getInt('id') . '.' . $model->action();
+        $this->app->setUserState($focusKey, null);
 
         if (!(new RateLimiter($db, $keys))->allow('manage', $this->input->server->getString('REMOTE_ADDR'), $now, 60, 900)) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_RATE'), 'error');
+            $this->app->setUserState($focusKey, true);
             return false;
         }
         // Visible fields get their message at the field (manage layout), hidden values
@@ -200,6 +208,7 @@ class BookingController extends BaseController
         }
         if ($model->action() === 'reschedule' && !in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_ZONE'), 'error');
+            $this->app->setUserState($focusKey, true);
             return false;
         }
         $start = UtcTimestamp::parse($this->input->post->getString('start', ''));
@@ -218,12 +227,17 @@ class BookingController extends BaseController
             $model->apply($now, $start, $reason);
         } catch (SlotTakenException $e) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_TAKEN'), 'error');
+            $this->app->setUserState($focusKey, true);
             return false;
         } catch (\DomainException $e) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_ERROR_STATE'), 'error');
+            $this->app->setUserState($focusKey, true);
             return false;
         }
         $this->app->setUserState('com_appointments.cancel_reason', null);
+        // Only the completed state lands at the result: on a refusal the page keeps its top, where
+        // the template shows the message, or the first invalid field takes the focus.
+        $this->setRedirect(Route::_($url, false) . '#appointment-result');
 
         return true;
     }
@@ -238,6 +252,8 @@ class BookingController extends BaseController
             $this->app->enqueueMessage(Text::_($key), 'error');
         }
 
+        $this->app->setUserState('com_appointments.booking_focus_message.' . $eventId,
+            $key !== '' && $fieldErrors === [] ? true : null);
         $this->app->setUserState('com_appointments.booking_errors.' . $eventId, $fieldErrors);
         $data = (array) $this->app->getUserState('com_appointments.booking.' . $eventId, []);
         $start = is_string($data['start'] ?? null) ? UtcTimestamp::parse($data['start']) : null;
@@ -247,9 +263,14 @@ class BookingController extends BaseController
         // the times of its day, refreshed, so the visitor chooses another one.
         $details = !isset($fieldErrors['start']) && $key !== 'COM_APPOINTMENTS_BOOKING_ERROR_TAKEN';
 
-        if ($start !== null && in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
+        $validZone = in_array($zone, \DateTimeZone::listIdentifiers(), true);
+        if ($validZone) {
+            $url .= '&timezone=' . urlencode($zone);
+        }
+
+        if ($start !== null && $validZone) {
             $local = $start->setTimezone(new \DateTimeZone($zone));
-            $url .= '&timezone=' . urlencode($zone) . '&month=' . $local->format('Y-m') . '&day=' . $local->format('Y-m-d')
+            $url .= '&month=' . $local->format('Y-m') . '&day=' . $local->format('Y-m-d')
                 . ($details ? '&start=' . urlencode(UtcTimestamp::toSql($start)) : '')
                 // The clock the visitor switched to stays, like the zone.
                 . (in_array($data['clock'] ?? null, ['12', '24'], true) ? '&clock=' . $data['clock'] : '');
@@ -257,10 +278,10 @@ class BookingController extends BaseController
             $details = false;
         }
 
-        // Field messages stand at their fields, so the page lands at the form instead of its
-        // top. A message for the whole form is shown in the template's message area at the
-        // top of the page, which the anchor would scroll out of view.
-        $this->setRedirect(Route::_($url, false) . ($key === '' ? ($details ? '#appointment-details' : '#appointment-picker') : ''));
+        // A field-error response keeps its native autofocus; a section fragment would suppress it.
+        // Page-level errors stay in Joomla's system-message area and are focused by the booking script.
+        $fragment = $key === '' && $fieldErrors === [] ? ($details ? '#appointment-details' : '#appointment-picker') : '';
+        $this->setRedirect(Route::_($url, false) . $fragment);
 
         return false;
     }
