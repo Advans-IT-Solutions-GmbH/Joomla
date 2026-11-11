@@ -7,11 +7,15 @@ define('JPATH_BASE', '/var/www/html');
 require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
+$_SERVER['REQUEST_METHOD'] = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$_SERVER['REQUEST_URI'] = $_SERVER['REQUEST_URI'] ?? '/administrator/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
+require_once __DIR__ . '/import-test-bootstrap.php';
 
 // Register component PSR-4 namespace
 spl_autoload_register(function (string $class): void {
@@ -54,6 +58,7 @@ class ImportModelTest
     public function run(): bool
     {
         echo "=== Import Model Tests ===\n\n";
+        $testContext = null;
 
         $rc = new ReflectionClass(ImportModel::class);
 
@@ -77,72 +82,111 @@ class ImportModelTest
             });
         }
 
-        // --- Runtime: importProductFull() with empty/minimal data does not crash ---
-        // newInstanceWithoutConstructor avoids BaseDatabaseModel::__construct() calling Factory::getApplication()
-        $db    = Factory::getContainer()->get(DatabaseInterface::class);
-        $model = $rc->newInstanceWithoutConstructor();
-        $model->setDatabase($db);
+        try {
+            // --- Runtime: importProductFull() with empty/minimal data does not crash ---
+            // newInstanceWithoutConstructor avoids BaseDatabaseModel::__construct() calling Factory::getApplication()
+            $db    = Factory::getContainer()->get(DatabaseInterface::class);
+            $model = $rc->newInstanceWithoutConstructor();
+            $model->setDatabase($db);
+            $context = importExportBootAuthorizedAdministrator();
+            $testContext = $context;
 
-        $this->test('importProductFull() without a title throws InvalidArgumentException', function () use ($model) {
-            try {
-                $model->importProductFull([]);
-            } catch (\InvalidArgumentException $e) {
-                return true;
-            }
+            $this->test('importProductFull() without a title throws InvalidArgumentException', function () use ($model) {
+                try {
+                    $model->importProductFull([]);
+                } catch (\InvalidArgumentException $e) {
+                    return true;
+                }
 
-            return false;
-        });
-        $this->test('Malformed nested product data is rejected before writing', function () use ($model) {
-            try {
-                $model->importProductFull(['title' => 'Invalid nested data', 'variants' => [1]]);
-            } catch (\InvalidArgumentException $e) {
-                return true;
-            }
-            return false;
-        });
-
-        // --- Runtime: importProductFull() with minimal valid data ---
-        // Detect stack
-        $db     = Factory::getContainer()->get(DatabaseInterface::class);
-        $tables = $db->getTableList();
-        $prefix = $db->getPrefix();
-        $isJ6   = in_array($prefix . 'j2commerce_products', $tables, true);
-        $hasJ4  = in_array($prefix . 'j2store_products',    $tables, true);
-
-        if (!$isJ6 && !$hasJ4) {
-            $this->test('J2Commerce tables are present', fn () => false);
-        } else {
-            $this->test('importProductFull() with minimal data succeeds', function () use ($model) {
-                $data = [
-                    'title'       => 'Import Test Product ' . uniqid(),
-                    'alias'       => 'import-test-' . uniqid(),
-                    'category'    => 'Import Test Category',
-                    'sku'         => 'IMP-TEST-' . uniqid(),
-                    'price'       => 19.99,
-                    'visibility'  => 1,
-                    'addtocart_text' => '',
-                    'up_sells'    => '',
-                    'cross_sells' => '',
-                    'variants'    => [],
-                    'product_images' => [],
-                    'options'     => [],
-                    'filters'     => [],
-                    'files'       => [],
-                    'tags'        => [],
-                    'custom_fields' => [],
-                ];
-                $result = $model->importProductFull($data, []);
-                return is_array($result)
-                    && ($result['success'] ?? false) === true
-                    && isset($result['article_id'])
-                    && isset($result['product_id'])
-                    && (int) $result['article_id'] > 0
-                    && (int) $result['product_id'] > 0;
+                return false;
             });
-        }
+            $this->test('Malformed nested product data is rejected before writing', function () use ($model) {
+                try {
+                    $model->importProductFull(['title' => 'Invalid nested data', 'variants' => [1]]);
+                } catch (\InvalidArgumentException $e) {
+                    return true;
+                }
+                return false;
+            });
 
-        $this->testTranslatedRowErrors($model);
-        $this->testImportContract($model);
+            // --- Runtime: importProductFull() with minimal valid data ---
+            // Detect stack
+            $db     = Factory::getContainer()->get(DatabaseInterface::class);
+            $tables = $db->getTableList();
+            $prefix = $db->getPrefix();
+            $isJ6   = in_array($prefix . 'j2commerce_products', $tables, true);
+            $hasJ4  = in_array($prefix . 'j2store_products',    $tables, true);
+
+            if (!$isJ6 && !$hasJ4) {
+                $this->test('J2Commerce tables are present', fn () => false);
+            } else {
+                $data = [
+                    'title'          => 'Import Test Product ' . uniqid(),
+                    'alias'          => 'import-test-' . uniqid(),
+                    'category'       => 'Import Test Category',
+                    'sku'            => 'IMP-TEST-' . uniqid(),
+                    'price'          => 19.99,
+                    'visibility'     => 1,
+                    'addtocart_text' => '',
+                    'up_sells'       => '',
+                    'cross_sells'    => '',
+                    'variants'       => [],
+                    'product_images' => [],
+                    'options'        => [],
+                    'filters'        => [],
+                    'files'          => [],
+                    'tags'            => [],
+                    'custom_fields'   => [],
+                ];
+                $guestData = $data;
+                $guestData['title'] = 'Unauthorized Import ' . uniqid();
+                $guestData['alias'] = 'unauthorized-import-' . uniqid();
+                $guestData['catid'] = 2;
+                $userFactory = Factory::getContainer()->get(UserFactoryInterface::class);
+                $context['application']->loadIdentity($userFactory->loadUserById(0));
+
+                $this->test('unauthorized model import is refused without article writes', function () use ($model, $db, $guestData) {
+                    try {
+                        $model->importProductFull($guestData, []);
+                        return false;
+                    } catch (\RuntimeException $e) {
+                        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                        $query->select('COUNT(*)')
+                            ->from($db->quoteName('#__content'))
+                            ->where($db->quoteName('alias') . ' = ' . $db->quote($guestData['alias']));
+                        $db->setQuery($query);
+
+                        return $e->getCode() === 403 && (int) $db->loadResult() === 0;
+                    }
+                });
+
+                $context['application']->loadIdentity($context['identity']);
+                $adminArticleId = 0;
+                $this->test('importProductFull() with minimal data succeeds', function () use ($model, $data, &$adminArticleId) {
+                    $result = $model->importProductFull($data, []);
+                    $adminArticleId = (int) ($result['article_id'] ?? 0);
+                    return is_array($result)
+                        && ($result['success'] ?? false) === true
+                        && isset($result['article_id'])
+                        && isset($result['product_id'])
+                        && (int) $result['article_id'] > 0
+                        && (int) $result['product_id'] > 0;
+                });
+
+                $this->testRestrictedAuthor($model, $db, $context, $data, $adminArticleId);
+            }
+
+            $this->testTranslatedRowErrors($model);
+            $this->testImportContract($model);
+        } finally {
+            if ($testContext !== null) {
+                try {
+                    importExportRemoveTestAdministrator((int) $testContext['user_id']);
+                } finally {
+                    importExportRestoreApplication($testContext);
+                }
+            }
+        }
 
         echo "\n=== Import Model Summary ===\n";
         echo "Passed: {$this->passed}\n";
@@ -150,6 +194,112 @@ class ImportModelTest
         echo "Total:  " . ($this->passed + $this->failed) . "\n";
 
         return $this->failed === 0;
+    }
+
+    /**
+     * Real Joomla ACL with a restricted identity: a member of the core "Author"
+     * group may create content but not publish it or edit other users' articles.
+     */
+    private function testRestrictedAuthor(ImportModel $model, object $db, array $context, array $data, int $adminArticleId): void
+    {
+        $authorId = 0;
+        $countAlias = function (string $alias) use ($db): int {
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select('COUNT(*)')
+                ->from($db->quoteName('#__content'))
+                ->where($db->quoteName('alias') . ' = ' . $db->quote($alias));
+            $db->setQuery($query);
+
+            return (int) $db->loadResult();
+        };
+        $denied = function (array $row, array $options) use ($model, $countAlias): bool {
+            try {
+                $model->importProductFull($row, $options);
+                return false;
+            } catch (\RuntimeException $e) {
+                return $e->getCode() === 403 && $countAlias($row['alias']) === 0;
+            }
+        };
+        $row = function (string $label) use ($data): array {
+            $suffix = uniqid();
+            return array_replace($data, [
+                'title' => 'Restricted ' . $label . ' ' . $suffix,
+                'alias' => 'restricted-' . strtolower(str_replace(' ', '-', $label)) . '-' . $suffix,
+                'catid' => 2,
+            ]);
+        };
+
+        try {
+            $author = importExportCreateTestUser(3, 'Synthetic Import Test Author', $authorId);
+            $context['application']->loadIdentity($author);
+
+            $this->test('Precondition: the Author group may create but not publish content in category 2',
+                fn () => $author->authorise('core.create', 'com_content.category.2')
+                    && !$author->authorise('core.edit.state', 'com_content.category.2')
+                    && !$author->authorise('core.edit', 'com_content.category.2'));
+
+            $created = $row('default state');
+            $this->test('A restricted author imports a new product as an unpublished article', function () use ($model, $db, $created) {
+                $result = $model->importProductFull($created, []);
+                $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                $query->select($db->quoteName('state'))
+                    ->from($db->quoteName('#__content'))
+                    ->where($db->quoteName('id') . ' = ' . (int) ($result['article_id'] ?? 0));
+                $db->setQuery($query);
+
+                return ($result['success'] ?? false) === true && (string) $db->loadResult() === '0';
+            });
+
+            $published = $row('publish');
+            $published['article_state'] = 1;
+            $this->test('A restricted author cannot publish an imported article; the row is rolled back',
+                fn () => $denied($published, []));
+
+            $featured = $row('feature');
+            $featured['featured'] = 1;
+            $this->test('A restricted author cannot feature an imported article; the row is rolled back',
+                fn () => $denied($featured, []));
+
+            $this->test('A restricted author cannot update an article created by another user', function () use ($model, $db, $data, $adminArticleId) {
+                if ($adminArticleId < 1) {
+                    return false;
+                }
+                $forged = array_replace($data, [
+                    'title'      => 'Restricted overwrite ' . uniqid(),
+                    'article_id' => $adminArticleId,
+                    'catid'      => 2,
+                ]);
+                try {
+                    $model->importProductFull($forged, ['update_existing' => true]);
+                    return false;
+                } catch (\RuntimeException $e) {
+                    $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                    $query->select($db->quoteName('title'))
+                        ->from($db->quoteName('#__content'))
+                        ->where($db->quoteName('id') . ' = ' . $adminArticleId);
+                    $db->setQuery($query);
+
+                    return $e->getCode() === 403 && (string) $db->loadResult() === $data['title'];
+                }
+            });
+
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select($db->quoteName('menutype'))
+                ->from($db->quoteName('#__menu_types'))
+                ->where($db->quoteName('client_id') . ' = 0')
+                ->order($db->quoteName('id'));
+            $db->setQuery($query, 0, 1);
+            $menutype = (string) $db->loadResult();
+            $menuRow = $row('menu');
+            $menuRow['menu_item'] = ['title' => $menuRow['title'], 'alias' => $menuRow['alias']];
+            $this->test('A restricted author cannot publish a menu item; the whole row is rolled back',
+                fn () => $menutype !== '' && $denied($menuRow, [
+                    'create_menu' => true, 'menu_published' => true, 'default_menutype' => $menutype,
+                ]));
+        } finally {
+            $context['application']->loadIdentity($context['identity']);
+            importExportRemoveTestAdministrator($authorId);
+        }
     }
 
     private function testImportContract(ImportModel $model): void

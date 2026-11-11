@@ -622,6 +622,8 @@ return static function (TeamSuite $suite): void {
 
             return $created !== '' && str_contains($browser->header('Cache-Control'), 'no-store')
                 && $browser->header('Referrer-Policy') === 'no-referrer'
+                // The outcome takes the focus, so it is in view and read out below template modules.
+                && preg_match('#<p class="com-appointments-status" role="status" tabindex="-1" autofocus data-appointments-result>#', $createdPage) === 1
                 && !str_contains($page($browser), $created);
         });
 

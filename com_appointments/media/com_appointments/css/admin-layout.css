@@ -1,0 +1,38 @@
+/**
+ * @package     Appointments Component
+ * @copyright   (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
+ * @license     GNU General Public License version 3 or later; see LICENSE.txt
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/* Atum keeps the page title on one line and no header box may shrink, so a long
+   title widened the whole administrator page on a phone. */
+.header-title,
+.header-title > .d-flex,
+.header-title .container-title {
+    min-inline-size: 0;
+}
+
+.header .header-title .page-title {
+    white-space: normal;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+}
+
+/* The main column is a flex item beside the sidebar. Without this its minimum width is
+   the widest table, so the table widened the page instead of scrolling in its wrapper. */
+.container-main {
+    min-inline-size: 0;
+}
+
+.com-appointments-booking-details > dt,
+.com-appointments-booking-details > dd {
+    overflow-wrap: anywhere;
+}
+
+@media (width <= 575.98px) {
+    /* Room for Atum's fixed toolbar toggler at the end of the header. */
+    .header-title {
+        padding-inline-end: 4.25rem;
+    }
+}
