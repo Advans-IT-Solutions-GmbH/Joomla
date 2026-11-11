@@ -305,16 +305,26 @@ try {
     $check(($result['sent'] ?? true) === false && ($result['links'] ?? '') === 'refused' && $before === $spool(),
         'Without a public site URL (and without live_site) no mail is sent and no link is built, also not from the Host header');
 
-    // The booking page and its submission while no public site URL is configured.
+    // The booking page and its submission while no public site URL is configured, with «System - Page
+    // Cache» on: a page rendered while the address was valid must not be served from the cache afterwards.
+    $pageCache = (int) $db->query("SELECT enabled FROM {$prefix}extensions WHERE type='plugin' AND folder='system' AND element='cache'")->fetch_row()[0];
+    $db->query("UPDATE {$prefix}extensions SET enabled=1 WHERE type='plugin' AND folder='system' AND element='cache'");
     $client = new AppointmentsHttp('http://localhost', 'mail-site-url');
     [$browser, $path, $form] = $client->bookingForm($event, $day . ' 13:00:00');
+    $guestPage = '/index.php?option=com_appointments&view=eventtype&id=' . $event;
+    $earlier = new AppointmentsHttp('http://localhost', 'mail-site-url-earlier');
+    $earlier->request($guestPage);
     $unset = json_decode($componentParams, true) ?: [];
     $unset['public_site_url'] = '';
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($unset)) . "' WHERE element='com_appointments' AND type='component'");
     try {
-        $page = $browser->request('/index.php?option=com_appointments&view=eventtype&id=' . $event);
+        $page = $browser->request($guestPage);
         $check($browser->status === 503 && str_contains($page, 'Booking is currently not possible') && !str_contains($page, 'name="booking[start]"'),
             'Without a public site URL the booking page answers 503 with a neutral notice and no form');
+        $later = new AppointmentsHttp('http://localhost', 'mail-site-url-later');
+        $page = $later->request($guestPage);
+        $check($later->status === 503 && !str_contains($page, 'name="booking[start]"'),
+            'With the page cache on, a booking page rendered while the address was valid is not served after it is cleared');
         sleep(2);
         $before = $spool();
         $html = $browser->request($path, $form);
@@ -323,8 +333,9 @@ try {
             'Without a public site URL a submitted booking is not saved and no mail is sent');
     } finally {
         $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($componentParams) . "' WHERE element='com_appointments' AND type='component'");
+        $db->query("UPDATE {$prefix}extensions SET enabled={$pageCache} WHERE type='plugin' AND folder='system' AND element='cache'");
     }
-    $page = $browser->request('/index.php?option=com_appointments&view=eventtype&id=' . $event);
+    $page = $browser->request($guestPage);
     $check($browser->status === 200 && str_contains($page, 'name="booking[start]"'), 'With a public site URL the booking page shows its form again');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
