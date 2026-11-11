@@ -54,12 +54,14 @@ final class StaffPrivacy
      */
     public function capture(int $requestId, int $userId, array $teamGroups, int $externalGroup, \DateTimeImmutable $now): void
     {
-        if ($requestId <= 0 || $userId <= 0) {
+        if ($requestId <= 0 || $userId < 0) {
             return;
         }
 
         $db = $this->db;
-        $team = self::isTeamMember($this->groupsOf($userId), $teamGroups, $externalGroup) ? 1 : 0;
+        // User id 0: the request has no account, recorded explicitly so that a retry can tell it
+        // from a request whose scope is unknown.
+        $team = $userId > 0 && self::isTeamMember($this->groupsOf($userId), $teamGroups, $externalGroup) ? 1 : 0;
         $db->setQuery('INSERT IGNORE INTO ' . $db->quoteName('#__appointments_privacy_scope')
             . ' (' . implode(', ', $db->quoteName(['request_id', 'user_id', 'team_member', 'created_utc'])) . ') VALUES ('
             . $requestId . ', ' . $userId . ', ' . $team . ', '
@@ -67,8 +69,8 @@ final class StaffPrivacy
     }
 
     /**
-     * The captured scope of a privacy request, or null when none was captured (the address had no
-     * account when Joomla checked the request).
+     * The captured scope of a privacy request (user id 0: the request has no account), or null when
+     * none was captured (a request checked before this version).
      *
      * @return  array{user_id: int, team_member: bool}|null
      */

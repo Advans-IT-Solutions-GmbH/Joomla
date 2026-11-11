@@ -123,13 +123,14 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         } elseif ($service->legalReason() !== '' && $service->hasBookings($address)) {
             $status->canRemove = false;
             $status->reason = Text::sprintf('PLG_PRIVACY_APPOINTMENTS_LEGAL_BLOCK', $service->legalReason());
-        } elseif ($user && (int) $user->id > 0) {
+        } elseif ((int) ($event->getRequest()->id ?? 0) > 0) {
             // Joomla runs this check before every removal, while it still finds the account: the
             // removal and every retry of this request use the scope captured here, also after
-            // Joomla has pseudonymised the account. Without a durable scope nothing is removed.
+            // Joomla has pseudonymised the account. A request without an account gets an explicit
+            // scope without one. Without a durable scope nothing is removed.
             try {
                 $params = ComponentHelper::getParams('com_appointments');
-                (new StaffPrivacy($this->getDatabase()))->capture((int) ($event->getRequest()->id ?? 0), (int) $user->id,
+                (new StaffPrivacy($this->getDatabase()))->capture((int) $event->getRequest()->id, $user ? (int) $user->id : 0,
                     (array) $params->get('team_groups', []), (int) $params->get('external_group', 0),
                     new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
             } catch (\Throwable $e) {
@@ -159,13 +160,15 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         if ($result['cleanup_failed']) {
             $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_CLEANUP_FAILED'), 'warning');
         }
-        // The scope captured by the removal check; the account found now only for a request that
-        // was checked before this version (Joomla still finds it unless a removal ran already).
+        // The scope captured by the removal check. Without one (a request checked before this
+        // version) the account Joomla finds now decides; when it finds none, the account may have
+        // been pseudonymised already, so calendar entries are kept rather than guessed.
         $requestId = (int) ($event->getRequest()->id ?? 0);
         $user = $event->getUser();
         try {
             $scope = (new StaffPrivacy($this->getDatabase()))->scope($requestId)
-                ?? ($user !== null && (int) $user->id > 0 ? ['user_id' => (int) $user->id, 'team_member' => null] : null);
+                ?? ($user !== null && (int) $user->id > 0 ? ['user_id' => (int) $user->id, 'team_member' => null]
+                    : ['user_id' => 0, 'team_member' => true]);
         } catch (\Throwable $e) {
             // Without the scope nothing of staff data is touched, and calendar entries are kept.
             Log::add('Appointments: the privacy scope could not be read (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');

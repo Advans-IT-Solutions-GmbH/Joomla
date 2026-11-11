@@ -1085,7 +1085,7 @@ sleep(3);
             }
         });
 
-        $suite->test('A removal for a team member keeps their calendar entries, also on a retry after the account was pseudonymised', static function () use ($run) {
+        $suite->test('A removal for a team member keeps their calendar entries, also on a retry after the account was pseudonymised and for a request without a known scope', static function () use ($run) {
             $result = $run('
                 $db = $services->db();
                 $group = (int) (((array) $services->params()->get("team_groups", []))[0] ?? 0);
@@ -1106,7 +1106,12 @@ sleep(3);
                     $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent("onPrivacyCanRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance($uid)]));
                     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance($uid)]));
                     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => null]));
-                    $rows = $db->setQuery("SELECT details FROM #__appointments_teamlog WHERE event = " . $db->quote(AuditEvent::PRIVACY_DELETE) . " ORDER BY id DESC", 0, 2)->loadColumn();
+                    // A request checked before the scope existed, retried after the pseudonymisation:
+                    // neither a scope nor an account, so its entries are kept, never guessed.
+                    $unknown = clone $request;
+                    $unknown->id = $request->id + 1;
+                    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $unknown, "user" => null]));
+                    $rows = $db->setQuery("SELECT details FROM #__appointments_teamlog WHERE event = " . $db->quote(AuditEvent::PRIVACY_DELETE) . " ORDER BY id DESC", 0, 3)->loadColumn();
 
                     return ["request" => (int) $request->id, "rows" => array_map(static fn ($d): ?array => AuditService::decodeDetails($d), $rows)];
                 } finally {
@@ -1116,9 +1121,10 @@ sleep(3);
                 }');
             $rows = $result['rows'] ?? [];
 
-            return \count($rows) === 2
-                && (int) ($rows[0]['request'] ?? 0) === $result['request'] && !empty($rows[0]['team_member'])
-                && (int) ($rows[1]['request'] ?? 0) === $result['request'] && !empty($rows[1]['team_member']);
+            return \count($rows) === 3
+                && (int) ($rows[0]['request'] ?? 0) === $result['request'] + 1 && !empty($rows[0]['team_member'])
+                && (int) ($rows[1]['request'] ?? 0) === $result['request'] && !empty($rows[1]['team_member'])
+                && (int) ($rows[2]['request'] ?? 0) === $result['request'] && !empty($rows[2]['team_member']);
         });
 
         $privacyOpen = $openPackages(['A', 'B', 'C', 'D', 'E', 'F']);
@@ -1225,6 +1231,9 @@ sleep(3);
                                 }
                             }
                         }
+                        // The removal check records that this request has no account.
+                        $request->id = 700000 + random_int(1, 99999);
+                        $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent("onPrivacyCanRemoveData", ["subject" => $request, "user" => null]));
                         $remove = new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => $user]);
                         $plugin->onPrivacyRemoveData($remove);
                         $remaining = (int) $joomlaDb->setQuery("SELECT COUNT(*) FROM #__appointments_calendar_objects WHERE calendar_id = ' . (int) $fixture->calendarId . ' AND uri = " . $joomlaDb->quote(' . var_export($uri, true) . '))->loadResult();

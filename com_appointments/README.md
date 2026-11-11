@@ -361,8 +361,10 @@ does not remove these rows.
 Joomla runs the removal check before every removal, while it still finds the account: the check
 records the verified account and whether it is a team member for the request
 (`#__appointments_privacy_scope`), and the removal and every retry of the request use this record,
-also after Joomla's user plugin has pseudonymised the account. A request whose account cannot be
-recorded is refused with a reason, so nothing is removed for an unknown scope.
+also after Joomla's user plugin has pseudonymised the account. A request without an account is
+recorded as such. A request whose scope cannot be recorded is refused with a reason, and a request
+without a recorded scope and without an account (checked before this version and retried after the
+pseudonymisation) keeps its calendar entries for review.
 
 ### Scheduler, reminders and retention
 
