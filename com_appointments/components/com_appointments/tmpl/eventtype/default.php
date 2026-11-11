@@ -47,7 +47,7 @@ $details = $this->step === 'details';
 <div class="com-appointments com-appointments-eventtype" data-appointments-booking>
     <div class="com-appointments-container" data-appointments-view data-step="<?php echo $details ? 'details' : 'time'; ?>">
         <?php if ($back !== '') : ?>
-            <p><a class="btn btn-outline-secondary com-appointments-back-link" href="<?php echo $back; ?>"><?php echo Text::_($details ? 'JCANCEL' : 'COM_APPOINTMENTS_BACK_TO_OVERVIEW'); ?></a></p>
+            <p><a class="btn btn-outline-secondary com-appointments-return" href="<?php echo $back; ?>"><?php echo Text::_($details ? 'JCANCEL' : 'COM_APPOINTMENTS_BACK_TO_OVERVIEW'); ?></a></p>
         <?php endif; ?>
         <?php if ($this->titleAbove) : ?>
             <h1 class="com-appointments-heading com-appointments-page-title"><?php echo $this->escape($this->pageHeading); ?></h1>

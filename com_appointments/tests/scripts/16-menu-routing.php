@@ -461,9 +461,9 @@ try {
     $check($starItem > 0 && isset($mailLinks['cancel']) && str_contains($mailLinks['cancel'], '&Itemid=' . $starItem),
         'The mail links carry the Itemid of the booking page of their event type: ' . ($mailLinks['cancel'] ?? '(missing)'));
     $check(str_contains($first($links($html, 'com-appointments-reschedule')), '&Itemid=' . $starItem)
-        && preg_match($bookingPage, $first($links($html, 'com-appointments-back-link'))) === 1,
+        && preg_match($bookingPage, $first($links($html, 'com-appointments-return'))) === 1,
         'The confirmation page links the signed pages with the Itemid and leads back to the booking page: '
-        . $first($links($html, 'com-appointments-back-link')));
+        . $first($links($html, 'com-appointments-return')));
 
     /** The values of the options of a select, in order. */
     $optionValues = static function (string $html, string $id): array {
@@ -480,8 +480,8 @@ try {
         $mover = new AppointmentsHttp('http://localhost', 'menu-reschedule');
         $oldReschedule = preg_replace('#^https?://[^/]+#', '', $mailLinks['reschedule']);
         $html = $mover->request($oldReschedule);
-        $check($mover->status === 200 && preg_match($bookingPage, $first($links($html, 'com-appointments-back-link'))) === 1,
-            'The reschedule page of the mail link runs in the frame of the booking page: ' . $first($links($html, 'com-appointments-back-link')));
+        $check($mover->status === 200 && preg_match($bookingPage, $first($links($html, 'com-appointments-return'))) === 1,
+            'The reschedule page of the mail link runs in the frame of the booking page: ' . $first($links($html, 'com-appointments-return')));
         [$action, $fields] = $formData($html, '//form[contains(@class, "com-appointments-manage-form")]');
         $current = (string) $fixture->row((int) $booking['id'])['start_utc'];
         $other = array_values(array_filter($optionValues($html, 'new-start'), static fn (string $value): bool => $value !== $current));
@@ -502,7 +502,7 @@ try {
         $check($newReschedule !== '' && $newCancel !== '' && $newReschedule !== $oldReschedule
             && str_contains($newCancel, '&Itemid=' . $starItem) && str_contains($newCancel, 'action=cancel'),
             'The receipt of the reschedule shows the new signed reschedule and cancel links');
-        $check(preg_match($bookingPage, $first($links($html, 'com-appointments-back-link'))) === 1,
+        $check(preg_match($bookingPage, $first($links($html, 'com-appointments-return'))) === 1,
             'The receipt of the reschedule leads back to the booking page');
 
         $rescheduleMail = [];
@@ -556,7 +556,7 @@ try {
         $landing = preg_replace('#^https?://[^/]+#', '', (string) end($guest->locations));
         $check($guest->landedAt($html, 'appointment-result') && str_contains($landing, '/' . $tag . '-all?')
             && !str_contains($landing, 'component/appointments') && $links($html, 'com-appointments-cancel') === []
-            && preg_match($bookingPage, $first($links($html, 'com-appointments-back-link'))) === 1,
+            && preg_match($bookingPage, $first($links($html, 'com-appointments-return'))) === 1,
             'The cancellation receipt stands at the booking page, without links to the cancelled appointment: ' . $landing);
         // Another browser: the acting session is shown its completion notice instead.
         $outsider = new AppointmentsHttp('http://localhost', 'menu-used-link');
@@ -572,23 +572,23 @@ try {
         $db->query("UPDATE {$prefix}menu SET params='" . $db->real_escape_string(json_encode($params)) . "' WHERE id=" . $id);
     };
     $html = $page('/index.php/en/' . $tag . '-all');
-    $check($site->status === 200 && $shows($html, $events['star']) && $links($html, 'com-appointments-back-link') === [],
+    $check($site->status === 200 && $shows($html, $events['star']) && $links($html, 'com-appointments-return') === [],
         'A menu item of one event type hides the back button by default');
     $html = $page('/index.php/en/' . $tag . '-list/' . $events['list']['alias']);
-    $check($first($links($html, 'com-appointments-back-link')) === '/index.php/en/' . $tag . '-list',
-        'Below the list the back button still leads to the list: ' . $first($links($html, 'com-appointments-back-link')));
+    $check($first($links($html, 'com-appointments-return')) === '/index.php/en/' . $tag . '-list',
+        'Below the list the back button still leads to the list: ' . $first($links($html, 'com-appointments-return')));
     if ($starItem > 0 && isset($items['en']['id'])) {
         $setParams($starItem, ['show_back_link' => '1']);
         $html = $page('/index.php/en/' . $tag . '-all');
-        $check($first($links($html, 'com-appointments-back-link')) === '/index.php/en/' . $tag . '-list',
-            'Shown without a target, the back button leads to the list of all event types: ' . $first($links($html, 'com-appointments-back-link')));
+        $check($first($links($html, 'com-appointments-return')) === '/index.php/en/' . $tag . '-list',
+            'Shown without a target, the back button leads to the list of all event types: ' . $first($links($html, 'com-appointments-return')));
         $setParams($starItem, ['show_back_link' => '1', 'back_link_itemid' => (string) $items['en']['id']]);
         $html = $page('/index.php/en/' . $tag . '-all');
-        $check($first($links($html, 'com-appointments-back-link')) === '/index.php/en/' . $tag . '-english',
-            'Shown with a target, the back button leads to the chosen menu item: ' . $first($links($html, 'com-appointments-back-link')));
+        $check($first($links($html, 'com-appointments-return')) === '/index.php/en/' . $tag . '-english',
+            'Shown with a target, the back button leads to the chosen menu item: ' . $first($links($html, 'com-appointments-return')));
         $setParams($starItem, ['show_back_link' => '0']);
         $html = $page('/index.php/en/' . $tag . '-all');
-        $check($links($html, 'com-appointments-back-link') === [], 'Hidden again, a chosen target shows no button');
+        $check($links($html, 'com-appointments-return') === [], 'Hidden again, a chosen target shows no button');
     }
 } catch (Throwable $e) {
     echo 'FAIL ' . get_class($e) . ': ' . $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ")\n";

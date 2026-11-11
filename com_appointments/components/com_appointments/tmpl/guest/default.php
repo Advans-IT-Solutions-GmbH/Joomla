@@ -55,6 +55,6 @@ $page = $this->page;
                 </div>
             </form>
         <?php endif; ?>
-        <p><a class="btn btn-secondary com-appointments-back-link" href="<?php echo BackLink::resolve(false); ?>"><?php echo Text::_($page['completed'] ? 'COM_APPOINTMENTS_BACK_TO_OVERVIEW' : 'JCANCEL'); ?></a></p>
+        <p><a class="btn btn-secondary com-appointments-return" href="<?php echo BackLink::resolve(false); ?>"><?php echo Text::_($page['completed'] ? 'COM_APPOINTMENTS_BACK_TO_OVERVIEW' : 'JCANCEL'); ?></a></p>
     </div>
 </div>

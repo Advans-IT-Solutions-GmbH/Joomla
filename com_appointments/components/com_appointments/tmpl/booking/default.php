@@ -93,6 +93,6 @@ $describedBy = trim(($this->notices ? 'appointment-notices' : '') . ($conference
                 <p class="form-text com-appointments-confirmation-note"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_CONFIRMATION_NOTE'); ?></p>
             <?php endif; ?>
         </div>
-        <p><a class="btn btn-secondary com-appointments-back-link" href="<?php echo BackLink::resolve(false); ?>"><?php echo Text::_('COM_APPOINTMENTS_BACK_TO_OVERVIEW'); ?></a></p>
+        <p><a class="btn btn-secondary com-appointments-return" href="<?php echo BackLink::resolve(false); ?>"><?php echo Text::_('COM_APPOINTMENTS_BACK_TO_OVERVIEW'); ?></a></p>
     </div>
 </div>
