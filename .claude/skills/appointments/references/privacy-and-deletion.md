@@ -63,7 +63,8 @@ is released the same way.
   request was honoured, and it must not become a second copy of the data that was erased. See
   "What the audit table is, and what it is not" below.
 - Deleting is idempotent. A second click says the data is already gone, and does not error.
-- The whole operation runs in one transaction.
+- Booking erasure and its audit run in one transaction. Calendar/provider teardown runs
+  after commit; its failure must never be reported as complete erasure.
 
 ### Additional guests remove their own address
 
@@ -120,6 +121,53 @@ writing it; the mechanics, the event names and the known traps are documented th
 The sub-plugin is declared in the component manifest and ships its own `LICENSE.txt` in its own
 `<files>` list, per `AGENTS.md`.
 
+The standalone `plg_system_privacyrequests` can provide no-account self-submission and
+confirmation through public native Core model APIs; it is not bundled or enabled by
+Appointments. See its README for the exact JSON capability route and identity limits.
+The Appointments callback always uses the authoritative Core request address.
+
+Formal removal captures `#__appointments_privacy_cleanup` in the same transaction
+as the irreversible booking/guest change. It keeps an authenticated-encrypted minimal
+operational snapshot, indexed by Core request/booking/key, so native Remove retries
+actual failed cleanup after an address match is gone. For a primary invitee the UID,
+host/event IDs, UTC start/end, sequence/modified time and provider/room are required by
+the conference service's stale/reused-room checks; a guest snapshot keeps only the
+booking ID. Never retain erased names, addresses, answers, content, joining URLs or
+calendar keys. These references remain linkable operational data, not anonymous data.
+Forget a reference only after verified actual teardown/rebuild, never on a zero-match
+retry, acknowledgment, expired timer or unreadable/tampered payload. Do not silently
+activate a Scheduler task for them.
+Retries rotate attempted references within bounded batches, including failed ones;
+never let a permanently failing first page starve later obligations.
+`#__appointments_privacy_staff` captures an authenticated-encrypted request-bound
+staff ID during CanRemove, before Core pseudonymisation. Keep it across null-user
+retries and feature switches. A scope without an account (ID 0) takes over a later
+exact-address account under the operation lock; a captured account is never replaced.
+Use native revocation/ownership teardown, and independently
+check staff obligations before accepting any success flag. Unknown older interrupted
+scope fails closed, not a fabricated guest success. A Core removal action-log entry
+for the request with neither staff scope nor outcome row marks such a pre-provenance
+attempt (CanRemove and Complete both refuse). See the README for retention
+and recovery limits of this still-linkable request metadata.
+Its authenticated pending-attempt marker also survives unexpected removal failures
+and missing/forged outcome flags. Log and warn instead of aborting Core's remaining
+privacy listeners; only a genuinely successful current attempt may clear the marker.
+A captured scope without an authenticated attempt remains pending as well: failure of
+the initial outcome write must not permit Complete with skipped booking cleanup.
+
+`#__appointments_privacy_outcomes` plus any outstanding cleanup reference govern the
+bundled `content/appointmentsprivacy` native before-save veto for Core Complete.
+This guard is independent of the generic system adapter and normally disabled DAV/user
+plugins. `Service/PrivacyOperationLock` (same HMAC key as the adapter's lock, so the two are re-entrant
+on one connection) serializes CanRemove/Remove and the Complete save per request,
+rechecking the stored status/type after it is acquired; a busy lock refuses, never waits.
+A removal audit is an attempt, not success proof. Unreadable/unsearched calendar
+or booking data remains incomplete; genuine unlocked key-holder access is still
+required. See the component README "Formal privacy requests" for repair and separate
+Core completion, and distinguish external/client/mail/backup copies from internal
+cleanup. Existing booking/audit retention is not a license to discard unresolved
+operational references.
+
 ## Path 3 — automatic retention
 
 A Joomla Scheduler task runs daily and anonymises or deletes every booking whose end time is older
@@ -137,8 +185,10 @@ is narrower than "no personal data", and saying it the loose way would be wrong:
 
 - **It holds no data of an invitee.** No name, no e-mail address, no telephone number, no answers,
   no times, not even the event type. Only the booking id, which points at a row that is gone. This
-  is the invariant that matters, because the whole point of an erasure is that nothing of the person
-  survives it, and a test pins the column set so a later change cannot quietly widen the table.
+  is the audit-table invariant, and a test pins its column set. It is not a guarantee
+  that every other record or external copy is gone: native Core requests/audits,
+  unresolved encrypted cleanup references and other legally retained data remain
+  separately governed and must not be described as anonymous.
 - **It does hold one identifier of an operator**: `actor_user_id`, the Joomla user id of the
   administrator who triggered a deletion, and only for the `admin` path. That is accountability data
   about a member of the operator's own staff acting in their professional capacity, which is

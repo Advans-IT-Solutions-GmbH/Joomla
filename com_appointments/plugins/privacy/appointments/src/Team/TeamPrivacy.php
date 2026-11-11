@@ -8,6 +8,7 @@
 
 namespace Advans\Plugin\Privacy\Appointments\Team;
 
+use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKeyring;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
@@ -55,6 +56,7 @@ defined('_JEXEC') or die;
 final class TeamPrivacy
 {
     private const LOG_ROWS = 5000;
+    private bool $staffRemoved = false;
 
     /**
      * The end of this request's time budget (microtime), shared by search and removal.
@@ -373,7 +375,9 @@ final class TeamPrivacy
             $counts['not_searched'] = -1;
         }
 
-        $userId = $user !== null ? (int) $user->id : 0;
+        // Core's database lookup may equate distinct accented mailbox addresses.
+        $userId = $user !== null && (int) $user->id > 0
+            && PrivacyAddress::matches((string) $user->email, $email) ? (int) $user->id : 0;
 
         if ($userId > 0) {
             try {
@@ -398,18 +402,23 @@ final class TeamPrivacy
 
     /**
      * Delete the entries with this address (never those of a team member's address) and the
-     * staff data of the account. Never throws; messages are queued for the administrator.
+     * staff data of the account. Never throws; messages are queued for the administrator;
+     * false means incomplete. Entries kept because the address is a team member's are left for
+     * the administrator's review and do not make the removal incomplete.
      *
-     * @param   int  $requestId  The Joomla privacy request. Its log row keeps whether the address
-     *                           belongs to a team member, because a retry after Joomla has
-     *                           pseudonymised the account no longer finds it.
+     * @param   int|null  $staffUserId  The staff account retained for the request
+     *                                  (PrivacyStaffCleanup); null falls back to $user.
+     * @param   int       $requestId    The Joomla privacy request. Its log row keeps whether the
+     *                                  address belongs to a team member, because a retry after
+     *                                  Joomla has pseudonymised the account no longer finds it.
      */
-    public function remove(string $email, ?User $user, int $requestId = 0): void
+    public function remove(string $email, ?User $user, ?int $staffUserId = null, int $requestId = 0): bool
     {
+        $this->staffRemoved = false;
         if ($this->services === null) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED'), 'warning');
 
-            return;
+            return false;
         }
 
         $deleted = 0;
@@ -417,9 +426,11 @@ final class TeamPrivacy
         $failed = 0;
         $unsearched = [];
         $staff = false;
-        $userId = $user !== null ? (int) $user->id : 0;
+        $userId = $staffUserId ?? ($user !== null ? (int) $user->id : 0);
         // The address of a team member is in many entries of the team: those are never changed automatically.
-        $teamMember = $userId > 0 ? !self::changesEntriesOf($this->audienceOf($userId)) : $this->teamMemberOfRequest($requestId);
+        // The retained staff account of a retry has already lost its grants, so an earlier run of the
+        // same request that found a team member decides as well.
+        $teamMember = ($userId > 0 && !self::changesEntriesOf($this->audienceOf($userId))) || $this->teamMemberOfRequest($requestId);
 
         try {
             $search = $this->search($email, null);
@@ -454,6 +465,7 @@ final class TeamPrivacy
             Log::add('Team calendars: the privacy removal of calendar entries failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
         }
 
+
         if ($userId > 0) {
             try {
                 $db = $this->services->db();
@@ -461,6 +473,7 @@ final class TeamPrivacy
                     ->where($db->quoteName('user_id') . ' = ' . $userId))->execute();
                 $this->services->cleanup()->onUserDeleted($userId);
                 $staff = true;
+                $this->staffRemoved = true;
             } catch (\Throwable $e) {
                 $failed++;
                 Log::add('Team calendars: the privacy removal of staff data failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
@@ -491,6 +504,13 @@ final class TeamPrivacy
             'details'         => ['entries' => $deleted, 'kept' => $kept, 'failed' => $failed, 'not_searched' => \count($unsearched), 'staff' => $staff,
                 'request' => max(0, $requestId), 'team_member' => $teamMember],
         ]);
+
+        return $failed === 0 && $unsearched === [];
+    }
+
+    public function staffRemoved(): bool
+    {
+        return $this->staffRemoved;
     }
 
     /**

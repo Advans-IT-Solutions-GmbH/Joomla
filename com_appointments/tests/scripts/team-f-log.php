@@ -1056,13 +1056,20 @@ sleep(3);
                 $db->query("INSERT INTO {$p}appointments_calendar_grants (calendar_id, user_id, role, state, audience, granted_by, row_mac, created_utc, modified_utc) VALUES ({$calendar}, {$userId}, 2, 1, 'team', 1, REPEAT(CHAR(0), 32), UTC_TIMESTAMP(), UTC_TIMESTAMP())");
                 $db->query("INSERT INTO {$p}appointments_calendar_key_wraps (calendar_id, key_version, user_id, user_key_version, wrapped, created_utc) VALUES ({$calendar}, 1, {$userId}, 1, REPEAT(CHAR(1), 80), UTC_TIMESTAMP())");
                 $db->query("INSERT INTO {$p}appointments_invitations (token_hash, user_id, email_hash, state, invited_by, created_utc, expires_utc, row_mac) VALUES (UNHEX('" . bin2hex(random_bytes(32)) . "'), {$userId}, REPEAT(CHAR(2), 32), 2, 1, UTC_TIMESTAMP(), UTC_TIMESTAMP(), REPEAT(CHAR(0), 32))");
-                $run('$application->bootComponent("com_privacy");
+                $removal = $run('$application->bootComponent("com_privacy");
                     $plugin = $application->bootPlugin("appointments", "privacy");
                     $request = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
                     $request->email = ' . var_export($tag . 'gone@example.test', true) . ';
                     $request->status = 1;
+                    $incomplete = false;
                     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance(' . $userId . ')]));
-                    return true;');
+                    $unsearched = false;
+                    foreach ($application->getMessageQueue() as $message) {
+                        $incomplete = $incomplete || ($message["type"] === "warning"
+                            && $message["message"] === \Joomla\CMS\Language\Text::_("PLG_PRIVACY_APPOINTMENTS_INCOMPLETE"));
+                        $unsearched = $unsearched || ($message["type"] === "warning" && str_contains($message["message"], "F removal"));
+                    }
+                    return ["incomplete" => $incomplete, "unsearched" => $unsearched];');
                 $left = 0;
 
                 foreach (['appointments_devices', 'appointments_calendar_grants', 'appointments_calendar_key_wraps', 'appointments_invitations', 'appointments_user_keys'] as $table) {
@@ -1074,7 +1081,10 @@ sleep(3);
 
                 // With the device and grant services still stubs, the epochs cannot be raised,
                 // so nothing may be deleted except the activation links.
-                return $teardownStub ? $left === 3 && $logged === 1 : $left === 0 && $rotation === 1 && $logged === 1;
+                // This deliberately unkeyed calendar cannot be searched by the
+                // CLI actor. Staff cleanup is not proof of complete erasure.
+                return $removal['incomplete'] === true && $removal['unsearched'] === true
+                    && ($teardownStub ? $left === 3 && $logged === 1 : $left === 0 && $rotation === 1 && $logged === 1);
             } finally {
                 foreach (['appointments_devices', 'appointments_calendar_grants', 'appointments_calendar_key_wraps', 'appointments_invitations'] as $table) {
                     $db->query("DELETE FROM {$p}{$table} WHERE user_id={$userId}");
@@ -1222,10 +1232,30 @@ sleep(3);
                                 }
                             }
                         }
+                        $wrongUser = \Joomla\CMS\Factory::getContainer()->get(\Joomla\CMS\User\UserFactoryInterface::class)->loadUserById(' . (int) $account['id'] . ');
+                        $beforeLog = (int) $joomlaDb->setQuery("SELECT COALESCE(MAX(id),0) FROM #__appointments_teamlog")->loadResult();
+                        $mismatch = new \Joomla\CMS\Event\Privacy\ExportRequestEvent("onPrivacyExportRequest", ["subject" => $request, "user" => $wrongUser]);
+                        $plugin->onPrivacyExportRequest($mismatch);
+                        $mismatchItems = 0; $mismatchContent = ""; $staffDomains = 0;
+                        foreach ($mismatch->getArgument("result") as $set) {
+                            foreach ($set as $domain) {
+                                if (str_starts_with($domain->name, "appointments_staff_")) { $staffDomains++; }
+                                if ($domain->name !== "appointments_calendar_entries") { continue; }
+                                foreach ($domain->getItems() as $item) {
+                                    $mismatchItems++;
+                                    foreach ($item->getFields() as $field) {
+                                        if ($field->name === "content") { $mismatchContent .= (string) $field->value; }
+                                    }
+                                }
+                            }
+                        }
+                        $subjects = $joomlaDb->setQuery("SELECT subject_user_id FROM #__appointments_teamlog WHERE id > $beforeLog AND event = \"privacy.export\"")->loadColumn();
                         $remove = new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => $user]);
                         $plugin->onPrivacyRemoveData($remove);
                         $remaining = (int) $joomlaDb->setQuery("SELECT COUNT(*) FROM #__appointments_calendar_objects WHERE calendar_id = ' . (int) $fixture->calendarId . ' AND uri = " . $joomlaDb->quote(' . var_export($uri, true) . '))->loadResult();
                         $result = ["domain" => $domainFound, "items" => $items, "content" => $content, "remaining" => $remaining,
+                            "mismatch_items" => $mismatchItems, "mismatch_content" => $mismatchContent,
+                            "mismatch_staff" => $staffDomains, "mismatch_subjects" => $subjects,
                             "actor" => (int) $application->getIdentity()->id];
                         echo "\n@@TEAMFPRIV@@".json_encode($result);';
                     token_get_all("<?php\n" . $php, TOKEN_PARSE);
@@ -1246,6 +1276,10 @@ sleep(3);
                         && $result['domain'] === true
                         && $result['items'] === 1
                         && str_contains($result['content'], $email)
+                        && $result['mismatch_items'] === 1
+                        && str_contains($result['mismatch_content'], $email)
+                        && $result['mismatch_staff'] === 0
+                        && $result['mismatch_subjects'] === [null]
                         && $result['remaining'] === 0
                         && $result['actor'] === (int) $account['id']
                         && $removed['status'] === 404;

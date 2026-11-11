@@ -864,6 +864,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 $acymIds = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
             }
         } catch (\Exception $e) {
+            Log::add('AcyMailing privacy lookup failed (' . \get_class($e) . '); removal remains unverified.',
+                Log::ERROR, 'plg_privacy_j2commerce');
+            $this->newsletterKept = true;
+            $app = $this->feedbackApplication();
+            if ($app !== null && method_exists($app, 'enqueueMessage')) {
+                $app->enqueueMessage($this->pluginStrings(self::currentLanguage())->_('PLG_PRIVACY_J2COMMERCE_ACYM_LOOKUP_FAILED'), 'warning');
+            }
+
             return;
         }
 

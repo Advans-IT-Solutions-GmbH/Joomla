@@ -74,7 +74,7 @@ interface BookingCalendarBridgeInterface
      *
      * @param   array<string, mixed>  $booking  Row of `#__appointments_bookings`.
      */
-    public function onBookingSaved(array $booking): void;
+    public function onBookingSaved(array $booking): bool;
 
     /**
      * @param   array<string, mixed>  $booking
@@ -83,6 +83,8 @@ interface BookingCalendarBridgeInterface
 
     /**
      * The booking was anonymised or deleted: remove its objects.
+     *
+     * @return bool False when removal could not be verified; no copies is success.
      */
-    public function onBookingErased(int $bookingId): void;
+    public function onBookingErased(int $bookingId): bool;
 }

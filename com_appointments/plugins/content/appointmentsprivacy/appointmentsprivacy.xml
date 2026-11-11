@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="plugin" group="content" method="upgrade">
+    <name>PLG_CONTENT_APPOINTMENTSPRIVACY</name>
+    <author>Advans IT Solutions GmbH</author>
+    <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
+    <license>GPL-3.0-or-later</license>
+    <version>1.0.0</version>
+    <description>PLG_CONTENT_APPOINTMENTSPRIVACY_DESC</description>
+    <namespace path="src">Advans\Plugin\Content\AppointmentsPrivacy</namespace>
+    <files>
+        <folder plugin="appointmentsprivacy">services</folder>
+        <folder>src</folder>
+        <filename>LICENSE.txt</filename>
+    </files>
+    <languages>
+        <language tag="de-DE">language/de-DE/plg_content_appointmentsprivacy.ini</language>
+        <language tag="de-DE">language/de-DE/plg_content_appointmentsprivacy.sys.ini</language>
+        <language tag="en-GB">language/en-GB/plg_content_appointmentsprivacy.ini</language>
+        <language tag="en-GB">language/en-GB/plg_content_appointmentsprivacy.sys.ini</language>
+        <language tag="fr-FR">language/fr-FR/plg_content_appointmentsprivacy.ini</language>
+        <language tag="fr-FR">language/fr-FR/plg_content_appointmentsprivacy.sys.ini</language>
+    </languages>
+</extension>

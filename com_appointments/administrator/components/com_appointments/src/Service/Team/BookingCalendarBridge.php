@@ -165,20 +165,18 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
         return $periods;
     }
 
-    public function onBookingSaved(array $booking): void
+    public function onBookingSaved(array $booking): bool
     {
         $bookingId = (int) ($booking['id'] ?? 0);
 
         if ($bookingId < 1) {
-            return;
+            return false;
         }
 
         // While the feature is off a change is not mirrored, so the copy would be stale (old
         // times, a removed guest): it goes now, not only at the next sweep. Removal needs no key.
         if (!$this->services->enabled()) {
-            $this->onBookingErased($bookingId);
-
-            return;
+            return $this->onBookingErased($bookingId);
         }
 
         $db = $this->services->db();
@@ -192,10 +190,12 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             $row = $this->booking($bookingId, true);
 
             if ($row === null || $row['anonymised_utc'] !== null || (int) $row['state'] === 2) {
-                $this->remove($bookingId);
+                if (!$this->remove($bookingId, true)) {
+                    throw new \RuntimeException('Calendar copy cleanup failed.');
+                }
                 $db->transactionCommit(true);
 
-                return;
+                return true;
             }
 
             $event = $this->event((int) $row['eventtype_id']);
@@ -205,7 +205,9 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             $present = $this->calendarsHolding($bookingId);
 
             if (!$writable || array_diff($present, [$target]) !== []) {
-                $this->remove($bookingId);
+                if (!$this->remove($bookingId, true)) {
+                    throw new \RuntimeException('Calendar copy cleanup failed.');
+                }
             }
 
             if ($writable) {
@@ -214,12 +216,16 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             }
 
             $db->transactionCommit(true);
+            $complete = true;
         } catch (\Throwable $e) {
             $db->transactionRollback(true);
             $this->failure('write', $bookingId, $e);
+            $complete = false;
         }
 
         $this->removeOrphans(self::ORPHAN_BATCH);
+
+        return $complete;
     }
 
     /**
@@ -237,13 +243,16 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
         $this->removeOrphans(self::ORPHAN_BATCH);
     }
 
-    public function onBookingErased(int $bookingId): void
+    public function onBookingErased(int $bookingId): bool
     {
+        $complete = true;
         if ($bookingId > 0) {
-            $this->remove($bookingId);
+            $complete = $this->remove($bookingId, true);
         }
 
         $this->removeOrphans(self::ORPHAN_BATCH);
+
+        return $complete;
     }
 
     /**
@@ -672,7 +681,7 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
     }
 
     /** @return  bool  Whether copies were removed. */
-    private function remove(int $bookingId): bool
+    private function remove(int $bookingId, bool $requireSuccess = false): bool
     {
         try {
             if ($this->services->objects()->deleteForBooking($bookingId) > 0) {
@@ -680,6 +689,8 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
 
                 return true;
             }
+
+            return $requireSuccess;
         } catch (\Throwable $e) {
             $this->failure('remove', $bookingId, $e);
         }

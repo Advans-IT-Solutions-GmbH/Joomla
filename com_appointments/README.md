@@ -98,6 +98,7 @@ activation and effective content access.
 | Plugin | Role | First installation |
 |---|---|---|
 | [`privacy/appointments`](plugins/privacy/appointments/README.md) | Native privacy export/removal and calendar privacy integration | Enabled |
+| [`content/appointmentsprivacy`](plugins/content/appointmentsprivacy/README.md) | Independent veto of native removal completion while Appointments reports incomplete | Enabled |
 | [`task/appointments`](plugins/task/appointments/README.md) | Booking reminders/retention and calendar-maintenance routines | Enabled; check task states and trigger separately |
 | [`system/appointmentsdav`](plugins/system/appointmentsdav/README.md) | Local CalDAV endpoint and pre-authentication sign-in guard | Disabled until deliberate setup |
 | [`user/appointments`](plugins/user/appointments/README.md) | Password/key sessions, lockout and account/device cleanup | Disabled until deliberate setup |
@@ -360,6 +361,103 @@ ones for the slot calculation but removes their reason, and deletes the host rec
 credential. Event types and schedules are team configuration and are never changed automatically:
 the removal names them for the administrator to assign another host and check the name, photo and
 role on the booking page. Deleting an account in the user manager does not remove these rows.
+Visitors without an account can use the separate
+[Core privacy request adapter](../plg_system_privacyrequests/README.md), when the
+operator has installed and enabled it. The bundled Appointments plugin supplies
+callbacks; it does not itself make Core's account-only public forms guest-accessible.
+Mailbox confirmation is not proof of every identity or entitlement, and Core success
+does not cover export-only plugins or copies outside this site's control.
+
+**Failed internal cleanup remains actionable.** For a formal Core removal,
+`#__appointments_privacy_cleanup` captures an authenticated-encrypted operational
+reference in the same transaction that clears the booking/guest address. It links the
+Core request ID and booking ID to the pending cleanup, so **Remove** can retry even
+when the cleared address no longer finds the booking. It stores no erased names,
+addresses, form answers, booking prose, joining URLs or calendar keys. Primary-invitee
+references retain the booking UID, host/event IDs, UTC times, sequence/modified time and
+provider/room identifier needed to reject stale or reused conference rooms safely;
+guest references retain only the booking identity and guest-cleanup role. These
+encrypted identifiers are still linkable operational data, **not anonymous data**.
+
+References are forgotten only after the actual calendar-copy/conference cleanup
+succeeds; an empty search, acknowledgment or failed calendar rebuild cannot clear
+them. A guest retry preserves the booking, primary invitee, remaining guests and owner
+conference, and rebuilds their copy when required. An unreadable or tampered reference
+fails closed. Resolve the reported provider/storage failure and retry native Remove;
+do not delete the reference to make the warning disappear. There is no expiry that
+silently abandons unresolved cleanup and no newly activated cleanup task.
+Retries process at most 200 references, rotating attempted rows behind untouched
+ones even when they fail. An unreadable first batch cannot starve later references.
+
+A guest who leaves a booking through the **signed link** in their mail goes through the
+same calendar-copy steps: the copy is removed and, with internet calendars on, written
+again without the address. Both steps are always attempted. If either fails, the
+visitor sees that the removal is not complete instead of a success message, the failure
+is logged with the booking ID only, and a reference row with request ID `0`, the booking
+ID and a random generation as payload (no address, link or key) stays in the same table.
+Each removal writes a new generation, so an earlier removal or retry that finishes later
+never forgets the reference of a newer one. The existing
+**Appointments: internet calendar retention** Scheduler task retries these references on
+each run (at most 200, also while internet calendars are off) and forgets one only when
+both steps succeed and its generation is unchanged; its log shows `guest_copies_repaired` and `guest_copies_pending`.
+A reference whose booking was deleted meanwhile, or whose internet calendars were switched
+off, resolves once the copy can be removed; deleting all Appointments data on uninstall drops it.
+Nothing activates that task: without a configured task the reference and the stale copy
+remain until the operator resolves the failure and runs it. A formal Core request does
+not process these references, and the removed address no longer finds the booking.
+
+Before Core pseudonymises an account, **CanRemove** captures its minimal staff scope
+in authenticated-encrypted `#__appointments_privacy_staff`, bound to the Core request
+ID and exact normalized request address. Later **Remove** attempts use that retained
+user ID, not another lookup of the now-cleared account address. A scope captured
+without an account takes over an account with exactly the request address that appears
+later (a registration after the first attempt, for example); a captured account is never
+replaced by another one. Local device/key/grant/
+invitation teardown and ownership release must actually succeed; a successful staff
+teardown does not make an unsearched calendar complete. The completion guard independently
+checks the scope and remaining staff rows, even if an outcome flag says success.
+Each removal also opens an authenticated pending-attempt marker before its work.
+Expected partial failures and unexpected exceptions are logged/reported as warnings,
+not thrown across Core's listener chain: later privacy plugins must still process
+the original registered user in that same dispatch. The marker independently vetoes
+Complete even with a missing or forged outcome flag. Only the current genuinely
+successful attempt can clear it; a superseded attempt cannot overwrite a newer one.
+A captured scope with no authenticated removal attempt also remains pending, including
+when the first outcome write fails before booking cleanup can start. Older captured
+scopes without attempt metadata require a successful native Remove retry, not a forged
+success flag.
+The encrypted ID remains linkable request/audit metadata needed for subsequent Core
+retries, not anonymous booking data. Include it in the site's request-record retention
+and access policy. Earlier interrupted requests without recoverable staff provenance
+fail closed when their original account can no longer be identified; they need
+operator investigation, not an automatic scope/status migration or a success flag.
+This includes a request upgraded from a version without these tables: if Core's action
+log already records a **Remove** for it but neither a staff scope nor an outcome row
+exists, CanRemove blocks the retry and the completion guard blocks Complete. Core
+captures the scope before it writes that log entry, so a current attempt never
+matches. A site that purged or never kept that log entry cannot be detected this way.
+
+`#__appointments_privacy_outcomes` records the request's incomplete/complete callback
+outcome; outstanding cleanup references independently count as incomplete. The bundled
+**Content - Appointments privacy completion guard** vetoes native Core **Complete**
+while Appointments remains incomplete, even with the generic request adapter, DAV and
+user plugins disabled. Installation enables this guard; updates preserve its state.
+Keep it enabled while relying on the completion protection. Remove and Complete of the
+same request are serialized by a per-request database lock, also without the generic
+adapter. The guard holds the lock through Core's status save and rechecks the stored
+request state. An overlapping operation is refused with a "still running" message and
+can be retried after a reload. Core's removal audit
+records an attempt, not proof of successful teardown. Complete is a separate authorized
+Core action after a clean retry and scope review, never an automatic consequence of
+callback dispatch.
+
+Disabled calendars with remaining data, unreadable booking data and calendars the
+handling session cannot unlock are explicit remaining-scope warnings, not "nothing
+found". Use genuinely authorized key-holder access or an explicitly authorized native
+calendar-management action; Superuser status does not unlock content. Inspect delivered
+email/client calendar copies, backups and CRM/provider copies separately. Existing
+booking/audit retention still applies, but it does not purge an unresolved operational
+reference merely because the source booking has been anonymised or deleted.
 
 ### Scheduler, reminders and retention
 

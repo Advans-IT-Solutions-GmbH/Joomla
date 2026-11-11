@@ -19,6 +19,27 @@
 -- A named weekly pattern, reusable across event types. `timezone` is the IANA
 -- name that decides what a time such as Tuesday 14:00 means.
 --
+CREATE TABLE IF NOT EXISTS `#__appointments_privacy_outcomes` (
+    `request_id` INT UNSIGNED NOT NULL PRIMARY KEY,
+    `complete` TINYINT NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `#__appointments_privacy_cleanup` (
+    `request_id` INT UNSIGNED NOT NULL,
+    `booking_id` INT UNSIGNED NOT NULL,
+    `cleanup_key` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `guest` TINYINT NOT NULL,
+    `payload` TEXT NOT NULL,
+    `retry_order` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (`request_id`, `booking_id`, `cleanup_key`),
+    KEY `idx_privacy_retry` (`request_id`, `retry_order`, `booking_id`, `cleanup_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `#__appointments_privacy_staff` (
+    `request_id` INT UNSIGNED NOT NULL PRIMARY KEY,
+    `payload` TEXT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS `#__appointments_schedules` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
     `title` VARCHAR(255) NOT NULL DEFAULT '',

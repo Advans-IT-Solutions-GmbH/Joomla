@@ -35,6 +35,12 @@ class InstallationTest
             $row = $result ? $result->fetch_assoc() : null;
             return $row && $row['enabled'] == 1;
         });
+        $this->test('Privacy staff provenance and bounded fair-retry schema are installed', function () {
+            $staff = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}appointments_privacy_staff LIKE 'payload'");
+            $retry = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}appointments_privacy_cleanup LIKE 'retry_order'");
+            $index = $this->db->query("SHOW INDEX FROM {$this->dbPrefix}appointments_privacy_cleanup WHERE Key_name='idx_privacy_retry'");
+            return $staff && $staff->num_rows === 1 && $retry && $retry->num_rows === 1 && $index && $index->num_rows === 4;
+        });
         $this->test('Installed shared module URLs select the lowest administrator id or the native add page', function () {
             require __DIR__ . '/appointments-joomla.php';
             $support = JPATH_ADMINISTRATOR . '/components/com_appointments/advansinstaller';

@@ -35,6 +35,7 @@ Extends Joomla's `com_privacy` with J2Commerce-specific data handling:
 
 - Exports J2Commerce orders and addresses, optional Joomla user/profile/action-log data, and AcyMailing subscriber data on privacy export requests
 - Carries out removal requests: deletes addresses, the carts of the account and AcyMailing data, anonymizes orders outside the retention period, keeps orders within it and reports them (administrator message, customer e-mail)
+- A detected AcyMailing subscriber-lookup failure must remain visible through the existing privacy callback: sanitized log, administrator warning and newsletter-kept/unverified notices. Repair and retry native Remove; dispatch success alone is not deletion proof. See the extension README, "AcyMailing Integration".
 - Anonymizes orders outside the retention period instead of deleting them (registered users and, via the task, guest orders)
 - Detects lifetime licenses: those orders keep only their order e-mail after the retention period (provisional, see Decisions)
 - Adds a consent checkbox to the J2Commerce checkout; on J2Commerce 6 validates it server-side and records one `#__privacy_consents` row per order (bundled system plugin)
