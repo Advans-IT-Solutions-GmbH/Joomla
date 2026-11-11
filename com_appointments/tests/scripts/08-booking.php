@@ -496,6 +496,8 @@ try {
     // One host serves both events, so each books its own hour.
     foreach (['phone_host_calls' => $day . ' 11:00:00', 'phone_invitee_calls' => $day . ' 13:00:00'] as $location => $phoneSlot) {
         $title = $tag . '-' . $location;
+        // Four submissions per location; each location starts with a fresh hourly booking budget.
+        $db->query("DELETE FROM {$prefix}appointments_ratelimit");
         $db->query("INSERT INTO {$prefix}appointments_schedules (title,timezone,owner_user_id,published,created_utc,modified_utc) VALUES ('{$title}','UTC',{$host},1,'{$time}','{$time}')");
         $schedule = (int) $db->insert_id;
         $scheduleIds[] = $schedule;
@@ -513,6 +515,11 @@ try {
             && $number->getAttribute('type') === 'tel' && $number->hasAttribute('required')
             && $selected instanceof DOMElement && $selected->getAttribute('value') === '41',
             $location . ': the telephone number is a fixed required field with the configured calling code preselected');
+        $codes = array_map(static fn (DOMElement $option): string => $option->getAttribute('value'),
+            iterator_to_array($xpath->query('//select[@id="booking-phone-country"]/option')));
+        $check(count(array_intersect(['1', '41', '44', '49', '33', '423'], $codes)) === 6
+            && $xpath->query('//*[contains(concat(" ", @class, " "), " com-appointments-tel-fixed ")]')->length === 0,
+            $location . ': the preselected calling code is only a preselection, every other code can be chosen');
 
         $request = $prepare($phoneEvent, $phoneSlot);
         sleep(2);
@@ -521,24 +528,34 @@ try {
             $location . ': a booking without a telephone number is refused at the telephone field');
 
         $request = $prepare($phoneEvent, $phoneSlot);
-        $request[2]['booking']['phone'] = ['country' => '41', 'number' => '12'];
+        $request[2]['booking']['phone'] = ['country' => '41', 'number' => 'call me'];
         sleep(2);
         $body = $request[0]->request($request[1], $request[2]);
         $check($fieldError($dom($body), 'booking-phone', 'Please enter a valid telephone number with its country calling code.')
             && $bookings($phoneEvent) === 0, $location . ': an invalid telephone number is refused at the telephone field');
 
+        // "+41 123": a known calling code, but Swiss numbers have nine digits after it.
         $request = $prepare($phoneEvent, $phoneSlot);
-        $request[2]['booking']['phone'] = ['country' => '41', 'number' => '079 123 45 67'];
+        $request[2]['booking']['phone'] = ['country' => '41', 'number' => '+41 123'];
+        sleep(2);
+        $body = $request[0]->request($request[1], $request[2]);
+        $check($fieldError($dom($body), 'booking-phone', 'This number has too few or too many digits for its country calling code. Please check the number and the calling code.')
+            && $bookings($phoneEvent) === 0, $location . ': a number too short for its calling code is refused at the telephone field');
+
+        // One location books a Swiss number, the other a foreign one typed with "+" while +41 stays preselected.
+        [$typed, $expected] = $location === 'phone_host_calls' ? ['079 123 45 67', '+41791234567'] : ['+1 202 555 0100', '+12025550100'];
+        $request = $prepare($phoneEvent, $phoneSlot);
+        $request[2]['booking']['phone'] = ['country' => '41', 'number' => $typed];
         $before = AppointmentsMail::snapshot();
         sleep(2);
         $body = $request[0]->request($request[1], $request[2]);
         $stored = appointments_open_booking($db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$phoneEvent} AND state IN (0,1)")->fetch_assoc());
-        $check(str_contains($body, 'Appointment confirmed') && $stored && $stored['invitee_phone'] === '+41791234567'
+        $check(str_contains($body, 'Appointment confirmed') && $stored && $stored['invitee_phone'] === $expected
             && $stored['custom_fields'] === '[]', $location . ': the number is stored in invitee_phone in international form');
-        $mailed = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool => str_contains(AppointmentsMail::decoded($mime), '+41791234567'));
+        $mailed = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool => str_contains(AppointmentsMail::decoded($mime), $expected));
         $check($mailed !== [], $location . ': the notification mail states the telephone number');
         $detail = $admin->request('/administrator/index.php?option=com_appointments&view=booking&id=' . (int) ($stored['id'] ?? 0));
-        $check($admin->status === 200 && str_contains($detail, '+41791234567'), $location . ': the administrator detail shows the telephone number');
+        $check($admin->status === 200 && str_contains($detail, $expected), $location . ': the administrator detail shows the telephone number');
     }
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";

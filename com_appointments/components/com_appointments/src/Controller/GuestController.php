@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Site\Controller;
 
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Helper\ManageMenuItem;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
@@ -19,6 +20,7 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
 use Joomla\CMS\MVC\View\HtmlView;
+use Advans\Component\Appointments\Site\Helper\NoPageCache;
 use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
@@ -67,7 +69,7 @@ class GuestController extends BaseController
                 'start' => UtcTimestamp::parse((string) $booking['start_utc'])->setTimezone($zone),
                 'end' => UtcTimestamp::parse((string) $booking['end_utc'])->setTimezone($zone),
                 // Unescaped: the layout escapes the address once for the attribute.
-            'action' => Route::_('index.php?option=com_appointments&task=guest.remove', false),
+                'action' => Route::_('index.php?option=com_appointments&task=guest.remove' . $this->frame((int) $booking['eventtype_id']), false),
             ];
         }
 
@@ -97,8 +99,13 @@ class GuestController extends BaseController
             $this->app->setUserState($receipt, true);
         }
 
+        // The receipt in the frame of the booking page, also for a link of an earlier mail without
+        // an Itemid; after the signature was verified above, or for this session's own receipt.
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $eventtypeId = (int) $db->setQuery('SELECT ' . $db->quoteName('eventtype_id') . ' FROM ' . $db->quoteName('#__appointments_bookings')
+            . ' WHERE ' . $db->quoteName('id') . ' = ' . $id)->loadResult();
         $this->setRedirect(Route::_('index.php?option=com_appointments&task=guest.confirm&id=' . $id
-            . '&signature=' . urlencode($signature), false));
+            . '&signature=' . urlencode($signature) . $this->frame($eventtypeId), false));
 
         return true;
     }
@@ -121,7 +128,7 @@ class GuestController extends BaseController
 
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(array_merge(['b.id', 'b.start_utc', 'b.end_utc', 'b.invitee_timezone', 'b.modified_utc'],
+        $query->select($db->quoteName(array_merge(['b.id', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.invitee_timezone', 'b.modified_utc'],
             \Advans\Component\Appointments\Administrator\Helper\BookingData::readColumns('b'))))
             ->select($db->quoteName('e.title'))
             ->from($db->quoteName('#__appointments_bookings', 'b'))
@@ -132,6 +139,15 @@ class GuestController extends BaseController
 
         // The guest list is encrypted at rest; one that cannot be decrypted matches no link.
         return $row === null ? null : \Advans\Component\Appointments\Administrator\Helper\BookingData::fromApplication()->openLenient($row);
+    }
+
+    /** '&Itemid=…' of the page frame (ManageMenuItem::frame), or '' for none. */
+    private function frame(int $eventtypeId): string
+    {
+        $itemId = ManageMenuItem::frame($this->app->getMenu()->getActive(), Factory::getContainer()->get(DatabaseInterface::class),
+            $eventtypeId, $this->app->getLanguage()->getTag());
+
+        return $itemId > 0 ? '&Itemid=' . $itemId : '';
     }
 
     private function links(): SignedLink
@@ -155,7 +171,7 @@ class GuestController extends BaseController
         $this->app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
         $this->app->setHeader('Cache-Control', 'private, no-store', true);
         // Neither Joomla's page cache may keep it: the page carries a form token and the guest's address.
-        $this->app->allowCache(false);
+        NoPageCache::apply($this->app);
         $document = $this->app->getDocument();
         $title = Text::_('COM_APPOINTMENTS_GUEST_TITLE');
         $document->setTitle(match ((int) $this->app->get('sitename_pagetitles', 0)) {
