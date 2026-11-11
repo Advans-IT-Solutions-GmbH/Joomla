@@ -337,7 +337,8 @@ try {
         $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($componentParams) . "' WHERE element='com_appointments' AND type='component'");
         $db->query("UPDATE {$prefix}extensions SET enabled={$pageCache} WHERE type='plugin' AND folder='system' AND element='cache'");
     }
-    $page = $browser->request($guestPage);
+    // The details step of a free time: its form names the time field.
+    $page = $browser->request($guestPage . '&timezone=UTC&start=' . urlencode($day . ' 16:00:00'));
     $check($browser->status === 200 && str_contains($page, 'name="booking[start]"'), 'With a public site URL the booking page shows its form again');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
