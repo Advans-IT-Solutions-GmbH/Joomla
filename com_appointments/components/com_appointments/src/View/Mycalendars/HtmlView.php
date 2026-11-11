@@ -57,15 +57,15 @@ class HtmlView extends BaseHtmlView
     /** Whether a part of the internet calendars this page needs is not available yet. */
     protected $unavailable = false;
 
-    /** @var array{name: string, client: string, errors: array<string, string>, device: int} */
-    protected $form = ['name' => '', 'client' => '', 'errors' => [], 'device' => 0];
+    /** @var array{name: string, client: string, removal_mode: string, errors: array<string, string>, device: int} */
+    protected $form = ['name' => '', 'client' => '', 'removal_mode' => 'auto', 'errors' => [], 'device' => 0];
 
     protected $formNonce = '';
 
     /** @var object|null The device of the `device` layout. */
     protected $device;
 
-    /** @var array{device_id: int, app_password: string, name: string, client: string, mail_sent: bool}|null */
+    /** @var array{device_id: int, app_password: string, name: string, client: string, removal_mode: string, mail_sent: bool}|null */
     protected $created;
 
     protected $davUrl = '';
@@ -115,6 +115,8 @@ class HtmlView extends BaseHtmlView
         $this->form = [
             'name' => \is_string($state['name'] ?? null) ? $state['name'] : '',
             'client' => \is_string($state['client'] ?? null) ? $state['client'] : '',
+            'removal_mode' => \is_string($state['removal_mode'] ?? null) && DeviceService::isRemovalMode($state['removal_mode'])
+                ? $state['removal_mode'] : 'auto',
             'errors' => array_filter((array) ($state['errors'] ?? []), 'is_string'),
             'device' => (int) ($state['device'] ?? 0),
         ];
@@ -167,13 +169,15 @@ class HtmlView extends BaseHtmlView
      *
      * @param   array{device_id: int, app_password: string, mail_sent?: bool}  $result
      */
-    public function setCreated(array $result, string $name, string $client): void
+    public function setCreated(array $result, string $name, string $client, string $removalMode = ''): void
     {
+        $client = DeviceService::isClient($client) ? $client : 'other';
         $this->created = [
             'device_id' => (int) $result['device_id'],
             'app_password' => (string) $result['app_password'],
             'name' => $name,
-            'client' => DeviceService::isClient($client) ? $client : 'other',
+            'client' => $client,
+            'removal_mode' => DeviceService::isRemovalMode($removalMode) ? $removalMode : DeviceService::defaultRemovalMode($client),
             'mail_sent' => (bool) ($result['mail_sent'] ?? true),
         ];
         $this->setLayout('created');

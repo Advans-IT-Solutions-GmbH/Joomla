@@ -116,10 +116,14 @@ HTTP 429 with `Retry-After`. Clean-up uses independent devices for the sync tomb
 collection listing, vdirsyncer's deletion guard and explicitly forced local deletion: fetching the
 empty collection already advances that device to hidden, and listing its hidden home revokes it.
 A separate idle device checks both Scheduler timeout transitions without consuming those deliveries.
+The devices that prove the clean-up choose «Clean up» explicitly, every other one keeps the
+recommendation of its client. Before the clean-up, a removed Outlook device («Block only») must get
+401 for PROPFIND and REPORT, report no deletions, and its vdirsyncer copy must stay complete. The
+revoked calendar of WRITER («Block only») answers 404 to REPORT as well.
 The same job also runs `authenticated.py`: a synthetic account starts without a key or device,
 signs in through Joomla's real password and TOTP forms (codes generated locally), and releases
 its first key only after MFA. The fixture then grants calendar access; the browser submits
-the normal device form twice and both actual clients use the returned one-time app passwords
+the normal device form twice (with «Clean up» chosen) and both actual clients use the returned one-time app passwords
 to read, create, change and delete entries. Wrong app passwords and Joomla passwords are
 refused; blocking permits only empty cleanup delivery, and final revocation refuses both clients.
 Credentials, TOTP seeds and browser cookies stay in the private work directory, never in artifacts.

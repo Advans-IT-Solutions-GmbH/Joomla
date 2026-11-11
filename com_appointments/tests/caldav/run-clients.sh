@@ -205,6 +205,10 @@ step mfa-enable && client mfa-restored
 
 step revoke && client revoked
 
+# «Block only»: removing BLOCKONLY's Outlook device revokes it at once. The client gets
+# 401, never an empty calendar, and keeps its local copy.
+step block-start && client block-revoked
+
 # Successful collection/home listings advance delivered phases immediately.
 # The Scheduler timeout path uses a separate device that never fetches them.
 step cleanup-start && client cleanup-empty

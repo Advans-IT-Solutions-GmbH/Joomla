@@ -521,7 +521,7 @@ the real key pair and its calendar wrap exist.
 | Group of external users | the group created by the installer | Accounts of external users belong here. Only users with the permission «Share with external users» grant to them, at most the write role, and only on calendars that allow externals. A member of both groups counts as external. |
 | Create user groups | on | Create missing groups and the access level on installation and update, and enforce MFA for both groups. |
 | Access level of «My calendars» | the level created by the installer | Shows the menu item to calendar users only. The page and its device actions check it on the server too, together with membership of a team group or the external group, also at an address without a menu item: any other signed-in account gets 403, a guest 404. |
-| Days per clean-up phase | 14 | Longest duration of each clean-up phase of a blocked device (see below). |
+| Days per clean-up phase | 14 | Longest duration of each clean-up phase of a blocked device set to «Clean up» (see below). |
 | Subscription feeds with token | off on a new installation, on after an update | The previous token feeds, replaced by the internet calendars. |
 
 The CalDAV plugin holds the **CalDAV base address**, an absolute `https://` address (default: the
@@ -550,7 +550,8 @@ rule: a lock code on the device, no forwarding to iCloud or Google calendars, re
 Private smartphones are allowed under that rule. Adding a device requires a password sign-in with
 the second factor in the same session and at least one grant. The app password is shown once and
 stored only as a keyed hash; the user receives a mail for every new device. The Joomla password
-never works for CalDAV. **Remove device** starts the clean-up.
+never works for CalDAV. **Remove device** acts by the device's **When removed or blocked** setting,
+chosen in **Add device** (see [Blocking and clean-up](#blocking-and-clean-up)).
 
 #### Client instructions
 
@@ -577,13 +578,52 @@ The setup page links the manufacturers' official download pages, opened in a new
 
 #### Blocking and clean-up
 
-A device to be blocked first gets its calendars **empty**, so the client deletes its local copy;
-then the calendars are **no longer listed**, so the client removes them; then every request is
-refused. Each phase ends when the device has fetched it, at the latest after **Days per clean-up
-phase**. Writes are refused during the clean-up, so a client cannot upload the deleted events
-again. Triggers: «Remove device», an administrator blocking a device or a user's calendar access,
-a blocked Joomla account and a password reset. A device that never connects again keeps its local
-copy; that is why the usage rule asks for a lock code.
+Every device has the setting **When removed or blocked**. The user chooses it in **Add device** and
+can change it later on the device page in «My calendars». An administrator with `core.admin`
+changes it in **Internet calendars → Devices**. Nobody else can change it.
+
+- **Clean up** (phones and tablets): the device first gets its calendars **empty**, so the client
+  deletes its local copy. Then the calendars are **no longer listed**, so the client removes them.
+  Then every request is refused with 401. Each phase ends when the device has fetched it, at the
+  latest after **Days per clean-up phase**. Writes are refused during the clean-up, so a client
+  cannot upload the deleted events again. The server keeps every entry.
+- **Block only** (desktop programs): the device is revoked at once. Every request, PROPFIND and
+  REPORT included, is refused with 401, and an empty calendar is never served. The client reports
+  an error and deletes nothing. Its local copy stays until the user removes it in the client.
+
+**Why «Block only» for Outlook with the main calendar.** CalDav Synchronizer in two-way mode
+applies every change of the server to the Outlook folder it is assigned to. If that folder is the
+user's main Outlook calendar, the synchronised items are the user's own appointments, and an empty
+calendar during a clean-up would make Outlook delete them. With «Block only» Outlook only reports
+an error and every appointment stays. A client that synchronises into a new, empty folder of its
+own can use either setting.
+
+The form preselects **Recommended for the chosen program**, which the server resolves as follows:
+
+| Client | Recommended | Reason |
+|---|---|---|
+| Classic Outlook with CalDav Synchronizer | Block only | Two-way synchronisation, possibly with the main calendar |
+| iOS calendar | Clean up | Phone or tablet, the internet calendars are calendars of their own account |
+| DAVx⁵ (Android) | Clean up | Phone or tablet, as iOS |
+| Thunderbird | Block only | Desktop program |
+| eM Client | Block only | Desktop program |
+| Other CalDAV client | Block only | The effect of an empty calendar is unknown. A refused sign-in can be undone, deleted appointments cannot |
+
+**Who is affected.** «Remove device» in «My calendars» and **Block by device setting** in the
+backend affect that one device only, every other device keeps working unchanged. A password reset,
+a blocked Joomla account, blocked calendar access, a revoked access and a discarded invalid key
+block every device of the user, each by its own setting. **Revoke now** in the backend always
+revokes at once without the clean-up, for a lost or stolen device. When the grant for a single
+calendar is withdrawn, the device keeps its other calendars. The withdrawn calendar is no longer
+listed and answers 404, to PROPFIND and REPORT as well. A «Block only» device never receives it
+empty, a «Clean up» device only when the whole device is cleaned up later.
+
+**Updating.** Devices created before this setting existed get **Clean up**, the behaviour so far.
+**System checks** reports active Outlook devices set to **Clean up**. Set them to **Block only** if
+they synchronise two ways with the main Outlook calendar.
+
+A device that never connects again keeps its local copy. That is why the usage rule asks for a lock
+code.
 
 #### What the encryption protects, and what not
 
@@ -618,7 +658,8 @@ possible with CalDAV clients.
   alone does not repair that; the way back is the old site secret. That is why it is printed with
   the recovery key.
 - **Password reset:** a reset by mail or a password set by an administrator gives a new key pair;
-  the user's grants are suspended and the devices go into clean-up. A manager grants again, or an
+  the user's grants are suspended and the devices are blocked, each by its **When removed or
+  blocked** setting. A manager grants again, or an
   administrator uses the recovery key. A password reset alone never gives anybody calendar access.
 - **Losing the recovery key and every key holder** of a calendar loses that calendar's contents, by
   design.
@@ -1458,7 +1499,9 @@ reports an explicit skip once the repository's latest-release-only policy retire
 The client lane includes a complete synthetic password/TOTP sign-in, first calendar-key release
 and device creation through the real site forms. Python `caldav` and `vdirsyncer` then read,
 create, update and delete entries using those one-time app passwords. Negative checks cover
-wrong credentials, account blocking (cleanup-only access) and revoked devices. No real accounts,
+wrong credentials, account blocking (cleanup-only access) and revoked devices. A removed device set
+to «Block only» must answer 401 to PROPFIND and REPORT at once, and its `vdirsyncer` copy must stay
+complete. No real accounts,
 credentials or TOTP seeds are included in test artifacts.
 
 The full integration matrix runs on the newest Joomla 5.4 and Joomla 6 images with MySQL. A third

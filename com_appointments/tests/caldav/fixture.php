@@ -11,6 +11,7 @@
  *   php fixture.php mfa-disable      WRITER removes its second factor
  *   php fixture.php mfa-enable       WRITER sets up a second factor again
  *   php fixture.php revoke           OWNER revokes WRITER's grant on CAL-R
+ *   php fixture.php block-start      BLOCKONLY removes its Outlook device («Block only»)
  *   php fixture.php cleanup-start    start the independent clean-up devices
  *   php fixture.php cleanup-advance  advance the idle device through a Scheduler timeout
  *   php fixture.php teardown         remove everything this fixture created
@@ -58,7 +59,14 @@ const USERS = [
     'cleanup-list' => CalendarRole::Write,
     'cleanup-guard' => CalendarRole::Write,
     'cleanup-timeout' => CalendarRole::Write,
+    'blockonly' => CalendarRole::Write,
 ];
+
+/**
+ * «When removed or blocked» of the devices that prove the clean-up. Every other device keeps the
+ * recommendation of its client: «Other client» and Outlook get «Block only».
+ */
+const CLEANUP_DEVICES = ['vdir', 'cleanup-sync', 'cleanup-list', 'cleanup-guard', 'cleanup-timeout'];
 
 function fail(string $message): never
 {
@@ -311,7 +319,8 @@ function setup(): void
     $team->grants()->grant($owner, $state['calendars']['R']['id'], $state['users']['writer']['id'], CalendarRole::Write, $keys['owner']);
 
     foreach (array_keys(USERS) as $name) {
-        $device = $team->devices()->create($keys[$name], 'CI ' . $name, 'other', true);
+        $device = $team->devices()->create($keys[$name], 'CI ' . $name, $name === 'blockonly' ? 'outlook-caldavsynchronizer' : 'other', true,
+            \in_array($name, CLEANUP_DEVICES, true) ? TeamStates::REMOVAL_CLEANUP : null);
         $state['devices'][$name] = (int) $device['device_id'];
         $state['users'][$name]['app_password'] = $device['app_password'];
         saveState($state);
@@ -413,6 +422,29 @@ function cleanupStart(): void
     }
 
     out(['states' => $states]);
+}
+
+/**
+ * BLOCKONLY's Outlook device («Block only», the recommendation for Outlook) is removed by its
+ * owner: revoked at once, never in a clean-up phase.
+ */
+function blockStart(): void
+{
+    $state = state();
+    $device = (int) $state['devices']['blockonly'];
+    $mode = db()->query("SELECT removal_mode FROM " . prefix() . "appointments_devices WHERE id={$device}")->fetch_assoc()['removal_mode'] ?? null;
+
+    if ($mode !== TeamStates::REMOVAL_BLOCK) {
+        fail("BLOCKONLY's Outlook device is not set to «Block only».");
+    }
+
+    services()->cleanup()->startForDevice($device, 'user_removed', $state['users']['blockonly']['id']);
+
+    if (deviceState($device) !== TeamStates::DEVICE_REVOKED) {
+        fail("Removing BLOCKONLY's «Block only» device did not revoke it at once.");
+    }
+
+    out(['device' => 'blockonly', 'state' => deviceState($device)]);
 }
 
 function cleanupAdvance(): void
@@ -588,6 +620,7 @@ $commands = [
     'mfa-disable'     => 'mfaDisable',
     'mfa-enable'      => 'mfaEnable',
     'revoke'          => 'revoke',
+    'block-start'     => 'blockStart',
     'cleanup-start'   => 'cleanupStart',
     'cleanup-advance' => 'cleanupAdvance',
     'authenticated-ready' => 'authenticatedReady',

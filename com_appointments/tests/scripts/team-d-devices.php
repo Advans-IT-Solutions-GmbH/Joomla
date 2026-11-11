@@ -499,6 +499,9 @@ return static function (TeamSuite $suite): void {
             'D: «Rename device» refuses a signed-in account outside the groups with 403 and changes nothing',
             'D: «Remove device» refuses a signed-in account outside the groups with 403 and changes nothing',
             'D: A member without the configured access level gets 403 for the page and every device task',
+            'D: «When removed or blocked» refuses a signed-in account outside the groups with 403 and changes nothing',
+            'D: «Add device» stores the recommendation for the client or the chosen «When removed or blocked» and shows it',
+            'D: Only the owner or an administrator changes «When removed or blocked», and «Block only» ends a running clean-up at once',
         ];
 
         if ($stubs !== []) {
@@ -822,6 +825,41 @@ return static function (TeamSuite $suite): void {
             return $refusedDevice && $refusedAdd && $services->devices()->authenticate($tag . 'member', $created) !== null;
         });
 
+        $suite->test($flow[31], static function () use ($services, $probe, $refusal, $user, $db, $p, $member, $admin, $tag) {
+            // «Other client»: «Block only» unless chosen otherwise.
+            $made = $probe($tag . ' setting');
+
+            if ($made === []) {
+                return false;
+            }
+
+            $id = (int) $made['device_id'];
+            $row = static fn (): array => $db->query("SELECT removal_mode, state FROM {$p}appointments_devices WHERE id = {$id}")->fetch_assoc() ?: [];
+            $stranger = $user('stranger', 'Stranger-' . bin2hex(random_bytes(8)) . '!', [2]);
+            $default = ($row()['removal_mode'] ?? '') === TeamStates::REMOVAL_BLOCK;
+            $foreign = $refusal(static fn () => $services->devices()->setRemovalMode($stranger, $id, TeamStates::REMOVAL_CLEANUP)) === 404
+                && ($row()['removal_mode'] ?? '') === TeamStates::REMOVAL_BLOCK;
+            $invalid = $refusal(static fn () => $services->devices()->setRemovalMode($member, $id, 'empty')) === 400;
+            // An administrator of the component may change it, the owner below as well.
+            $services->devices()->setRemovalMode($admin, $id, TeamStates::REMOVAL_CLEANUP);
+            $owner = ($row()['removal_mode'] ?? '') === TeamStates::REMOVAL_CLEANUP;
+            $services->cleanup()->startForDevice($id, 'test', $member);
+            $cleanup = (int) ($row()['state'] ?? -1) === TeamStates::DEVICE_CLEANUP_EMPTY;
+            // Switched to «Block only» during the clean-up: revoked now, no further empty calendar.
+            $services->devices()->setRemovalMode($member, $id, TeamStates::REMOVAL_BLOCK);
+            $revoked = (int) ($row()['state'] ?? -1) === TeamStates::DEVICE_REVOKED
+                && $services->devices()->authenticate($tag . 'member', $made['app_password']) === null;
+            $logged = (int) $db->query("SELECT COUNT(*) AS n FROM {$p}appointments_teamlog WHERE event = 'device.removal_mode' AND subject_user_id = {$member}")
+                ->fetch_assoc()['n'] >= 2;
+
+            if (!($default && $foreign && $invalid && $owner && $cleanup && $revoked && $logged)) {
+                echo '    setting: default ' . (int) $default . ', foreign ' . (int) $foreign . ', invalid ' . (int) $invalid . ', owner ' . (int) $owner
+                    . ', clean-up ' . (int) $cleanup . ', revoked ' . (int) $revoked . ', logged ' . (int) $logged . "\n";
+            }
+
+            return $default && $foreign && $invalid && $owner && $cleanup && $revoked && $logged;
+        });
+
         $suite->test($flow[7], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page) {
             // A session of its own: the key and factor probes above may have closed the first one's keys.
             $browser = new TeamDBrowser($suite->base);
@@ -905,6 +943,49 @@ return static function (TeamSuite $suite): void {
             return $unchanged && $noPassword && $noDetail;
         });
 
+        $suite->test($flow[30], static function () use ($suite, $db, $p, $member, $tag, $password, $secret, $signIn, $page) {
+            $browser = new TeamDBrowser($suite->base);
+            $signIn($browser, $tag . 'member', $password, $secret);
+            $results = [];
+
+            // Name suffix, client, the choice sent (null: the radio «Recommended» left as it is), the stored value.
+            foreach ([
+                ['outlook', 'outlook-caldavsynchronizer', null, TeamStates::REMOVAL_BLOCK],
+                ['tablet', 'davx5', null, TeamStates::REMOVAL_CLEANUP],
+                ['thunderbird', 'thunderbird', 'auto', TeamStates::REMOVAL_BLOCK],
+                ['outlook folder', 'outlook-caldavsynchronizer', TeamStates::REMOVAL_CLEANUP, TeamStates::REMOVAL_CLEANUP],
+                ['phone blocked', 'davx5', TeamStates::REMOVAL_BLOCK, TeamStates::REMOVAL_BLOCK],
+            ] as [$suffix, $client, $choice, $expected]) {
+                $form = TeamDBrowser::form($page($browser), 'devices.create');
+
+                if ($form === null) {
+                    echo "    setting on add: no form for {$suffix}\n";
+
+                    return false;
+                }
+
+                $name = $tag . ' mode ' . $suffix;
+                $fields = $form['fields'] + ['name' => $name, 'client' => $client, 'rule' => 1] + ($choice === null ? [] : ['removal_mode' => $choice]);
+                $html = $browser->request($form['action'], $fields, 0);
+                $row = $db->query("SELECT removal_mode FROM {$p}appointments_devices WHERE user_id = {$member} AND name = '"
+                    . $db->real_escape_string($name) . "'")->fetch_assoc();
+                $results[$suffix] = $row !== null && $row['removal_mode'] === $expected && str_contains($html, 'id="created-removal"');
+            }
+
+            // A forged value creates nothing.
+            $form = TeamDBrowser::form($page($browser), 'devices.create');
+            $before = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}");
+            $form !== null && $browser->request($form['action'], $form['fields'] + ['name' => $tag . ' mode forged', 'client' => 'davx5', 'rule' => 1,
+                'removal_mode' => 'empty'], 0);
+            $results['forged'] = $form !== null && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $before;
+
+            if (\in_array(false, $results, true)) {
+                echo '    setting on add: ' . json_encode($results) . "\n";
+            }
+
+            return !\in_array(false, $results, true);
+        });
+
         // ------------------------------------------------------------------
         // Access: only accounts that may use internet calendars, on the server,
         // also at the address without a menu item (the test site has none).
@@ -923,6 +1004,7 @@ return static function (TeamSuite $suite): void {
                 'devices.create' => ['name' => 'Refused phone', 'client' => 'davx5', 'rule' => 1, 'rule_version' => TeamStates::DEVICE_RULE_VERSION, 'form_nonce' => bin2hex(random_bytes(16))],
                 'devices.rename' => ['id' => $deviceId, 'name' => 'Refused rename'],
                 'devices.remove' => ['id' => $deviceId, 'confirm' => 1],
+                'devices.removalMode' => ['id' => $deviceId, 'removal_mode' => TeamStates::REMOVAL_BLOCK],
             ] as $task => $fields) {
                 $browser->request('/index.php?option=com_appointments&task=' . $task, [$token => 1] + $fields, 0);
                 $statuses[$task] = $browser->status;
@@ -971,7 +1053,7 @@ return static function (TeamSuite $suite): void {
                 echo '    guest: page ' . $page . ', tasks ' . json_encode($statuses) . "\n";
             }
 
-            return $page === 404 && \count($statuses) === 3 && array_values(array_unique($statuses)) === [404];
+            return $page === 404 && \count($statuses) === 4 && array_values(array_unique($statuses)) === [404];
         });
 
         $suite->test($flow[23], static function () use ($outsiderBrowser, $outsiderSignedIn, $outsiders) {
@@ -1011,7 +1093,7 @@ return static function (TeamSuite $suite): void {
             return $browser->status === 403;
         });
 
-        foreach (['devices.create' => 25, 'devices.rename' => 26, 'devices.remove' => 27] as $task => $index) {
+        foreach (['devices.create' => 25, 'devices.rename' => 26, 'devices.remove' => 27, 'devices.removalMode' => 29] as $task => $index) {
             $suite->test($flow[$index], static function () use ($task, $outsiderStatuses, $outsiderBefore, $deviceRow, $suite, $p, $outsiders) {
                 $id = $outsiders['outsider']['id'];
                 $unchanged = $outsiderBefore !== null && $deviceRow($outsiders['outsider']['device']) === $outsiderBefore
@@ -1055,7 +1137,7 @@ return static function (TeamSuite $suite): void {
                 echo '    member without level: page ' . $page . ', tasks ' . json_encode($statuses) . ', unchanged ' . (int) $unchanged . "\n";
             }
 
-            return $page === 403 && \count($statuses) === 3 && array_values(array_unique($statuses)) === [403] && $unchanged;
+            return $page === 403 && \count($statuses) === 4 && array_values(array_unique($statuses)) === [403] && $unchanged;
         });
 
         // ------------------------------------------------------------------

@@ -534,13 +534,17 @@ CREATE TABLE IF NOT EXISTS `#__appointments_calendar_busy` (
 -- One row per device. The app password itself is never stored: `secret_hash` is
 -- an HMAC with a server key, `usk_wrapped` is the user's secret key wrapped with
 -- a key derived from the app password. `state`: 1 active, 2 clean-up (calendars
--- served empty), 3 clean-up (calendars hidden), 0 revoked.
+-- served empty), 3 clean-up (calendars hidden), 0 revoked. `removal_mode`, «When
+-- removed or blocked»: `cleanup` (the clean-up above) or `block` (revoked at once,
+-- never an empty calendar). script.php adds the column on an update as well, with
+-- `cleanup` for every existing device.
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_devices` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
     `user_id` INT UNSIGNED NOT NULL,
     `name` VARCHAR(100) NOT NULL,
     `client` VARCHAR(32) NOT NULL,
+    `removal_mode` VARCHAR(16) NOT NULL DEFAULT 'cleanup',
     `secret_hash` BINARY(32) NOT NULL,
     `kek_salt` VARBINARY(16) NOT NULL,
     `usk_wrapped` VARBINARY(255) DEFAULT NULL,

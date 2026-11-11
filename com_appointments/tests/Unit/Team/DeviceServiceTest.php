@@ -8,6 +8,7 @@
 
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\Team\AppPassword;
+use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\Team\DeviceService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\Database\DatabaseInterface;
@@ -65,6 +66,29 @@ final class DeviceServiceTest extends TestCase
         self::assertFalse(DeviceService::isClient('outlook-new'));
         self::assertFalse(DeviceService::isClient(''));
         self::assertFalse(DeviceService::isClient('APPLE'));
+    }
+
+    public function testEveryClientRecommendsASettingForRemoval(): void
+    {
+        self::assertSame(DeviceService::CLIENTS, array_keys(DeviceService::REMOVAL_DEFAULTS));
+        self::assertSame(DeviceService::REMOVAL_MODES, array_keys(DeviceService::REMOVAL_LABELS));
+
+        // Phones and tablets clean up, desktop programs and unknown clients are only blocked.
+        self::assertSame(TeamStates::REMOVAL_BLOCK, DeviceService::defaultRemovalMode('outlook-caldavsynchronizer'));
+        self::assertSame(TeamStates::REMOVAL_CLEANUP, DeviceService::defaultRemovalMode('apple'));
+        self::assertSame(TeamStates::REMOVAL_CLEANUP, DeviceService::defaultRemovalMode('davx5'));
+        self::assertSame(TeamStates::REMOVAL_BLOCK, DeviceService::defaultRemovalMode('thunderbird'));
+        self::assertSame(TeamStates::REMOVAL_BLOCK, DeviceService::defaultRemovalMode('emclient'));
+        self::assertSame(TeamStates::REMOVAL_BLOCK, DeviceService::defaultRemovalMode('other'));
+        self::assertSame(TeamStates::REMOVAL_BLOCK, DeviceService::defaultRemovalMode('outlook-new'));
+
+        foreach (DeviceService::REMOVAL_MODES as $mode) {
+            self::assertTrue(DeviceService::isRemovalMode($mode));
+        }
+
+        foreach (['', 'auto', 'empty', 'Block', 'CLEANUP', 'block '] as $mode) {
+            self::assertFalse(DeviceService::isRemovalMode($mode));
+        }
     }
 
     public function testRowMacCoversTheAccessColumnsInAFixedShape(): void

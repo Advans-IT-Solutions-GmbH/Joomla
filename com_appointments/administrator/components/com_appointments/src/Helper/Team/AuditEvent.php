@@ -35,6 +35,10 @@ final class AuditEvent
     public const DEVICE_CLEANUP_STARTED = 'device.cleanup_started';
     public const DEVICE_CLEANUP_ADVANCED = 'device.cleanup_advanced';
     public const DEVICE_REVOKED = 'device.revoked';
+    /** A device set to «Block only» was removed or blocked: revoked at once, without clean-up. */
+    public const DEVICE_BLOCKED = 'device.blocked';
+    /** The setting «When removed or blocked» of a device changed. */
+    public const DEVICE_REMOVAL_MODE = 'device.removal_mode';
 
     public const CALENDAR_CREATED = 'calendar.created';
     public const CALENDAR_UPDATED = 'calendar.updated';
