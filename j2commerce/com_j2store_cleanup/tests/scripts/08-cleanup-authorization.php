@@ -288,6 +288,15 @@ namespace {
             $this->check('Extension type and element must match', !isCleanupCandidate((object) $this->row(7, 'module', 'com_j2commerce_forged')));
             $this->check('Plugin type cannot claim a component element', !isCleanupCandidate((object) $this->row(8, 'plugin', 'com_j2commerce_forged', 'j2store')));
             $this->check('Cleanup component cannot select itself', !isCleanupCandidate((object) $this->row(8, 'component', 'com_j2store_cleanup')));
+            $this->check('J2Store library is a candidate', isCleanupCandidate((object) $this->row(11, 'library', 'j2store/legacy')));
+            // File extensions have no single install path: missing files cannot be verified.
+            $this->check('File extensions are out of scope', !isCleanupCandidate((object) $this->row(12, 'file', 'j2store_files'))
+                && !isCleanupCandidate((object) $this->row(13, 'file', 'files_j2commerce_assets')));
+            $fileDb = new FakeDatabase([$this->row(12, 'file', 'j2store_files')]);
+            Installer::$calls = [];
+            $fileResult = cleanupExtensions($fileDb, [12]);
+            $this->check('A file extension record is never removed database-only', $fileResult['error'] === 1
+                && $fileDb->has(12) && Installer::$calls === []);
         }
 
         private function testAuthorizationPermissions(): void
@@ -485,6 +494,14 @@ namespace {
             Installer::$mode = 'throw';
             $result = cleanupExtensions($db, [1]);
             $this->check('Eligible installer exception uses guarded DB-only fallback', $result['warning'] === 1 && !$db->has(1));
+
+            $failedDb = new FakeDatabase([$this->row(1, 'plugin', 'test_incompatible', 'j2store')]);
+            $failedDb->failExecute = true;
+            $result = cleanupExtensions($failedDb, [1]);
+            $this->check('A failed fallback after an installer exception is reported through a language key',
+                $result['error'] === 1 && $failedDb->has(1)
+                && ($result['messages'][0] ?? '') === 'test_incompatible: COM_J2STORE_CLEANUP_MSG_FALLBACK_FAILED:'
+                    . 'synthetic installer failure|synthetic database failure');
             Installer::$mode = 'success';
         }
 
