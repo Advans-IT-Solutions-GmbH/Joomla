@@ -65,7 +65,8 @@ interface BookingCalendarBridgeInterface
      * no key; runs also when the feature is switched off. Called after each
      * booking change with a small limit and by the Scheduler in batches.
      *
-     * @return  int  Objects removed, -1 when the clean-up could not run.
+     * @return  int  Bookings whose copies were removed, -1 when the clean-up could not run,
+     *                a removal failed or the restore request could not be recorded.
      */
     public function removeOrphans(int $limit): int;
 

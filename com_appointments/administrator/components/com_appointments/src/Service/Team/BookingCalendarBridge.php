@@ -313,17 +313,26 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                     . $db->quoteName('b.anonymised_utc') . ' IS NOT NULL)');
             }
 
+            $failed = false;
+
             foreach (array_map('intval', $db->setQuery($query)->loadColumn()) as $bookingId) {
                 if ($bookingId > 0 && $this->remove($bookingId)) {
                     $removed++;
+                } elseif ($bookingId > 0 && $this->calendarsHolding($bookingId) !== []) {
+                    // A removal that failed (logged by remove()): reported, retried next run.
+                    $failed = true;
                 }
             }
 
             // Switched off: every run records that the copies must be written again once the
             // feature is back, also when nothing was left to remove (a copy a device deleted
             // before). The request does nothing while the feature stays off.
-            if (!$enabled) {
-                $this->requestRestore(0);
+            if (!$enabled && !$this->requestRestore(0)) {
+                $failed = true;
+            }
+
+            if ($failed) {
+                return -1;
             }
         } catch (\Throwable $e) {
             $this->failure('orphans', 0, $e);
