@@ -122,6 +122,9 @@ final class PrivacyReviewTest extends TestCase
         // An escaped backslash before n is not a line break: nanna@… is another mailbox.
         $slashes = "BEGIN:VCALENDAR\r\nDESCRIPTION:path C:\\\\nanna@example.test\r\nEND:VCALENDAR\r\n";
         self::assertSame($slashes, PrivacyReview::withoutAddress($slashes, 'anna@example.test', '[removed]'));
+        // An encoded ? or = belongs to the mailbox, also inside a mailto URI.
+        $encodedMailbox = "BEGIN:VCALENDAR\r\nATTENDEE:mailto:b%3Fto%3Danna%40example.test\r\nEND:VCALENDAR\r\n";
+        self::assertSame($encodedMailbox, PrivacyReview::withoutAddress($encodedMailbox, 'anna@example.test', '[removed]'));
         self::assertSame($changed, str_replace("\r\n ", '', PrivacyReview::withoutAddress($changed, 'anna@example.test', '[removed]')));
     }
     public function testAnOrganiserAddressAndLongLines(): void

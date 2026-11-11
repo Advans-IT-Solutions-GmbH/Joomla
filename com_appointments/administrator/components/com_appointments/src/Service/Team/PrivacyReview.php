@@ -452,17 +452,25 @@ final class PrivacyReview
 
                 $word = '/(?<![\p{L}\p{N}.!#$%&\'*+\/=?^_`{|}~\-])' . preg_quote($email, '/') . '(?![\p{L}\p{N}\-]|\.[\p{L}\p{N}])/iu';
                 $hit = false;
-                $decoded = (string) preg_replace_callback($uri ? '/([?&]?)([^?&]*)/' : '/()(.+)/s', static function (array $part) use ($word, $replacement, $uri, &$hit): string {
+                // The query is split at its literal separators (?, &, =) while still encoded, so
+                // an encoded %3F or %3D belongs to a mailbox, never to the query syntax. Only a
+                // value that contains the address is decoded, changed and encoded again.
+                $rebuilt = (string) preg_replace_callback($uri ? '/([?&]?)([^?&]*)/' : '/()(.+)/s', static function (array $part) use ($word, $replacement, $uri, &$hit): string {
                     $at = $uri ? strpos($part[2], '=') : false;
                     $key = $at === false ? '' : substr($part[2], 0, $at + 1);
                     $value = $at === false ? $part[2] : substr($part[2], $at + 1);
-                    $changed = (string) preg_replace($word, $replacement, $value, -1, $count);
-                    $hit = $hit || $count > 0;
+                    $changed = (string) preg_replace($word, $replacement, rawurldecode($value), -1, $count);
 
-                    return $part[1] . $key . $changed;
-                }, rawurldecode($found));
+                    if ($count === 0) {
+                        return $part[0];
+                    }
 
-                return $hit ? $lead . rawurlencode($decoded) . $tail : $text;
+                    $hit = true;
+
+                    return $part[1] . $key . rawurlencode($changed);
+                }, $found);
+
+                return $hit ? $lead . $rebuilt . $tail : $text;
             }
 
             // Inside a URI the placeholder is percent-encoded, so the URI stays valid.
