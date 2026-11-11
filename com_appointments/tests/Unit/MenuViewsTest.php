@@ -109,6 +109,14 @@ final class MenuViewsTest extends TestCase
             'Never an item of another language.');
         self::assertSame(0, MenuViews::pickItem($rows, 'de-DE', [1]), 'Never an item the reader may not open.');
         self::assertSame(30, MenuViews::pickItem($rows, '', [2]), 'Without a language "All" first.');
+
+        // By the view of the link: an alternative layout qualifies, a similar view name does not.
+        $links = [
+            ['id' => 40, 'language' => '*', 'access' => 2, 'link' => 'index.php?option=com_appointments&view=mycalendarsx'],
+            ['id' => 41, 'language' => '*', 'access' => 2, 'link' => 'index.php?option=com_appointments&view=mycalendars&layout=mytemplate:wide'],
+        ];
+        self::assertSame(41, MenuViews::pickItem($links, 'de-DE', [2], 'mycalendars'));
+        self::assertSame(0, MenuViews::pickItem([$links[0]], 'de-DE', [2], 'mycalendars'));
     }
 
     public function testOnlyTheListedTasksRun(): void

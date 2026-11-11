@@ -106,19 +106,29 @@ final class MenuViews
      * Pure choice among menu item rows of one view, testable without Joomla: an item the reader may
      * open (its access level among $levels), in the reader's language first, then in "All", the
      * lowest id within each; an item of another language is never chosen, because it would switch
-     * the page to that language. Without a language every language qualifies, "All" first.
+     * the page to that language. Without a language every language qualifies, "All" first. With a
+     * $view, a row with a link must point at that view of this component; further parameters of the
+     * link (an alternative layout) do not matter.
      *
-     * @param   iterable<array{id: int|string, language: string, access: int|string}>  $rows
-     * @param   int[]                                                                 $levels  Authorised view levels of the reader.
+     * @param   iterable<array{id: int|string, language: string, access: int|string, link?: string}>  $rows
+     * @param   int[]                                                                                $levels  Authorised view levels of the reader.
      *
      * @return  int  The Itemid, or 0 for none.
      */
-    public static function pickItem(iterable $rows, string $language, array $levels): int
+    public static function pickItem(iterable $rows, string $language, array $levels, string $view = ''): int
     {
         $best = [PHP_INT_MAX, PHP_INT_MAX];
         $chosen = 0;
 
         foreach ($rows as $row) {
+            if ($view !== '' && isset($row['link'])) {
+                parse_str((string) parse_url((string) $row['link'], PHP_URL_QUERY), $query);
+
+                if (($query['option'] ?? '') !== 'com_appointments' || ($query['view'] ?? '') !== $view) {
+                    continue;
+                }
+            }
+
             if (!\in_array((int) $row['access'], $levels, true)) {
                 continue;
             }
@@ -164,17 +174,18 @@ final class MenuViews
         $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
         $link = 'index.php?option=com_appointments&view=' . $view;
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['id', 'language', 'access']))
+        $query->select($db->quoteName(['id', 'link', 'language', 'access']))
             ->from($db->quoteName('#__menu'))
             ->where($db->quoteName('client_id') . ' = 0')
             ->where($db->quoteName('published') . ' = 1')
             ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->where($db->quoteName('link') . ' = ' . $db->quote($link))
+            // The link may carry an alternative layout; pickItem() checks option and view exactly.
+            ->where($db->quoteName('link') . ' LIKE ' . $db->quote($link . '%'))
             ->where('(' . $db->quoteName('publish_up') . ' IS NULL OR ' . $db->quoteName('publish_up') . ' <= ' . $db->quote($now) . ')')
             ->where('(' . $db->quoteName('publish_down') . ' IS NULL OR ' . $db->quoteName('publish_down') . ' >= ' . $db->quote($now) . ')')
             ->where($db->quoteName('access') . ' IN (' . implode(',', $levels) . ')');
 
-        return self::pickItem($db->setQuery($query)->loadAssocList(), $language, $levels);
+        return self::pickItem($db->setQuery($query)->loadAssocList(), $language, $levels, $view);
     }
 
     /**
