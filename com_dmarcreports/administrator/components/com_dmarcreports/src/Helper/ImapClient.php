@@ -224,12 +224,13 @@ final class ImapClient
             // mail cannot starve each other: at most half the messages per run
             // and at most half the raw byte budget go to retries, and the
             // callback sees 'retry' => true so the ingestor gives them only half
-            // of each ingestion limit. The rest is
-            // always left for the scan, and every run starts with at least one
-            // retry, so a retry is never starved by fresh mail either.
+            // of each ingestion limit. The scan below gets the messages the
+            // retries left, so both together never exceed the message limit.
+            // With the smallest configurable limit (10) every run retries up
+            // to five messages, so a retry is never starved by fresh mail.
             $retryCount   = 0;
             $retryStopped = false;
-            $retryLimit   = max(1, intdiv($limit, 2));
+            $retryLimit   = intdiv($limit, 2);
             $retryFloor   = intdiv(self::MAX_TOTAL_BYTES, 2);
 
             // Re-try reports an earlier run could not decode for lack of a PHP
@@ -304,7 +305,9 @@ final class ImapClient
                 }
             }
 
-            foreach ($ids as $id) {
+            // The scan takes what the retry pass left of the message limit.
+            // Candidates beyond that stay above the cursor for the next run.
+            foreach (\array_slice($ids, 0, $limit - $retryCount) as $id) {
                 $raw = $this->fetchBody($id);
 
                 if ($raw === '') {

@@ -800,6 +800,37 @@ class ImapClientTest extends TestCase
         }
     }
 
+    public function testRetriesAndScanTogetherStayWithinTheMessageLimit(): void
+    {
+        // Message limit 4: three retries wait and four new messages arrive.
+        // Retries get two, the scan gets the remaining two; four fetches in
+        // total, the rest waits for the next run.
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 6 7 8 9\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, "Subject: Late 1\r\n\r\nlate", 'A0005')
+            . $this->fetchResponse(2, 2, "Subject: Late 2\r\n\r\nlate", 'A0006')
+            . $this->fetchResponse(3, 6, "Subject: New 6\r\n\r\nnew", 'A0007')
+            . $this->fetchResponse(4, 7, "Subject: New 7\r\n\r\nnew", 'A0008')
+            . "A0009 OK STORE completed\r\n"
+            . "* BYE\r\nA0010 OK LOGOUT completed\r\n";
+
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0, 'last_uid' => 5, 'deferred_uids' => [1, 2, 3], 'limit' => 4],
+            static fn (): string => 'new'
+        );
+
+        $this->assertSame(4, substr_count($result['sent'], 'UID FETCH '));
+        $this->assertStringNotContainsString('UID FETCH 3 ', $result['sent']);
+        $this->assertStringNotContainsString('UID FETCH 8 ', $result['sent']);
+        $this->assertSame(4, $result['stats']['ingested']);
+        $this->assertSame(7, $result['stats']['last_uid']);
+        $this->assertSame([3], $result['stats']['deferred_uids']);
+    }
+
     public function testRetriesUseAtMostHalfOfTheRun(): void
     {
         // Three retries wait, one fresh message arrives, and the run takes two
