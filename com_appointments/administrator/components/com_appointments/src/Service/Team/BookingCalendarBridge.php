@@ -74,6 +74,9 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
     /** Orphaned calendar copies removed after each booking change. */
     private const ORPHAN_BATCH = 20;
 
+    /** Requests to write the copies of future bookings anew, one row per event type (0: all). */
+    public const RESTORE_TABLE = '#__appointments_copy_restore';
+
     /** Requests longer than this are computed, never cached. */
     private const MAX_WINDOW_DAYS = 800;
 
@@ -175,7 +178,10 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
 
         // While the feature is off a change is not mirrored, so the copy would be stale (old
         // times, a removed guest): it goes now, not only at the next sweep. Removal needs no key.
+        // Switched on again, the Scheduler writes the copies of the future bookings anew.
         if (!$this->services->enabled()) {
+            $this->requestRestore(0);
+
             return $this->onBookingErased($bookingId);
         }
 
@@ -259,9 +265,10 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
      * Remove calendar copies whose booking is cancelled, anonymised or gone: the
      * retry of a removal that failed earlier. While the feature is off, every
      * booking copy goes: changes are not mirrored then, so a copy would be stale
-     * (old times, a removed guest) when the feature is switched on again; the
-     * next change of a booking writes it anew. Called after every booking change
-     * and by the Scheduler. Needs no key.
+     * (old times, a removed guest) when the feature is switched on again; then
+     * the Scheduler writes the copies of the future bookings anew
+     * ({@see self::restoreCopies()}). Called after every booking change and by
+     * the Scheduler. Needs no key.
      *
      * @return  int  Bookings whose copies were removed.
      */
@@ -271,13 +278,14 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
 
         try {
             $db = $this->services->db();
+            $enabled = $this->services->enabled();
             $query = $this->query()->select('DISTINCT ' . $db->quoteName('o.booking_id'))
                 ->from($db->quoteName('#__appointments_calendar_objects', 'o'))
                 ->join('LEFT', $db->quoteName('#__appointments_bookings', 'b'), $db->quoteName('b.id') . ' = ' . $db->quoteName('o.booking_id'))
                 ->where($db->quoteName('o.booking_id') . ' IS NOT NULL')
                 ->setLimit(max(1, min(500, $limit)));
 
-            if ($this->services->enabled()) {
+            if ($enabled) {
                 $query->where('(' . $db->quoteName('b.id') . ' IS NULL OR ' . $db->quoteName('b.state') . ' = 2 OR '
                     . $db->quoteName('b.anonymised_utc') . ' IS NOT NULL)');
             }
@@ -287,11 +295,109 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                     $removed++;
                 }
             }
+
+            if (!$enabled && $removed > 0) {
+                $this->requestRestore(0);
+            }
         } catch (\Throwable $e) {
             $this->failure('orphans', 0, $e);
         }
 
         return $removed;
+    }
+
+    public function requestRestore(int $eventTypeId): void
+    {
+        try {
+            $db = $this->services->db();
+            $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+            // A new request starts the walk through the bookings from the beginning again.
+            $db->setQuery('INSERT INTO ' . $db->quoteName(self::RESTORE_TABLE)
+                . ' (' . implode(', ', $db->quoteName(['eventtype_id', 'requested_utc', 'generation', 'after_booking_id'])) . ')'
+                . ' VALUES (' . max(0, $eventTypeId) . ', ' . $db->quote($now) . ', 1, 0)'
+                . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('requested_utc') . ' = VALUES(' . $db->quoteName('requested_utc') . '), '
+                . $db->quoteName('generation') . ' = ' . $db->quoteName('generation') . ' + 1, '
+                . $db->quoteName('after_booking_id') . ' = 0')->execute();
+        } catch (\Throwable $e) {
+            // A booking or a saved event type never fails because of this.
+            $this->failure('restore-request', $eventTypeId, $e);
+        }
+    }
+
+    public function restoreCopies(int $limit): int
+    {
+        if ($limit < 1 || !$this->services->enabled()) {
+            return 0;
+        }
+
+        $handled = 0;
+
+        try {
+            $db = $this->services->db();
+            $requests = $db->setQuery($this->query()
+                ->select($db->quoteName(['eventtype_id', 'generation', 'after_booking_id']))
+                ->from($db->quoteName(self::RESTORE_TABLE))
+                ->order($db->quoteName('eventtype_id') . ' ASC'))->loadAssocList() ?: [];
+            $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+
+            foreach ($requests as $request) {
+                $budget = min(500, $limit - $handled);
+
+                if ($budget < 1) {
+                    break;
+                }
+
+                $type = (int) $request['eventtype_id'];
+                $generation = (int) $request['generation'];
+                $after = (int) $request['after_booking_id'];
+                $ids = array_map('intval', $db->setQuery($this->restoreCandidates($type, $after, $now)->setLimit($budget))->loadColumn() ?: []);
+
+                foreach ($ids as $bookingId) {
+                    $this->onBookingSaved(['id' => $bookingId]);
+                    $handled++;
+                    $after = $bookingId;
+                }
+
+                // Changed only while it is still the request that was read: a new request
+                // in the meantime starts again from the first booking.
+                $where = $db->quoteName('eventtype_id') . ' = ' . $type . ' AND ' . $db->quoteName('generation') . ' = ' . $generation;
+                $db->setQuery(\count($ids) < $budget
+                    ? 'DELETE FROM ' . $db->quoteName(self::RESTORE_TABLE) . ' WHERE ' . $where
+                    : 'UPDATE ' . $db->quoteName(self::RESTORE_TABLE) . ' SET ' . $db->quoteName('after_booking_id') . ' = ' . $after . ' WHERE ' . $where)->execute();
+            }
+        } catch (\Throwable $e) {
+            $this->failure('restore', 0, $e);
+        }
+
+        return $handled;
+    }
+
+    /**
+     * Future, active bookings after `$after` (of one event type, or of all with 0) whose
+     * copy is missing in the event type's target calendar or lies in another calendar.
+     */
+    private function restoreCandidates(int $eventTypeId, int $after, string $now)
+    {
+        $db = $this->services->db();
+        $target = 'COALESCE(' . $db->quoteName('e.calendar_id') . ', 0)';
+        $copies = $db->quoteName('#__appointments_calendar_objects');
+        $query = $this->query()->select($db->quoteName('b.id'))
+            ->from($db->quoteName('#__appointments_bookings', 'b'))
+            ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
+            ->where($db->quoteName('b.id') . ' > ' . $after)
+            ->where($db->quoteName('b.state') . ' <> 2')
+            ->where($db->quoteName('b.anonymised_utc') . ' IS NULL')
+            ->where($db->quoteName('b.end_utc') . ' > ' . $db->quote($now))
+            ->where('((' . $target . ' > 0 AND NOT EXISTS (SELECT 1 FROM ' . $copies . ' o WHERE o.booking_id = ' . $db->quoteName('b.id')
+                . ' AND o.calendar_id = ' . $target . ')) OR EXISTS (SELECT 1 FROM ' . $copies . ' x WHERE x.booking_id = ' . $db->quoteName('b.id')
+                . ' AND x.calendar_id <> ' . $target . '))')
+            ->order($db->quoteName('b.id') . ' ASC');
+
+        if ($eventTypeId > 0) {
+            $query->where($db->quoteName('b.eventtype_id') . ' = ' . $eventTypeId);
+        }
+
+        return $query;
     }
 
     /**

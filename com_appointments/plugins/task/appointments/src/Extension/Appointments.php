@@ -129,11 +129,14 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Retention per calendar: delete the entries that ended longer ago than the
-     * calendar's `retention_days`; calendars with 0 keep everything. Also,
-     * whether the internet calendars are on or off: remove calendar copies of
-     * cancelled, anonymised or deleted bookings, and encrypt booking rows that
-     * are still in clear (once the booking record class exists).
+     * Retention per calendar: delete the booking copies that ended longer ago
+     * than the calendar's `retention_days`; calendars with 0 keep everything,
+     * and an entry of the calendar's own (no booking) is never deleted by age.
+     * Also, whether the internet calendars are on or off: remove calendar copies
+     * of cancelled, anonymised or deleted bookings, and encrypt booking rows that
+     * are still in clear (once the booking record class exists). While they are
+     * on: write the copies of future bookings anew where that was requested
+     * (target calendar changed, switched on again).
      */
     protected function teamRetention(ExecuteTaskEvent $event): int
     {
@@ -143,6 +146,8 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             if (!$services->enabled()) {
                 return $result;
             }
+
+            $result['copies_restored'] = $services->bookings()->restoreCopies(200);
 
             $db = $services->db();
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);

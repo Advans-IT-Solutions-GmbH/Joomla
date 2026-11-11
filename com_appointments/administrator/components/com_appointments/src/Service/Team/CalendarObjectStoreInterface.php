@@ -94,9 +94,11 @@ interface CalendarObjectStoreInterface
     public function reencrypt(CalendarKeyring $keyring, int $limit): int;
 
     /**
-     * Retention of one calendar (`retention_days`): delete every object whose
-     * last occurrence ended before the given instant, read from the time
-     * skeleton; an open-ended series is never deleted. Each deletion is a
+     * Retention of one calendar (`retention_days`): delete every booking copy
+     * (an object with a booking id) whose last occurrence ended before the given
+     * instant, read from the time skeleton; an open-ended series is never
+     * deleted. An object without a booking id (an entry of the calendar's own)
+     * is never deleted by age, whatever the calendar's retention. Each deletion is a
      * normal change (sync token, journal). Logged once per run as
      * `object.retention` with the count, never with content.
      *

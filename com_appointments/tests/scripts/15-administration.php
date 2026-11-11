@@ -222,6 +222,11 @@ try {
             $check(str_contains($help, 'THISANDFUTURE') && str_contains($help, 'does not mean unlimited retention')
                 && str_contains($help, 'fixed 12-month period') && !str_contains($help, 'COM_APPOINTMENTS_HELP_'),
                 'Central help renders the separate translated retention contracts, enabled=' . $enabled);
+            $check($helpXpath->query('//section[@id="help-retention"]//h2[normalize-space()="Retention and deletion"]')->length === 1
+                && $helpXpath->query('//table[@id="help-retention-table"]/tbody/tr')->length === 9
+                && str_contains($help, 'never deletes entries of your own') && str_contains($help, 'does not cancel the appointment')
+                && str_contains($help, 'Block only') && str_contains($help, 'catch up on the deletions at once'),
+                'Central help states the retention and deletion rules with the overview table, enabled=' . $enabled);
             $check((int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_user_keys")->fetch_row()[0] === $keyRows,
                 'Reading central help never initialises personal keys, enabled=' . $enabled);
             $calendars = $admin->request('/administrator/index.php?option=com_appointments&view=calendars');
