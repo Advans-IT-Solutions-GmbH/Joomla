@@ -14,6 +14,8 @@ Extension scan and removal tool for transitioning from J2Store to [J2Commerce](h
 
 The component lists J2Store/J2Commerce-related extensions, scans their PHP for selected removed APIs and lets an authorised administrator uninstall selected entries. A clean scan is not proof of runtime compatibility, and a finding is not by itself a reason to remove an extension. Review each result and take a complete files/database backup: the tool has no dependency graph, automatic backup or rollback.
 
+The page follows Joomla/Atum's active Bootstrap color scheme using Atum's unprefixed color variables, with prefixed Bootstrap variables as a fallback for other templates. On narrow screens, wide extension tables scroll within their own horizontal containers so they do not widen the page.
+
 ## Features
 
 - Scan for incompatible extensions
@@ -52,9 +54,11 @@ Uninstall via **System → Manage → Extensions**. The component has no uninsta
 
 ### Configuration and Data Handling
 
-There are no extension-specific behaviour options; the manifest's configuration only enables language loading. There is no Scheduler routine or notification mail. The component stores no own business tables; it reads extension metadata and local PHP files and uses Joomla's uninstaller for selected removals.
+There are no extension-specific behaviour options; the manifest enables language loading, and the installed component's `config.xml` supplies Joomla's permission editor. There is no Scheduler routine or notification mail. The component stores no own business tables; it reads extension metadata and local PHP files and uses Joomla's uninstaller for selected removals.
 
-An uninstalled extension's own script can delete its data. The two protected shop core components are not a guarantee that every other removal preserves orders or customer data. Restrict `core.manage` access, review the selected extensions' uninstall behaviour and verify your recovery backup before confirming.
+An uninstalled extension's own script can delete its data. The two protected shop core components are not a guarantee that every other removal preserves orders or customer data. Removing extensions requires `core.manage` and `core.delete` on this component **and** on Joomla's Extensions manager (`com_installer`), so this component never widens who may uninstall extensions; grant them only to trusted administrators; review each selected extension's uninstall behaviour and verify your recovery backup before confirming.
+
+Configure these rules at **Components → J2Store Extension Cleanup → Options → Permissions**. The Options toolbar action is shown only to users with `core.admin` or `core.options` on this component; Joomla requires `core.admin` to change permission rules. Joomla ACL rules inherit from parent groups unless overridden, and an inherited Denied cannot be overridden by an Allow on this component. By default Joomla denies the Administrator group the Extensions manager, so such users can inspect the scan but cannot remove extensions. The upgrade does not automatically grant `core.admin` or `core.delete`; a role that previously had `core.manage` but does not inherit or receive `core.delete` can continue to inspect the scan, but cannot remove extensions until an authorised administrator grants that permission.
 
 ### Access
 Navigate to: **Components → J2Store Extension Cleanup**
@@ -66,10 +70,12 @@ The component displays:
 
 1. **Compatibility scan box** ("Compatibility scan for Joomla X") - Explains what is checked on the running Joomla version and the four result types
 2. **Incompatible Extensions** - Extensions whose PHP files use APIs removed in the running Joomla version (selectable for removal)
-3. **No Files Found** - Extensions registered in `#__extensions` whose folder is missing on disk (selectable for removal)
+3. **No Files Found** - Extensions registered in `#__extensions` whose folder is missing on disk; for components the administrator, site and API folders must all be missing (selectable for removal)
 4. **Compatible Extensions** - Extensions without findings, plus the core component (not selectable)
 
-The **Remove Selected Extensions** button is only shown if at least one extension is *Incompatible* or *No files*.
+Only J2Store/J2Commerce-related components, plugins, modules, templates and libraries in the supported extension namespaces can be removed. File extensions are out of scope: they have no single install path, so missing files cannot be verified and a database-only removal could leave their files behind. Protected or locked records (Joomla's uninstaller refuses both), records whose element or folder is not a plain extension name, the shop core components, this cleanup component, other extension types, compatible extensions and out-of-scope records are rejected even when submitted directly. A mixed valid/invalid selection is rejected without removing any item.
+
+The **Remove Selected Extensions** button is only shown to users with `core.manage` and `core.delete` on this component and on `com_installer` when at least one eligible extension is *Incompatible* or *No files*. Users with only `core.manage` can still inspect the scan. Users without `core.manage` on this component are denied the page and every task, including direct requests.
 
 ### Workflow
 
@@ -78,6 +84,8 @@ The **Remove Selected Extensions** button is only shown if at least one extensio
 3. **Select Extensions** - Use checkboxes to select extensions for removal
 4. **Remove** - Click "Remove Selected Extensions"
 5. **Confirm** - Read the confirmation dialog and confirm removal
+
+Each selected extension is processed separately. If a later uninstall fails, earlier successful removals are not rolled back; review the reported result for every selected extension.
 
 ### Table Columns
 
@@ -101,7 +109,7 @@ When you remove an extension, the component uses **Joomla's Installer API** for 
 
 **Note:** Extension-specific database tables (e.g., `#__j2store_*`) are only removed if the extension's uninstall script handles them.
 
-If Joomla's uninstaller fails (e.g. missing manifest), only the `#__extensions` record is deleted and a warning ("DB only — files may remain") is shown; leftover files must be removed manually.
+If an eligible extension has no files, only its `#__extensions` record is deleted and a warning ("DB only — files may remain") is shown; a record that belongs to a package is never removed this way. If Joomla's uninstaller throws an exception, the record stays unless the revalidated extension has no files left, so a failing uninstall script never turns into a database-only removal that leaves code or tables behind. A `false` return from Joomla is treated as an uninstall refusal and is never bypassed with a direct database deletion.
 
 ## What Stays
 
@@ -124,9 +132,16 @@ logic is exercised with the actual core component present in each:
   (`EXPECTED_CORE_COMPONENT=com_j2commerce`).
 
 Both stacks run the **same full suite** from `tests/test.env` (installation, scanning,
-cleanup, component functions, safety checks, backend views, installer messages, uninstall). The
+cleanup, component functions, safety checks, isolated cleanup-authorization regressions, backend access,
+backend views, installer messages, uninstall). The
 `official-j5-j2c4` job runs the safety checks against J2Store 4 as expected core
 component; `official-j6-j2c6` asserts that the Joomla 6 matrix passed.
+
+The job `layout-j6` opens the page in a real browser on the Joomla 6 stack
+(`tests/browser/`, Playwright from `shared/tests/browser/package.json`): Chromium and
+Firefox, 375 and 1600 px, light and dark color scheme. It asserts that the component
+surface and Atum's page share the active scheme, that the text contrast reaches 4.5:1, and
+that the page never scrolls sideways while wide tables scroll inside their containers.
 
 ### Test Suites
 
@@ -145,14 +160,29 @@ Order as in `tests/test.env`:
    site language (the suite runs in de-DE)
 5. **Safety Checks** - Protected extensions list, edge cases, DB verification that
    the expected core component is installed
-6. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator`
+6. **Cleanup Authorization** - Isolated PHP regression test for extension-scope filtering,
+   delegated delete permission, fail-closed selections, and safe uninstall fallbacks
+7. **Backend Access** - first upgrades the installed component from a state without
+   `access.xml`/`config.xml` and an existing `core.manage` delegation, and checks that both
+   files arrive and the rules stay unchanged (no automatic `core.delete` or `core.admin`).
+   Then it logs a synthetic Manager into `/administrator` and switches the
+   component's real Joomla permission rules: without `core.manage` the page and the task are
+   refused, with `core.manage` only the scan is read-only and a forged cleanup request removes
+   nothing, `core.delete` without rights in Joomla's Extensions manager is still read-only, and
+   with those rights as well an eligible record is removed, but only with a POSTed form token. It
+   also checks that the Options button and Joomla's permission editor (with the manage and
+   delete actions) are available only with `core.admin`, that with the untouched default
+   rules a member of the Administrator group can inspect the scan but remove nothing, and on
+   the page Atum renders it checks the theme color variables and the responsive table
+   containers
+8. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator`
    and really renders the component page. It asserts HTTP 200, no PHP error and no Joomla
    error page, no untranslated language key, and at least one string of the component's own
    language file on the page
-7. **Installer Messages** - shared suite: removes and reinstalls the package through the
+9. **Installer Messages** - shared suite: removes and reinstalls the package through the
    Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language
    keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
-8. **Uninstall** - Component removal, verification
+10. **Uninstall** - Component removal, verification
 
 ### Running Tests Locally
 
