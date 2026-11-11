@@ -110,83 +110,32 @@ final class ReportArchive
         }
 
         if ($isGzip) {
-            if (!\function_exists('gzdecode')) {
+            if (!\function_exists('inflate_init')) {
                 throw new DecoderUnavailableException(
                     'The PHP zlib extension is required to read gzip-compressed DMARC reports.'
                 );
             }
 
-            // Decompress through a bounded read path so an oversized gzip is
-            // reported as a size-limit (bomb) while a corrupt stream is reported
-            // as the wrong format — and, crucially, without ever materialising
-            // more than MAX_BYTES + 1 uncompressed bytes. A zlib.inflate stream
-            // filter lets the output be pulled in a single bounded read: a gzip
-            // bomb is stopped at the ceiling instead of being expanded in full.
-            $stream = fopen('php://temp', 'r+b');
+            // Decompress incrementally so an oversized gzip is reported as a
+            // size-limit (bomb) while a corrupt stream is reported as the wrong
+            // format, without ever materialising much more than MAX_BYTES of
+            // uncompressed data: a gzip bomb is stopped at the ceiling instead
+            // of being expanded in full. Every byte the inflater produces is
+            // counted, also when the stream fails later (for example on its
+            // checksum), so the caller can charge that work.
+            [$data, $produced, $state] = self::inflateGzip($payload, self::MAX_BYTES);
+            $stats['unpacked'] += max($produced, \strlen($payload));
 
-            if ($stream === false) {
-                // No scratch stream: treat as transient so the message is retried
-                // rather than being misclassified as a bad upload.
-                throw new ArchiveExtractionException(
-                    'Unable to open a temporary stream to read a gzip-compressed DMARC report.'
-                );
-            }
-
-            $written = fwrite($stream, $payload);
-
-            if ($written === false || $written < \strlen($payload)) {
-                // A short write (e.g. php://temp spilling to a full disk) would
-                // leave a truncated gzip that the filter then misreads as the
-                // wrong format; treat it as transient so the message is retried.
-                fclose($stream);
-
-                throw new ArchiveExtractionException(
-                    'Unable to buffer a gzip-compressed DMARC report for decompression.'
-                );
-            }
-
-            rewind($stream);
-
-            if (@stream_filter_append($stream, 'zlib.inflate', STREAM_FILTER_READ, ['window' => 31]) === false) {
-                fclose($stream);
-                $stats['reason'] = 'format';
-
-                return [];
-            }
-
-            // A corrupt deflate stream raises a warning from the filter rather
-            // than returning an error code, so capture it to tell malformed input
-            // apart from a genuinely oversized (but valid) report.
-            $corrupt = false;
-            set_error_handler(
-                static function () use (&$corrupt): bool {
-                    $corrupt = true;
-
-                    return true;
-                }
-            );
-
-            try {
-                // Read at most MAX_BYTES + 1 decompressed bytes. The filter emits
-                // at most one input block of output per internal step, so peak
-                // memory stays bounded no matter how high the compression ratio.
-                $data = stream_get_contents($stream, self::MAX_BYTES + 1);
-                $stats['unpacked'] += \is_string($data) ? \strlen($data) : 0;
-            } finally {
-                restore_error_handler();
-                fclose($stream);
-            }
-
-            if ($data === false || $corrupt || $data === '') {
+            if ($state === 'corrupt') {
                 // Not a decodable gzip stream: corrupt or not actually gzip.
-                $stats['reason'] = 'format';
-                $stats['discarded'] = \is_string($data) ? \strlen($data) : 0;
+                $stats['reason']    = 'format';
+                $stats['discarded'] = \strlen($data);
 
                 return [];
             }
 
-            if (\strlen($data) > self::MAX_BYTES) {
-                $stats['reason'] = 'bomb';
+            if ($state === 'bomb') {
+                $stats['reason']    = 'bomb';
                 $stats['discarded'] = \strlen($data);
 
                 return [];
@@ -402,6 +351,74 @@ final class ReportArchive
         }
 
         return $dropped;
+    }
+
+    /**
+     * Inflate a gzip payload step by step through zlib's incremental API,
+     * producing at most about $limit + 1 bytes. Small input steps keep the
+     * output of one step small, and every produced byte is counted, also when
+     * a later step fails.
+     *
+     * @return  array{0: string, 1: int, 2: string}  The data (cut to $limit + 1
+     *          bytes when over the limit), the number of bytes the inflater
+     *          produced, and the state: 'ok', 'bomb' (over the limit) or
+     *          'corrupt' (not a complete, valid gzip stream).
+     *
+     * @since  1.2.0
+     */
+    public static function inflateGzip(string $payload, int $limit): array
+    {
+        $data     = '';
+        $produced = 0;
+
+        // zlib reports a damaged stream with a warning; it is answered with the
+        // 'corrupt' state instead.
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            $context = inflate_init(ZLIB_ENCODING_GZIP);
+
+            if ($context === false) {
+                return ['', 0, 'corrupt'];
+            }
+
+            $length = \strlen($payload);
+            $step   = 1024;
+
+            for ($offset = 0; $offset < $length; $offset += $step) {
+                $last   = $offset + $step >= $length;
+                $input  = substr($payload, $offset, $step);
+                $output = inflate_add($context, $input, $last ? ZLIB_FINISH : ZLIB_SYNC_FLUSH);
+
+                if ($output === false) {
+                    // The output of the failing step (for example the last one,
+                    // which checks the checksum) is lost. Count the most it can
+                    // have been: deflate expands at most 1032 to 1.
+                    $produced += min(\strlen($input) * 1032, $limit + 1);
+
+                    return [$data, $produced, 'corrupt'];
+                }
+
+                $produced += \strlen($output);
+                $data     .= $output;
+
+                if (\strlen($data) > $limit) {
+                    return [substr($data, 0, $limit + 1), $produced, 'bomb'];
+                }
+
+                if (inflate_get_status($context) === ZLIB_STREAM_END) {
+                    break;
+                }
+            }
+
+            if (inflate_get_status($context) !== ZLIB_STREAM_END || $data === '') {
+                return [$data, $produced, 'corrupt'];
+            }
+
+            return [$data, $produced, 'ok'];
+        } finally {
+            restore_error_handler();
+        }
     }
 
     private static function clean(string $xml): string

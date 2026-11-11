@@ -50,6 +50,22 @@ class TlsReportArchiveTest extends TestCase
         $this->assertTrue(TlsReportArchive::looksLikeTlsRpt(gzencode(self::JSON), 'report'));
     }
 
+    public function testGzipWithABadChecksumCountsTheInflatedBytes(): void
+    {
+        if (!\function_exists('gzencode')) {
+            $this->markTestSkipped('zlib extension not available');
+        }
+
+        $body    = '{"x":"' . str_repeat('A', 300000) . '"}';
+        $payload = gzencode($body);
+        $at      = \strlen($payload) - 8;
+        $payload[$at] = \chr(\ord($payload[$at]) ^ 0xFF);
+
+        $this->assertSame([], TlsReportArchive::extract($payload, 'crc.json.gz', $stats));
+        $this->assertSame('format', $stats['reason']);
+        $this->assertGreaterThanOrEqual(\strlen($body), $stats['unpacked']);
+    }
+
     public function testRejectedGzipReportsTheDiscardedBytes(): void
     {
         if (!\function_exists('gzencode')) {

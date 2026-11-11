@@ -302,73 +302,33 @@ final class TlsReportArchive
     }
 
     /**
-     * Decompress a gzip member through a bounded read, returning the decoded
-     * JSON or null with a reason recorded in $stats. Mirrors the hardened read
-     * path used for DMARC gzip so a TLS-RPT bomb is stopped at the ceiling.
+     * Decompress a gzip member through a bounded, incremental read, returning
+     * the decoded JSON or null with a reason recorded in $stats. Uses the same
+     * path as DMARC gzip ({@see ReportArchive::inflateGzip()}) so a TLS-RPT
+     * bomb is stopped at the ceiling and every inflated byte is counted.
      *
      * @param   array  $stats  Diagnostics out-parameter shared with extract().
      */
     private static function gunzip(string $payload, array &$stats): ?string
     {
-        if (!\function_exists('gzdecode')) {
+        if (!\function_exists('inflate_init')) {
             throw new DecoderUnavailableException(
                 'The PHP zlib extension is required to read gzip-compressed TLS-RPT reports.'
             );
         }
 
-        $stream = fopen('php://temp', 'r+b');
+        [$data, $produced, $state] = ReportArchive::inflateGzip($payload, self::MAX_BYTES);
+        $stats['unpacked'] += max($produced, \strlen($payload));
 
-        if ($stream === false) {
-            throw new ArchiveExtractionException(
-                'Unable to open a temporary stream to read a gzip-compressed TLS-RPT report.'
-            );
-        }
-
-        $written = fwrite($stream, $payload);
-
-        if ($written === false || $written < \strlen($payload)) {
-            fclose($stream);
-
-            throw new ArchiveExtractionException(
-                'Unable to buffer a gzip-compressed TLS-RPT report for decompression.'
-            );
-        }
-
-        rewind($stream);
-
-        if (@stream_filter_append($stream, 'zlib.inflate', STREAM_FILTER_READ, ['window' => 31]) === false) {
-            fclose($stream);
-            $stats['reason'] = 'format';
+        if ($state === 'corrupt') {
+            $stats['reason']    = 'format';
+            $stats['discarded'] = \strlen($data);
 
             return null;
         }
 
-        $corrupt = false;
-        set_error_handler(
-            static function () use (&$corrupt): bool {
-                $corrupt = true;
-
-                return true;
-            }
-        );
-
-        try {
-            $data = stream_get_contents($stream, self::MAX_BYTES + 1);
-            $stats['unpacked'] += \is_string($data) ? \strlen($data) : 0;
-        } finally {
-            restore_error_handler();
-            fclose($stream);
-        }
-
-        if ($data === false || $corrupt || $data === '') {
-            $stats['reason'] = 'format';
-            $stats['discarded'] = \is_string($data) ? \strlen($data) : 0;
-
-            return null;
-        }
-
-        if (\strlen($data) > self::MAX_BYTES) {
-            $stats['reason'] = 'bomb';
+        if ($state === 'bomb') {
+            $stats['reason']    = 'bomb';
             $stats['discarded'] = \strlen($data);
 
             return null;

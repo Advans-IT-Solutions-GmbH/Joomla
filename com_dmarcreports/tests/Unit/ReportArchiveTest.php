@@ -189,6 +189,24 @@ class ReportArchiveTest extends TestCase
         $this->assertSame(1, $stats['oversized']);
     }
 
+    public function testGzipWithABadChecksumCountsTheInflatedBytes(): void
+    {
+        if (!\function_exists('gzencode')) {
+            $this->markTestSkipped('zlib extension not available');
+        }
+
+        // A stream that inflates 300 KB and then fails on its CRC. The data is
+        // rejected as the wrong format, but the inflate work still counts.
+        $body    = '<?xml version="1.0"?><feedback>' . str_repeat('A', 300000) . '</feedback>';
+        $payload = gzencode($body);
+        $at      = \strlen($payload) - 8;
+        $payload[$at] = \chr(\ord($payload[$at]) ^ 0xFF);
+
+        $this->assertSame([], ReportArchive::extract($payload, 'crc.xml.gz', $stats));
+        $this->assertSame('format', $stats['reason']);
+        $this->assertGreaterThanOrEqual(\strlen($body), $stats['unpacked']);
+    }
+
     public function testGzipBombReportsTheDiscardedBytes(): void
     {
         if (!\function_exists('gzencode')) {
