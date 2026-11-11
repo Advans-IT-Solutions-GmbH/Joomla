@@ -133,9 +133,30 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         if (method_exists($doc, 'addScriptOptions')) {
             $doc->addScriptOptions(
                 'plg_ajax_joomlaajaxforms',
-                array_merge(['debug' => (bool) $this->params->get('debug', 0)], $this->scriptTexts())
+                array_merge(
+                    ['debug' => (bool) $this->params->get('debug', 0), 'enabled' => $this->enabledForms()],
+                    $this->scriptTexts()
+                )
             );
         }
+    }
+
+    /**
+     * Which forms the options hand to AJAX. The script leaves a form that is
+     * switched off to com_users, so it is submitted the normal way instead of
+     * being answered with "disabled". Logout is always handled.
+     *
+     * @return  array<string, bool>
+     */
+    private function enabledForms(): array
+    {
+        return [
+            'login'        => (bool) $this->params->get('enable_login', 1),
+            'registration' => (bool) $this->params->get('enable_registration', 1),
+            'reset'        => (bool) $this->params->get('enable_reset', 1),
+            'remind'       => (bool) $this->params->get('enable_remind', 1),
+            'profile'      => (bool) $this->params->get('enable_profile', 1),
+        ];
     }
 
     /**
@@ -188,8 +209,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         // nothing about the site beyond the state of a developer switch.
         if ($task === 'texts') {
             $result = $this->jsonSuccess([
-                'data'  => $this->scriptTexts(),
-                'debug' => (bool) $this->params->get('debug', 0),
+                'data'    => $this->scriptTexts(),
+                'debug'   => (bool) $this->params->get('debug', 0),
+                'enabled' => $this->enabledForms(),
             ]);
 
             if ($event) {
@@ -210,38 +232,43 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             return $result;
         }
 
-        switch ($task) {
-            case 'login':
-                $result = $this->handleLogin();
-                break;
-            case 'logout':
-                $result = $this->handleLogout();
-                break;
-            case 'register':
-                $result = $this->handleRegistration();
-                break;
-            case 'reset':
-                $result = $this->handleReset();
-                break;
-            case 'remind':
-                $result = $this->handleRemind();
-                break;
-            case 'mfa_validate':
-                // MFA validation is now handled by Joomla's captive page
-                $result = $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_INVALID_TASK'));
-                break;
-            case 'removeCartItem':
-                $result = $this->handleRemoveCartItem();
-                break;
-            case 'getCartCount':
-                $result = $this->handleGetCartCount();
-                break;
-            case 'saveProfile':
-                $result = $this->handleSaveProfile();
-                break;
-            default:
-                $result = $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_INVALID_TASK'));
-                break;
+        try {
+            switch ($task) {
+                case 'login':
+                    $result = $this->handleLogin();
+                    break;
+                case 'logout':
+                    $result = $this->handleLogout();
+                    break;
+                case 'register':
+                    $result = $this->handleRegistration();
+                    break;
+                case 'reset':
+                    $result = $this->handleReset();
+                    break;
+                case 'remind':
+                    $result = $this->handleRemind();
+                    break;
+                case 'removeCartItem':
+                    $result = $this->handleRemoveCartItem();
+                    break;
+                case 'getCartCount':
+                    $result = $this->handleGetCartCount();
+                    break;
+                case 'saveProfile':
+                    $result = $this->handleSaveProfile();
+                    break;
+                default:
+                    // MFA is validated on Joomla's captive page, not here.
+                    $result = $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_INVALID_TASK'));
+                    break;
+            }
+        } catch (\Throwable $e) {
+            // Manipulated input, for example an array where a string is
+            // expected, must end in the generic JSON answer, not in an error
+            // page. The details go to the log only.
+            Log::add('AJAX task ' . $task . ' failed: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
+            $result = $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC'));
         }
 
         // When dispatched by com_ajax, add result to the event object
@@ -270,7 +297,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
         $input = $this->getApplication()->getInput();
         $username = $input->post->getString('username', '');
-        $password = $input->post->getString('password', '');
+        // RAW as in com_users: the string filter would strip tags and decode
+        // entities, so a password like a<b>c or one with &amp; would change.
+        $password = $this->rawString($input->post->get('password', '', 'RAW'));
         $remember = $input->post->getInt('remember', 0);
         $returnUrl = $input->post->getBase64('return', '');
 
@@ -338,7 +367,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                     false
                 );
 
-                // JS reads redirect from data.data.redirect (login handler line 276, logout line 613)
+                // JS reads redirect from data.data.redirect (convertLoginForm() and logout() in media/js/joomlaajaxforms.js)
                 return $this->jsonSuccess([
                     'message' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_MFA_REQUIRED'),
                     'data'    => ['redirect' => $captiveUrl],
@@ -366,7 +395,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 $redirect = $this->getProfileRedirect();
             }
 
-            // JS reads redirect from data.data.redirect (login handler line 276, logout line 613)
+            // JS reads redirect from data.data.redirect (convertLoginForm() and logout() in media/js/joomlaajaxforms.js)
             return $this->jsonSuccess([
                 'message' => Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_LOGIN_SUCCESS', $user->name),
                 'data'    => ['redirect' => $redirect],
@@ -462,7 +491,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 $redirect = Uri::base();
             }
 
-            // JS reads redirect from data.data.redirect (logout handler line 613)
+            // JS reads redirect from data.data.redirect (logout() in media/js/joomlaajaxforms.js)
             return $this->jsonSuccess([
                 'message' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_LOGOUT_SUCCESS'),
                 'data'    => ['redirect' => $redirect],
@@ -493,8 +522,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         $username = trim($input->post->getString('username', ''));
         $email = trim($input->post->getString('email', ''));
         $email2 = trim($input->post->getString('email2', ''));
-        $password = $input->post->getString('password', '');
-        $password2 = $input->post->getString('password2', '');
+        // RAW as in com_users, see handleLogin().
+        $password = $this->rawString($input->post->get('password', '', 'RAW'));
+        $password2 = $this->rawString($input->post->get('password2', '', 'RAW'));
 
         // Validation
         if (empty($name)) {
@@ -728,6 +758,83 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Check the captcha of a com_users form that has one (reset, remind).
+     *
+     * The forms of com_users carry the captcha chosen in the Users options.
+     * com_users validates it in RemindModel and ResetModel. Without this check
+     * the AJAX endpoint would send reset and reminder mails without the
+     * captcha the site requires. The script forwards the answer of the widget.
+     *
+     * @param   string  $modelName  "Reset" or "Remind"
+     * @param   string  $email      The submitted e-mail address
+     *
+     * @return  string|null  The validation message, null when the request may proceed
+     */
+    protected function coreCaptchaError(string $modelName, string $email): ?string
+    {
+        $plugin = $this->registrationCaptchaPlugin();
+
+        if ($plugin === '0') {
+            return null;
+        }
+
+        $app = $this->getApplication();
+
+        try {
+            $app->getLanguage()->load('com_users', JPATH_SITE);
+            Form::addFormPath(JPATH_SITE . '/components/com_users/forms');
+
+            $model = $app->bootComponent('com_users')->getMVCFactory()
+                ->createModel($modelName, 'Site', ['ignore_request' => true]);
+            $form = $model ? $model->getForm([], false) : false;
+
+            if (!$form) {
+                return Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC');
+            }
+
+            if (!$form->getField('captcha')) {
+                return null;
+            }
+
+            $form->setFieldAttribute('captcha', 'plugin', $plugin);
+
+            $data = $app->getInput()->post->get('jform', [], 'array');
+            $data = \is_array($data) ? $data : [];
+            $data['email'] = $email;
+
+            if ($model->validate($form, $data) !== false) {
+                return null;
+            }
+
+            foreach ((method_exists($model, 'getErrors') ? $model->getErrors() : []) as $error) {
+                $message = $error instanceof \Throwable ? $error->getMessage() : (string) $error;
+
+                if ($message !== '') {
+                    return $message;
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::add($modelName . ' captcha validation error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
+        }
+
+        // Fail closed: no mail without a passed captcha.
+        return Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC');
+    }
+
+    /**
+     * A request value as a string, or an empty string for an array or other
+     * non-scalar input.
+     *
+     * @param   mixed  $value  The value read from the request
+     *
+     * @return  string
+     */
+    private function rawString($value): string
+    {
+        return \is_scalar($value) ? (string) $value : '';
+    }
+
+    /**
      * The captcha plugin of the registration, as the Users options define it.
      *
      * An empty value means "Use Default", the captcha of the Global
@@ -800,6 +907,14 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
         if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_EMAIL_INVALID'));
+        }
+
+        // The captcha of the core reset form, checked before the account is
+        // looked up, so its answer says nothing about the account.
+        $captchaError = $this->coreCaptchaError('Reset', $email);
+
+        if ($captchaError !== null) {
+            return $this->jsonError($captchaError);
         }
 
         // Always return success to prevent email enumeration
@@ -890,6 +1005,13 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
 
         if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_EMAIL_INVALID'));
+        }
+
+        // The captcha of the core remind form, see handleReset().
+        $captchaError = $this->coreCaptchaError('Remind', $email);
+
+        if ($captchaError !== null) {
+            return $this->jsonError($captchaError);
         }
 
         // Always return success to prevent email enumeration
@@ -1268,59 +1390,74 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         $input = $this->getApplication()->getInput();
 
         try {
-            // Joomla profile form sends jform[name], jform[email1], jform[password1], jform[password2]
-            $jform = $input->post->get('jform', [], 'array');
+            // The profile is saved through the profile model of com_users, as
+            // ProfileController::save() does: the form of com_users filters and
+            // validates every field (the password rules of the Users options,
+            // the name filter, unique e-mail, allowed domains, the fields a
+            // profile plugin adds, the account parameters), only fields of that
+            // form are bound, and a password change ends the other sessions of
+            // the account.
+            $data = $input->post->get('jform', [], 'array');
+            $data = \is_array($data) ? $data : [];
 
-
-
-            $name  = trim($jform['name'] ?? $input->post->getString('name', ''));
-            $email = trim($jform['email1'] ?? $jform['email'] ?? $input->post->getString('email', ''));
-
-            if (empty($name)) {
-                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_NAME_REQUIRED'));
-            }
-            if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_EMAIL_INVALID'));
-            }
-
-            // Only update fields that changed
-            $changed = false;
-            if ($user->name !== $name) {
-                $user->name = $name;
-                $changed = true;
-            }
-            if ($user->email !== $email) {
-                $user->email = $email;
-                $changed = true;
-            }
-
-            // Update password if provided
-            $password  = $jform['password1'] ?? $input->post->getString('password1', '');
-            $password2 = $jform['password2'] ?? $input->post->getString('password2', '');
-            if (!empty($password)) {
-                if ($password !== $password2) {
-                    return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PASSWORD_MISMATCH'));
+            // Template overrides that post plain field names keep working.
+            foreach (['name' => 'name', 'email1' => 'email', 'email2' => 'email2', 'password1' => 'password1', 'password2' => 'password2'] as $field => $plain) {
+                if (!isset($data[$field]) && $input->post->get($plain, null, 'RAW') !== null) {
+                    $data[$field] = $input->post->get($plain, '', 'RAW');
                 }
-                $minLength = (int) ComponentHelper::getParams('com_users')->get('minimum_length', 12);
-                if (strlen($password) < $minLength) {
-                    return $this->jsonError(Text::sprintf('PLG_AJAX_JOOMLAAJAXFORMS_PASSWORD_TOO_SHORT', $minLength));
+            }
+
+            $userId     = (int) $user->id;
+            $data['id'] = $userId;
+
+            $app = $this->getApplication();
+            $app->getLanguage()->load('com_users', JPATH_SITE);
+
+            // A form of com_users is only found on the paths of the component
+            // that dispatches the request, here com_ajax.
+            Form::addFormPath(JPATH_SITE . '/components/com_users/forms');
+
+            $model = $app->bootComponent('com_users')->getMVCFactory()
+                ->createModel('Profile', 'Site', ['ignore_request' => true]);
+
+            if (!$model) {
+                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVE_FAILED'));
+            }
+
+            // Always the account of the signed-in user, never one from the request.
+            $model->setState('user.id', $userId);
+            $model->setState('params', ComponentHelper::getParams('com_users'));
+
+            $form = $model->getForm();
+
+            if (!$form) {
+                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVE_FAILED'));
+            }
+
+            $validated = $model->validate($form, $data);
+
+            if ($validated === false) {
+                foreach ((method_exists($model, 'getErrors') ? $model->getErrors() : []) as $error) {
+                    $message = $error instanceof \Throwable ? $error->getMessage() : (string) $error;
+
+                    if ($message !== '') {
+                        return $this->jsonError($message);
+                    }
                 }
-                $user->password = UserHelper::hashPassword($password);
-                $changed = true;
+
+                return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVE_FAILED'));
             }
 
-            if (!$changed) {
-                return $this->jsonSuccess([
-                    'message' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVED'),
-                ]);
-            }
+            $validated['id'] = $userId;
 
-            if (!$user->save(true)) {
-                // User::getErrors() can carry untranslated database or driver text.
+            if ($model->save($validated) === false) {
+                // The model error can carry untranslated database or driver text.
                 // It goes to the log for the administrator, never to the client.
-                $errors = $user->getErrors();
+                $error = $model->getError();
+                $error = $error instanceof \Throwable ? $error->getMessage() : (string) $error;
+
                 Log::add(
-                    'Profile save failed: ' . ($errors ? implode(' ', array_map('strval', $errors)) : 'no error message'),
+                    'Profile save failed: ' . ($error !== '' ? $error : 'no error message'),
                     Log::ERROR,
                     'plg_ajax_joomlaajaxforms'
                 );
@@ -1331,7 +1468,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             return $this->jsonSuccess([
                 'message' => Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVED'),
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::add('Profile save exception: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
             return $this->jsonError(Text::_('PLG_AJAX_JOOMLAAJAXFORMS_PROFILE_SAVE_FAILED'));
         }

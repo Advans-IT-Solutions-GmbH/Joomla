@@ -195,6 +195,49 @@ class RemindRequestTest
         $this->test('Unknown e-mail → neutral success response', $data !== null && ($data['success'] ?? null) === true, 'body: ' . substr($body, 0, 200));
     }
 
+    /**
+     * Reset and reminder requests apply the captcha of the Users options, as
+     * the forms of com_users do. Without it the endpoint would send mails to
+     * any address without the check the site requires. The answer comes
+     * before the account lookup, so an unknown address is used throughout.
+     */
+    private function testCaptchaOfTheUsersOptions(): void
+    {
+        echo "\n--- HTTP: captcha of the Users options (remind and reset) ---\n";
+
+        ajaxforms_install_test_captcha();
+        $original = ajaxforms_set_component_params('com_users', ['captcha' => 'ajaxformstest']);
+
+        try {
+            foreach (['remind', 'reset'] as $task) {
+                foreach (['no answer' => null, 'a wrong answer' => 'wrong', 'the right answer' => 'ajaxforms-ok'] as $what => $answer) {
+                    [$cookies, $token] = $this->sessionAndToken();
+
+                    $fields = ['task' => $task, 'email' => 'nobody_' . $task . '_' . time() . '@example.com'];
+                    if ($answer !== null) {
+                        $fields['jform'] = ['captcha' => $answer];
+                    }
+                    if ($token !== '') {
+                        $fields[$token] = '1';
+                    }
+
+                    [$code, $body] = $this->http($this->baseUrl . $this->ajaxPath . '&task=' . $task, $fields, $cookies);
+                    $data     = ajaxforms_decode_response($body);
+                    $accepted = $answer === 'ajaxforms-ok';
+
+                    $this->test(
+                        ucfirst($task) . " with $what to the captcha is " . ($accepted ? 'accepted' : 'refused'),
+                        $code < 500 && $data !== null && ($data['success'] ?? null) === $accepted,
+                        "HTTP $code, body: " . substr($body, 0, 200)
+                    );
+                }
+            }
+        } finally {
+            ajaxforms_restore_component_params('com_users', $original);
+            ajaxforms_remove_test_captcha();
+        }
+    }
+
     private function testLanguageKeys(): void
     {
         echo "\n--- Language keys ---\n";
@@ -350,6 +393,7 @@ class RemindRequestTest
         $this->testNoTokenRejected();
         $this->testInvalidEmail();
         $this->testUnknownEmail();
+        $this->testCaptchaOfTheUsersOptions();
         $this->testLanguageKeys();
         $this->testFormDetection();
         $this->testRemindMailCarriesTheSiteDesign();

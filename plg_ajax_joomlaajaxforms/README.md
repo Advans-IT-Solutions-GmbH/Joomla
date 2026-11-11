@@ -21,13 +21,13 @@ A Joomla plugin that provides AJAX handling for user forms, authentication, prof
 | Registration | `register` | User registration with email verification and admin approval, validated with the registration form of com_users |
 | Password Reset | `reset` | Password reset email request, limited like com_users |
 | Username Reminder | `remind` | Username reminder email request |
-| Profile Editing | `saveProfile` | Update name, email, password |
+| Profile Editing | `saveProfile` | Save the profile through the profile form and model of com_users (all fields of that form, including fields of profile plugins and the account parameters) |
 | Cart: Remove Item | `removeCartItem` | Remove item from J2Commerce cart (v4 and v6) |
 | Cart: Get Count | `getCartCount` | Get current cart item count |
 
-Login, registration, password reset, username reminder, the profile save and the J2Store cart tasks can be disabled individually via plugin parameters (`enable_login`, `enable_registration`, `enable_reset`, `enable_remind`, `enable_profile`, `enable_j2store_cart`); a disabled task answers with the message of `PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED`. Only `logout` is always available.
+Login, registration, password reset, username reminder, the profile save and the J2Store cart tasks can be disabled individually via plugin parameters (`enable_login`, `enable_registration`, `enable_reset`, `enable_remind`, `enable_profile`, `enable_j2store_cart`); a disabled task answers with the message of `PLG_AJAX_JOOMLAAJAXFORMS_TASK_DISABLED`. The script learns which forms are switched off (`enabled` in the script options or in the `texts` answer) and leaves those forms to com_users, so they are submitted the normal way. `logout` and the read-only `texts` task are always available.
 
-### Rules of the core registration and reset
+### Rules of the core registration, reset, reminder and profile
 
 The AJAX registration applies the same rules as the registration of com_users. It is refused while
 **Allow User Registration** is off, and it is validated with the registration form of com_users
@@ -42,6 +42,16 @@ requests within **Time in Hours** per account, counted from the first request of
 `ResetModel::checkResetLimit()`. Like com_users it never resets the password of a Super User from
 the site. A refused request gets the same answer as an accepted one and sends nothing, so the form
 reveals nothing about the account.
+
+The password reset and the username reminder check the captcha of the Users options with the reset
+and remind forms of com_users before the account is looked up, so the answer to the captcha says
+nothing about the account. The script forwards the answer of the captcha widget. Like com_users,
+the reminder has no limit of its own beyond that captcha.
+
+The profile save uses the profile form and model of com_users: the password rules of the Users
+options, the name filter, unique e-mail address, the fields of profile plugins and the account
+parameters apply unchanged, and a new password ends the other sessions of the account. Passwords
+are read unchanged (`RAW`) in login, registration and profile, as com_users reads them.
 
 ## Requirements
 
@@ -88,8 +98,8 @@ removed.
 | Enable Registration | AJAX user registration | Yes |
 | Enable Password Reset | AJAX password reset | Yes |
 | Enable Username Reminder | AJAX username reminder | Yes |
-| Enable Profile Editing | AJAX profile save (name, email, password); `saveProfile` answers `TASK_DISABLED` while it is No | Yes |
-| Enable J2Store Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x); `removeCartItem` and `getCartCount` answer `TASK_DISABLED` while it is No | Yes |
+| Enable Profile Editing | AJAX profile save through the profile form of com_users; `saveProfile` answers `TASK_DISABLED` while it is No | Yes |
+| Enable Shop Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x); `removeCartItem` and `getCartCount` answer `TASK_DISABLED` while it is No | Yes |
 | Debug Output | Write the plugin's developer traces (which form was found, which form was converted) to the browser console. With this off no trace is printed during normal use; a failed request is still reported with `console.error` so a problem stays visible. The script learns the setting from the script options, or, on a page that carries none, from the `texts` answer of the endpoint; traces from before that answer arrives are not printed | No |
 
 ### J2Commerce Cart Compatibility
@@ -366,7 +376,7 @@ The plugin runs inside `com_ajax` with `format=json`. This affects several Jooml
 |---|---|---|
 | `Route::_()` generates wrong URLs | The SEF router uses the active menu item (`com_ajax`), producing URLs like `/component/j2store/?Itemid=123` | Look up the target menu item via `$menu->getItems()` and call `Route::_('index.php?Itemid=' . $id)` with the explicit Itemid |
 | `$menuItem->route` lacks language prefix | The `route` field contains only the alias path (e.g. `account`), not the language segment (`de/account`) | Always use `Route::_()` with Itemid — never use `$item->route` directly as a URL |
-| An `ajax` plugin does not receive `onAfterRoute` | Joomla dispatches `onAfterRoute` only to `system` plugins. An `ajax` plugin is not loaded for `com_users` or other component requests | Logic that needs to intercept other components must go into a `system` plugin or a template override |
+| An `ajax` plugin usually does not receive `onAfterRoute` | Joomla delivers `onAfterRoute` only to plugins that are already loaded. `ajax` plugins are imported by `com_ajax`, after routing, so on a normal request this plugin is not loaded for `com_users` or other components | Logic that needs to intercept other components must go into a `system` plugin or a template override |
 
 ### MFA redirect flow
 

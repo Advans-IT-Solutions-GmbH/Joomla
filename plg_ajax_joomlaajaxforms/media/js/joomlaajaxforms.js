@@ -102,6 +102,34 @@ const JoomlaAjaxForms = {
     debug: false,
 
     /**
+     * Which forms the plugin options hand to AJAX, from the endpoint answer
+     * (task "texts"). Empty until known.
+     */
+    enabled: {},
+
+    /**
+     * Whether the plugin handles this form. A form whose option is switched
+     * off is submitted to com_users the normal way, so it keeps working.
+     * Unknown counts as on, the state of a fresh installation.
+     *
+     * @param {string} name - login, registration, reset, remind or profile
+     * @returns {boolean}
+     */
+    formEnabled: function(name) {
+        var opts = {};
+
+        try {
+            opts = Joomla.getOptions('plg_ajax_joomlaajaxforms') || {};
+        } catch (e) {
+            opts = {};
+        }
+
+        var map = (opts.enabled && typeof opts.enabled === 'object') ? opts.enabled : JoomlaAjaxForms.enabled;
+
+        return !(map && map[name] === false);
+    },
+
+    /**
      * Fetch the translated texts once when the page loaded the script without
      * them (script options missing). Read-only request without a token.
      */
@@ -131,6 +159,10 @@ const JoomlaAjaxForms = {
 
             if (data && data.success) {
                 JoomlaAjaxForms.debug = !!data.debug;
+
+                if (data.enabled && typeof data.enabled === 'object') {
+                    JoomlaAjaxForms.enabled = data.enabled;
+                }
             }
         })
         .catch(function(error) {
@@ -391,6 +423,10 @@ const JoomlaAjaxForms = {
         const messageContainer = JoomlaAjaxForms.createMessageContainer(form);
 
         form.addEventListener('submit', function(e) {
+            if (!JoomlaAjaxForms.formEnabled('login')) {
+                return;
+            }
+
             e.preventDefault();
 
             const formData = new FormData(form);
@@ -519,7 +555,7 @@ const JoomlaAjaxForms = {
         form.addEventListener('submit', function(e) {
             // A captcha whose answer cannot be renewed on this page: after a failed
             // attempt the form goes to com_users the normal way, which shows a new one.
-            if (form.dataset.joomlaajaxformsNative === '1') {
+            if (form.dataset.joomlaajaxformsNative === '1' || !JoomlaAjaxForms.formEnabled('registration')) {
                 return;
             }
 
@@ -615,6 +651,12 @@ const JoomlaAjaxForms = {
         
         // Use capture phase to intercept before other handlers
         form.addEventListener('submit', function(e) {
+            // Switched off, or a captcha whose answer cannot be renewed on this
+            // page after an attempt: com_users handles the form the normal way.
+            if (form.dataset.joomlaajaxformsNative === '1' || !JoomlaAjaxForms.formEnabled(task)) {
+                return;
+            }
+
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
@@ -622,9 +664,20 @@ const JoomlaAjaxForms = {
             const formData = new FormData(form);
             const tokenName = JoomlaAjaxForms.getTokenName(form);
             const body = JoomlaAjaxForms.buildBaseParams(task, tokenName);
+            const handled = ['option', 'plugin', 'format', 'task', tokenName];
             fields.forEach(function(field) {
                 const value = formData.get('jform[' + field + ']') || formData.get(field) || '';
                 body.append(field, value);
+                handled.push(field, 'jform[' + field + ']');
+            });
+
+            // Every further field goes along unchanged, above all the answer of
+            // the captcha of com_users. The server validates it with the form
+            // of com_users.
+            formData.forEach(function(value, key) {
+                if (handled.indexOf(key) === -1 && typeof value === 'string') {
+                    body.append(key, value);
+                }
             });
 
             const submitBtn = JoomlaAjaxForms.disableSubmit(form);
@@ -652,6 +705,12 @@ const JoomlaAjaxForms = {
                 } else {
                     var errorMsg = serverErrorMsg || JoomlaAjaxForms.getErrorMessage(data);
                     JoomlaAjaxForms.showMessage(messageContainer, errorMsg, 'error');
+                }
+
+                // A captcha answer is used up by the attempt. Renew it, or let the
+                // next submission go to com_users when the captcha offers no reset.
+                if (JoomlaAjaxForms.hasCaptcha(form) && !JoomlaAjaxForms.resetCaptcha(form)) {
+                    form.dataset.joomlaajaxformsNative = '1';
                 }
             })
             .catch(function(error) {
@@ -932,7 +991,7 @@ const JoomlaAjaxForms = {
                 if (callback) callback(null, data);
             } else {
                 if (cartItem) cartItem.style.opacity = '1';
-                if (callback) callback(data.message || 'Error', null);
+                if (callback) callback(data.message || getFormsLang('ERROR_GENERIC'), null);
             }
         })
         .catch(function(error) {
@@ -960,6 +1019,10 @@ const JoomlaAjaxForms = {
                     form.classList.remove('form-validate');
                     form.setAttribute('novalidate', 'novalidate');
                     form.addEventListener('submit', function(e) {
+                        if (!JoomlaAjaxForms.formEnabled('profile')) {
+                            return;
+                        }
+
                         e.preventDefault();
                         e.stopPropagation();
                         JoomlaAjaxForms.saveProfile(form);
