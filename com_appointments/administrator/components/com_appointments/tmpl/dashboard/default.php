@@ -105,6 +105,7 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
                 $deliveryStates = ['pending' => 'COM_APPOINTMENTS_CLOSE_PENDING', 'retry' => 'COM_APPOINTMENTS_CLOSE_RETRY_STATE',
                     'done' => 'COM_APPOINTMENTS_CLOSE_DONE', 'blocked' => 'COM_APPOINTMENTS_CLOSE_BLOCKED',
                     'uncertain' => 'COM_APPOINTMENTS_CLOSE_UNCERTAIN']; ?>
+                <div class="table-responsive">
                 <table class="table com-appointments-close-queue">
                     <caption><?php echo Text::_('COM_APPOINTMENTS_CLOSE_RECENT'); ?></caption>
                     <thead><tr><th scope="col"><?php echo Text::_('JGRID_HEADING_ID'); ?></th><th scope="col"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_PROFILE'); ?></th><th scope="col"><?php echo Text::_('JSTATUS'); ?></th><th scope="col"><?php echo Text::_('COM_APPOINTMENTS_CLOSE_REASON'); ?></th></tr></thead>
@@ -127,6 +128,7 @@ $statLabels = ['bookings' => 'COM_APPOINTMENTS_STAT_BOOKINGS', 'today' => 'COM_A
                         </td>
                     </tr><?php endforeach; ?></tbody>
                 </table>
+                </div>
                 <nav aria-label="<?php echo Text::_('COM_APPOINTMENTS_CLOSE_PAGES'); ?>">
                     <p><?php echo Text::sprintf('COM_APPOINTMENTS_CLOSE_PAGE', intdiv($this->closeStart, 100) + 1,
                         max(1, (int) ceil($this->closeTotal / 100))); ?></p>

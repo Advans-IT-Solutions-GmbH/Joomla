@@ -428,7 +428,7 @@ return static function (TeamSuite $suite): void {
             sort($ids);
 
             return $ids === [$active, $cleanup]
-                && $columns === ['id', 'name', 'client', 'state', 'created_utc', 'last_sync_utc'];
+                && $columns === ['id', 'name', 'client', 'removal_mode', 'state', 'created_utc', 'last_sync_utc'];
         });
 
         $suite->test('«Last synchronised» is written at most once a minute, the first sync of a calendar and a changed role always, the sync token only rises', static function () use ($enabled, $joomla, $user, $device, $db, $p, $tag, &$state) {
