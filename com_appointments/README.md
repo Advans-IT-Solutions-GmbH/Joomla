@@ -364,9 +364,15 @@ invoke its CLI from the server's cron; a quiet website must not rely solely on v
 execution for timely reminders.
 
 In the component options, set **Public site URL** to the canonical HTTP(S) site root, including a
-Joomla subdirectory if applicable. CLI reminders require this setting unless Joomla's `live_site`
-is configured. It controls the signed links in reminder messages and avoids deriving a public link
-from a CLI script path. Use HTTPS in production.
+Joomla subdirectory if applicable. This is strongly recommended for every installation, not only
+for the CLI. Every e-mail builds its absolute links (the signed reschedule, cancel and delete
+links, the guest removal link, the administrator links of the internet calendars) from this
+setting, else from Joomla's `live_site`, else from the root of the request that sends the mail.
+That last fallback follows the request's `Host` header: on a server that answers for any host
+name, a visitor can choose the host the links of a mail point to, also for a reminder sent by the
+lazy Scheduler during that visitor's request. CLI reminders require this setting unless `live_site`
+is configured. The system checks report the setting as needing attention while neither is set.
+Use HTTPS in production.
 
 **Reminder offsets** is a comma-separated list of minutes before a confirmed appointment. The
 default `1440,60` sends reminders one day and one hour beforehand; each value must be 1–525600.
@@ -1253,7 +1259,8 @@ erasure requires delete permission. Moderator links are shown only to the host o
 administrator, not to an ordinary event editor.
 
 **System checks** requires component options permission. It reports PHP/Joomla versions, the site
-time zone, configured mail transport, enabled bundled plugins, each routine's most recent enabled
+time zone, configured mail transport, the public site URL for e-mail links (needs attention while
+neither it nor `live_site` is set, or when mail links would refuse it), enabled bundled plugins, each routine's most recent enabled
 task and last run, invalid feed-credential counts and the oldest audit record. A configuration
 check is not a delivery test or a remote connectivity probe. Configure and monitor both Scheduler
 routines; a never-run task is explicitly shown as needing attention.

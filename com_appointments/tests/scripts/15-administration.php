@@ -243,6 +243,36 @@ try {
         && str_contains($system, 'Latest enabled retention task') && !str_contains($system, $config->secret),
         'System checks report task/audit health without exposing signing credentials');
 
+    // Without a public site URL and live_site, mail links follow the Host header of the sending request.
+    $siteUrlRow = static fn (string $html, string $status): bool => preg_match('#Public site URL for e-mail links</th>\s*<td class="text-'
+        . ($status === 'ok' ? 'success">OK' : 'warning">Needs attention') . '#', $html) === 1;
+    $withSiteUrl = static function (string $url) use ($db, $prefix, $componentParams): void {
+        $params = json_decode($componentParams, true) ?: [];
+        $params['public_site_url'] = $url;
+        $encoded = $db->real_escape_string(json_encode($params));
+        $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
+    };
+    try {
+        if (trim((string) ($config->live_site ?? '')) === '') {
+            $withSiteUrl('');
+            $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
+            $check($admin->status === 200 && $siteUrlRow($system, 'attention') && str_contains($system, 'Not set')
+                && str_contains($system, 'Host header'),
+                'Without a public site URL and live_site, the system checks ask for the public site URL');
+        }
+        $withSiteUrl('https://www.example.test/site');
+        $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
+        $check($admin->status === 200 && $siteUrlRow($system, 'ok') && str_contains($system, 'https://www.example.test/site'),
+            'A configured public site URL satisfies the system check and is shown');
+        $withSiteUrl('https://www.example.test/?x=1');
+        $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
+        $check($admin->status === 200 && $siteUrlRow($system, 'attention'),
+            'A public site URL that mail links refuse (with a query) needs attention');
+    } finally {
+        $encoded = $db->real_escape_string($componentParams);
+        $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
+    }
+
     $parent = $db->query("SELECT rgt FROM {$prefix}usergroups WHERE id=6")->fetch_assoc();
     $right = (int) $parent['rgt'];
     $db->begin_transaction();

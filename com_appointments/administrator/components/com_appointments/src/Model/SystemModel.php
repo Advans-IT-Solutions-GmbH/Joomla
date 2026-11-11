@@ -42,6 +42,8 @@ class SystemModel extends BaseDatabaseModel
             ['label' => 'COM_APPOINTMENTS_SYSTEM_TIMEZONE', 'ok' => in_array($timezone, \DateTimeZone::listIdentifiers(), true), 'value' => $timezone],
             ['label' => 'COM_APPOINTMENTS_SYSTEM_MAIL', 'ok' => (bool) $app->get('mailonline', true),
                 'value' => (string) $app->get('mailer', 'mail')],
+            self::siteUrlCheck((string) ComponentHelper::getParams('com_appointments')->get('public_site_url', ''),
+                (string) $app->get('live_site', '')),
         ];
         foreach (['task' => 'COM_APPOINTMENTS_SYSTEM_TASK', 'privacy' => 'COM_APPOINTMENTS_SYSTEM_PRIVACY'] as $group => $label) {
             $query = $this->query()->select($db->quoteName('enabled'))->from($db->quoteName('#__extensions'))
@@ -325,6 +327,28 @@ class SystemModel extends BaseDatabaseModel
         curl_close($ch);
 
         return ['status' => $status, 'headers' => "\n" . str_replace("\r", '', \is_string($raw) ? substr($raw, 0, $size) : '')];
+    }
+
+    /**
+     * Mails build their absolute links (signed reschedule, cancel and delete links, administrator
+     * links) from the component's public site URL, else Joomla's live_site, else the root of the
+     * request that sends the mail, which follows its Host header. Needs attention while neither
+     * address is configured, or when the configured one is not a plain HTTP(S) root that the mail
+     * links accept.
+     *
+     * @return  array{label: string, ok: bool, value: string, remedy: string}
+     */
+    public static function siteUrlCheck(string $publicSiteUrl, string $liveSite): array
+    {
+        $configured = trim($publicSiteUrl) !== '' ? trim($publicSiteUrl) : trim($liveSite);
+        $parts = parse_url($configured);
+        $valid = $configured !== '' && filter_var($configured, FILTER_VALIDATE_URL) !== false && \is_array($parts)
+            && \in_array(strtolower((string) ($parts['scheme'] ?? '')), ['http', 'https'], true)
+            && !isset($parts['user']) && !isset($parts['pass']) && !isset($parts['query']) && !isset($parts['fragment']);
+
+        return ['label' => 'COM_APPOINTMENTS_SYSTEM_SITE_URL', 'ok' => $valid,
+            'value' => $configured === '' ? Text::_('COM_APPOINTMENTS_SYSTEM_SITE_URL_UNSET') : $configured,
+            'remedy' => $configured === '' ? 'COM_APPOINTMENTS_SYSTEM_SITE_URL_FIX' : 'COM_APPOINTMENTS_SYSTEM_SITE_URL_INVALID'];
     }
 
     /**
