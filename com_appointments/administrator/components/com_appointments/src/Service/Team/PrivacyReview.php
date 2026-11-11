@@ -74,8 +74,14 @@ final class PrivacyReview
                 ['#__appointments_teamlog', 'subject_user_id']] as [$table, $column]) {
                 $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
 
-                if ((int) $db->setQuery($query->select('COUNT(*)')->from($db->quoteName($table))
-                    ->where($db->quoteName($column) . ' = ' . $id))->loadResult() > 0) {
+                $query->select('COUNT(*)')->from($db->quoteName($table))->where($db->quoteName($column) . ' = ' . $id);
+
+                // The privacy steps themselves write log rows about any requester: they do not count.
+                if ($table === '#__appointments_teamlog') {
+                    $query->where($db->quoteName('event') . ' NOT LIKE ' . $db->quote('privacy.%'));
+                }
+
+                if ((int) $db->setQuery($query)->loadResult() > 0) {
                     return true;
                 }
             }
