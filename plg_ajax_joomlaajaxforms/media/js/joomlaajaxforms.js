@@ -1119,10 +1119,14 @@ const JoomlaAjaxForms = {
         // Collect all form fields
         var formData = new FormData(form);
         formData.forEach(function(value, key) {
-            if (key !== 'option' && key !== 'plugin' && key !== 'format' && key !== 'task') {
+            if (key !== 'option' && key !== 'plugin' && key !== 'format' && key !== 'task' && key !== 'profile_form') {
                 body.append(key, value);
             }
         });
+
+        // The whole profile form goes along, so a custom field missing from
+        // the request (all checkboxes cleared) may be saved as cleared.
+        body.append('profile_form', '1');
 
         var messageContainer = form.querySelector('.ajax-message') || JoomlaAjaxForms.createMessageContainer(form);
         var submitBtn = JoomlaAjaxForms.disableSubmit(form);

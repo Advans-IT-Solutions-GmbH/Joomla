@@ -1426,10 +1426,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $data = $input->post->get('jform', [], 'array');
             $data = \is_array($data) ? $data : [];
 
-            // Only a request that carries the profile form (jform) represents
-            // every editable field. A legacy request with plain field names
-            // does not, so its missing custom fields must not count as cleared.
-            $carriesForm = $data !== [];
+            // Only a request that carries the whole profile form represents
+            // every editable field. The script marks it (profile_form=1) because
+            // it sends every field of the form. A legacy or partial request from
+            // a template override does not, so its missing custom fields must
+            // not count as cleared and keep their stored values.
+            $carriesForm = $data !== [] && $input->post->getInt('profile_form', 0) === 1;
 
             // Template overrides that post jform[email] or plain field names
             // keep working, as with the former handler.

@@ -336,6 +336,7 @@ class InstallationTest
         if (substr_count($source, 'JoomlaAjaxForms.handOverIfDisabled(data, form)') === 4
             && substr_count($source, 'JoomlaAjaxForms.rememberSubmitter(form, e)') === 4
             && str_contains($source, 'carried.name = submitter.name')
+            && str_contains($source, "body.append('profile_form', '1')")
             && str_contains($source, 'HTMLFormElement.prototype.submit.call(form)')) {
             echo "PASS\n";
         } else {
