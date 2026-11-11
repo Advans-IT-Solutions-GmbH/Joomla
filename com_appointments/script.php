@@ -47,6 +47,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
     ];
 
     private const APPOINTMENT_TABLES = [
+        'privacy_scope',
         'eventtype_calendars',
         'auth_failures',
         'teamlog_head',

@@ -168,13 +168,24 @@ try {
     }
     $check(!$leaked, 'An account whose address does not match the request exactly gets no staff export');
     $request->email = $tag . '@example.test';
+    // Joomla runs the removal check before every removal, while it still finds the account. The
+    // removal itself here gets no account, as a retry after Joomla pseudonymised it: the scope
+    // captured by the check decides.
+    $request->id = 900000 + random_int(1, 99999);
+    $staffRows['request'] = (int) $request->id;
+    $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $request, 'user' => $staffUser]);
+    $plugin->onPrivacyCanRemoveData($canRemove);
+    $scope = $db->query("SELECT user_id FROM {$prefix}appointments_privacy_scope WHERE request_id=" . (int) $request->id)->fetch_row();
+    $check($canRemove->getArgument('result')[0]->canRemove !== false && $scope !== null && (int) $scope[0] === $staffId,
+        'The removal check captures the verified account of the request');
     $application->getMessageQueue(true);
-    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => $staffUser]));
+    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => null]));
     $blocked = $db->query("SELECT title, end_utc > UTC_TIMESTAMP() AS future FROM {$prefix}appointments_blocked WHERE user_id={$staffId}")->fetch_all(MYSQLI_ASSOC);
     $check(count($blocked) === 1 && $blocked[0]['title'] === '' && (int) $blocked[0]['future'] === 1,
-        'Removal deletes past blocked periods and keeps future ones for the slot calculation without their reason');
-    $check((int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_hosts WHERE user_id={$staffId}")->fetch_row()[0] === 0,
-        'Removal deletes the host record with its feed credential');
+        'Removal without the account (a retry) deletes past blocked periods and keeps future ones without their reason');
+    $host = $db->query("SELECT feed_token FROM {$prefix}appointments_hosts WHERE user_id={$staffId}")->fetch_row();
+    $check($host !== null && $host[0] !== $hostToken,
+        'Removal revokes the host feed credential and keeps the host row, which bookings lock');
     $hosted = $db->query("SELECT host_user_id, info_name FROM {$prefix}appointments_eventtypes WHERE id={$staffRows['event']}")->fetch_assoc();
     $owned = $db->query("SELECT owner_user_id, title FROM {$prefix}appointments_schedules WHERE id={$staffRows['schedule']}")->fetch_assoc();
     $messages = implode("\n", array_column($application->getMessageQueue(true), 'message'));
@@ -185,6 +196,9 @@ try {
 } catch (Throwable $e) {
     $check(false, 'Privacy integration failed: ' . $e->getMessage());
 } finally {
+    if (isset($staffRows['request'])) {
+        $db->query("DELETE FROM {$prefix}appointments_privacy_scope WHERE request_id=" . (int) $staffRows['request']);
+    }
     if (isset($staffRows['event'])) {
         $db->query("DELETE FROM {$prefix}appointments_eventtypes WHERE id=" . (int) $staffRows['event']);
     }

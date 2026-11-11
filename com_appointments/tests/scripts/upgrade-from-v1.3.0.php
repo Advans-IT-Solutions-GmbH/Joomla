@@ -404,8 +404,8 @@ function upgrade_verify(): void
         $result = $db->query("SELECT version_id FROM `$schemasTable` WHERE extension_id = " . (int) $fixture['extension_id']);
         $schemaVersions = $result ? array_map('strval', array_column($result->fetch_all(MYSQLI_ASSOC), 'version_id')) : [];
     }
-    upgrade_check('Joomla records the 1.4.0 database schema update',
-        in_array('1.4.0', $schemaVersions, true), implode(', ', $schemaVersions));
+    upgrade_check('Joomla records the newest (1.5.0) database schema update',
+        in_array('1.5.0', $schemaVersions, true), implode(', ', $schemaVersions));
 
     $eventId = (int) $fixture['eventtype_id'];
     $event = $db->query("SELECT schedule_id, host_user_id, feed_token, calendar_id FROM `$eventtypesTable` WHERE id = $eventId")->fetch_assoc();

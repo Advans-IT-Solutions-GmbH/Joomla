@@ -664,3 +664,16 @@ CREATE TABLE IF NOT EXISTS `#__appointments_eventtype_calendars` (
     FOREIGN KEY (`eventtype_id`) REFERENCES `#__appointments_eventtypes` (`id`) ON DELETE CASCADE,
     FOREIGN KEY (`calendar_id`) REFERENCES `#__appointments_calendars` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- The account a Joomla privacy request concerns, captured by the removal check while Joomla still
+-- finds the account (StaffPrivacy::capture()). The removal and every retry of the request use it,
+-- also after Joomla's user plugin has pseudonymised the account. One row per request, never replaced.
+--
+CREATE TABLE IF NOT EXISTS `#__appointments_privacy_scope` (
+    `request_id` INT UNSIGNED NOT NULL,
+    `user_id` INT UNSIGNED NOT NULL,
+    `team_member` TINYINT(1) NOT NULL DEFAULT 0,
+    `created_utc` DATETIME NOT NULL,
+    PRIMARY KEY (`request_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

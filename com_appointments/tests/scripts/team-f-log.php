@@ -1101,13 +1101,16 @@ sleep(3);
                     $request->id = 800000 + random_int(1, 99999);
                     $request->email = "$name@example.test";
                     $request->status = 1;
-                    // First run with the account, then a retry in which Joomla no longer finds it.
+                    // The removal check captures the scope, then the first run with the account and a
+                    // retry in which Joomla no longer finds it.
+                    $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent("onPrivacyCanRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance($uid)]));
                     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance($uid)]));
                     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => null]));
                     $rows = $db->setQuery("SELECT details FROM #__appointments_teamlog WHERE event = " . $db->quote(AuditEvent::PRIVACY_DELETE) . " ORDER BY id DESC", 0, 2)->loadColumn();
 
                     return ["request" => (int) $request->id, "rows" => array_map(static fn ($d): ?array => AuditService::decodeDetails($d), $rows)];
                 } finally {
+                    $db->setQuery("DELETE FROM #__appointments_privacy_scope WHERE user_id = $uid")->execute();
                     $db->setQuery("DELETE FROM #__user_usergroup_map WHERE user_id = $uid")->execute();
                     $db->setQuery("DELETE FROM #__users WHERE id = $uid")->execute();
                 }');

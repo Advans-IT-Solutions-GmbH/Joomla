@@ -122,6 +122,20 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         } elseif ($service->legalReason() !== '' && $service->hasBookings($address)) {
             $status->canRemove = false;
             $status->reason = Text::sprintf('PLG_PRIVACY_APPOINTMENTS_LEGAL_BLOCK', $service->legalReason());
+        } elseif ($user && (int) $user->id > 0) {
+            // Joomla runs this check before every removal, while it still finds the account: the
+            // removal and every retry of this request use the scope captured here, also after
+            // Joomla has pseudonymised the account. Without a durable scope nothing is removed.
+            try {
+                $params = ComponentHelper::getParams('com_appointments');
+                (new StaffPrivacy($this->getDatabase()))->capture((int) ($event->getRequest()->id ?? 0), (int) $user->id,
+                    (array) $params->get('team_groups', []), (int) $params->get('external_group', 0),
+                    new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+            } catch (\Throwable $e) {
+                Log::add('Appointments: the privacy scope could not be stored (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+                $status->canRemove = false;
+                $status->reason = Text::_('PLG_PRIVACY_APPOINTMENTS_SCOPE_FAILED');
+            }
         }
         $event->addResult($status);
     }
@@ -144,9 +158,22 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         if ($result['cleanup_failed']) {
             $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_CLEANUP_FAILED'), 'warning');
         }
-        $this->removeStaffData($event->getUser());
+        // The scope captured by the removal check; the account found now only for a request that
+        // was checked before this version (Joomla still finds it unless a removal ran already).
+        $requestId = (int) ($event->getRequest()->id ?? 0);
+        $user = $event->getUser();
+        try {
+            $scope = (new StaffPrivacy($this->getDatabase()))->scope($requestId)
+                ?? ($user !== null && (int) $user->id > 0 ? ['user_id' => (int) $user->id, 'team_member' => null] : null);
+        } catch (\Throwable $e) {
+            // Without the scope nothing of staff data is touched, and calendar entries are kept.
+            Log::add('Appointments: the privacy scope could not be read (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+            $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_STAFF_FAILED'), 'warning');
+            $scope = ['user_id' => 0, 'team_member' => true];
+        }
+        $this->removeStaffData((int) ($scope['user_id'] ?? 0));
         TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase())
-            ?->remove((string) $event->getRequest()->email, $event->getUser(), (int) ($event->getRequest()->id ?? 0));
+            ?->remove((string) $event->getRequest()->email, (int) ($scope['user_id'] ?? 0), $scope['team_member'] ?? null, $requestId);
     }
 
     /**
@@ -196,13 +223,11 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
 
     /**
      * Staff data of the account: past absences go, current and future ones lose their reason,
-     * the host feed record goes. Event types and schedules of the person are team configuration
-     * and are never changed automatically: the administrator gets them to review.
+     * the host feed credential is revoked. Event types and schedules of the person are team
+     * configuration and are never changed automatically: the administrator gets them to review.
      */
-    private function removeStaffData(?User $user): void
+    private function removeStaffData(int $userId): void
     {
-        $userId = $user !== null ? (int) $user->id : 0;
-
         if ($userId <= 0) {
             return;
         }
@@ -219,7 +244,7 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         }
 
         $app->enqueueMessage(Text::sprintf('PLG_PRIVACY_APPOINTMENTS_STAFF_REMOVED', $result['absences_deleted'],
-            $result['absences_cleared'], $result['host_removed']), 'message');
+            $result['absences_cleared'], $result['host_revoked']), 'message');
         $escape = static fn (array $titles): string => implode(', ', array_map(
             static fn (string $title): string => htmlspecialchars($title, ENT_QUOTES, 'UTF-8'), $titles));
 

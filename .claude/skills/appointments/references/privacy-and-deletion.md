@@ -112,8 +112,11 @@ writing it; the mechanics, the event names and the known traps are documented th
   calendars): export of blocked periods with reason, host record without feed credential, hosted
   event types with the person's name, role and photo, owned schedules. Removal deletes past blocked
   periods, clears the reason of current and future ones (their period still feeds the slot
-  calculation) and deletes the host record. Event types and schedules are never changed
-  automatically, only named for review; the account itself is pseudonymised by Joomla's user plugin.
+  calculation) and revokes the host feed credential (the host row is the booking lock target and
+  stays). Event types and schedules are never changed automatically, only named for review; the
+  account itself is pseudonymised by Joomla's user plugin. The removal check captures the verified
+  account and its team membership per request (`#__appointments_privacy_scope`), so a retry after
+  the pseudonymisation still uses them.
 - **Calendar entries with a team member's address** are never changed automatically by a removal
   (`TeamPrivacy::changesEntriesOf()`); their number is reported for review.
 

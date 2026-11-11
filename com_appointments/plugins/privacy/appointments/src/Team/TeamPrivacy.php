@@ -11,7 +11,6 @@ namespace Advans\Plugin\Privacy\Appointments\Team;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKeyring;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
-use Advans\Component\Appointments\Administrator\Service\Team\AuditService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Application\CMSApplicationInterface;
 use Joomla\CMS\Language\Text;
@@ -400,11 +399,11 @@ final class TeamPrivacy
      * Delete the entries with this address (never those of a team member's address) and the
      * staff data of the account. Never throws; messages are queued for the administrator.
      *
-     * @param   int  $requestId  The Joomla privacy request. Its log row keeps whether the address
-     *                           belongs to a team member, because a retry after Joomla has
-     *                           pseudonymised the account no longer finds it.
+     * @param   int        $userId      The account of the request's captured scope, 0 for none.
+     * @param   bool|null  $teamMember  The captured team-member decision, null to determine it now.
+     * @param   int        $requestId   The Joomla privacy request, recorded in the log row.
      */
-    public function remove(string $email, ?User $user, int $requestId = 0): void
+    public function remove(string $email, int $userId, ?bool $teamMember = null, int $requestId = 0): void
     {
         if ($this->services === null) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED'), 'warning');
@@ -417,9 +416,8 @@ final class TeamPrivacy
         $failed = 0;
         $unsearched = [];
         $staff = false;
-        $userId = $user !== null ? (int) $user->id : 0;
         // The address of a team member is in many entries of the team: those are never changed automatically.
-        $teamMember = $userId > 0 ? !self::changesEntriesOf($this->audienceOf($userId)) : $this->teamMemberOfRequest($requestId);
+        $teamMember ??= $userId > 0 && !self::changesEntriesOf($this->audienceOf($userId));
 
         try {
             $search = $this->search($email, null);
@@ -491,37 +489,6 @@ final class TeamPrivacy
             'details'         => ['entries' => $deleted, 'kept' => $kept, 'failed' => $failed, 'not_searched' => \count($unsearched), 'staff' => $staff,
                 'request' => max(0, $requestId), 'team_member' => $teamMember],
         ]);
-    }
-
-    /**
-     * Whether an earlier removal of this privacy request found the address to be a team
-     * member's (its `privacy.delete` log row). A check that cannot be made counts as team
-     * member, so a retry never changes entries that the first run kept.
-     */
-    private function teamMemberOfRequest(int $requestId): bool
-    {
-        if ($requestId <= 0) {
-            return false;
-        }
-
-        try {
-            $db = $this->services->db();
-            $rows = $db->setQuery($this->query()->select($db->quoteName('details'))->from($db->quoteName('#__appointments_teamlog'))
-                ->where($db->quoteName('event') . ' = ' . $db->quote(AuditEvent::PRIVACY_DELETE))
-                ->order($db->quoteName('id') . ' DESC')->setLimit(self::LOG_ROWS))->loadColumn() ?: [];
-
-            foreach ($rows as $stored) {
-                $details = AuditService::decodeDetails($stored) ?? [];
-
-                if ((int) ($details['request'] ?? 0) === $requestId && !empty($details['team_member'])) {
-                    return true;
-                }
-            }
-
-            return false;
-        } catch (\Throwable $e) {
-            return true;
-        }
     }
 
     /**

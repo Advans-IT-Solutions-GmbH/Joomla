@@ -8,6 +8,8 @@
 
 namespace Advans\Component\Appointments\Administrator\Service;
 
+use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
+use Advans\Component\Appointments\Administrator\Service\Team\GrantService;
 use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
@@ -18,13 +20,19 @@ defined('_JEXEC') or die;
  * schedules it owns. Bound to the account Joomla found for the request, never to an address,
  * and independent of whether the internet calendars are on.
  *
- * Removal follows Joomla's core privacy plugins: the account itself is pseudonymised by the user
- * plugin, so references to its id stay. What the component stores about the person goes:
- * absences that are over are deleted; current and future absences keep their period, which the
- * slot calculation of the event types still needs, and lose their reason (the title, which may
- * hold health data). The host record with the feed credential is deleted. Event types and
- * schedules are team configuration: they are never changed automatically, their titles are
- * returned so the administrator can review them (host, name, photo, role on the booking page).
+ * Joomla's user plugin pseudonymises the account during the first removal, so a retry of the same
+ * request no longer finds it. The removal check (which Joomla runs before every removal) therefore
+ * captures the verified account and whether it is a team member in `#__appointments_privacy_scope`,
+ * keyed by the request, and every removal of that request uses this scope. A captured scope is
+ * never replaced.
+ *
+ * Removal follows Joomla's core privacy plugins: references to the account id stay. What the
+ * component stores about the person goes: absences that are over are deleted; current and future
+ * absences keep their period, which the slot calculation of the event types still needs, and lose
+ * their reason (the title, which may hold health data). The host feed credential is replaced by a
+ * random value no address carries, so the feed is revoked; the host row itself stays, because
+ * existing bookings lock it. Event types and schedules are team configuration: they are never
+ * changed automatically, their titles are returned so the administrator can review them.
  */
 final class StaffPrivacy
 {
@@ -35,6 +43,59 @@ final class StaffPrivacy
 
     public function __construct(private DatabaseInterface $db)
     {
+    }
+
+    /**
+     * Captures the verified account of a privacy request once. The first captured scope wins; a
+     * later call never replaces it (a pseudonymised or another account cannot take it over).
+     *
+     * @param   int[]  $teamGroups     The option `team_groups`.
+     * @param   int    $externalGroup  The option `external_group`.
+     */
+    public function capture(int $requestId, int $userId, array $teamGroups, int $externalGroup, \DateTimeImmutable $now): void
+    {
+        if ($requestId <= 0 || $userId <= 0) {
+            return;
+        }
+
+        $db = $this->db;
+        $team = self::isTeamMember($this->groupsOf($userId), $teamGroups, $externalGroup) ? 1 : 0;
+        $db->setQuery('INSERT IGNORE INTO ' . $db->quoteName('#__appointments_privacy_scope')
+            . ' (' . implode(', ', $db->quoteName(['request_id', 'user_id', 'team_member', 'created_utc'])) . ') VALUES ('
+            . $requestId . ', ' . $userId . ', ' . $team . ', '
+            . $db->quote($now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')) . ')')->execute();
+    }
+
+    /**
+     * The captured scope of a privacy request, or null when none was captured (the address had no
+     * account when Joomla checked the request).
+     *
+     * @return  array{user_id: int, team_member: bool}|null
+     */
+    public function scope(int $requestId): ?array
+    {
+        if ($requestId <= 0) {
+            return null;
+        }
+
+        $db = $this->db;
+        $row = $db->setQuery($this->query()->select($db->quoteName(['user_id', 'team_member']))
+            ->from($db->quoteName('#__appointments_privacy_scope'))
+            ->where($db->quoteName('request_id') . ' = ' . $requestId))->loadAssoc();
+
+        return $row ? ['user_id' => (int) $row['user_id'], 'team_member' => (int) $row['team_member'] === 1] : null;
+    }
+
+    /**
+     * Whether an account in these groups is a team member, with the audience rule of the internet
+     * calendars (a member of the external group is external). Pure.
+     *
+     * @param   int[]  $groups
+     * @param   int[]  $teamGroups
+     */
+    public static function isTeamMember(array $groups, array $teamGroups, int $externalGroup): bool
+    {
+        return GrantService::audienceFromGroups($groups, $teamGroups, $externalGroup) === TeamStates::AUDIENCE_TEAM;
     }
 
     /**
@@ -57,11 +118,11 @@ final class StaffPrivacy
     }
 
     /**
-     * @return  array{absences_deleted: int, absences_cleared: int, host_removed: int, event_types: list<string>, schedules: list<string>}
+     * @return  array{absences_deleted: int, absences_cleared: int, host_revoked: int, event_types: list<string>, schedules: list<string>}
      */
     public function remove(int $userId, \DateTimeImmutable $now): array
     {
-        $result = ['absences_deleted' => 0, 'absences_cleared' => 0, 'host_removed' => 0, 'event_types' => [], 'schedules' => []];
+        $result = ['absences_deleted' => 0, 'absences_cleared' => 0, 'host_revoked' => 0, 'event_types' => [], 'schedules' => []];
 
         if ($userId <= 0) {
             return $result;
@@ -81,9 +142,13 @@ final class StaffPrivacy
                 ->where($db->quoteName('user_id') . ' = ' . $userId)
                 ->where($db->quoteName('title') . ' <> ' . $db->quote('')))->execute();
             $result['absences_cleared'] = (int) $db->getAffectedRows();
-            $db->setQuery($this->query()->delete($db->quoteName('#__appointments_hosts'))
+            // The host row is the lock target of the host's bookings and stays; its feed credential
+            // is replaced by a random value that no address carries, which revokes the feed.
+            $db->setQuery($this->query()->update($db->quoteName('#__appointments_hosts'))
+                ->set($db->quoteName('feed_token') . ' = ' . $db->quote(bin2hex(random_bytes(32))))
+                ->set($db->quoteName('modified_utc') . ' = ' . $time)
                 ->where($db->quoteName('user_id') . ' = ' . $userId))->execute();
-            $result['host_removed'] = (int) $db->getAffectedRows();
+            $result['host_revoked'] = (int) $db->getAffectedRows();
             // Read before the commit: a failing lookup rolls everything back, so the message
             // "nothing changed" stays true and the review lists never go missing after a change.
             $result['event_types'] = array_map(static fn (array $row): string => (string) $row['title'],
@@ -98,6 +163,18 @@ final class StaffPrivacy
         }
 
         return $result;
+    }
+
+    /**
+     * @return  int[]
+     */
+    private function groupsOf(int $userId): array
+    {
+        $db = $this->db;
+
+        return array_map('intval', $db->setQuery($this->query()->select($db->quoteName('group_id'))
+            ->from($db->quoteName('#__user_usergroup_map'))
+            ->where($db->quoteName('user_id') . ' = ' . $userId))->loadColumn() ?: []);
     }
 
     /**
