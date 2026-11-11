@@ -464,9 +464,9 @@ the privacy policy. A backup contains bookings and copies deleted since. After a
 on the deletions at once:
 
 1. In **System → Scheduled Tasks**, run *Appointments: retention* and *Appointments: internet
-   calendar retention* by hand at once, and again until a run processes nothing more: each run
-   handles one batch only (the batch size of the task). Resolve failed runs before the devices
-   synchronise.
+   calendar retention* by hand at once, and again until the task log shows `bookings` 0 for the
+   first and `restore_pending` 0 for the second: each run handles one batch only. Resolve failed
+   runs before the devices synchronise.
 2. Repeat every deletion requested since the date of the backup: deletion links from mails,
    deletions in the administrator and Joomla privacy requests. The restored database no longer
    knows them; the operator's own records decide.

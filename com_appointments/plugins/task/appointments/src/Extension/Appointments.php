@@ -129,6 +129,8 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             }
 
             $result['copies_restored'] = $services->bookings()->restoreCopies(200);
+            // The explicit completion signal: 0 once every restore request is done.
+            $result['restore_pending'] = $services->bookings()->restorePending();
 
             $db = $services->db();
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
