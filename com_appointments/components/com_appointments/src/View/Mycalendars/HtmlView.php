@@ -51,6 +51,12 @@ class HtmlView extends BaseHtmlView
     /** @var object[] */
     protected $devices = [];
 
+    /** @var int[]|null The calendars whose booking mails the user switched off; null when unknown. */
+    protected $mailOff = [];
+
+    /** @var int[] The calendars that are the target calendar of an event type the user hosts. */
+    protected $hosted = [];
+
     /** Language key of the reason why «Add device» is not offered, empty when it is. */
     protected $addBlocked = '';
 
@@ -146,6 +152,16 @@ class HtmlView extends BaseHtmlView
 
         $this->setLayout('default');
         $this->calendars = $this->calendarsOf($services, $userId);
+
+        try {
+            // The user's own switch for the booking mails of each calendar (on unless switched off).
+            $this->mailOff = \Advans\Component\Appointments\Administrator\Helper\NotificationSwitch::muted($services->db(), $userId);
+            $this->hosted = \Advans\Component\Appointments\Administrator\Helper\NotificationSwitch::hostedCalendars($services->db(), $userId);
+        } catch (\Throwable $e) {
+            // Unknown: the page shows no switch rather than a wrong state.
+            $this->mailOff = null;
+        }
+
         $this->addBlocked = $this->forcedBlock !== '' ? $this->forcedBlock
             : ($this->unavailable ? 'COM_APPOINTMENTS_MYCALENDARS_NOT_READY' : $this->addBlockedReason($services, $userId));
 

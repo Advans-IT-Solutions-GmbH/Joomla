@@ -68,8 +68,12 @@ package; a deviation is a change to this file in the same pull request, agreed w
   a remedy; the README lists the prerequisites (section 8.3).
 - **Private smartphones are allowed** for internet calendars. No device management is required; the
   usage rule (lock code, no forwarding, report a loss) and the clean-up are the safeguards.
-- **Mails as today:** content and ICS of booking mails also go to the team; they are outside the
-  calendar encryption.
+- **Booking mails to every calendar user** (maintainer, 11.11.2026: every user with access to a
+  calendar is notified by mail): with a target calendar in use, every user with an effective access
+  gets a mail on a new booking, an approval, a reschedule and a cancellation, the host included,
+  **without ICS** (the entry arrives through the synchronisation; an accepted invitation showed it
+  twice). Contents per role, free/busy without personal data. Each user can switch these mails off
+  per calendar, for their own account only (section 12). They are outside the calendar encryption.
 - Generic: no installation-specific value anywhere. Everything is a setting.
 
 ## 2. Threat model: what encryption B protects, and what not
@@ -113,7 +117,8 @@ and rejected by the maintainer: whoever controls the server controls everything 
   (server key), contents stay encrypted.
 - **Devices that never connect again** keep their local copy. The clean-up only reaches devices that
   synchronise. This is why the usage rule requires a device lock code.
-- **Booking mails** to the team carry content and ICS in clear, as decided (outside the encryption).
+- **Booking mails** to the calendar users carry the content their role reads in clear, as decided
+  (outside the encryption); free/busy mails carry the time only.
 
 ## 3. Architecture
 
@@ -669,7 +674,30 @@ them again; one-way «Outlook → server» would try to upload, which the refuse
 `TeamMailerInterface`: new device (always), activation link, activation completed (to the
 administrators, with the one-step revoke link), grant changed (to owner and managers), access
 suspended, calendar deleted (to the former owner and managers, `calendarDeleted()`). They are DB templates (`#__appointments_templates`, eventtype_id 0, no ICS), editable
-under Templates. Joomla mailer, recipient language, no secret except the activation link. Booking mails stay as they are, with content and ICS to the team.
+under Templates. Joomla mailer, recipient language, no secret except the activation link. These
+mails cannot be switched off.
+
+**Booking mails to the calendar users** (`Helper/CalendarNotice`, `NotificationService`). A target
+calendar is *in use* when the feature is on, the calendar active and the host holds an effective
+write access (exactly when `BookingCalendarBridge` writes the copy). Otherwise nothing changes: the
+host gets the mail with ICS. In use:
+
+| Recipient | Mail | ICS |
+|---|---|---|
+| Booking person, additional guests | as before, with their signed links | yes |
+| Every effective grant (active grant, valid row, active account in a calendar group, second factor), internal or external, host included | `calendar_booked` (new, pending), `calendar_approved`, `calendar_rescheduled`, `calendar_cancelled` (also on erasure); the reminder `calendar_reminder` to the host only | no |
+| Role read, write, manage | what the calendar copy shows (event type, time, host, invitee name and address, guests, location, conference link); the host also the telephone and the moderator link; a link to the booking in the administrator for accounts with `core.login.admin` and `core.manage` | no |
+| Role free/busy | `calendar_busy` (new, pending), `calendar_busy_moved` (reschedule), `calendar_free` (cancellation, erasure), no mail on approval; only `{calendar_title}`, `{start}`, `{end}`, `{timezone}`, every other placeholder of an edited template stays empty | no |
+
+Each account and each address once (the host first; an address that already gets the booking
+person's or a guest's mail gets none). Recipient's account language and time zone, else the site
+defaults. Every mail links «My calendars», where each user switches the booking mails of each
+calendar off and on (`Helper/NotificationSwitch`, default on, stored as a list of calendar ids in the
+account's own `#__users.params`, key `appointments_booking_mail_off`, no table). The task
+`notifications.save` takes the account from the session only, never from the request, and needs an
+effective access to the calendar (404 otherwise); a calendar owner or an administrator cannot change
+another person's switch. A host of an event type booking into the calendar is warned that, switched
+off, they learn of new bookings only through the calendar.
 
 ## 13. Administrator views
 
@@ -702,8 +730,9 @@ under Templates. Joomla mailer, recipient language, no secret except the activat
   a `booking_id` is skipped only when that booking has the same host as the asking event type; a
   booking of another host in the same calendar blocks.
 - A booking is written sealed into the target calendar on create/approve/reschedule (same UID as the
-  mail ICS, so a team member's client does not show it twice when the mail ICS was accepted too),
-  removed on cancellation and erasure. Calendar errors never fail a booking.
+  mail ICS of the invitee), removed on cancellation and erasure. Calendar errors never fail a booking.
+  A client that keeps the calendar in a folder of its own (Outlook with CalDav Synchronizer) showed an
+  accepted mail ICS a second time; the calendar users therefore get no ICS (section 12).
 - Known race, accepted: a calendar PUT does not take the host lock, so an event created in the very
   second of a booking is not seen by that booking.
 
