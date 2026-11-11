@@ -237,6 +237,13 @@ class ProfileTest
             $alias = $this->ajax('saveProfile', ['jform' => ['name' => 'Alias User', 'username' => $user->username, 'email' => $user->email], $token => '1'], $jar);
             $this->test('A save with jform[email] instead of jform[email1] is accepted', ($alias['success'] ?? null) === true, $this->lastAnswer);
             $this->test('That save stores the name', $nameOf() === 'Alias User', 'stored: ' . $nameOf());
+
+            // A legacy request with plain field names and no password fields:
+            // accepted, no PHP warning in the answer, password unchanged.
+            $hashBefore = $hashOf();
+            $legacy     = $this->ajax('saveProfile', ['name' => 'Legacy User', 'email' => $user->email, $token => '1'], $jar);
+            $this->test('A legacy save with plain name and email is accepted as JSON', ($legacy['success'] ?? null) === true, $this->lastAnswer);
+            $this->test('That save stores the name and keeps the password', $nameOf() === 'Legacy User' && $hashOf() === $hashBefore, 'stored: ' . $nameOf());
         } finally {
             $db->setQuery('DELETE FROM #__privacy_consents WHERE user_id = ' . (int) $user->id)->execute();
             ajaxforms_restore_component_params('com_users', $original);

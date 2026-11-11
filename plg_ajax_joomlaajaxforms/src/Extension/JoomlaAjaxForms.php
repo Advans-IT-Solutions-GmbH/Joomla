@@ -1438,6 +1438,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 }
             }
 
+            // Fields a legacy request may omit. ProfileModel::save() reads
+            // password1 unconditionally, and a missing key would print a PHP
+            // warning into the JSON answer. An omitted username means the
+            // current one, as the core form always posts it.
+            $data += ['password1' => '', 'password2' => '', 'username' => (string) $user->username];
+
             $userId     = (int) $user->id;
             $data['id'] = $userId;
 
