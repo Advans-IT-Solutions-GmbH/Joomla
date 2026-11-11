@@ -736,6 +736,70 @@ class ImapClientTest extends TestCase
         $this->assertSame([1, 2, 3, 4, 5], $pending);
     }
 
+    public function testPersistentRetriesNeverStarveNewMail(): void
+    {
+        // Two retries stay blocked (their zip decoder is missing) on every poll
+        // while their gzip parts are unpacked again. Units stand for MiB: 32
+        // per message, 128 per run. Retry A costs 48 when admitted, retry B is
+        // unpacked (24) before it no longer fits the retry share. Each poll
+        // also brings one new message costing 60. New mail must be imported in
+        // every poll.
+        $pending = [1, 2];
+        $lastUid = 10;
+
+        for ($poll = 1; $poll <= 3; $poll++) {
+            $fresh  = 10 + $poll;
+            $limits = new IngestLimits(10, 20, 32, 1000, 128);
+            $script = "* OK IMAP4rev1 ready\r\n"
+                . "A0001 OK LOGIN completed\r\n"
+                . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+                . "A0003 OK SELECT completed\r\n"
+                . '* SEARCH ' . $fresh . "\r\nA0004 OK SEARCH completed\r\n"
+                . $this->fetchResponse(1, $pending[0], "Subject: Retry\r\n\r\nretry", 'A0005')
+                . $this->fetchResponse(2, $pending[1], "Subject: Retry\r\n\r\nretry", 'A0006')
+                . $this->fetchResponse(3, $fresh, "Subject: New\r\n\r\nnew", 'A0007')
+                . "A0008 OK STORE completed\r\n"
+                . "* BYE\r\nA0009 OK LOGOUT completed\r\n";
+
+            $result = $this->drive(
+                $script,
+                ['delete_after_import' => 0, 'last_uid' => $lastUid, 'deferred_uids' => $pending, 'limit' => 10],
+                static function (array $m) use ($limits): string {
+                    if (!empty($m['retry'])) {
+                        if ($limits->retryShareExhausted() !== null) {
+                            return 'postpone';
+                        }
+
+                        if ($limits->checkRetry(1, 48) !== null) {
+                            $limits->chargeInspected(24, true);
+
+                            return 'postpone';
+                        }
+
+                        $limits->charge(1, 48, true);
+
+                        return 'blocked';
+                    }
+
+                    if ($limits->runExhausted() !== null || $limits->checkRun(1, 60) !== null) {
+                        return 'postpone';
+                    }
+
+                    $limits->charge(1, 60);
+
+                    return 'new';
+                }
+            );
+
+            $this->assertSame(1, $result['stats']['ingested'], 'poll ' . $poll);
+            $this->assertSame($fresh, $result['stats']['last_uid'], 'poll ' . $poll);
+            $this->assertCount(2, $result['stats']['deferred_uids'], 'poll ' . $poll);
+
+            $pending = $result['stats']['deferred_uids'];
+            $lastUid = $fresh;
+        }
+    }
+
     public function testRetriesUseAtMostHalfOfTheRun(): void
     {
         // Three retries wait, one fresh message arrives, and the run takes two

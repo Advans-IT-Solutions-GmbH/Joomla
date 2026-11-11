@@ -65,11 +65,11 @@ final class IngestLimits
     private int $maxRunReports;
     private int $maxRunBytes;
 
-    /** Reports admitted to this run so far. */
-    private int $runReports = 0;
+    /** Reports of new mail admitted to this run so far. */
+    private int $freshReports = 0;
 
-    /** Unpacked bytes inspected in this run so far (admitted and held messages). */
-    private int $runBytes = 0;
+    /** Unpacked bytes of new mail inspected in this run so far (admitted, held, postponed). */
+    private int $freshBytes = 0;
 
     /** Reports of retried messages (the retry set) admitted to this run so far. */
     private int $retryReports = 0;
@@ -172,23 +172,25 @@ final class IngestLimits
     }
 
     /**
-     * Whether a message that fits its own ceilings may still be stored in this
-     * run. The first message of a run is always admitted, so a run whose
-     * per-run ceiling is lower than one message still makes progress.
+     * Whether a message of new mail that fits its own ceilings may still be
+     * stored in this run. The first message of a run is always admitted, so a
+     * run always makes progress. Retries count against the run limits only up
+     * to their share: whatever a retry inspects beyond its half never reduces
+     * the other half that new mail keeps.
      *
      * @return  string|null  A REASON_RUN_* constant, or null when admitted.
      */
     public function checkRun(int $reports, int $bytes): ?string
     {
-        if ($this->runReports === 0 && $this->runBytes === 0) {
+        if ($this->usedReports() === 0 && $this->usedBytes() === 0) {
             return null;
         }
 
-        if ($this->runReports + $reports > $this->maxRunReports) {
+        if ($this->usedReports() + $reports > $this->maxRunReports) {
             return self::REASON_RUN_REPORTS;
         }
 
-        if ($this->runBytes + $bytes > $this->maxRunBytes) {
+        if ($this->usedBytes() + $bytes > $this->maxRunBytes) {
             return self::REASON_RUN_SIZE;
         }
 
@@ -204,11 +206,11 @@ final class IngestLimits
      */
     public function runExhausted(): ?string
     {
-        if ($this->runReports >= $this->maxRunReports) {
+        if ($this->usedReports() >= $this->maxRunReports) {
             return self::REASON_RUN_REPORTS;
         }
 
-        if ($this->runBytes >= $this->maxRunBytes) {
+        if ($this->usedBytes() >= $this->maxRunBytes) {
             return self::REASON_RUN_SIZE;
         }
 
@@ -217,8 +219,7 @@ final class IngestLimits
 
     /**
      * Whether a retried message (from the retry set) still fits the retry share:
-     * half of each run limit. The share is checked in addition to
-     * {@see checkRun()}. Because of the raised run limits (see the
+     * half of each run limit. Because of the raised run limits (see the
      * constructor), a message within its own limits always fits an unused
      * share, so every run retries at least one message.
      *
@@ -226,11 +227,11 @@ final class IngestLimits
      */
     public function checkRetry(int $reports, int $bytes): ?string
     {
-        if ($this->retryReports + $reports > intdiv($this->maxRunReports, 2)) {
+        if ($this->retryReports + $reports > $this->shareReports()) {
             return self::REASON_RUN_REPORTS;
         }
 
-        if ($this->retryBytes + $bytes > intdiv($this->maxRunBytes, 2)) {
+        if ($this->retryBytes + $bytes > $this->shareBytes()) {
             return self::REASON_RUN_SIZE;
         }
 
@@ -245,11 +246,11 @@ final class IngestLimits
      */
     public function retryShareExhausted(): ?string
     {
-        if ($this->retryReports >= intdiv($this->maxRunReports, 2)) {
+        if ($this->retryReports >= $this->shareReports()) {
             return self::REASON_RUN_REPORTS;
         }
 
-        if ($this->retryBytes >= intdiv($this->maxRunBytes, 2)) {
+        if ($this->retryBytes >= $this->shareBytes()) {
             return self::REASON_RUN_SIZE;
         }
 
@@ -257,33 +258,58 @@ final class IngestLimits
     }
 
     /**
-     * Charge an admitted message to the run budget, and to the retry share
-     * when it came from the retry set.
+     * Charge an admitted message, to the retry share when it came from the
+     * retry set and to new mail otherwise.
      */
     public function charge(int $reports, int $bytes, bool $retry = false): void
     {
-        $this->runReports += max(0, $reports);
-        $this->runBytes   += max(0, $bytes);
-
         if ($retry) {
             $this->retryReports += max(0, $reports);
             $this->retryBytes   += max(0, $bytes);
+
+            return;
         }
+
+        $this->freshReports += max(0, $reports);
+        $this->freshBytes   += max(0, $bytes);
     }
 
     /**
-     * Charge unpacked bytes that were not stored to the run budget: those of a
-     * held or postponed message and a second extraction. Nothing of them is
-     * stored, but the decompression work counts, so a flood of such messages
-     * cannot make one run unpack without bound.
+     * Charge unpacked bytes that were not stored: those of a held or postponed
+     * message. Nothing of them is stored, but the decompression work counts,
+     * so a flood of such messages cannot make one run unpack without bound.
      */
     public function chargeInspected(int $bytes, bool $retry = false): void
     {
-        $this->runBytes += max(0, $bytes);
-
         if ($retry) {
             $this->retryBytes += max(0, $bytes);
+
+            return;
         }
+
+        $this->freshBytes += max(0, $bytes);
+    }
+
+    /** Reports counted against the run: new mail plus retries up to their share. */
+    private function usedReports(): int
+    {
+        return $this->freshReports + min($this->retryReports, $this->shareReports());
+    }
+
+    /** Bytes counted against the run: new mail plus retries up to their share. */
+    private function usedBytes(): int
+    {
+        return $this->freshBytes + min($this->retryBytes, $this->shareBytes());
+    }
+
+    private function shareReports(): int
+    {
+        return intdiv($this->maxRunReports, 2);
+    }
+
+    private function shareBytes(): int
+    {
+        return intdiv($this->maxRunBytes, 2);
     }
 
     public function maxAttachments(): int

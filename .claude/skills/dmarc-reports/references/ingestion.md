@@ -95,7 +95,8 @@ Streaming design (do not revert to loading all messages into an array):
   budget of a run, and a postponement stops it with every unvisited retry UID kept. The retry set is
   stored in round-robin order (unvisited first, retried last, not sorted), so the quota rotates. The
   callback gets `'retry' => true`; the ingestor then allows only half of each run limit
-  (`checkRetry()`), and a postponed retry stops only the retry pass, not the scan. Run limits are
+  (`checkRetry()`), and a postponed retry stops only the retry pass, not the scan. Retry and new-mail
+  usage are counted apart; retries count against the run only up to their half. Run limits are
   clamped to at least twice the per-message reports and four times the per-message size. Admission
   uses the full cost (bytes twice when pass 2 must extract again).
   `IngestLog` writes UID, limit and counts to `com_dmarcreports.php`, never content or addresses.

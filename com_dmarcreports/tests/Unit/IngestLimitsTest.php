@@ -226,6 +226,27 @@ class IngestLimitsTest extends TestCase
         $this->assertNull($fresh->checkRetry(5, 500));
     }
 
+    public function testRetryOvershootNeverReducesTheHalfOfNewMail(): void
+    {
+        // Units stand for MiB: 32 per message, 128 per run, so retries get 64.
+        $limits = new IngestLimits(10, 20, 32, 1000, 128);
+
+        // Retry A is admitted at a cost of 48 (unpacked twice).
+        $this->assertNull($limits->checkRetry(1, 48));
+        $limits->charge(1, 48, true);
+
+        // Retry B is unpacked (24) before it turns out not to fit the share;
+        // the inspection is charged and overshoots the share to 72.
+        $this->assertSame(IngestLimits::REASON_RUN_SIZE, $limits->checkRetry(1, 48));
+        $limits->chargeInspected(24, true);
+        $this->assertSame(IngestLimits::REASON_RUN_SIZE, $limits->retryShareExhausted());
+
+        // New mail still has its half: a 30 unit message unpacked twice (60)
+        // fits, because retries count against the run only up to 64.
+        $this->assertNull($limits->runExhausted());
+        $this->assertNull($limits->checkRun(1, 60));
+    }
+
     public function testNewRunStartsWithAFullBudget(): void
     {
         // Every poll builds a fresh limits object, so a message postponed by
