@@ -221,6 +221,29 @@ try {
     $check($email instanceof DOMElement && $email->getAttribute('value') === 'not-an-address' && $bookings($eventIds[0]) === 1,
         'A refused submission keeps the entered values and creates no booking');
 
+    // With Joomla's page cache on, the booking page that shows one visitor's refused entries must not
+    // be stored and served to the next visitor of the same address.
+    $cacheState = (int) $db->query("SELECT enabled FROM {$prefix}extensions WHERE type='plugin' AND folder='system' AND element='cache'")->fetch_row()[0];
+    $db->query("UPDATE {$prefix}extensions SET enabled=1 WHERE type='plugin' AND folder='system' AND element='cache'");
+    try {
+        $marker = 'cache-' . bin2hex(random_bytes(6));
+        $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+        $request = $prepare($eventIds[0], $slot);
+        $request[2]['booking']['first_name'] = $marker;
+        $request[2]['booking']['email'] = $marker . '-not-an-address';
+        sleep(2);
+        $body = $request[0]->request($request[1], $request[2]);
+        $refusedAt = (string) end($request[0]->locations);
+        $check(str_contains($body, $marker) && $refusedAt !== '', 'With the page cache on, the refused submission still shows its own entries');
+        $next = new AppointmentsHttp('http://localhost', 'booking-cache-next');
+        $nextBody = $next->request(preg_replace('#^https?://[^/]+#', '', $refusedAt));
+        $nextBody .= $next->request(preg_replace('#^https?://[^/]+#', '', $refusedAt));
+        $check($next->status === 200 && !str_contains($nextBody, $marker),
+            'Another visitor of the same booking page address never receives the refused entries from the page cache');
+    } finally {
+        $db->query("UPDATE {$prefix}extensions SET enabled={$cacheState} WHERE type='plugin' AND folder='system' AND element='cache'");
+    }
+
     $request = $prepare($eventIds[0], $slot);
     $request[2]['consent'] = 0;
     $request[2]['booking']['first_name'] = '';

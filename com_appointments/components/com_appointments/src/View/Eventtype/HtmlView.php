@@ -21,6 +21,7 @@ use Advans\Component\Appointments\Administrator\Helper\ConsentMode;
 use Advans\Component\Appointments\Administrator\Helper\FormGuard;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Site\Helper\NoPageCache;
 use Advans\Component\Appointments\Site\Helper\PrivacyLink;
 use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
@@ -130,6 +131,9 @@ class HtmlView extends BaseHtmlView
         $this->fields = $this->getModel()->getFields((int) $this->item->id);
         $app = Factory::getApplication();
         $app->setHeader('Cache-Control', 'private, no-store', true);
+        // A refused submission is shown again with the visitor's own entries (name, e-mail, phone,
+        // answers, guests), and the form carries this session's token: never a shared cached page.
+        NoPageCache::apply($app);
         $this->params = ComponentHelper::getParams('com_appointments');
         $this->inputData = (array) $app->getUserState('com_appointments.booking.' . (int) $this->item->id, []);
 

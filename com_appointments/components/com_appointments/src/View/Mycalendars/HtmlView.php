@@ -13,6 +13,7 @@ use Advans\Component\Appointments\Administrator\Helper\Team\CalendarAccess;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\Team\DeviceService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
+use Advans\Component\Appointments\Site\Helper\NoPageCache;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
@@ -238,9 +239,8 @@ class HtmlView extends BaseHtmlView
     {
         $app = Factory::getApplication();
 
-        if (method_exists($app, 'allowCache')) {
-            $app->allowCache(false);
-        }
+        // Also out of «System - Page Cache»: the activation page answers guests with account data.
+        NoPageCache::apply($app);
 
         $app->setHeader('Cache-Control', 'private, no-store, max-age=0', true);
         $app->setHeader('Pragma', 'no-cache', true);
