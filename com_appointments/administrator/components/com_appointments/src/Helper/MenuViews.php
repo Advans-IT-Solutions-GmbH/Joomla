@@ -103,16 +103,68 @@ final class MenuViews
     }
 
     /**
-     * The published site menu item of a view without further parameters (for example «My calendars»),
-     * from the database, so a mail sent from the administrator or the command line links its page.
-     * An item in "All" languages first, then the lowest id; 0 when there is none.
+     * Pure choice among menu item rows of one view, testable without Joomla: an item the reader may
+     * open (its access level among $levels), in the reader's language first, then in "All", the
+     * lowest id within each; an item of another language is never chosen, because it would switch
+     * the page to that language. Without a language every language qualifies, "All" first.
+     *
+     * @param   iterable<array{id: int|string, language: string, access: int|string}>  $rows
+     * @param   int[]                                                                 $levels  Authorised view levels of the reader.
+     *
+     * @return  int  The Itemid, or 0 for none.
      */
-    public static function itemFor(DatabaseInterface $db, string $view): int
+    public static function pickItem(iterable $rows, string $language, array $levels): int
     {
+        $best = [PHP_INT_MAX, PHP_INT_MAX];
+        $chosen = 0;
+
+        foreach ($rows as $row) {
+            if (!\in_array((int) $row['access'], $levels, true)) {
+                continue;
+            }
+
+            $itemLanguage = (string) $row['language'];
+            $rank = match (true) {
+                $language !== '' && $itemLanguage === $language => 0,
+                $itemLanguage === '*' => 1,
+                $language === '' => 2,
+                default => null,
+            };
+
+            if ($rank === null) {
+                continue;
+            }
+
+            $candidate = [$rank, (int) $row['id']];
+
+            if ($candidate < $best) {
+                $best = $candidate;
+                $chosen = (int) $row['id'];
+            }
+        }
+
+        return $chosen;
+    }
+
+    /**
+     * The published site menu item of a view without further parameters (for example «My calendars»)
+     * for a reader with $levels in $language (a tag such as de-DE), from the database, so a mail sent
+     * from the administrator or the command line links its page (pickItem()); 0 when there is none.
+     *
+     * @param   int[]  $levels  Authorised view levels of the reader.
+     */
+    public static function itemFor(DatabaseInterface $db, string $view, string $language, array $levels): int
+    {
+        $levels = array_values(array_unique(array_map('intval', $levels)));
+
+        if ($levels === []) {
+            return 0;
+        }
+
         $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
         $link = 'index.php?option=com_appointments&view=' . $view;
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['id', 'language']))
+        $query->select($db->quoteName(['id', 'language', 'access']))
             ->from($db->quoteName('#__menu'))
             ->where($db->quoteName('client_id') . ' = 0')
             ->where($db->quoteName('published') . ' = 1')
@@ -120,18 +172,9 @@ final class MenuViews
             ->where($db->quoteName('link') . ' = ' . $db->quote($link))
             ->where('(' . $db->quoteName('publish_up') . ' IS NULL OR ' . $db->quoteName('publish_up') . ' <= ' . $db->quote($now) . ')')
             ->where('(' . $db->quoteName('publish_down') . ' IS NULL OR ' . $db->quoteName('publish_down') . ' >= ' . $db->quote($now) . ')')
-            ->order($db->quoteName('id'));
-        $chosen = 0;
+            ->where($db->quoteName('access') . ' IN (' . implode(',', $levels) . ')');
 
-        foreach ($db->setQuery($query)->loadAssocList() as $row) {
-            if ((string) $row['language'] === '*') {
-                return (int) $row['id'];
-            }
-
-            $chosen = $chosen ?: (int) $row['id'];
-        }
-
-        return $chosen;
+        return self::pickItem($db->setQuery($query)->loadAssocList(), $language, $levels);
     }
 
     /**

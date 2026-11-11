@@ -93,6 +93,24 @@ final class MenuViewsTest extends TestCase
         }
     }
 
+    public function testTheMailLinksTheMenuItemTheReaderMayOpenInTheReadersLanguage(): void
+    {
+        $rows = [
+            ['id' => 30, 'language' => '*', 'access' => 2],
+            ['id' => 31, 'language' => 'de-DE', 'access' => 2],
+            ['id' => 32, 'language' => 'en-GB', 'access' => 2],
+            ['id' => 20, 'language' => 'de-DE', 'access' => 9],
+        ];
+
+        self::assertSame(31, MenuViews::pickItem($rows, 'de-DE', [1, 2]), 'The reader\'s language before "All".');
+        self::assertSame(30, MenuViews::pickItem($rows, 'fr-FR', [1, 2]), '"All" when there is none in the language.');
+        self::assertSame(20, MenuViews::pickItem($rows, 'de-DE', [1, 2, 9]), 'The lowest id within the language.');
+        self::assertSame(0, MenuViews::pickItem([['id' => 32, 'language' => 'en-GB', 'access' => 2]], 'de-DE', [2]),
+            'Never an item of another language.');
+        self::assertSame(0, MenuViews::pickItem($rows, 'de-DE', [1]), 'Never an item the reader may not open.');
+        self::assertSame(30, MenuViews::pickItem($rows, '', [2]), 'Without a language "All" first.');
+    }
+
     public function testOnlyTheListedTasksRun(): void
     {
         foreach (MenuViews::TASKS as $controller => $tasks) {

@@ -94,7 +94,8 @@ class SitePageTest
             });
         }
 
-        $list = appointments_menu_item('index.php?option=com_appointments&view=eventtypes');
+        // A row of its own (removed when the script ends), so renaming it changes no other menu item.
+        $list = appointments_menu_item('index.php?option=com_appointments&view=eventtypes', false, false);
         $listTitle = 'Appointments list fixture';
         $this->db->query("UPDATE {$this->dbPrefix}menu SET title='{$listTitle}' WHERE id={$list}");
         $pages = [

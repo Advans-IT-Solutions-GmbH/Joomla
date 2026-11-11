@@ -9,7 +9,8 @@
  *
  * - appointments_menu_item($link) returns a published public site menu item in "All" languages with
  *   exactly that link, an existing one or a new row (inserted like a menu item saved without a
- *   position in the tree, which the site menu loads all the same);
+ *   position in the tree, which the site menu loads all the same); with $reuse = false always a new
+ *   row that belongs to the caller, so the caller may change or remove it;
  * - appointments_page($event, $query) returns the non-SEF address of the booking page through it.
  *
  * Rows this helper inserts are removed when the script ends, unless $keep is set by a fixture that
@@ -34,11 +35,11 @@ function appointments_menu_db(): array
     return $connection;
 }
 
-function appointments_menu_item(string $link, bool $keep = false): int
+function appointments_menu_item(string $link, bool $keep = false, bool $reuse = true): int
 {
     [$db, $prefix] = appointments_menu_db();
     $escaped = $db->real_escape_string($link);
-    $row = $db->query("SELECT id FROM {$prefix}menu WHERE client_id=0 AND published=1 AND type='component' AND access=1"
+    $row = !$reuse ? null : $db->query("SELECT id FROM {$prefix}menu WHERE client_id=0 AND published=1 AND type='component' AND access=1"
         . " AND language='*' AND link='{$escaped}' ORDER BY id LIMIT 1")->fetch_row();
 
     if ($row) {
