@@ -34,13 +34,6 @@ namespace Joomla\CMS\Language {
         public static function sprintf($key, ...$args): string { return $key . ': ' . implode(', ', $args); }
     }
 }
-namespace Joomla\CMS\Component {
-    class ComponentHelper
-    {
-        // Stand-in for the group based text filter: removes script elements.
-        public static function filterText($text): string { return preg_replace('#<script\b.*?</script>#is', '', (string) $text); }
-    }
-}
 namespace Joomla\CMS\Filter {
     class InputFilter
     {
@@ -182,6 +175,8 @@ namespace {
         public ?string $activeShop = 'j2commerce';
         protected function getImportIdentity(): object { return $this->identity; }
         protected function getActiveShop(): ?string { return $this->activeShop; }
+        // Stand-in for the group based text filter (covered against real Joomla by 04-import-model.php).
+        protected function applyTextFilter(string $text): string { return preg_replace('#<script\b.*?</script>#is', '', $text); }
         public function authorize(?object $article, int $categoryId, array $data): array
         {
             return $this->authorizeArticleImport($article, $categoryId, $data);

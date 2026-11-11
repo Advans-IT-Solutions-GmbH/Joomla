@@ -15,6 +15,7 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Table\Category as CategoryTable;
 use Joomla\CMS\Table\Menu as MenuTable;
+use Joomla\CMS\Access\Access;
 use Joomla\CMS\Application\ApplicationHelper;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Filter\InputFilter;
@@ -297,9 +298,97 @@ class ImportModel extends BaseDatabaseModel
             throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
         }
 
-        return (string) ComponentHelper::filterText($value);
+        return $value === '' ? '' : $this->applyTextFilter($value);
     }
 
+    /**
+     * Joomla's text filter (Global Configuration, Text Filters) for the importing identity.
+     *
+     * ComponentHelper::filterText() reads the user from the session, which an import run
+     * outside a web session (CLI, tests) does not have, and it would filter for the wrong
+     * user whenever the identity differs. This applies the same rules to the groups of
+     * getImportIdentity(): the filter types NH, NONE, BL, CBL and WL, cumulative per group.
+     */
+    protected function applyTextFilter(string $text): string
+    {
+        $filters = ComponentHelper::getParams('com_config')->get('filters');
+        $groups  = Access::getGroupsByUser((int) ($this->getImportIdentity()->id ?? 0));
+
+        $forbiddenTags = $forbiddenAttributes = $customTags = $customAttributes = $allowedTags = $allowedAttributes = [];
+        $allowed = $forbidden = $custom = $unfiltered = false;
+
+        foreach ($groups as $groupId) {
+            if (!isset($filters->$groupId)) {
+                continue;
+            }
+
+            $type = strtoupper((string) $filters->$groupId->filter_type);
+
+            if ($type === 'NONE') {
+                $unfiltered = true;
+            } elseif ($type !== 'NH') {
+                $tags       = array_filter(array_map('trim', explode(',', (string) ($filters->$groupId->filter_tags ?? ''))));
+                $attributes = array_filter(array_map('trim', explode(',', (string) ($filters->$groupId->filter_attributes ?? ''))));
+
+                if ($type === 'BL') {
+                    $forbidden           = true;
+                    $forbiddenTags       = array_merge($forbiddenTags, $tags);
+                    $forbiddenAttributes = array_merge($forbiddenAttributes, $attributes);
+                } elseif ($type === 'CBL') {
+                    if ($tags || $attributes) {
+                        $custom           = true;
+                        $customTags       = array_merge($customTags, $tags);
+                        $customAttributes = array_merge($customAttributes, $attributes);
+                    }
+                } elseif ($type === 'WL') {
+                    $allowed           = true;
+                    $allowedTags       = array_merge($allowedTags, $tags);
+                    $allowedAttributes = array_merge($allowedAttributes, $attributes);
+                }
+            }
+        }
+
+        if ($unfiltered) {
+            return $text;
+        }
+
+        $forbiddenTags       = array_unique($forbiddenTags);
+        $forbiddenAttributes = array_unique($forbiddenAttributes);
+        $customTags          = array_unique($customTags);
+        $customAttributes    = array_unique($customAttributes);
+        $allowedTags         = array_unique($allowedTags);
+        $allowedAttributes   = array_unique($allowedAttributes);
+
+        if ($custom) {
+            $filter = InputFilter::getInstance([], [], 1, 1);
+
+            if ($customTags) {
+                $filter->blockedTags = $customTags;
+            }
+
+            if ($customAttributes) {
+                $filter->blockedAttributes = $customAttributes;
+            }
+        } elseif ($forbidden) {
+            $forbiddenTags       = array_diff($forbiddenTags, $allowedTags);
+            $forbiddenAttributes = array_diff($forbiddenAttributes, $allowedAttributes);
+            $filter = InputFilter::getInstance($forbiddenTags, $forbiddenAttributes, 1, 1);
+
+            if ($allowedTags) {
+                $filter->blockedTags = array_diff($filter->blockedTags, $allowedTags);
+            }
+
+            if ($allowedAttributes) {
+                $filter->blockedAttributes = array_diff($filter->blockedAttributes, $allowedAttributes);
+            }
+        } elseif ($allowed) {
+            $filter = InputFilter::getInstance($allowedTags, $allowedAttributes, 0, 0, 0);
+        } else {
+            $filter = InputFilter::getInstance();
+        }
+
+        return (string) $filter->clean($text, 'html');
+    }
     /**
      * Validates a JSON column of #__content (images, urls, attribs, metadata).
      *
