@@ -1426,6 +1426,11 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $data = $input->post->get('jform', [], 'array');
             $data = \is_array($data) ? $data : [];
 
+            // Only a request that carries the profile form (jform) represents
+            // every editable field. A legacy request with plain field names
+            // does not, so its missing custom fields must not count as cleared.
+            $carriesForm = $data !== [];
+
             // Template overrides that post jform[email] or plain field names
             // keep working, as with the former handler.
             if (!isset($data['email1']) && isset($data['email'])) {
@@ -1474,17 +1479,20 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             // As ProfileController::save(): plugins normalise the request data
             // first. The fields plugin turns an editable custom field missing
             // from the request (all checkboxes cleared) into a cleared value.
-            $objData = (object) $data;
-            $app->getDispatcher()->dispatch(
-                'onContentNormaliseRequestData',
-                new NormaliseRequestDataEvent('onContentNormaliseRequestData', [
-                    'context' => 'com_users.user',
-                    'data'    => $objData,
-                    'subject' => $form,
-                ])
-            );
-            $data       = (array) $objData;
-            $data['id'] = $userId;
+            // Only for a request that carries the form, see above.
+            if ($carriesForm) {
+                $objData = (object) $data;
+                $app->getDispatcher()->dispatch(
+                    'onContentNormaliseRequestData',
+                    new NormaliseRequestDataEvent('onContentNormaliseRequestData', [
+                        'context' => 'com_users.user',
+                        'data'    => $objData,
+                        'subject' => $form,
+                    ])
+                );
+                $data       = (array) $objData;
+                $data['id'] = $userId;
+            }
 
             $validated = $model->validate($form, $data);
 
