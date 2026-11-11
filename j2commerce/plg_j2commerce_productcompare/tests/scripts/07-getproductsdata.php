@@ -65,6 +65,7 @@ class GetProductsDataTest
             $this->testGetProductsData();
             $this->testDisabledProductExcluded();
             $this->testHiddenProductsExcluded();
+            $this->testHiddenCategoryExcluded();
             $this->testNullDateWindowStaysVisible();
             $this->testGetProductOptions();
         } finally {
@@ -244,7 +245,55 @@ class GetProductsDataTest
     }
 
     /**
-     * An open publishing window is stored by Joomla either as SQL NULL or, in a
+     * Joomla hides the articles of a category that is unpublished or not readable for the
+     * visitor. The comparison must hide their products as well, or a guessed product ID hands
+     * out title, description, price and stock of a product the storefront does not show.
+     */
+    private function testHiddenCategoryExcluded(): void
+    {
+        echo "\n--- Products of an unpublished or protected category excluded ---\n";
+
+        $plugin = $this->makePlugin();
+        $method = (new ReflectionClass($plugin))->getMethod('getProductsData');
+        $method->setAccessible(true);
+
+        $productId = $this->seedHiddenProduct('category toggle', ['state' => 1, 'access' => 1, 'publish_up' => null, 'publish_down' => null]);
+        $this->test('Fixture for the category checks created', $productId !== 0);
+
+        if ($productId === 0) {
+            return;
+        }
+
+        $catid = (int) $this->db->setQuery(
+            'SELECT catid FROM ' . $this->db->quoteName('#__content')
+            . ' WHERE id = (SELECT product_source_id FROM ' . $this->db->quoteName($this->productsTable)
+            . ' WHERE ' . $this->db->quoteName($this->productsPk) . ' = ' . $productId . ')'
+        )->loadResult();
+
+        $pkCol    = $this->productsPk;
+        $returned = fn () => array_map(fn ($p) => (int) $p->$pkCol, $method->invoke($plugin, [$productId]));
+
+        $this->test('Product in a published public category is returned', $returned() === [$productId]);
+
+        foreach ([
+            'unpublished category'            => ['published = 0', 'published = 1'],
+            'category behind a view level'    => ['access = 2', 'access = 1'],
+        ] as $label => [$hide, $restore]) {
+            $this->db->setQuery('UPDATE #__categories SET ' . $hide . ' WHERE id = ' . $catid)->execute();
+
+            try {
+                $this->test("Not in results ($label)", $returned() === []);
+            } finally {
+                $this->db->setQuery('UPDATE #__categories SET ' . $restore . ' WHERE id = ' . $catid)->execute();
+            }
+        }
+
+        $this->test('Product is returned again after the category is restored', $returned() === [$productId]);
+    }
+
+    /**
+     * An open publishing window is stored by Joomla either
+ as SQL NULL or, in a
      * database that was migrated from an older Joomla, as the driver's null-date
      * sentinel ('0000-00-00 00:00:00'). Both mean "no limit", so a product whose
      * article carries the sentinel is an ordinary, visible product and has to be
