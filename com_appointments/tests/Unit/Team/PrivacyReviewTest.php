@@ -76,6 +76,18 @@ final class PrivacyReviewTest extends TestCase
         // A second pass changes nothing: the address is gone everywhere.
         self::assertSame($changed, PrivacyReview::withoutAddress($changed, 'anna@example.test', '[removed]'));
     }
+    public function testPercentEncodedAddressesGoInTextAndParameters(): void
+    {
+        $ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:own-5\r\nSUMMARY:Call anna@example.test\r\n"
+            . "DESCRIPTION:Also an%6Ea%40example%2Etest and ann%61@ex%61mple.test\r\n"
+            . "ATTENDEE;SENT-BY=\"mailto:anna%40example%2Etest\":mailto:other@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        $changed = str_replace("\r\n ", '', PrivacyReview::withoutAddress($ics, 'anna@example.test', '[removed]'));
+
+        self::assertSame('DESCRIPTION:Also [removed] and [removed]', explode("\r\n", $changed)[4]);
+        self::assertStringContainsString('SENT-BY="mailto:[removed]":mailto:other@example.test', $changed);
+        self::assertSame(0, preg_match('/anna|an%6Ea|ann%61/i', $changed));
+    }
+
     public function testAnOrganiserAddressAndLongLines(): void
     {
         $ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:own-2\r\nORGANIZER:mailto:anna@example.test\r\n"

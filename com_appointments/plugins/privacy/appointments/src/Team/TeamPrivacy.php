@@ -420,7 +420,7 @@ final class TeamPrivacy
 
         try {
             // Decided before anything else of the request changes the account.
-            $calendarUser = PrivacyReview::calendarUser($this->services->db(), $email);
+            $calendarUser = PrivacyReview::calendarUser($this->services->db(), $email, $user !== null ? (int) $user->id : 0);
             $search = $this->search($email, null);
             $unsearched = $search['unsearched'];
 

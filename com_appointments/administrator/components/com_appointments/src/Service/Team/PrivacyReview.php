@@ -51,19 +51,20 @@ final class PrivacyReview
      * a device, a personal key, an owned calendar or an activation link): such
      * an address is never handled automatically by a privacy request.
      */
-    public static function calendarUser(DatabaseInterface $db, string $email): bool
+    public static function calendarUser(DatabaseInterface $db, string $email, int $userId = 0): bool
     {
         $email = mb_strtolower(trim($email), 'UTF-8');
+        // The request's account by its id as well: a privacy plugin that ran before may already
+        // have replaced the account's address.
+        $ids = $userId > 0 ? [$userId] : [];
 
-        if ($email === '') {
-            return false;
+        if ($email !== '') {
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $ids = array_merge($ids, array_map('intval', $db->setQuery($query->select($db->quoteName('id'))->from($db->quoteName('#__users'))
+                ->where('LOWER(' . $db->quoteName('email') . ') = :email')->bind(':email', $email))->loadColumn() ?: []));
         }
 
-        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $ids = array_map('intval', $db->setQuery($query->select($db->quoteName('id'))->from($db->quoteName('#__users'))
-            ->where('LOWER(' . $db->quoteName('email') . ') = :email')->bind(':email', $email))->loadColumn() ?: []);
-
-        foreach ($ids as $id) {
+        foreach (array_unique($ids) as $id) {
             foreach ([['#__appointments_calendar_grants', 'user_id'], ['#__appointments_devices', 'user_id'],
                 ['#__appointments_user_keys', 'user_id'], ['#__appointments_calendars', 'owner_user_id'],
                 ['#__appointments_invitations', 'user_id']] as [$table, $column]) {
@@ -237,6 +238,14 @@ final class PrivacyReview
                 return 'COM_APPOINTMENTS_PRIVACY_REVIEW_CHANGED';
             }
 
+            // Checked again right before the change, so an access revoked while the page was
+            // open never writes (the same contract as a CalDAV write).
+            $access = $this->services->grants()->accessFor($actor, $calendarId);
+
+            if ($access === null || !$access->readsContent() || !$access->role->canWrite()) {
+                return 'COM_APPOINTMENTS_PRIVACY_REVIEW_NO_ACCESS';
+            }
+
             if ($action === self::ACTION_DELETE) {
                 $this->services->objects()->delete($calendarId, $uri, $etag, null);
             } else {
@@ -391,14 +400,16 @@ final class PrivacyReview
      */
     private static function replaceAddress(string $line, string $email, string $replacement): string
     {
-        $label = '[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?';
-        $pattern = '/[\p{L}\p{N}.!#$%&\'*+\/=?^_`{|}~-]{1,64}(?:@|%40)' . $label . '(?:\.' . $label . ')+/iu';
+        // A character of a domain label may also be percent-encoded, and so may a dot.
+        $char = '(?:[\p{L}\p{N}]|%[0-9A-Fa-f]{2})';
+        $label = $char . '(?:(?:[\p{L}\p{N}-]|%[0-9A-Fa-f]{2}){0,61}' . $char . ')?';
+        $pattern = '/[\p{L}\p{N}.!#$%&\'*+\/=?^_`{|}~-]{1,192}(?:@|%40)' . $label . '(?:(?:\.|%2[Ee])' . $label . ')+/iu';
         $result = preg_replace_callback($pattern, static function (array $match) use ($email, $replacement): string {
             $found = rtrim(ltrim($match[0], '.'), '.');
             $lead = substr($match[0], 0, strpos($match[0], $found));
             $tail = substr($match[0], \strlen($lead) + \strlen($found));
 
-            return mb_strtolower(str_ireplace('%40', '@', $found), 'UTF-8') === $email ? $lead . $replacement . $tail : $match[0];
+            return mb_strtolower(rawurldecode($found), 'UTF-8') === $email ? $lead . $replacement . $tail : $match[0];
         }, $line);
 
         return $result ?? $line;
