@@ -421,6 +421,26 @@ try {
         $check($formalState() === 1 && str_contains($pendingHtml, 'Appointments reported incomplete removal.')
             && $queue->pendingPrivacy($formalId) === 1 && count($requests) === $callsBeforeOverlap,
             'After overlap release the independent completion guard still sees pending CRM cleanup with the generic adapter disabled');
+        // Native Remove of the second request: only the Close cleanup is outstanding.
+        $application->bootComponent('com_privacy');
+        $privacyPlugin = $application->bootPlugin('appointments', 'privacy');
+        $removal = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
+        if (!$removal->load($requestId + 2)) {
+            throw new RuntimeException('Cannot load the second formal privacy request.');
+        }
+        $application->getMessageQueue(true);
+        $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $removal, 'user' => null]);
+        $privacyPlugin->onPrivacyCanRemoveData($canRemove);
+        $privacyPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
+            ['subject' => $removal, 'user' => null]));
+        $warnings = array_column(array_filter($application->getMessageQueue(true),
+            static fn (array $message): bool => $message['type'] === 'warning'), 'message');
+        $check($canRemove->getArgument('result')[0]->canRemove
+            && in_array(\Joomla\CMS\Language\Text::_('PLG_PRIVACY_APPOINTMENTS_CRM_PENDING'), $warnings, true)
+            && !in_array(\Joomla\CMS\Language\Text::_('PLG_PRIVACY_APPOINTMENTS_CLEANUP_FAILED'), $warnings, true)
+            && \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, $requestId + 2)
+            && $queue->pendingPrivacy($requestId + 2) === 1 && count($requests) === $callsBeforeOverlap,
+            'Native Remove with only Close cleanup pending names the Close cleanup, not calendar or conference cleanup, and stays incomplete');
     } finally {
         $operation?->release();
         if ($generic !== null) {
@@ -568,9 +588,10 @@ try {
         $db->query("DELETE FROM {$prefix}appointments_close WHERE booking_id IN (" . implode(',', $ids) . ')');
         $db->query("DELETE FROM {$prefix}appointments_audit WHERE booking_id IN (" . implode(',', $ids) . ')');
     }
-    $db->query("DELETE FROM {$prefix}appointments_privacy_outcomes WHERE request_id={$requestId}");
-    $db->query("DELETE FROM {$prefix}appointments_privacy_cleanup WHERE request_id={$requestId}");
-    $db->query("DELETE FROM {$prefix}appointments_privacy_staff WHERE request_id={$requestId}");
+    $privacyIds = $requestId . ',' . ($requestId + 1) . ',' . ($requestId + 2);
+    $db->query("DELETE FROM {$prefix}appointments_privacy_outcomes WHERE request_id IN ({$privacyIds})");
+    $db->query("DELETE FROM {$prefix}appointments_privacy_cleanup WHERE request_id IN ({$privacyIds})");
+    $db->query("DELETE FROM {$prefix}appointments_privacy_staff WHERE request_id IN ({$privacyIds})");
     $db->query("DELETE FROM {$prefix}privacy_requests WHERE id IN (" . ($requestId + 1) . ',' . ($requestId + 2) . ')');
     $db->query("DELETE FROM {$prefix}appointments_ratelimit WHERE bucket IN ({$rateBuckets})");
     foreach ($rateRows as $row) {
