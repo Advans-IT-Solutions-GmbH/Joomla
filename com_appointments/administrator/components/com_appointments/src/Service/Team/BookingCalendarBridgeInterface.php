@@ -103,7 +103,7 @@ interface BookingCalendarBridgeInterface
      * target alone. An entry of the target's own with the booking's UID is never
      * adopted by a restore and stays as it is. A request is closed
      * once a pass over its bookings ended without a failed write; after a failed write the next run starts a new pass (at most five,
-     * then the request is given up and logged). Without a request nothing is
+     * then the request is kept as failed, logged and reported by restoreFailed()). Without a request nothing is
      * written, so a copy a device deleted stays deleted. While the feature is
      * switched off, every clean-up records a request for all event types, so
      * the copies come back when it is switched on again; nothing is written
@@ -118,4 +118,11 @@ interface BookingCalendarBridgeInterface
      * task reports it as `restore_pending`: a restore is complete at 0.
      */
     public function restorePending(): int;
+
+    /**
+     * Restore requests given up after five passes with failed writes (-1 when they cannot
+     * be counted). The calendar retention task reports it as `restore_failed` and then fails;
+     * a new request (target change, switching on again) starts such a request again.
+     */
+    public function restoreFailed(): int;
 }

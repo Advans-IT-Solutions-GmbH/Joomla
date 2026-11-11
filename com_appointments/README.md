@@ -471,7 +471,7 @@ per run and one worker at a time, and moves copies out of a calendar that is no 
 All future bookings are written, also those that still have a copy, because a copy that survived
 the switched-off period may be stale. Only a copy whose ETag changed with the write (so the refresh
 was committed) and that lies in the target alone counts; after a failed write the next run starts another pass, at most five, then
-the request is given up and logged. Copies that a device deleted come back as well, but an entry of the target's own with the booking's UID (for
+the request is kept as failed (`restore_failed` in the task log, the run fails) until a new request. Copies that a device deleted come back as well, but an entry of the target's own with the booking's UID (for
 example an imported mail attachment) is never adopted by a restore. Past bookings
 get no new copy. Without such a request nothing is rewritten, so a copy deleted on a device
 otherwise stays deleted.
@@ -482,8 +482,11 @@ on the deletions at once:
 
 1. In **System → Scheduled Tasks**, run *Appointments: retention* and *Appointments: internet
    calendar retention* by hand at once, and again until the task log shows `bookings` 0 for the
-   first and `restore_pending` 0 for the second: each run handles one batch only. Resolve failed
-   runs before the devices synchronise.
+   first and `restore_pending` 0 and `restore_failed` 0 for the second: each run handles one batch
+   only. A request given up after five passes stays as `restore_failed` and makes the run fail;
+   resolve the cause (for example the host's Write access), then request the restore anew by
+   switching the internet calendars off and on again. Resolve failed runs before the devices
+   synchronise.
 2. Repeat every deletion requested since the date of the backup: deletion links from mails,
    deletions in the administrator and Joomla privacy requests. The restored database no longer
    knows them; the operator's own records decide.
