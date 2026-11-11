@@ -56,6 +56,11 @@ class Dispatcher extends ComponentDispatcher
             throw new RouteNotFoundException(Text::_('JERROR_PAGE_NOT_FOUND'));
         }
 
+        // A layout Joomla merged in from the frame's menu item belongs to that item's view.
+        if (MenuViews::inFrame($this->input->getCmd('view', ''), $menu)) {
+            $this->input->set('layout', 'default');
+        }
+
         parent::dispatch();
     }
 }

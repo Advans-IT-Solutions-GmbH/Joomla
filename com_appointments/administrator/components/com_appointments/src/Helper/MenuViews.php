@@ -78,8 +78,12 @@ final class MenuViews
         $layout = self::layout($layout);
         $format = strtolower($format === '' ? 'html' : $format);
 
+        // In the frame of a menu item of another view, Joomla merges that item's layout into the
+        // request: it belongs to the frame, not to this page (inFrame(), the dispatcher resets it).
+        $frameLayout = self::inFrame($view, $menu) ? self::layout((string) ($menu['layout'] ?? '')) : 'default';
+
         if (\in_array($view, self::UNFRAMED, true)) {
-            return $format === 'html' && $layout === 'default';
+            return $format === 'html' && ($layout === 'default' || $layout === $frameLayout);
         }
 
         if ($menu === null || ($menu['option'] ?? '') !== 'com_appointments') {
@@ -94,12 +98,27 @@ final class MenuViews
             // The date-and-time part on its own (format=raw) is the background update of the same page.
             'eventtype' => $id > 0 && \in_array($format, ['html', 'raw'], true) && (
                 ($menuView === 'eventtype' && (int) ($menu['id'] ?? 0) === $id && $layout === $menuLayout)
-                || ($menuView === 'eventtypes' && $layout === 'default')
+                || ($menuView === 'eventtypes' && ($layout === 'default' || $layout === $frameLayout))
             ),
             'mycalendars' => $menuView === 'mycalendars' && $format === 'html'
                 && ($layout === $menuLayout || \in_array($layout, self::MYCALENDARS_LAYOUTS, true)),
             default => false,
         };
+    }
+
+    /**
+     * Whether $view is shown in the frame of a menu item of this component that points at another
+     * view: the confirmation and the signed pages in the frame of a booking page, a booking page below
+     * the list. Joomla merges the frame's layout into such a request; the page uses its own default.
+     *
+     * @param   array|null  $menu  Query of the active menu item, null without one.
+     */
+    public static function inFrame(string $view, ?array $menu): bool
+    {
+        $view = strtolower($view === '' ? 'eventtypes' : $view);
+        $menuView = strtolower((string) ($menu['view'] ?? ''));
+
+        return $menu !== null && ($menu['option'] ?? '') === 'com_appointments' && $menuView !== '' && $menuView !== $view;
     }
 
     /**

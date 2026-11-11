@@ -93,6 +93,26 @@ final class MenuViewsTest extends TestCase
         }
     }
 
+    public function testTheLayoutOfAFrameIsNoLayoutOfThePageInIt(): void
+    {
+        // Joomla merges the frame's layout into the request; the dispatcher then resets it (inFrame()).
+        $compactPage = self::BOOKING_PAGE + ['layout' => 'mytemplate:compact'];
+        $compactList = self::LIST + ['layout' => 'mytemplate:cards'];
+
+        self::assertTrue(self::page('manage', 0, $compactPage, 'mytemplate:compact'));
+        self::assertTrue(self::page('booking', 0, $compactPage, 'mytemplate:compact'));
+        self::assertFalse(self::page('manage', 0, $compactPage, 'mytemplate:other'));
+        self::assertTrue(self::page('eventtype', 8, $compactList, 'mytemplate:cards'));
+        self::assertTrue(self::page('eventtype', 8, $compactList));
+        self::assertFalse(self::page('eventtype', 8, $compactList, 'mytemplate:other'));
+
+        self::assertTrue(MenuViews::inFrame('manage', $compactPage));
+        self::assertTrue(MenuViews::inFrame('eventtype', $compactList));
+        self::assertFalse(MenuViews::inFrame('eventtype', $compactPage), 'Its own menu item is no frame.');
+        self::assertFalse(MenuViews::inFrame('booking', null));
+        self::assertFalse(MenuViews::inFrame('booking', self::ARTICLE), 'Another component merges nothing.');
+    }
+
     public function testTheMailLinksTheMenuItemTheReaderMayOpenInTheReadersLanguage(): void
     {
         $rows = [
