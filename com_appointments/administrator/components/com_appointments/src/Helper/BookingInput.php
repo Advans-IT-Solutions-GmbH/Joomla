@@ -42,6 +42,24 @@ final class BookingInput
      */
     private const KEEP_LEADING_ZERO = ['39', '378', '379', '225', '229', '242'];
 
+    /**
+     * Number of digits after the calling code, for the calling codes whose national numbers
+     * all have the same length (geographic, mobile and freephone numbers alike): North America
+     * 10, Russia and Kazakhstan 10, Greece 10, France 9, Spain 9, Switzerland 9, Poland 9,
+     * Portugal 9, Czechia 9, Denmark 8. Every other calling code has national numbers of
+     * different lengths and only gets the general E.164 bounds (see phone()).
+     */
+    private const NATIONAL_LENGTH = [
+        '1' => 10, '7' => 10, '30' => 10, '33' => 9, '34' => 9, '41' => 9, '45' => 8, '48' => 9,
+        '351' => 9, '420' => 9,
+    ];
+
+    /** Shortest national number accepted for a calling code without a fixed length. */
+    private const MIN_NATIONAL_LENGTH = 3;
+
+    /** E.164: an international number has at most 15 digits, calling code included. */
+    private const MAX_E164_LENGTH = 15;
+
     /** Default and upper bound of the component option `max_guests` (0 = no guest field). */
     public const DEFAULT_MAX_GUESTS = 10;
     public const MAX_GUESTS_LIMIT = 50;
@@ -232,14 +250,17 @@ final class BookingInput
 
     /**
      * Runs the check of one field. A refusal becomes the message of that field: the
-     * required-field message when the field is empty, otherwise the field's own message.
+     * required-field message when the field is empty, the length message when a telephone
+     * number has too few or too many digits for its calling code, otherwise the field's own
+     * message.
      */
     private function collect(array &$errors, string $field, string $message, callable $check): mixed
     {
         try {
             return $check();
         } catch (BookingValidationException $e) {
-            $errors[$field] = $e->languageKey === 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED' ? $e->languageKey : $message;
+            $errors[$field] = in_array($e->languageKey, ['COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED', 'COM_APPOINTMENTS_BOOKING_ERROR_PHONE_LENGTH'], true)
+                ? $e->languageKey : $message;
 
             return null;
         }
@@ -305,7 +326,8 @@ final class BookingInput
      * empty. The visitor chooses a calling code and types the national number, or types
      * the whole international number starting with "+" or "00", in which case the
      * calling code is read from the number and the selector is ignored. Spaces,
-     * brackets, dots and hyphens are ignored; a national trunk zero is dropped.
+     * brackets, dots and hyphens are ignored; a national trunk zero is dropped. A number
+     * whose length does not fit its calling code is refused with its own message.
      */
     private function phone(mixed $raw): ?string
     {
@@ -350,11 +372,30 @@ final class BookingInput
             $digits = substr($digits, 1);
         }
 
-        if (!preg_match('/^[0-9]{3,14}$/D', $digits) || strlen($code . $digits) > 15) {
+        if (!preg_match('/^[0-9]*$/D', $digits)) {
             throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
         }
 
+        if (!self::plausibleLength($code, strlen($digits))) {
+            throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_PHONE_LENGTH');
+        }
+
         return '+' . $code . $digits;
+    }
+
+    /**
+     * Whether a national number of $length digits fits the calling code $code: exactly the
+     * length of NATIONAL_LENGTH where the code has one ("+41 123" is refused, Swiss numbers
+     * have 9 digits), otherwise at least MIN_NATIONAL_LENGTH digits and, with the code, at
+     * most the 15 digits of E.164.
+     */
+    private static function plausibleLength(string $code, int $length): bool
+    {
+        if (isset(self::NATIONAL_LENGTH[$code])) {
+            return $length === self::NATIONAL_LENGTH[$code];
+        }
+
+        return $length >= self::MIN_NATIONAL_LENGTH && strlen($code) + $length <= self::MAX_E164_LENGTH;
     }
 
     private function text($value, int $max): string
