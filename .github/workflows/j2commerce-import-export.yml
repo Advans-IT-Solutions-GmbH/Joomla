@@ -115,6 +115,9 @@ jobs:
         run: |
           # xargs exits non-zero as soon as one file fails; `find -exec \;` would not.
           find j2commerce/com_j2commerce_importexport -name '*.php' -not -path '*/vendor/*' -print0 | xargs -0 -n1 php -l
+      # Framework-free contract checks, including the import authorization regressions.
+      - name: Run import contract checks
+        run: php -d memory_limit=32M j2commerce/com_j2commerce_importexport/tests/import-contract.php
 
   language-lint:
     name: Language Files

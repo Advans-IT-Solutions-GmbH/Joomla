@@ -62,6 +62,7 @@ $date = static fn (?string $utc): string => $utc ? HTMLHelper::_('date', $utc, T
 <?php if (!$this->items) : ?>
     <p class="alert alert-info"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_INVITATIONS_EMPTY'); ?></p>
 <?php else : ?>
+    <div class="table-responsive">
     <table class="table">
         <caption class="visually-hidden"><?php echo Text::_('COM_APPOINTMENTS_TEAM_INVITATIONS_TITLE'); ?></caption>
         <thead><tr>
@@ -96,4 +97,5 @@ $date = static fn (?string $utc): string => $utc ? HTMLHelper::_('date', $utc, T
         <?php endforeach; ?>
         </tbody>
     </table>
+    </div>
 <?php endif; ?>

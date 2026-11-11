@@ -56,6 +56,7 @@ $noteOf = function ($title): string {
                         <?php echo Text::_('COM_APPOINTMENTS_BLOCKEDS_EMPTY'); ?>
                     </div>
                 <?php else : ?>
+                    <div class="table-responsive">
                     <table class="table" id="blockedList">
                         <caption class="visually-hidden">
                             <?php echo Text::_('COM_APPOINTMENTS_BLOCKEDS_TITLE'); ?>
@@ -93,6 +94,7 @@ $noteOf = function ($title): string {
                             <?php endforeach; ?>
                         </tbody>
                     </table>
+                    </div>
 
                     <?php echo $this->pagination->getListFooter(); ?>
                 <?php endif; ?>
