@@ -631,8 +631,12 @@ index of e-mail addresses anywhere (maintainer's decision, see 5.10).
   that work's consent.
 ## 10. Devices and «My calendars» (work package D)
 
-Site view `mycalendars` (signed in, feature on; otherwise 404): calendars with role, devices with
-client, state and last synchronisation, «Add device» (name, client, checkbox with the usage rule
+Site view `mycalendars` (signed in, feature on; otherwise 404; and eligible: a member of a team group
+or the external group and, when `team_viewlevel` is set, holding that access level; otherwise 403
+with Joomla's «not authorised» page). The view and every device task (`devices.create`, `rename`,
+`remove`) check this on the server for every request, also at an address without a menu item; the
+menu item's access level only hides the link. Super Users have no exception. Content: calendars
+with role, devices with client, state and last synchronisation, «Add device» (name, client, checkbox with the usage rule
 text and its version, `TeamStates::DEVICE_RULE_VERSION`), «Remove device» (starts the clean-up). The
 created page shows the app password once (copy button, no autocomplete, `Cache-Control: no-store`),
 the server address, the user name and the client-specific instructions (section 16). The app
