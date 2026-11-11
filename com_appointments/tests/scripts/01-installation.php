@@ -250,7 +250,7 @@ class InstallationTest
         $tasks = function (): array {
             $found = [];
             $result = $this->db->query("SELECT id, type, state, execution_rules, params FROM {$this->dbPrefix}scheduler_tasks"
-                . " WHERE type IN ('plg_task_appointments.reminders','plg_task_appointments.retention') ORDER BY id");
+                . " WHERE type IN ('plg_task_appointments.reminders','plg_task_appointments.retention','plg_task_appointments.close') ORDER BY id");
             while ($result && ($row = $result->fetch_assoc())) {
                 $found[$row['type']][] = $row;
             }
@@ -277,6 +277,54 @@ class InstallationTest
                 && ($rules($reminders[0])['rule-type'] ?? '') === 'interval-minutes' && (int) ($rules($reminders[0])['interval-minutes'] ?? 0) === 5
                 && ($rules($retention[0])['rule-type'] ?? '') === 'interval-hours' && (int) ($rules($retention[0])['interval-hours'] ?? 0) === 24
                 && (int) (json_decode((string) $reminders[0]['params'], true)['batch_size'] ?? 0) === 100;
+        });
+
+        $this->test('Installation creates exactly one Close delivery task, disabled even on a fresh installation', function () use ($tasks) {
+            $close = $tasks()['plg_task_appointments.close'] ?? [];
+            $rules = json_decode((string) ($close[0]['execution_rules'] ?? ''), true) ?: [];
+
+            return count($close) === 1 && (int) $close[0]['state'] === 0
+                && ($rules['rule-type'] ?? '') === 'interval-minutes' && (int) ($rules['interval-minutes'] ?? 0) === 5;
+        });
+
+        $this->test('Installation creates the Close transfer tables and removes the unreleased evaluation table', function () {
+            $exists = fn (string $table): bool => ($result = $this->db->query("SHOW TABLES LIKE '{$this->dbPrefix}{$table}'"))
+                && $result->num_rows === 1;
+
+            return $exists('appointments_close_delivery') && $exists('appointments_close_limits') && !$exists('appointments_close');
+        });
+
+        $this->test('An update keeps the Close task once and preserves the state the operator chose', function () use ($tasks, $reinstall) {
+            $close = (int) ($tasks()['plg_task_appointments.close'][0]['id'] ?? 0);
+            if ($close === 0) {
+                return false;
+            }
+            try {
+                $preserved = true;
+                foreach ([1, -2, 0] as $state) {
+                    $this->db->query("UPDATE {$this->dbPrefix}scheduler_tasks SET state = {$state} WHERE id = {$close}");
+                    if (!$reinstall()) {
+                        return false;
+                    }
+                    $after = $tasks()['plg_task_appointments.close'] ?? [];
+                    $preserved = $preserved && count($after) === 1 && (int) $after[0]['id'] === $close
+                        && (int) $after[0]['state'] === $state;
+                }
+
+                return $preserved;
+            } finally {
+                $this->db->query("UPDATE {$this->dbPrefix}scheduler_tasks SET state = 0 WHERE id = {$close}");
+            }
+        });
+
+        $this->test('An update recreates a missing Close task disabled', function () use ($tasks, $reinstall) {
+            $this->db->query("DELETE FROM {$this->dbPrefix}scheduler_tasks WHERE type = 'plg_task_appointments.close'");
+            if (!$reinstall()) {
+                return false;
+            }
+            $close = $tasks()['plg_task_appointments.close'] ?? [];
+
+            return count($close) === 1 && (int) $close[0]['state'] === 0;
         });
 
         $this->test('An update never re-enables or duplicates a task the operator disabled or trashed', function () use ($tasks, $reinstall) {
