@@ -804,11 +804,15 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 return Text::_('PLG_AJAX_JOOMLAAJAXFORMS_JS_ERROR_GENERIC');
             }
 
+            // The plugin is set first: the field reads it while it is set up,
+            // and outside of com_users it would read the options of com_ajax.
+            // A field that cannot be set up (captcha plugin not installed) drops
+            // out of the form and is not validated, as in com_users.
+            $form->setFieldAttribute('captcha', 'plugin', $plugin);
+
             if (!$form->getField('captcha')) {
                 return null;
             }
-
-            $form->setFieldAttribute('captcha', 'plugin', $plugin);
 
             $data = $app->getInput()->post->get('jform', [], 'array');
             $data = \is_array($data) ? $data : [];
