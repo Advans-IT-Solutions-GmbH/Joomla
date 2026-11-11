@@ -428,14 +428,26 @@ final class PrivacyReview
             if (mb_strtolower(rawurldecode($found), 'UTF-8') !== $email) {
                 // Percent-encoded text around the address (%20, %26 …): decoded, the address is
                 // replaced as a whole word there and the rest is encoded again.
-                $decoded = rawurldecode($found);
-                $word = '/(?<![\p{L}\p{N}._%+\-])' . preg_quote($email, '/') . '(?![\p{L}\p{N}\-]|\.[\p{L}\p{N}])/iu';
-
-                if (!str_contains($found, '%') || preg_match($word, $decoded) !== 1) {
+                // The decoded text is split at query separators (?, &) and keys (key=), and the
+                // address must stand as a whole word with the full local-part character set
+                // around it, so another address such as x!anna@… is never touched.
+                if (!str_contains($found, '%')) {
                     return $text;
                 }
 
-                return $lead . rawurlencode((string) preg_replace($word, $replacement, $decoded)) . $tail;
+                $word = '/(?<![\p{L}\p{N}.!#$%&\'*+\/=?^_`{|}~\-])' . preg_quote($email, '/') . '(?![\p{L}\p{N}\-]|\.[\p{L}\p{N}])/iu';
+                $hit = false;
+                $decoded = (string) preg_replace_callback('/([?&]?)([^?&]*)/', static function (array $part) use ($word, $replacement, &$hit): string {
+                    $at = strpos($part[2], '=');
+                    $key = $at === false ? '' : substr($part[2], 0, $at + 1);
+                    $value = $at === false ? $part[2] : substr($part[2], $at + 1);
+                    $changed = (string) preg_replace($word, $replacement, $value, -1, $count);
+                    $hit = $hit || $count > 0;
+
+                    return $part[1] . $key . $changed;
+                }, rawurldecode($found));
+
+                return $hit ? $lead . rawurlencode($decoded) . $tail : $text;
             }
 
             // Inside a URI the placeholder is percent-encoded, so the URI stays valid.
