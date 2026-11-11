@@ -346,6 +346,7 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             $requests = $db->setQuery($this->query()
                 ->select($db->quoteName(['eventtype_id', 'token', 'after_booking_id', 'failed', 'passes']))
                 ->from($db->quoteName(self::RESTORE_TABLE))
+                ->where($db->quoteName('passes') . ' < ' . self::RESTORE_PASSES)
                 ->order($db->quoteName('eventtype_id') . ' ASC'))->loadAssocList() ?: [];
             $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
 
@@ -409,11 +410,13 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                     // where only the bookings still without their copy are candidates.
                     $db->setQuery('UPDATE ' . $table . ' SET ' . $db->quoteName('after_booking_id') . ' = 0, ' . $db->quoteName('failed') . ' = 0, '
                         . $db->quoteName('passes') . ' = ' . ($passes + 1) . $where)->execute();
+                } elseif ($failed) {
+                    // Given up after the last pass: kept as failed (reported by restoreFailed() and
+                    // the task), never retried by itself; a new request starts it again.
+                    $this->failure('restore-gave-up', $type, new \RuntimeException('Calendar copies could not be written.'));
+                    $db->setQuery('UPDATE ' . $table . ' SET ' . $db->quoteName('after_booking_id') . ' = 0, ' . $db->quoteName('failed') . ' = 0, '
+                        . $db->quoteName('passes') . ' = ' . self::RESTORE_PASSES . $where)->execute();
                 } else {
-                    if ($failed) {
-                        $this->failure('restore-gave-up', $type, new \RuntimeException('Calendar copies could not be written.'));
-                    }
-
                     $db->setQuery('DELETE FROM ' . $table . $where)->execute();
                 }
             }
@@ -435,9 +438,24 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
         try {
             $db = $this->services->db();
 
-            return (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName(self::RESTORE_TABLE))->loadResult();
+            return (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName(self::RESTORE_TABLE)
+                . ' WHERE ' . $db->quoteName('passes') . ' < ' . self::RESTORE_PASSES)->loadResult();
         } catch (\Throwable $e) {
             $this->failure('restore-pending', 0, $e);
+
+            return -1;
+        }
+    }
+
+    public function restoreFailed(): int
+    {
+        try {
+            $db = $this->services->db();
+
+            return (int) $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName(self::RESTORE_TABLE)
+                . ' WHERE ' . $db->quoteName('passes') . ' >= ' . self::RESTORE_PASSES)->loadResult();
+        } catch (\Throwable $e) {
+            $this->failure('restore-failed', 0, $e);
 
             return -1;
         }
