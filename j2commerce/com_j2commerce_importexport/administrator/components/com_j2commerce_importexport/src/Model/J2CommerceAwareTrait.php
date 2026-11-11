@@ -66,7 +66,7 @@ trait J2CommerceAwareTrait
      * null when neither is enabled together with its product table.
      * The result is cached per instance.
      */
-    private function getActiveShop(): ?string
+    protected function getActiveShop(): ?string
     {
         if ($this->activeShopCache === null) {
             /** @var DatabaseInterface $db */
