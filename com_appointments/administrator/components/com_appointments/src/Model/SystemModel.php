@@ -334,16 +334,17 @@ class SystemModel extends BaseDatabaseModel
      * links) from the component's public site URL, else Joomla's live_site, else the root of the
      * request that sends the mail, which follows its Host header. Needs attention while neither
      * address is configured, or when the configured one is not a plain HTTP(S) root that the mail
-     * links accept.
+     * links accept. Mirrors their selection and validation exactly (NotificationService::linkBase()):
+     * the first value that is not the empty string, untrimmed, with a lower-case scheme.
      *
      * @return  array{label: string, ok: bool, value: string, remedy: string}
      */
     public static function siteUrlCheck(string $publicSiteUrl, string $liveSite): array
     {
-        $configured = trim($publicSiteUrl) !== '' ? trim($publicSiteUrl) : trim($liveSite);
+        $configured = $publicSiteUrl !== '' ? $publicSiteUrl : $liveSite;
         $parts = parse_url($configured);
         $valid = $configured !== '' && filter_var($configured, FILTER_VALIDATE_URL) !== false && \is_array($parts)
-            && \in_array(strtolower((string) ($parts['scheme'] ?? '')), ['http', 'https'], true)
+            && \in_array($parts['scheme'] ?? '', ['http', 'https'], true)
             && !isset($parts['user']) && !isset($parts['pass']) && !isset($parts['query']) && !isset($parts['fragment']);
 
         return ['label' => 'COM_APPOINTMENTS_SYSTEM_SITE_URL', 'ok' => $valid,

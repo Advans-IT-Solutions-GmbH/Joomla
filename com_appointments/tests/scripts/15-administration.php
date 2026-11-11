@@ -264,10 +264,14 @@ try {
         $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
         $check($admin->status === 200 && $siteUrlRow($system, 'ok') && str_contains($system, 'https://www.example.test/site'),
             'A configured public site URL satisfies the system check and is shown');
-        $withSiteUrl('https://www.example.test/?x=1');
-        $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
-        $check($admin->status === 200 && $siteUrlRow($system, 'attention'),
-            'A public site URL that mail links refuse (with a query) needs attention');
+        // The same values that NotificationService::linkBase() refuses: a query, an upper-case scheme,
+        // surrounding spaces, and an option of spaces only (which mail links use instead of live_site).
+        foreach (['https://www.example.test/?x=1', 'HTTPS://www.example.test', ' https://www.example.test ', '   '] as $refused) {
+            $withSiteUrl($refused);
+            $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
+            $check($admin->status === 200 && $siteUrlRow($system, 'attention'),
+                'A public site URL that mail links refuse needs attention: ' . json_encode($refused));
+        }
     } finally {
         $encoded = $db->real_escape_string($componentParams);
         $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
