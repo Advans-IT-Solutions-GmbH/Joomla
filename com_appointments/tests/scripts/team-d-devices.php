@@ -944,8 +944,9 @@ return static function (TeamSuite $suite): void {
         $outsiderBrowser = new TeamDBrowser($suite->base);
         $outsiderSignedIn = $signIn($outsiderBrowser, $tag . 'outsider', $outsiders['outsider']['password'], $secret);
         $outsiderToken = $outsiderSignedIn ? $tokenOf($outsiderBrowser) : '';
-        $outsiderStatuses = $outsiderToken !== '' ? $tasks($outsiderBrowser, $outsiderToken, $outsiders['outsider']['device']) : [];
+        // Taken before the refused requests, so a change made by any of them is detected.
         $outsiderBefore = $deviceRow($outsiders['outsider']['device']);
+        $outsiderStatuses = $outsiderToken !== '' ? $tasks($outsiderBrowser, $outsiderToken, $outsiders['outsider']['device']) : [];
 
         $suite->test($flow[21], static function () use ($suite, $tag, $password, $secret, $signIn) {
             $browser = new TeamDBrowser($suite->base);
@@ -987,15 +988,15 @@ return static function (TeamSuite $suite): void {
             ] as $key => $path) {
                 $html = $outsiderBrowser->request($path);
                 // Joomla's error page with the «not authorised» message, never an empty page or the form.
-                $statuses[$key] = $outsiderBrowser->status === 403 && trim($html) !== ''
-                    && !str_contains($html, 'devices.create') && !str_contains($html, 'form_nonce') ? 403 : $outsiderBrowser->status;
+                $content = trim($html) !== '' && !str_contains($html, 'devices.create') && !str_contains($html, 'form_nonce');
+                $statuses[$key] = $outsiderBrowser->status . ($content ? '' : ' (empty or with the form)');
             }
 
-            if (array_values(array_unique($statuses)) !== [403]) {
+            if (array_values(array_unique($statuses)) !== ['403']) {
                 echo '    outsider: ' . json_encode($statuses) . "\n";
             }
 
-            return array_values(array_unique($statuses)) === [403];
+            return array_values(array_unique($statuses)) === ['403'];
         });
 
         $suite->test($flow[24], static function () use ($suite, $tag, $secret, $signIn, $outsiders) {
