@@ -506,6 +506,25 @@ return static function (TeamSuite $suite): void {
                 static fn () => $stillGone && $handled >= 1 && $objects((int) $fourth['id']) === 1
                     && $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_copy_restore") === 0);
             $suite->test('The restore never touches the entry of the calendar\'s own', static fn () => $own() === 1);
+
+            // An entry of the calendar's own with a booking's UID (an imported mail attachment) is
+            // never adopted by a restore: it keeps its content and stays an entry of its own.
+            $collisionUri = (string) ($suite->db->query("SELECT uri FROM {$suite->prefix}appointments_calendar_objects"
+                . " WHERE calendar_id={$calendar} AND booking_id=" . (int) $fourth['id'])->fetch_row()[0] ?? '');
+            $team->objects()->delete($calendar, $collisionUri, null, null);
+            $imported = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nBEGIN:VEVENT\r\nUID:" . $fourth['uid'] . "\r\nDTSTAMP:20270101T000000Z\r\n"
+                . "DTSTART:{$day}T120000Z\r\nDTEND:{$day}T123000Z\r\nSUMMARY:Imported with my notes\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+            $team->objects()->put($ring, $tag . '-imported.ics', $imported, null, true, null);
+            $importedEtag = (string) $suite->db->query("SELECT etag FROM {$suite->prefix}appointments_calendar_objects"
+                . " WHERE calendar_id={$calendar} AND uri='" . $suite->db->real_escape_string($tag . '-imported.ics') . "'")->fetch_row()[0];
+            $suite->db->query("DELETE FROM {$suite->prefix}appointments_copy_restore");
+            $team->bookings()->requestRestore($event);
+            $team->bookings()->restoreCopies(50);
+            $suite->test('A restore never adopts an entry of the calendar\'s own that has the booking\'s UID',
+                static fn () => $own() === 2 && $objects((int) $fourth['id']) === 0
+                    && (string) $suite->db->query("SELECT etag FROM {$suite->prefix}appointments_calendar_objects"
+                        . " WHERE calendar_id={$calendar} AND uri='" . $suite->db->real_escape_string($tag . '-imported.ics') . "'")->fetch_row()[0] === $importedEtag
+                    && $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_copy_restore") === 0);
         } finally {
             if ($calendar > 0) {
                 try {
