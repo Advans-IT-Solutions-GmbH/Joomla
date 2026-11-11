@@ -23,7 +23,8 @@ test('cleanup page follows the Atum color scheme and fits the viewport', async (
     await page.fill('#mod-login-username', fixture.username);
     await page.fill('#mod-login-password', fixture.password);
     await page.click('#btn-login-submit');
-    await page.waitForLoadState('load');
+    // Wait until the login form has gone, i.e. the session is established.
+    await expect(page.locator('#mod-login-username')).toHaveCount(0, { timeout: 30_000 });
 
     await page.goto('/administrator/index.php?option=com_j2store_cleanup');
     await expect(page.locator('.j2cleanup')).toBeVisible();
@@ -46,15 +47,23 @@ test('cleanup page follows the Atum color scheme and fits the viewport', async (
                 right: el.getBoundingClientRect().right,
             })),
             viewport: document.documentElement.clientWidth,
+            scheme: {
+                colorScheme: document.documentElement.getAttribute('data-color-scheme'),
+                bsTheme: document.documentElement.getAttribute('data-bs-theme'),
+                bodyBg: getComputedStyle(root).getPropertyValue('--body-bg').trim(),
+                bsBodyBg: getComputedStyle(root).getPropertyValue('--bs-body-bg').trim(),
+            },
         };
     });
+    const details = JSON.stringify(m);
+    console.log(`${testInfo.project.name}: ${details}`);
 
     const dark = testInfo.project.use.colorScheme === 'dark';
     // The component surface sits on the same side of the scheme as Atum's page.
-    expect(luminance(m.surface) < 0.4).toBe(dark);
-    expect(luminance(m.page) < 0.4).toBe(dark);
+    expect(luminance(m.page) < 0.4, `Atum page follows the scheme: ${details}`).toBe(dark);
+    expect(luminance(m.surface) < 0.4, `component surface follows the scheme: ${details}`).toBe(dark);
     // Text stays readable on the surface (WCAG AA for normal text).
-    expect(contrast(m.text, m.surface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(m.text, m.surface), `text contrast: ${details}`).toBeGreaterThanOrEqual(4.5);
     // The page never scrolls sideways; wide tables scroll inside their containers.
     expect(m.overflow).toBeLessThanOrEqual(1);
     expect(m.containers.length).toBeGreaterThan(0);
