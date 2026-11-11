@@ -43,6 +43,7 @@ $action = Route::_('index.php?option=com_appointments&view=calendars');
         <?php if (!$this->items) : ?>
             <p class="alert alert-info"><?php echo Text::_('COM_APPOINTMENTS_TEAM_C_CALENDARS_EMPTY'); ?></p>
         <?php else : ?>
+            <div class="table-responsive">
             <table class="table">
                 <caption class="visually-hidden"><?php echo Text::_('COM_APPOINTMENTS_TEAM_CALENDARS_TITLE'); ?></caption>
                 <thead><tr>
@@ -82,6 +83,7 @@ $action = Route::_('index.php?option=com_appointments&view=calendars');
                 <?php endforeach; ?>
                 </tbody>
             </table>
+            </div>
         <?php endif; ?>
         <input type="hidden" name="task" value="">
         <?php echo HTMLHelper::_('form.token'); ?>

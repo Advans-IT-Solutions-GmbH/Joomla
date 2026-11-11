@@ -8,9 +8,11 @@
 
 namespace Advans\Component\Appointments\Site\View\Manage;
 
+use Advans\Component\Appointments\Site\Helper\NoPageCache;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
+use Advans\Component\Appointments\Site\View\ResultNoticesTrait;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
@@ -21,6 +23,7 @@ class HtmlView extends BaseHtmlView
 {
     use PageTitleTrait;
     use AssetsTrait;
+    use ResultNoticesTrait;
 
     protected $item;
     protected $action;
@@ -32,6 +35,10 @@ class HtmlView extends BaseHtmlView
     protected $zone;
     protected $reason;
     protected $errors = [];
+    /** New signed reschedule and cancel addresses on the receipt of a reschedule (ManageModel::receiptLinks). */
+    protected array $manageLinks = [];
+    /** Itemid of the page frame, kept by the GET form of the reschedule page; 0 for none. */
+    protected int $itemId = 0;
 
     public function display($tpl = null)
     {
@@ -39,12 +46,30 @@ class HtmlView extends BaseHtmlView
         $app->setHeader('Referrer-Policy', 'no-referrer', true);
         $app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
         $app->setHeader('Cache-Control', 'private, no-store', true);
-        $this->useAppointmentsAssets(false);
+        // Nor Joomla's page cache: the page carries signed links and tokens of one browser session.
+        NoPageCache::apply($app);
         $model = $this->getModel();
         $this->action = $model->action();
         $this->applyPageTitle('manage', Text::_(['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL', 'erase' => 'COM_APPOINTMENTS_MANAGE_ERASE'][$this->action]));
         $this->signature = $model->signature();
         $this->completed = $model->completed();
+        $focusKey = 'com_appointments.manage_focus_message.' . $app->getInput()->getInt('id') . '.' . $this->action;
+        $focusMessage = !$this->completed && (bool) $app->getUserState($focusKey, false);
+        $app->setUserState($focusKey, null);
+        // Ordinary forms keep native field autofocus; only outcomes and page-level refusals need the script.
+        $this->useAppointmentsAssets($this->completed || $focusMessage);
+
+        if ($focusMessage) {
+            $this->getDocument()->addScriptOptions('com_appointments.focusSystemMessage', true);
+        }
+
+        if ($this->completed) {
+            $this->takeResultNotices();
+            $this->manageLinks = $model->receiptLinks();
+        }
+
+        $active = $app->getMenu()->getActive();
+        $this->itemId = $active !== null && ($active->query['option'] ?? '') === 'com_appointments' ? (int) $active->id : 0;
         $this->item = $model->getItem();
         $this->deleteMode = $model->deleteMode();
         $this->reason = (string) $app->getUserState('com_appointments.cancel_reason', '');

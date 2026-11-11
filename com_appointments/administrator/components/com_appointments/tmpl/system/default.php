@@ -18,6 +18,7 @@ defined('_JEXEC') or die;
     <?php echo HTMLHelper::_('form.token'); ?>
     <p><button class="btn btn-secondary" type="submit"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_SYSTEM_PROBE_RUN'); ?></button></p>
 </form>
+<div class="table-responsive">
 <table class="table">
     <caption><?php echo Text::_('COM_APPOINTMENTS_SYSTEM_TITLE'); ?></caption>
     <thead><tr><th scope="col"><?php echo Text::_('COM_APPOINTMENTS_SYSTEM_CHECK'); ?></th><th scope="col"><?php echo Text::_('JSTATUS'); ?></th><th scope="col"><?php echo Text::_('COM_APPOINTMENTS_SYSTEM_VALUE'); ?></th></tr></thead>
@@ -34,3 +35,4 @@ defined('_JEXEC') or die;
         <?php endforeach; ?>
     </tbody>
 </table>
+</div>

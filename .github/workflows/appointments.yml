@@ -98,6 +98,8 @@ jobs:
           # customer's server.
           # xargs exits non-zero as soon as one file fails; `find -exec \;` would not.
           find com_appointments -name '*.php' -not -path '*/vendor/*' -print0 | xargs -0 -n1 php -l
+      - name: Check booking focus regressions
+        run: node --test com_appointments/tests/booking-focus.test.cjs
 
   language-lint:
     name: Language Files

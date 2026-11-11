@@ -3,6 +3,8 @@
 final class AppointmentsHttp
 {
     public int $status = 0;
+    /** The Location headers of the redirects the last request followed, in order. */
+    public array $locations = [];
     public string $contentType = '';
     private string $cookie;
 
@@ -40,7 +42,15 @@ final class AppointmentsHttp
         curl_setopt_array($curl, [
             CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 5,
             CURLOPT_TIMEOUT => 30, CURLOPT_COOKIEJAR => $this->cookie, CURLOPT_COOKIEFILE => $this->cookie,
+            CURLOPT_HEADERFUNCTION => function ($curl, string $line): int {
+                if (preg_match('/^Location:\s*(\S.*?)\s*$/i', $line, $match)) {
+                    $this->locations[] = $match[1];
+                }
+
+                return strlen($line);
+            },
         ]);
+        $this->locations = [];
 
         if ($data !== null) {
             curl_setopt($curl, CURLOPT_POST, true);
@@ -98,6 +108,30 @@ final class AppointmentsHttp
         }
 
         return $bodies;
+    }
+
+    /**
+     * Whether the last request ended at a completed result: the redirect carried the fragment to
+     * its container, the page has that container, a focusable status region and the script that
+     * focuses it; without a target, neither a result fragment nor a result (a refused form).
+     */
+    public function landedAt(string $html, ?string $target): bool
+    {
+        $document = new DOMDocument();
+        @$document->loadHTML($html);
+        $xpath = new DOMXPath($document);
+        $results = $xpath->query('//p[contains(concat(" ", normalize-space(@class), " "), " com-appointments-status ")]'
+            . '[@role="status"][@tabindex="-1"][@autofocus][@data-appointments-result]');
+        $fragments = array_filter($this->locations, static fn (string $location): bool => (bool) preg_match('/#appointment-(result|confirmation)$/', $location));
+
+        if ($target === null) {
+            return $fragments === [] && $xpath->query('//*[@data-appointments-result]')->length === 0;
+        }
+
+        return $this->locations !== [] && str_ends_with(end($this->locations), '#' . $target)
+            && $xpath->query('//*[@id="' . $target . '"]//p[@data-appointments-result]')->length === 1
+            && $results->length === 1
+            && preg_match('#/media/com_appointments/js/booking(\.min)?\.js#', $html) === 1;
     }
 
     public function token(string $html): string

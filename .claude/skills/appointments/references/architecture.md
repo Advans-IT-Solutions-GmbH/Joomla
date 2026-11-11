@@ -95,6 +95,14 @@ non-SEF from the public site URL, without the router, because the reminder task 
 they must keep resolving unchanged. The "Book an appointment" menu item picks its event type with
 the component's `Eventtypelist` field, never with a raw-query `sql` field.
 
+These pages are no menu views, so they carry an explicit `Itemid` as their frame, otherwise Joomla
+frames them with the default (home) menu item. `Administrator\Helper\ManageMenuItem` picks it from
+the database (also on the CLI): the event type's "Book an appointment" item, else an "Event types"
+item, in the reader's language before "All", published and open to guests. The signature does not
+cover the `Itemid`. The controller looks it up only after the signature is verified. The way back
+(`Site\Helper\BackLink`) is hidden on a one-event-type menu item unless its "Navigation" options
+show it.
+
 ## Domain logic lives in helpers, not in models
 
 Models talk to the database and to Joomla. The rules live in plain, injectable classes under

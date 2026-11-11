@@ -225,13 +225,42 @@ try {
     $request[2]['consent'] = 0;
     $request[2]['booking']['first_name'] = '';
     sleep(2);
-    $xpath = $dom($request[0]->request($request[1], $request[2]));
+    $body = $request[0]->request($request[1], $request[2]);
+    $xpath = $dom($body);
     $check($fieldError($xpath, 'booking-consent', 'Please confirm your consent.')
         && $fieldError($xpath, 'booking-first_name', 'Please enter your first name.'),
         'A missing consent and an empty first name are reported together in one round trip');
     $focused = $xpath->query('//*[@autofocus]');
     $check($focused->length === 1 && $focused->item(0)->getAttribute('id') === 'booking-first_name',
         'The first invalid control in page order receives the focus, not the consent checkbox');
+    $check($request[0]->landedAt($xpath->document->saveHTML(), null),
+        'A refused booking has no result fragment or region, so the focus stays at the first invalid field');
+    $locations = $request[0]->locations;
+    $lastLocation = $locations === [] ? '' : $locations[array_key_last($locations)];
+    $check($lastLocation !== '' && !str_contains($lastLocation, '#')
+        && !str_contains($body, 'com_appointments.focusSystemMessage'),
+        'A refused booking with field errors does not let a section fragment suppress native autofocus');
+
+    // A forged form signature is a page-level error, not an invalid field. Keep it in Joomla's
+    // live system-message region and leave the page without a result or fragment.
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+    $request = $prepare($eventIds[0], $slot);
+    $request[2]['form_signature'] = str_repeat('0', 64);
+    $body = $request[0]->request($request[1], $request[2]);
+    $xpath = $dom($body);
+    $systemMessage = $xpath->query('//*[@id="system-message-container"][@aria-live="polite"]')->item(0);
+    $locations = $request[0]->locations;
+    $lastLocation = $locations === [] ? '' : $locations[array_key_last($locations)];
+    $check($systemMessage instanceof DOMElement
+        && str_contains($systemMessage->textContent, 'The form has expired or could not be verified.')
+        && $lastLocation !== '' && !str_contains($lastLocation, '#')
+        && str_contains($body, 'com_appointments.focusSystemMessage')
+        && $xpath->query('//*[@data-appointments-result]')->length === 0,
+        'A forged form signature is present in Joomla\'s live region without a result fragment');
+    $cleanPage = $request[0]->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventIds[0]
+        . '&timezone=UTC&start=' . urlencode($slot));
+    $check(!str_contains($cleanPage, 'com_appointments.focusSystemMessage'),
+        'The one-request error-message focus option is consumed after the refused submission');
 
     // The component option max_guests limits the guests on the server, whatever the form sends.
     // The submissions above used the hourly booking budget of this client address.
@@ -272,6 +301,8 @@ try {
     $row = $stored($eventIds[1], $noticeSlot);
     $check(str_contains($body, 'Appointment confirmed') && $row !== null && $row['consent_utc'] === null && $row['consent_version'] === null,
         'Notice mode: a booking without the checkbox succeeds and stores no consent');
+    $check($request[0]->landedAt($body, 'appointment-confirmation') && !str_contains($body, 'appointment-notices'),
+        'A booking lands at #appointment-confirmation with a focusable status region the screen reader announces');
     $setParams(['consent_mode' => 'acknowledge']);
     $ackSlot = $day . ' 16:00:00';
     $check($modeForm($eventIds[1], $ackSlot)->query('//input[@name="consent"][@required]')->length === 1,
@@ -284,7 +315,21 @@ try {
         'Acknowledge mode: without the checkbox the booking is refused at the checkbox');
     $request = $prepare($eventIds[1], $ackSlot);
     sleep(2);
-    $body = $request[0]->request($request[1], $request[2]);
+    // A failed notification: the warning is part of the announced confirmation, shown once.
+    $hostEmail = $db->query("SELECT email FROM {$prefix}users WHERE id={$host}")->fetch_assoc()['email'];
+    $db->query("UPDATE {$prefix}users SET email='not-an-address' WHERE id={$host}");
+    try {
+        $body = $request[0]->request($request[1], $request[2]);
+    } finally {
+        $db->query("UPDATE {$prefix}users SET email='" . $db->real_escape_string($hostEmail) . "' WHERE id={$host}");
+    }
+    $warning = 'Your appointment was saved, but one or more notification emails could not be delivered.';
+    $xpath = $dom($body);
+    $check($request[0]->landedAt($body, 'appointment-confirmation')
+        && $xpath->query('//p[@data-appointments-result][@aria-describedby="appointment-notices"]')->length === 1
+        && str_contains((string) $xpath->query('//*[@id="appointment-confirmation"]//*[@id="appointment-notices"]')->item(0)?->textContent, $warning)
+        && substr_count($body, $warning) === 1,
+        'A failed confirmation email is shown once, inside the confirmation, as the description of the focused status');
     $row = $stored($eventIds[1], $ackSlot);
     $check(str_contains($body, 'Appointment confirmed') && $row !== null && $row['consent_utc'] === null && $row['consent_version'] === null,
         'Acknowledge mode: with the checkbox the booking succeeds and nothing is stored');
@@ -298,14 +343,29 @@ try {
     $check(str_contains($body, 'The form has expired or could not be verified.') && !str_contains($body, 'Please confirm your consent.')
         && $bookings($eventIds[0]) === 1, 'A filled honeypot gets the form message, never the consent message');
 
-    // A sent time that is no time at all names no day: the reason stands above the calendar.
-    $request = $prepare($eventIds[0], $slot);
-    $request[2]['booking']['start'] = 'not-a-time';
-    sleep(2);
-    $xpath = $dom($request[0]->request($request[1], $request[2]));
-    $check(trim((string) ($xpath->query('//*[@id="booking-start-error"]')->item(0)?->textContent ?? '')) === 'Please choose an available time.'
-        && $xpath->query('//form[@id="appointment-details-form"]')->length === 0 && $bookings($eventIds[0]) === 1,
-        'A malformed time returns to the calendar with its message, without a booking');
+    // A missing or malformed time names no field control, so the alert above the calendar
+    // takes native autofocus; no section fragment may suppress it.
+    foreach (['', 'not-a-time'] as $invalidStart) {
+        $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+        $request = $prepare($eventIds[0], $slot);
+        $request[2]['booking']['start'] = $invalidStart;
+        $request[2]['booking']['timezone'] = 'Europe/Zurich';
+        sleep(2);
+        $body = $request[0]->request($request[1], $request[2]);
+        $xpath = $dom($body);
+        $startError = $xpath->query('//*[@id="booking-start-error"]')->item(0);
+        $locations = $request[0]->locations;
+        $lastLocation = $locations === [] ? '' : $locations[array_key_last($locations)];
+        parse_str((string) parse_url($lastLocation, PHP_URL_QUERY), $redirectQuery);
+        $check(trim((string) ($startError?->textContent ?? '')) === 'Please choose an available time.'
+            && $startError instanceof DOMElement && $startError->getAttribute('role') === 'alert'
+            && $startError->getAttribute('tabindex') === '-1' && $startError->hasAttribute('autofocus')
+            && !str_contains($body, 'com_appointments.focusSystemMessage')
+            && $lastLocation !== '' && !str_contains($lastLocation, '#')
+            && ($redirectQuery['timezone'] ?? '') === 'Europe/Zurich'
+            && $xpath->query('//form[@id="appointment-details-form"]')->length === 0 && $bookings($eventIds[0]) === 1,
+            'An empty or malformed time keeps its submitted timezone, focusable alert and no booking');
+    }
 
     // Release test 22.10.: dates in words of the site language, times without a zone abbreviation.
     $dates = new AppointmentsHttp('http://localhost', 'booking-dates');
@@ -436,6 +496,8 @@ try {
     // One host serves both events, so each books its own hour.
     foreach (['phone_host_calls' => $day . ' 11:00:00', 'phone_invitee_calls' => $day . ' 13:00:00'] as $location => $phoneSlot) {
         $title = $tag . '-' . $location;
+        // Four submissions per location; each location starts with a fresh hourly booking budget.
+        $db->query("DELETE FROM {$prefix}appointments_ratelimit");
         $db->query("INSERT INTO {$prefix}appointments_schedules (title,timezone,owner_user_id,published,created_utc,modified_utc) VALUES ('{$title}','UTC',{$host},1,'{$time}','{$time}')");
         $schedule = (int) $db->insert_id;
         $scheduleIds[] = $schedule;
@@ -453,6 +515,11 @@ try {
             && $number->getAttribute('type') === 'tel' && $number->hasAttribute('required')
             && $selected instanceof DOMElement && $selected->getAttribute('value') === '41',
             $location . ': the telephone number is a fixed required field with the configured calling code preselected');
+        $codes = array_map(static fn (DOMElement $option): string => $option->getAttribute('value'),
+            iterator_to_array($xpath->query('//select[@id="booking-phone-country"]/option')));
+        $check(count(array_intersect(['1', '41', '44', '49', '33', '423'], $codes)) === 6
+            && $xpath->query('//*[contains(concat(" ", @class, " "), " com-appointments-tel-fixed ")]')->length === 0,
+            $location . ': the preselected calling code is only a preselection, every other code can be chosen');
 
         $request = $prepare($phoneEvent, $phoneSlot);
         sleep(2);
@@ -461,24 +528,34 @@ try {
             $location . ': a booking without a telephone number is refused at the telephone field');
 
         $request = $prepare($phoneEvent, $phoneSlot);
-        $request[2]['booking']['phone'] = ['country' => '41', 'number' => '12'];
+        $request[2]['booking']['phone'] = ['country' => '41', 'number' => 'call me'];
         sleep(2);
         $body = $request[0]->request($request[1], $request[2]);
         $check($fieldError($dom($body), 'booking-phone', 'Please enter a valid telephone number with its country calling code.')
             && $bookings($phoneEvent) === 0, $location . ': an invalid telephone number is refused at the telephone field');
 
+        // "+41 123": a known calling code, but Swiss numbers have nine digits after it.
         $request = $prepare($phoneEvent, $phoneSlot);
-        $request[2]['booking']['phone'] = ['country' => '41', 'number' => '079 123 45 67'];
+        $request[2]['booking']['phone'] = ['country' => '41', 'number' => '+41 123'];
+        sleep(2);
+        $body = $request[0]->request($request[1], $request[2]);
+        $check($fieldError($dom($body), 'booking-phone', 'This number has too few or too many digits for its country calling code. Please check the number and the calling code.')
+            && $bookings($phoneEvent) === 0, $location . ': a number too short for its calling code is refused at the telephone field');
+
+        // One location books a Swiss number, the other a foreign one typed with "+" while +41 stays preselected.
+        [$typed, $expected] = $location === 'phone_host_calls' ? ['079 123 45 67', '+41791234567'] : ['+1 202 555 0100', '+12025550100'];
+        $request = $prepare($phoneEvent, $phoneSlot);
+        $request[2]['booking']['phone'] = ['country' => '41', 'number' => $typed];
         $before = AppointmentsMail::snapshot();
         sleep(2);
         $body = $request[0]->request($request[1], $request[2]);
         $stored = appointments_open_booking($db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$phoneEvent} AND state IN (0,1)")->fetch_assoc());
-        $check(str_contains($body, 'Appointment confirmed') && $stored && $stored['invitee_phone'] === '+41791234567'
+        $check(str_contains($body, 'Appointment confirmed') && $stored && $stored['invitee_phone'] === $expected
             && $stored['custom_fields'] === '[]', $location . ': the number is stored in invitee_phone in international form');
-        $mailed = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool => str_contains(AppointmentsMail::decoded($mime), '+41791234567'));
+        $mailed = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool => str_contains(AppointmentsMail::decoded($mime), $expected));
         $check($mailed !== [], $location . ': the notification mail states the telephone number');
         $detail = $admin->request('/administrator/index.php?option=com_appointments&view=booking&id=' . (int) ($stored['id'] ?? 0));
-        $check($admin->status === 200 && str_contains($detail, '+41791234567'), $location . ': the administrator detail shows the telephone number');
+        $check($admin->status === 200 && str_contains($detail, $expected), $location . ': the administrator detail shows the telephone number');
     }
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";

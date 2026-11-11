@@ -26,6 +26,7 @@ if (!$this->legacy) : ?>
     <?php echo Text::_('COM_APPOINTMENTS_FEEDS_PASSWORD_WARNING'); ?>
 </div>
 <p><?php echo Text::_('COM_APPOINTMENTS_FEEDS_READ_ONLY'); ?></p>
+<div class="table-responsive">
 <table class="table">
     <caption class="visually-hidden"><?php echo Text::_('COM_APPOINTMENTS_FEEDS_TITLE'); ?></caption>
     <thead>
@@ -63,3 +64,4 @@ if (!$this->legacy) : ?>
     <?php endforeach; ?>
     </tbody>
 </table>
+</div>

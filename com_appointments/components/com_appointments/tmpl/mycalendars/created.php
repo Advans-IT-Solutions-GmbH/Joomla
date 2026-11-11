@@ -28,6 +28,7 @@ $guides = [
         Text::sprintf('COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_3', $dav, $user),
         Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_4'),
         Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_5'),
+        Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_6'),
     ],
     'apple' => [
         Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_APPLE_1'),
@@ -55,14 +56,48 @@ $guides = [
         Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_OTHER_2'),
     ],
 ];
+// Clients that need a program first: a note and the manufacturer's official download page (HTTPS, external).
+// The address is a language string, so an operator can change it with a language override. It is only a link
+// the visitor clicks; the server never contacts it.
+$downloads = [
+    'outlook-caldavsynchronizer' => [
+        'COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_URL',
+        'COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_GET',
+        'COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_LINK',
+    ],
+    'davx5' => [
+        'COM_APPOINTMENTS_TEAM_D_GUIDE_DAVX5_URL',
+        'COM_APPOINTMENTS_TEAM_D_GUIDE_DAVX5_GET',
+        'COM_APPOINTMENTS_TEAM_D_GUIDE_DAVX5_LINK',
+    ],
+];
 $chosen = $created['client'];
-$guide = static fn (array $steps): string => '<ol class="com-appointments-mycal-steps">'
+$download = static function (string $client) use ($downloads): string {
+    if (!isset($downloads[$client])) {
+        return '';
+    }
+
+    [$url, $note, $label] = $downloads[$client];
+    $url = Text::_($url);
+
+    // Only HTTPS addresses, whatever a language override says.
+    if (!str_starts_with($url, 'https://')) {
+        return '';
+    }
+
+    $url = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
+
+    return '<p class="form-text">' . Text::_($note) . ' <a href="' . $url . '" target="_blank" rel="noopener noreferrer">'
+        . Text::_($label) . '<span class="visually-hidden"> ' . Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_NEW_WINDOW') . '</span></a></p>';
+};
+$guide = static fn (array $steps, string $client): string => $download($client) . '<ol class="com-appointments-mycal-steps">'
     . implode('', array_map(static fn (string $step): string => '<li>' . $step . '</li>', $steps)) . '</ol>';
 ?>
 <div class="com-appointments com-appointments-mycalendars">
     <div class="com-appointments-container">
         <h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
-        <p class="com-appointments-status"><?php echo Text::sprintf('COM_APPOINTMENTS_TEAM_D_CREATED_INTRO', $this->escape($created['name'])); ?></p>
+        <?php // The answer to the form itself, not a redirect: autofocus brings the outcome into view and to the screen reader. ?>
+        <p class="com-appointments-status" role="status" tabindex="-1" autofocus data-appointments-result><?php echo Text::sprintf('COM_APPOINTMENTS_TEAM_D_CREATED_INTRO', $this->escape($created['name'])); ?></p>
         <?php if (!$created['mail_sent']) : ?>
             <p class="com-appointments-notice"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_CREATED_NO_MAIL'); ?></p>
         <?php endif; ?>
@@ -91,7 +126,7 @@ $guide = static fn (array $steps): string => '<ol class="com-appointments-mycal-
 
         <section class="com-appointments-mycal-section" aria-labelledby="created-guide">
             <h2 id="created-guide" class="com-appointments-title"><?php echo Text::sprintf('COM_APPOINTMENTS_TEAM_D_GUIDE_FOR', Text::_(DeviceService::CLIENT_LABELS[$chosen])); ?></h2>
-            <?php echo $guide($guides[$chosen]); ?>
+            <?php echo $guide($guides[$chosen], $chosen); ?>
             <p class="form-text"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_AUTOMATIC'); ?></p>
         <p class="form-text" id="created-not-cancel"><strong><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_NOT_CANCEL'); ?></strong></p>
         </section>
@@ -102,7 +137,7 @@ $guide = static fn (array $steps): string => '<ol class="com-appointments-mycal-
                 <?php if ($client !== $chosen) : ?>
                     <details class="com-appointments-mycal-guide">
                         <summary><?php echo Text::_(DeviceService::CLIENT_LABELS[$client]); ?></summary>
-                        <?php echo $guide($steps); ?>
+                        <?php echo $guide($steps, $client); ?>
                     </details>
                 <?php endif; ?>
             <?php endforeach; ?>
