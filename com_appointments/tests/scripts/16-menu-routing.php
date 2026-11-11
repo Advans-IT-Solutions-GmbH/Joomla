@@ -449,7 +449,7 @@ try {
     $refused($list . '?view=mycalendars', '«My calendars» on the list item');
 
     // Without a menu item of their type the pages do not exist: no component address, no
-    // non-SEF address, no other component's menu item.
+    // non-SEF address, not on the home page.
     $home = '/index.php/en/';
     foreach ([
         '/index.php/en/component/appointments/eventtype/' . $events['list']['alias'] => 'the routed component address of a booking page',
@@ -465,7 +465,7 @@ try {
         $refused($path, $label);
     }
 
-    // The ways a menu item does offer keep working, also with strict routing on again.
+    // The ways a menu item does offer keep working; with strict routing as configured again below.
     foreach ([
         $all => [$events['star'], 'the booking page through its menu item'],
         $all . '?view=eventtype&id=' . $events['star']['id'] => [$events['star'], 'the booking page with its own parameters'],

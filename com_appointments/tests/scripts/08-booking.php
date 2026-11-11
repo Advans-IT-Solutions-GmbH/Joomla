@@ -369,8 +369,10 @@ try {
 
     // Release test 22.10.: dates in words of the site language, times without a zone abbreviation.
     $dates = new AppointmentsHttp('http://localhost', 'booking-dates');
-    $html = $dates->request(appointments_page($eventIds[1],
-        '&timezone=UTC&month=' . substr($day, 0, 7) . '&day=' . $day));
+    // Below the list of event types, so the booking page has no menu item of its own.
+    $html = $dates->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventIds[1]
+        . '&Itemid=' . appointments_menu_item('index.php?option=com_appointments&view=eventtypes')
+        . '&timezone=UTC&month=' . substr($day, 0, 7) . '&day=' . $day);
     $xpath = $dom($html);
     $date = new DateTimeImmutable($day, $utc);
     $text = static fn (string $query): string => trim((string) ($xpath->query($query)->item(0)?->textContent ?? ''));
