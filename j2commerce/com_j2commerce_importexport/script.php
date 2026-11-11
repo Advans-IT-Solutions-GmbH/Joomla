@@ -27,6 +27,7 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
     {
         if ($type === 'install' || $type === 'update') {
             $this->ensureUpdateSite();
+            $this->seedActionRules();
 
             $app = Factory::getApplication();
             $lang = $app->getLanguage();
@@ -58,6 +59,57 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
 
             $app->enqueueMessage($message, 'message');
         }
+    }
+
+    /**
+     * Gives the new import and export actions to the groups that already may manage the
+     * component, so an update does not lock out existing administrators.
+     *
+     * An action without a rule is denied for everyone except Super Users. Administrators
+     * receive core.manage from the root asset, so this falls back to the Administrator group
+     * when the component asset sets no core.manage rule. Existing rules are never changed.
+     */
+    private function seedActionRules(): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $name = 'com_j2commerce_importexport';
+
+        $query = $this->createDbQuery($db)
+            ->select([$db->quoteName('id'), $db->quoteName('rules')])
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = :name')
+            ->bind(':name', $name);
+        $asset = $db->setQuery($query)->loadObject();
+
+        if (!$asset) {
+            return;
+        }
+
+        $rules = json_decode((string) $asset->rules, true);
+        $rules = is_array($rules) ? $rules : [];
+        $manage = isset($rules['core.manage']) && is_array($rules['core.manage']) ? $rules['core.manage'] : ['7' => 1];
+        $changed = false;
+
+        foreach (['importexport.import', 'importexport.export'] as $action) {
+            if (!array_key_exists($action, $rules)) {
+                $rules[$action] = (object) $manage;
+                $changed = true;
+            }
+        }
+
+        if (!$changed) {
+            return;
+        }
+
+        $json = json_encode((object) $rules);
+        $assetId = (int) $asset->id;
+        $query = $this->createDbQuery($db)
+            ->update($db->quoteName('#__assets'))
+            ->set($db->quoteName('rules') . ' = :rules')
+            ->where($db->quoteName('id') . ' = :id')
+            ->bind(':rules', $json)
+            ->bind(':id', $assetId, ParameterType::INTEGER);
+        $db->setQuery($query)->execute();
     }
 
     private function ensureUpdateSite(): void

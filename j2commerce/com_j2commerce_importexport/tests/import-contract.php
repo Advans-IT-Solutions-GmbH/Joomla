@@ -34,6 +34,20 @@ namespace Joomla\CMS\Language {
         public static function sprintf($key, ...$args): string { return $key . ': ' . implode(', ', $args); }
     }
 }
+namespace Joomla\CMS\Component {
+    class ComponentHelper
+    {
+        // Stand-in for the group based text filter: removes script elements.
+        public static function filterText($text): string { return preg_replace('#<script\b.*?</script>#is', '', (string) $text); }
+    }
+}
+namespace Joomla\CMS\Filter {
+    class InputFilter
+    {
+        public static function getInstance(): self { return new self(); }
+        public function clean($source, $type = 'string'): string { return strip_tags((string) $source); }
+    }
+}
 namespace Joomla\CMS\Session {
     class Session
     {
@@ -86,6 +100,7 @@ namespace {
     require $src . 'Model/J2CommerceAwareTrait.php';
     require $src . 'Model/ImportModel.php';
     require $src . 'Controller/ImportController.php';
+    require $src . 'Controller/ExportController.php';
 
     use Advans\Component\J2CommerceImportExport\Administrator\Model\ImportModel;
     use Advans\Component\J2CommerceImportExport\Administrator\Controller\ImportController;
@@ -241,8 +256,13 @@ namespace {
         public function get(string $key): mixed {
             return $key === 'access' ? $this->categoryAccess : null;
         }
+        public array $deniedActions = [];
         public function getIdentity(): object {
-            return new class { public function authorise(...$args): bool { return true; } };
+            $denied = $this->deniedActions;
+            return new class ($denied) {
+                public function __construct(private array $denied) {}
+                public function authorise(string $action, ...$args): bool { return !in_array($action, $this->denied, true); }
+            };
         }
         public function getSession(): object { return $this->session; }
         public function getInput(): object { return $this->input; }
@@ -979,7 +999,76 @@ namespace {
         $authModel->fields([['name' => 'fixture-field', 'value' => 'x']], 80);
         check(isset($authDb->inserted['#__fields_values']) && $authDb->inserted['#__fields_values']->field_id === 9,
             'core.edit.value permits writing the custom field value');
-    } finally {
+
+        // Component actions: core.manage alone is not enough for import or export.
+        foreach ([[ImportController::class, 'upload', 'importexport.import'], [Advans\Component\J2CommerceImportExport\Administrator\Controller\ExportController::class, 'export', 'importexport.export']] as [$class, $task, $action]) {
+            foreach ([[$action], ['core.manage']] as $denied) {
+                Factory::$application->deniedActions = $denied;
+                check((function () use ($class, $task): bool {
+                    try { (new $class())->$task(); }
+                    catch (\Exception $e) { return $e->getCode() === 403; }
+                    catch (RequestClosed $e) { return false; }
+                    return false;
+                })(), "$task is refused without " . $denied[0]);
+            }
+        }
+        Factory::$application->deniedActions = [];
+
+        // Joomla's text filters and JSON validation apply to imported articles.
+        $user->permissions = ['core.create:com_content.category.2' => true];
+        $authDb->resetAuthorizationScenario([], []);
+        $authModel->importArticleData([
+            'title' => 'Filtered', 'alias' => 'filtered',
+            'introtext' => '<p>a</p><script>alert(1)</script>',
+            'fulltext' => '<script>x</script>b',
+            'article_images' => '{"image_intro":"images/a.jpg","float_intro":""}',
+            'urls' => '{"urla":"java\t' . 'script:alert(1)","urla_text":"<b>x</b>","urlb":"https://example.org/a?b=1&c=2","urlc":"mailto:a@example.org"}',
+            'attribs' => ['show_title' => '1', 'note' => '<i>t</i>', 'nested' => ['k' => '<u>v</u>']],
+            'metadata' => '{"robots":"noindex"}',
+        ], 2, ['update_existing' => false]);
+        $stored = $authDb->inserted['#__content'];
+        check($stored->introtext === '<p>a</p>' && $stored->fulltext === 'b',
+            'Imported article texts pass through the Joomla text filter');
+        check(json_decode($stored->urls, true) === ['urla' => '', 'urla_text' => 'x', 'urlb' => 'https://example.org/a?b=1&c=2', 'urlc' => 'mailto:a@example.org'],
+            'Imported links drop unsafe schemes and markup, safe links stay');
+        check(json_decode($stored->attribs, true) === ['show_title' => '1', 'note' => 't', 'nested' => ['k' => 'v']]
+            && $stored->images === '{"image_intro":"images/a.jpg","float_intro":""}'
+            && $stored->metadata === '{"robots":"noindex"}',
+            'Imported JSON columns are stripped of markup and re-encoded');
+        $authDb->resetAuthorizationScenario([], []);
+        $authModel->importArticleData(['title' => 'Plain', 'alias' => 'plain'], 2, ['update_existing' => false]);
+        $stored = $authDb->inserted['#__content'];
+        check($stored->introtext === '' && $stored->urls === '{}' && $stored->attribs === '{}' && $stored->images === '{}' && $stored->metadata === '{}',
+            'Missing text and JSON columns keep their empty defaults');
+        foreach ([['introtext', ['x']], ['fulltext', 5], ['urls', '{not json'], ['attribs', '[1,2]'], ['metadata', '"text"'], ['article_images', 7]] as [$column, $bad]) {
+            $authDb->resetAuthorizationScenario([], []);
+            check((function () use ($authModel, $authDb, $column, $bad): bool {
+                try { $authModel->importArticleData(['title' => 'Bad', 'alias' => 'bad', $column => $bad], 2, ['update_existing' => false]); }
+                catch (\InvalidArgumentException $e) { return $authDb->inserted === []; }
+                return false;
+            })(), "An invalid $column value is rejected before anything is stored");
+        }
+
+        // CSV injection: the export neutralizes formulas, the import restores the cell.
+        $exportClass = Advans\Component\J2CommerceImportExport\Administrator\Controller\ExportController::class;
+        foreach (['=1+1', '+SUM(A1)', '-2+3', '@SUM(A1)', "\tcmd", "\rcmd", '-cmd|calc'] as $cell) {
+            check($exportClass::neutralizeFormula($cell) === "'" . $cell && ImportModel::restoreFormulaCell("'" . $cell) === $cell,
+                'A formula cell is prefixed and restored: ' . json_encode($cell));
+        }
+        foreach (['Plain', '', '12', '-5', '-5.25', '0.5', 'a=b', '{"a":"=1"}', 12, 1.5, null] as $cell) {
+            check($exportClass::neutralizeFormula($cell) === $cell && ImportModel::restoreFormulaCell($cell) === $cell,
+                'A harmless cell stays unchanged: ' . json_encode($cell));
+        }
+        $csvFile = tempnam(sys_get_temp_dir(), 'j2ie-formula-') . '.csv';
+        file_put_contents($csvFile, "title,alias\n\"'=HYPERLINK(\"\"x\"\")\",formula\n");
+        try {
+            $parse = new \ReflectionMethod(ImportModel::class, 'parseCSV');
+            $parse->setAccessible(true);
+            check($parse->invoke(new ContractModel(), $csvFile) === [['title' => '=HYPERLINK("x")', 'alias' => 'formula']],
+                'The CSV import restores a neutralized formula cell');
+        } finally {
+            unlink($csvFile);
+        }    } finally {
         foreach ([$file, $csv, $otherFile, $base] as $owned) {
             if (is_file($owned)) unlink($owned);
         }
