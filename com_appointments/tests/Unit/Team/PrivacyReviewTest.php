@@ -116,6 +116,9 @@ final class PrivacyReviewTest extends TestCase
         // An encoded, different attendee address stays as it is.
         $other = "BEGIN:VCALENDAR\r\nATTENDEE:mailto:x!anna%40example.test\r\nDESCRIPTION:see x!anna%40example.test%20too\r\nEND:VCALENDAR\r\n";
         self::assertSame($other, PrivacyReview::withoutAddress($other, 'anna@example.test', '[removed]'));
+        // Outside a URI, ? = & belong to a mailbox: a?cc=anna@… is another address.
+        $mailbox = "BEGIN:VCALENDAR\r\nATTENDEE:mailto:other@example.test\r\nDESCRIPTION:write to a?cc=anna@example.test or b%3Fto=anna%40example.test\r\nEND:VCALENDAR\r\n";
+        self::assertSame($mailbox, PrivacyReview::withoutAddress($mailbox, 'anna@example.test', '[removed]'));
         self::assertSame($changed, str_replace("\r\n ", '', PrivacyReview::withoutAddress($changed, 'anna@example.test', '[removed]')));
     }
     public function testAnOrganiserAddressAndLongLines(): void

@@ -410,6 +410,9 @@ final class PrivacyReview
             $lead = substr($text, 0, strpos($text, $found));
             $tail = substr($text, \strlen($lead) + \strlen($found));
             $inUri = false;
+            // Query syntax counts only inside a URI (after a scheme such as mailto: or https:, without a space in
+            // between): in an address itself ? = & are ordinary mailbox characters.
+            $uri = preg_match('~(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*:\S*$~', substr($line, 0, $offset)) === 1;
 
             // An escaped line break (\n, \N) before the address is TEXT, not part of it.
             if ($lead === '' && $offset > 0 && $line[$offset - 1] === '\\' && preg_match('/^[nN]/', $found) === 1) {
@@ -418,7 +421,7 @@ final class PrivacyReview
             }
 
             // A value in a URI query (?cc=…, &to=…) is the address, not the key before it.
-            if (mb_strtolower(rawurldecode($found), 'UTF-8') !== $email
+            if ($uri && mb_strtolower(rawurldecode($found), 'UTF-8') !== $email
                 && preg_match('/^(.*[?&][^=?&]*=)(.+)$/s', $found, $query) === 1) {
                 $lead .= $query[1];
                 $found = $query[2];
@@ -437,8 +440,8 @@ final class PrivacyReview
 
                 $word = '/(?<![\p{L}\p{N}.!#$%&\'*+\/=?^_`{|}~\-])' . preg_quote($email, '/') . '(?![\p{L}\p{N}\-]|\.[\p{L}\p{N}])/iu';
                 $hit = false;
-                $decoded = (string) preg_replace_callback('/([?&]?)([^?&]*)/', static function (array $part) use ($word, $replacement, &$hit): string {
-                    $at = strpos($part[2], '=');
+                $decoded = (string) preg_replace_callback($uri ? '/([?&]?)([^?&]*)/' : '/()(.+)/s', static function (array $part) use ($word, $replacement, $uri, &$hit): string {
+                    $at = $uri ? strpos($part[2], '=') : false;
                     $key = $at === false ? '' : substr($part[2], 0, $at + 1);
                     $value = $at === false ? $part[2] : substr($part[2], $at + 1);
                     $changed = (string) preg_replace($word, $replacement, $value, -1, $count);
