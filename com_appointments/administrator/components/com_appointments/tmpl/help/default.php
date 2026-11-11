@@ -28,6 +28,43 @@ $sections = [
         'COM_APPOINTMENTS_HELP_TROUBLE_CHECKS_DESC',
     ]],
 ];
+// Retention and deletion: the rules, what is deleted when, the recommended calendar setup and
+// the limits, then the separate settings. Keys are written out in full for the language lint.
+$deletionRules = [
+    ['COM_APPOINTMENTS_HELP_DEL_RULE_ORIGIN_TITLE', 'COM_APPOINTMENTS_HELP_DEL_RULE_ORIGIN_DESC', []],
+    ['COM_APPOINTMENTS_HELP_DEL_RULE_BOOKINGS_TITLE', 'COM_APPOINTMENTS_HELP_DEL_RULE_BOOKINGS_DESC', []],
+    ['COM_APPOINTMENTS_HELP_DEL_RULE_OWNER_TITLE', 'COM_APPOINTMENTS_HELP_DEL_RULE_OWNER_DESC', []],
+    ['COM_APPOINTMENTS_HELP_DEL_RULE_DEVICE_DELETE_TITLE', 'COM_APPOINTMENTS_HELP_DEL_RULE_DEVICE_DELETE_DESC', []],
+    ['COM_APPOINTMENTS_HELP_DEL_RULE_OWN_TITLE', 'COM_APPOINTMENTS_HELP_DEL_RULE_OWN_DESC', []],
+    ['COM_APPOINTMENTS_HELP_DEL_RULE_CALRET_TITLE', 'COM_APPOINTMENTS_HELP_DEL_RULE_CALRET_DESC', []],
+    ['COM_APPOINTMENTS_HELP_DEL_RULE_CLEANUP_TITLE', 'COM_APPOINTMENTS_HELP_DEL_RULE_CLEANUP_DESC', []],
+    ['COM_APPOINTMENTS_HELP_DEL_RULE_RESTORE_TITLE', 'COM_APPOINTMENTS_HELP_DEL_RULE_RESTORE_DESC', []],
+    ['COM_APPOINTMENTS_HELP_DEL_RULE_BACKUP_TITLE', 'COM_APPOINTMENTS_HELP_DEL_RULE_BACKUP_DESC', [
+        'COM_APPOINTMENTS_HELP_DEL_RULE_BACKUP_STEP_1', 'COM_APPOINTMENTS_HELP_DEL_RULE_BACKUP_STEP_2',
+        'COM_APPOINTMENTS_HELP_DEL_RULE_BACKUP_STEP_3', 'COM_APPOINTMENTS_HELP_DEL_RULE_BACKUP_STEP_4',
+    ]],
+];
+$deletionRows = [
+    ['COM_APPOINTMENTS_HELP_DEL_ROW_BOOKING_WHAT', 'COM_APPOINTMENTS_HELP_DEL_ROW_BOOKING_WHEN', 'COM_APPOINTMENTS_HELP_DEL_ROW_BOOKING_WHERE'],
+    ['COM_APPOINTMENTS_HELP_DEL_ROW_COPY_WHAT', 'COM_APPOINTMENTS_HELP_DEL_ROW_COPY_WHEN', 'COM_APPOINTMENTS_HELP_DEL_ROW_COPY_WHERE'],
+    ['COM_APPOINTMENTS_HELP_DEL_ROW_OWN_WHAT', 'COM_APPOINTMENTS_HELP_DEL_ROW_OWN_WHEN', 'COM_APPOINTMENTS_HELP_DEL_ROW_OWN_WHERE'],
+    ['COM_APPOINTMENTS_HELP_DEL_ROW_OFF_WHAT', 'COM_APPOINTMENTS_HELP_DEL_ROW_OFF_WHEN', 'COM_APPOINTMENTS_HELP_DEL_ROW_OFF_WHERE'],
+    ['COM_APPOINTMENTS_HELP_DEL_ROW_CLEANUP_WHAT', 'COM_APPOINTMENTS_HELP_DEL_ROW_CLEANUP_WHEN', 'COM_APPOINTMENTS_HELP_DEL_ROW_CLEANUP_WHERE'],
+    ['COM_APPOINTMENTS_HELP_DEL_ROW_CALENDAR_WHAT', 'COM_APPOINTMENTS_HELP_DEL_ROW_CALENDAR_WHEN', 'COM_APPOINTMENTS_HELP_DEL_ROW_CALENDAR_WHERE'],
+    ['COM_APPOINTMENTS_HELP_DEL_ROW_AUDIT_WHAT', 'COM_APPOINTMENTS_HELP_DEL_ROW_AUDIT_WHEN', 'COM_APPOINTMENTS_HELP_DEL_ROW_AUDIT_WHERE'],
+    ['COM_APPOINTMENTS_HELP_DEL_ROW_LOG_WHAT', 'COM_APPOINTMENTS_HELP_DEL_ROW_LOG_WHEN', 'COM_APPOINTMENTS_HELP_DEL_ROW_LOG_WHERE'],
+    ['COM_APPOINTMENTS_HELP_DEL_ROW_BACKUP_WHAT', 'COM_APPOINTMENTS_HELP_DEL_ROW_BACKUP_WHEN', 'COM_APPOINTMENTS_HELP_DEL_ROW_BACKUP_WHERE'],
+];
+$deletionSetup = [
+    'COM_APPOINTMENTS_HELP_DEL_OUTLOOK_STEP_1', 'COM_APPOINTMENTS_HELP_DEL_OUTLOOK_STEP_2', 'COM_APPOINTMENTS_HELP_DEL_OUTLOOK_STEP_3',
+    'COM_APPOINTMENTS_HELP_DEL_OUTLOOK_STEP_4', 'COM_APPOINTMENTS_HELP_DEL_OUTLOOK_STEP_5', 'COM_APPOINTMENTS_HELP_DEL_OUTLOOK_STEP_6',
+];
+$deletionLists = [
+    'COM_APPOINTMENTS_HELP_DEL_NEVER_TITLE' => ['COM_APPOINTMENTS_HELP_DEL_NEVER_1', 'COM_APPOINTMENTS_HELP_DEL_NEVER_2',
+        'COM_APPOINTMENTS_HELP_DEL_NEVER_3', 'COM_APPOINTMENTS_HELP_DEL_NEVER_4', 'COM_APPOINTMENTS_HELP_DEL_NEVER_5'],
+    'COM_APPOINTMENTS_HELP_DEL_BEYOND_TITLE' => ['COM_APPOINTMENTS_HELP_DEL_BEYOND_1', 'COM_APPOINTMENTS_HELP_DEL_BEYOND_2',
+        'COM_APPOINTMENTS_HELP_DEL_BEYOND_3', 'COM_APPOINTMENTS_HELP_DEL_BEYOND_4'],
+];
 $retentionLabels = [
     'COM_APPOINTMENTS_TEAM_C_FIELD_RETENTION_DESC' => 'COM_APPOINTMENTS_TEAM_C_FIELD_RETENTION',
     'COM_APPOINTMENTS_CONFIG_RETENTION_DAYS_DESC' => 'COM_APPOINTMENTS_CONFIG_RETENTION_DAYS',
@@ -58,9 +95,67 @@ $retentionLabels = [
         <section class="card mb-4" id="help-<?php echo $id; ?>" aria-labelledby="help-<?php echo $id; ?>-heading">
             <div class="card-body">
                 <h2 class="h4" id="help-<?php echo $id; ?>-heading"><?php echo Text::_($heading); ?></h2>
+                <?php if ($id === 'retention') : ?>
+                    <p><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_INTRO'); ?></p>
+                    <h3 class="h5"><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_RULES_TITLE'); ?></h3>
+                    <?php foreach ($deletionRules as [$ruleTitle, $ruleText, $ruleSteps]) : ?>
+                        <h4 class="h6"><?php echo Text::_($ruleTitle); ?></h4>
+                        <p><?php echo Text::_($ruleText); ?></p>
+                        <?php if ($ruleSteps !== []) : ?>
+                            <ol>
+                                <?php foreach ($ruleSteps as $step) : ?>
+                                    <li><?php echo Text::_($step); ?></li>
+                                <?php endforeach; ?>
+                            </ol>
+                        <?php endif; ?>
+                    <?php endforeach; ?>
+                    <h3 class="h5" id="help-retention-table-heading"><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_TABLE_TITLE'); ?></h3>
+                    <div class="table-responsive">
+                        <table class="table table-striped" id="help-retention-table" aria-labelledby="help-retention-table-heading">
+                            <thead>
+                                <tr>
+                                    <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_COL_WHAT'); ?></th>
+                                    <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_COL_WHEN'); ?></th>
+                                    <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_COL_WHERE'); ?></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($deletionRows as [$what, $when, $where]) : ?>
+                                    <tr>
+                                        <th scope="row"><?php echo Text::_($what); ?></th>
+                                        <td><?php echo Text::_($when); ?></td>
+                                        <td><?php echo Text::_($where); ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                    <h3 class="h5"><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_OUTLOOK_TITLE'); ?></h3>
+                    <p><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_OUTLOOK_DESC'); ?></p>
+                    <ul>
+                        <li><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_OUTLOOK_OWN'); ?></li>
+                        <li><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_OUTLOOK_STOP'); ?></li>
+                    </ul>
+                    <h4 class="h6"><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_OUTLOOK_STEPS_TITLE'); ?></h4>
+                    <ol>
+                        <?php foreach ($deletionSetup as $step) : ?>
+                            <li><?php echo Text::_($step); ?></li>
+                        <?php endforeach; ?>
+                    </ol>
+                    <div class="alert alert-warning" role="note"><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_OUTLOOK_WHY'); ?></div>
+                    <?php foreach ($deletionLists as $listTitle => $items) : ?>
+                        <h3 class="h5"><?php echo Text::_($listTitle); ?></h3>
+                        <ul>
+                            <?php foreach ($items as $item) : ?>
+                                <li><?php echo Text::_($item); ?></li>
+                            <?php endforeach; ?>
+                        </ul>
+                    <?php endforeach; ?>
+                    <h3 class="h5"><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_SETTINGS_TITLE'); ?></h3>
+                <?php endif; ?>
                 <?php foreach ($paragraphs as $key) : ?>
                     <?php if (isset($retentionLabels[$key])) : ?>
-                        <h3 class="h5"><?php echo Text::_($retentionLabels[$key]); ?></h3>
+                        <h4 class="h6"><?php echo Text::_($retentionLabels[$key]); ?></h4>
                     <?php endif; ?>
                     <p><?php echo Text::_($key); ?></p>
                 <?php endforeach; ?>

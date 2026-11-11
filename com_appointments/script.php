@@ -47,6 +47,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
     ];
 
     private const APPOINTMENT_TABLES = [
+        'copy_restore',
         'eventtype_calendars',
         'auth_failures',
         'teamlog_head',
@@ -212,6 +213,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $this->ensureUpdateSite();
+        $this->ensureCopyRestoreTable();
         $this->seedMailTemplates($parent);
         $this->installBundledPlugins($parent);
         $this->initialiseLegacyFeedSetting($type);
@@ -251,6 +253,19 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $app->enqueueMessage($message, 'message');
 
         return true;
+    }
+
+    /**
+     * The table of requests to write calendar copies anew (see install.mysql.utf8.sql), also on
+     * an update from a version without it. Independent of the schema version on purpose.
+     */
+    private function ensureCopyRestoreTable(): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_copy_restore')
+            . ' (`eventtype_id` INT UNSIGNED NOT NULL, `requested_utc` DATETIME NOT NULL,'
+            . ' `generation` INT UNSIGNED NOT NULL DEFAULT 1, `after_booking_id` INT UNSIGNED NOT NULL DEFAULT 0,'
+            . ' PRIMARY KEY (`eventtype_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
     }
 
     private function prepareUninstall(): bool

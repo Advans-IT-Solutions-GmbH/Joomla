@@ -664,3 +664,19 @@ CREATE TABLE IF NOT EXISTS `#__appointments_eventtype_calendars` (
     FOREIGN KEY (`eventtype_id`) REFERENCES `#__appointments_eventtypes` (`id`) ON DELETE CASCADE,
     FOREIGN KEY (`calendar_id`) REFERENCES `#__appointments_calendars` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Requests to write the calendar copies of future bookings anew: after the
+-- target calendar of an event type changed (`eventtype_id`), or after the
+-- copies were removed while the internet calendars were switched off (`0`, all
+-- event types). The Scheduler works through them in batches; `generation`
+-- rises with every new request, `after_booking_id` is where the walk stands.
+-- Created by script.php on an update as well.
+--
+CREATE TABLE IF NOT EXISTS `#__appointments_copy_restore` (
+    `eventtype_id` INT UNSIGNED NOT NULL,
+    `requested_utc` DATETIME NOT NULL,
+    `generation` INT UNSIGNED NOT NULL DEFAULT 1,
+    `after_booking_id` INT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (`eventtype_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

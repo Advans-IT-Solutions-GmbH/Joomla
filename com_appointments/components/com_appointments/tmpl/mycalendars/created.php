@@ -128,6 +128,7 @@ $guide = static fn (array $steps, string $client): string => $download($client) 
             <h2 id="created-guide" class="com-appointments-title"><?php echo Text::sprintf('COM_APPOINTMENTS_TEAM_D_GUIDE_FOR', Text::_(DeviceService::CLIENT_LABELS[$chosen])); ?></h2>
             <?php echo $guide($guides[$chosen], $chosen); ?>
             <p class="form-text"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_AUTOMATIC'); ?></p>
+        <p class="form-text" id="created-not-cancel"><strong><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_NOT_CANCEL'); ?></strong></p>
         </section>
 
         <section class="com-appointments-mycal-section" aria-labelledby="created-others">

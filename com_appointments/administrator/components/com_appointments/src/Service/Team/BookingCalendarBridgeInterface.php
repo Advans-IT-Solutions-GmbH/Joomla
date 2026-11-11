@@ -85,4 +85,24 @@ interface BookingCalendarBridgeInterface
      * The booking was anonymised or deleted: remove its objects.
      */
     public function onBookingErased(int $bookingId): void;
+
+    /**
+     * Ask for the copies of the future bookings of one event type to be written
+     * again, or of every event type with `0`: after its target calendar changed,
+     * or after the copies were removed while the feature was switched off.
+     * Recorded only; {@see self::restoreCopies()} does the work. Needs no key.
+     */
+    public function requestRestore(int $eventTypeId): void;
+
+    /**
+     * Work through the recorded requests: for every future, active booking of a
+     * requested event type whose copy is missing in the target calendar, or
+     * lies in another calendar, write the copy as after a booking change. A
+     * request is closed once all its bookings were handled. Without a request
+     * nothing is written, so a copy a device deleted stays deleted. Does nothing
+     * while the feature is switched off.
+     *
+     * @return  int  Bookings handled.
+     */
+    public function restoreCopies(int $limit): int;
 }
