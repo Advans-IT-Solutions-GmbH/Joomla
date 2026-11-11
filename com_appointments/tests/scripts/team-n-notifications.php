@@ -12,6 +12,7 @@
  * settings and plugins it changes.
  */
 
+use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\NotificationSwitch;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
@@ -168,8 +169,9 @@ return static function (TeamSuite $suite): void {
         }
 
         $super = $user('super', [8], true);
-        // The host may open the administrator (Manager group), the reader may not.
-        $host = $user('host', [$teamGroup, 6], false, ['language' => 'en-GB']);
+        // The host may open the administrator and the component (Administrator group: a Manager has no
+        // core.manage on the component by default), the reader may not.
+        $host = $user('host', [$teamGroup, 7], false, ['language' => 'en-GB']);
         $reader = $user('reader', [$teamGroup], false, ['language' => 'fr-FR', 'timezone' => 'Europe/Paris']);
         $freebusy = $user('freebusy', [$teamGroup], true, ['language' => 'de-DE']);
         $external = $user('external', [$externalGroup], true);
@@ -244,12 +246,20 @@ return static function (TeamSuite $suite): void {
         $store = new BookingStore($joomla);
         $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
         $day = $now->modify('+6 days')->format('Y-m-d');
-        $book = static function (array $row, string $hour, array $fields = []) use ($store, $now, $day): array {
-            return $store->create($row, array_replace([
+        // The booking as the notification gets it after a booking (BookingModel, ConferenceService::provision()):
+        // the stored row, opened. The clear array that BookingStore::create() returns is not marked as opened,
+        // so the notification would refuse its personal fields as clear values.
+        $bookingData = BookingData::fromApplication();
+        $book = static function (array $row, string $hour, array $fields = []) use ($store, $now, $day, $joomla, $bookingData): array {
+            $created = $store->create($row, array_replace([
                 'invitee_name' => 'Notify Invitee', 'invitee_first_name' => 'Notify', 'invitee_last_name' => 'Invitee',
                 'invitee_email' => 'notify-invitee@example.test', 'invitee_phone' => '+41 44 555 01 01',
                 'guest_emails' => 'notify-guest@example.test', 'invitee_timezone' => 'UTC', 'invitee_language' => 'en-GB',
             ], $fields), new DateTimeImmutable($day . ' ' . $hour, new DateTimeZone('UTC')), $now, [1, 2, 3, 5, 6], 'en-GB');
+            $stored = $joomla->setQuery('SELECT * FROM ' . $joomla->quoteName('#__appointments_bookings')
+                . ' WHERE ' . $joomla->quoteName('id') . ' = ' . (int) $created['id'])->loadAssoc();
+
+            return $bookingData->open($stored);
         };
         $notifier = new NotificationService($joomla, $team);
         $send = static function (array $booking, string $purpose, bool $hostOnly = false, ?NotificationService $service = null) use ($notifier, $now, $mails): array {
