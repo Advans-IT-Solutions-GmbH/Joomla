@@ -276,6 +276,10 @@ try {
     ba_request($page, ['task' => 'cleanup', 'cid' => [$probe['id']], (string) ba_token($full['body']) => '1']);
     ba_check('With all permissions and the form token the eligible record is removed',
         !ba_has_extension($db, $probe['id']));
+    $after = ba_request($page);
+    ba_check('The remove action is offered exactly when a row is selectable',
+        $after['code'] === 200
+        && str_contains($after['body'], 'name="cid[]"') === str_contains($after['body'], 'name="task" value="cleanup"'));
 
     // 5. Permission editing: the installed config.xml/access.xml drive Joomla's editor.
     $options = $baseUrl . '/administrator/index.php?option=com_config&view=component&component=com_j2store_cleanup';
