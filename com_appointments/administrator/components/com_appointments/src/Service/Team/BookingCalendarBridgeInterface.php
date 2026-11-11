@@ -100,7 +100,8 @@ interface BookingCalendarBridgeInterface
      * after a booking change (a copy that survived a switched-off period may be
      * stale) and remove it from other calendars. A copy counts only if its ETag
      * changed with the write (the refresh was committed) and it lies in the
-     * target alone. A request is closed
+     * target alone. An entry of the target's own with the booking's UID is never
+     * adopted by a restore and stays as it is. A request is closed
      * once a pass over its bookings ended without a failed write; after a failed write the next run starts a new pass (at most five,
      * then the request is given up and logged). Without a request nothing is
      * written, so a copy a device deleted stays deleted. While the feature is
