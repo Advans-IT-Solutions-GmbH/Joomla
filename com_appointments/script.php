@@ -264,7 +264,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_copy_restore')
             . ' (`eventtype_id` INT UNSIGNED NOT NULL, `requested_utc` DATETIME NOT NULL,'
-            . ' `generation` INT UNSIGNED NOT NULL DEFAULT 1, `after_booking_id` INT UNSIGNED NOT NULL DEFAULT 0,'
+            . ' `token` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, `after_booking_id` INT UNSIGNED NOT NULL DEFAULT 0,'
             . ' `failed` TINYINT UNSIGNED NOT NULL DEFAULT 0, `passes` TINYINT UNSIGNED NOT NULL DEFAULT 0,'
             . ' PRIMARY KEY (`eventtype_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
     }
