@@ -112,4 +112,10 @@ interface BookingCalendarBridgeInterface
      * @return  int  Copies written and verified in place.
      */
     public function restoreCopies(int $limit): int;
+
+    /**
+     * Restore requests still open (-1 when they cannot be counted). The calendar retention
+     * task reports it as `restore_pending`: a restore is complete at 0.
+     */
+    public function restorePending(): int;
 }
