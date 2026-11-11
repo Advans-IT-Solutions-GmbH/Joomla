@@ -90,8 +90,11 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         // must not be exposed in an invitee's domain.
         $event->addResult([$domain, $guestDomain]);
         // Staff data of the account Joomla found (absences, host record, hosted event types,
-        // owned schedules), whether or not the internet calendars are on.
-        $staff = $this->staffDomains($event->getUser());
+        // owned schedules), whether or not the internet calendars are on. Joomla finds the account
+        // with the database collation; only an exactly matching address makes it the requester's.
+        $account = $event->getUser();
+        $staff = $account !== null && PrivacyAddress::matches((string) $account->email, (string) $event->getRequest()->email)
+            ? $this->staffDomains($account) : [];
         if ($staff !== []) {
             $event->addResult($staff);
         }
@@ -143,7 +146,7 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         }
         $this->removeStaffData($event->getUser());
         TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase())
-            ?->remove((string) $event->getRequest()->email, $event->getUser());
+            ?->remove((string) $event->getRequest()->email, $event->getUser(), (int) ($event->getRequest()->id ?? 0));
     }
 
     /**

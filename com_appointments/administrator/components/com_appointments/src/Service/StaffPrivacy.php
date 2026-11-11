@@ -84,17 +84,18 @@ final class StaffPrivacy
             $db->setQuery($this->query()->delete($db->quoteName('#__appointments_hosts'))
                 ->where($db->quoteName('user_id') . ' = ' . $userId))->execute();
             $result['host_removed'] = (int) $db->getAffectedRows();
+            // Read before the commit: a failing lookup rolls everything back, so the message
+            // "nothing changed" stays true and the review lists never go missing after a change.
+            $result['event_types'] = array_map(static fn (array $row): string => (string) $row['title'],
+                $this->rows('#__appointments_eventtypes', ['id', 'title'], 'host_user_id', $userId, 'title'));
+            $result['schedules'] = array_map(static fn (array $row): string => (string) $row['title'],
+                $this->rows('#__appointments_schedules', ['id', 'title'], 'owner_user_id', $userId, 'title'));
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();
 
             throw $e;
         }
-
-        $result['event_types'] = array_map(static fn (array $row): string => (string) $row['title'],
-            $this->rows('#__appointments_eventtypes', ['id', 'title'], 'host_user_id', $userId, 'title'));
-        $result['schedules'] = array_map(static fn (array $row): string => (string) $row['title'],
-            $this->rows('#__appointments_schedules', ['id', 'title'], 'owner_user_id', $userId, 'title'));
 
         return $result;
     }

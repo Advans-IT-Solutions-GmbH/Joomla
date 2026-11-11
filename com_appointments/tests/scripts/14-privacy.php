@@ -152,6 +152,22 @@ try {
         'A staff account exports its blocked periods with reasons, its host record, hosted event types and owned schedules, with the internet calendars off');
     $check(!str_contains($staffExport, $hostToken) && !str_contains($staffExport, 'feed_token'),
         'The staff export never contains the feed credential');
+    // Joomla finds the account by database collation (e.g. without accents): only an exactly matching
+    // address makes the staff data the requester's.
+    $collated = new \Joomla\CMS\User\User();
+    $collated->id = $staffId;
+    $collated->email = 'privacy-stäff-' . substr($tag, 14) . '@example.test';
+    $request->email = 'privacy-staff-' . substr($tag, 14) . '@example.test';
+    $export = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', ['subject' => $request, 'user' => $collated]);
+    $plugin->onPrivacyExportRequest($export);
+    $leaked = false;
+    foreach ($export->getArgument('result') as $set) {
+        foreach ($set as $domain) {
+            $leaked = $leaked || str_starts_with($domain->name, 'appointments_staff_absences');
+        }
+    }
+    $check(!$leaked, 'An account whose address does not match the request exactly gets no staff export');
+    $request->email = $tag . '@example.test';
     $application->getMessageQueue(true);
     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => $staffUser]));
     $blocked = $db->query("SELECT title, end_utc > UTC_TIMESTAMP() AS future FROM {$prefix}appointments_blocked WHERE user_id={$staffId}")->fetch_all(MYSQLI_ASSOC);
