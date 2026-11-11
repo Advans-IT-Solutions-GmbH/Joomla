@@ -84,6 +84,24 @@ final class ManageMenuItem
     }
 
     /**
+     * The frame of a site redirect after a signed action: the active menu item when it belongs to
+     * this component (the request came through it), otherwise find(). Callers use it only after
+     * the signature was verified, or for this browser session's own receipt.
+     *
+     * @param   object|null  $active  The active site menu item.
+     */
+    public static function frame(?object $active, DatabaseInterface $db, int $eventtypeId, string $language): int
+    {
+        $query = $active !== null && is_array($active->query ?? null) ? $active->query : [];
+
+        if (($query['option'] ?? '') === 'com_appointments') {
+            return (int) $active->id;
+        }
+
+        return self::find($db, $eventtypeId, $language);
+    }
+
+    /**
      * The Itemid for the booking pages of an event type in $language (a tag such as de-DE), from
      * the database, so it also works for mails sent from the administrator or the command line.
      */

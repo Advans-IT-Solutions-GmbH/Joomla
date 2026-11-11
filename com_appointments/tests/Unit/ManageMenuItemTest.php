@@ -5,6 +5,8 @@ namespace Advans\Component\Appointments\Tests\Unit;
 use Advans\Component\Appointments\Administrator\Helper\ManageMenuItem;
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__ . '/Conference/RuntimeStubs.php';
+
 final class ManageMenuItemTest extends TestCase
 {
     private static function row(int $id, string $link, string $language = '*'): array
@@ -76,5 +78,15 @@ final class ManageMenuItemTest extends TestCase
         self::assertSame(0, ManageMenuItem::pick([], 4, 'de-DE'));
         // A link to an event type whose id only starts with the booking's.
         self::assertSame(0, ManageMenuItem::pick([self::row(53, 'index.php?option=com_appointments&view=eventtype&id=40')], 4, 'de-DE'));
+    }
+
+    public function testARedirectKeepsTheActiveMenuItemOfTheComponent(): void
+    {
+        $active = (object) ['id' => 7, 'query' => ['option' => 'com_appointments', 'view' => 'eventtypes']];
+        // The database is not consulted: the request already came through a page of this component.
+        $db = $this->createMock(\Joomla\Database\DatabaseInterface::class);
+        $db->expects(self::never())->method('setQuery');
+
+        self::assertSame(7, ManageMenuItem::frame($active, $db, 4, 'de-DE'));
     }
 }

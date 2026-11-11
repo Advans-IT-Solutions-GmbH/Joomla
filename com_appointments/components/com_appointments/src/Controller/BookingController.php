@@ -257,14 +257,8 @@ class BookingController extends BaseController
      */
     private function frame(int $eventtypeId): string
     {
-        $active = $this->app->getMenu()->getActive();
-
-        if ($active !== null && ($active->query['option'] ?? '') === 'com_appointments') {
-            return '&Itemid=' . (int) $active->id;
-        }
-
-        $itemId = ManageMenuItem::find(Factory::getContainer()->get(DatabaseInterface::class), $eventtypeId,
-            $this->app->getLanguage()->getTag());
+        $itemId = ManageMenuItem::frame($this->app->getMenu()->getActive(), Factory::getContainer()->get(DatabaseInterface::class),
+            $eventtypeId, $this->app->getLanguage()->getTag());
 
         return $itemId > 0 ? '&Itemid=' . $itemId : '';
     }
