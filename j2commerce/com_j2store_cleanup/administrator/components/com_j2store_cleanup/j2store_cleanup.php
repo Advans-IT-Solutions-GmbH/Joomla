@@ -51,7 +51,8 @@ function isCleanupCandidate(object $ext): bool
     $type      = (string) ($ext->type ?? '');
     $element   = (string) ($ext->element ?? '');
     $folder    = (string) ($ext->folder ?? '');
-    $protected = (int) ($ext->protected ?? 0) !== 0;
+    // Joomla's uninstaller refuses locked records; a direct deletion must never bypass that.
+    $protected = (int) ($ext->protected ?? 0) !== 0 || (int) ($ext->locked ?? 0) !== 0;
 
     if ($protected || isShopCoreExtension($ext) || $element === 'com_j2store_cleanup' || $element === '') {
         return false;
@@ -144,7 +145,7 @@ function getCleanupExtension(\Joomla\Database\DatabaseInterface $db, int $id): ?
 {
     $db->setQuery(
         createDbQuery($db)
-            ->select($db->quoteName(['extension_id', 'type', 'element', 'folder', 'client_id', 'protected', 'manifest_cache']))
+            ->select($db->quoteName(['extension_id', 'type', 'element', 'folder', 'client_id', 'protected', 'locked', 'manifest_cache']))
             ->from($db->quoteName('#__extensions'))
             ->where($db->quoteName('extension_id') . ' = :extId')
             ->bind(':extId', $id, \Joomla\Database\ParameterType::INTEGER)
@@ -179,6 +180,7 @@ function removeCleanupExtensionRecord(\Joomla\Database\DatabaseInterface $db, ob
             ->where($db->quoteName('folder') . ' = :folder')
             ->where($db->quoteName('client_id') . ' = :clientId')
             ->where($db->quoteName('protected') . ' = 0')
+            ->where($db->quoteName('locked') . ' = 0')
             ->bind(':extId', $extensionId, \Joomla\Database\ParameterType::INTEGER)
             ->bind(':type', $type, \Joomla\Database\ParameterType::STRING)
             ->bind(':element', $element, \Joomla\Database\ParameterType::STRING)
@@ -241,7 +243,7 @@ function cleanupExtensions(\Joomla\Database\DatabaseInterface $db, array $ids): 
     }
 
     $query = createDbQuery($db)
-        ->select($db->quoteName(['extension_id', 'type', 'element', 'folder', 'client_id', 'protected', 'manifest_cache']))
+        ->select($db->quoteName(['extension_id', 'type', 'element', 'folder', 'client_id', 'protected', 'locked', 'manifest_cache']))
         ->from($db->quoteName('#__extensions'))
         ->whereIn($db->quoteName('extension_id'), $ids);
     $db->setQuery($query);
@@ -738,7 +740,7 @@ if ($task === 'cleanup' && Session::checkToken()) {
 
 // The same candidate predicate is used here and by the mutation path.
 $query = createDbQuery($db)
-    ->select($db->quoteName(['extension_id', 'name', 'type', 'element', 'folder', 'enabled', 'client_id', 'protected', 'manifest_cache']))
+    ->select($db->quoteName(['extension_id', 'name', 'type', 'element', 'folder', 'enabled', 'client_id', 'protected', 'locked', 'manifest_cache']))
     ->from('#__extensions')
     ->order('type, name');
 
