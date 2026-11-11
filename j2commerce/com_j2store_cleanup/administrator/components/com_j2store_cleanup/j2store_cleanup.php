@@ -59,11 +59,13 @@ function isCleanupCandidate(object $ext): bool
     }
 
     // Element and folder become filesystem paths: accept only plain extension
-    // names (a library may have one sub-folder), never a traversal.
-    $name = '[a-z0-9_.-]+';
+    // names that start with a letter or digit (so never ".", ".." or a traversal),
+    // a library may have one sub-folder, and a plugin must name its group.
+    $name = '[a-z0-9][a-z0-9_.-]*';
     if (str_contains($element, '..') || str_contains($folder, '..')
         || preg_match('#^' . $name . ($type === 'library' ? '(?:/' . $name . ')?' : '') . '$#', $element) !== 1
-        || preg_match('#^[a-z0-9_.-]*$#', $folder) !== 1) {
+        || preg_match('#^(?:' . $name . ')?$#', $folder) !== 1
+        || ($type === 'plugin' && $folder === '')) {
         return false;
     }
 
