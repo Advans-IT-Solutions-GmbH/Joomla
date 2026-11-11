@@ -57,14 +57,16 @@ $guides = [
     ],
 ];
 // Clients that need a program first: a note and the manufacturer's official download page (HTTPS, external).
+// The address is a language string, so an operator can change it with a language override. It is only a link
+// the visitor clicks; the server never contacts it.
 $downloads = [
     'outlook-caldavsynchronizer' => [
-        'https://caldavsynchronizer.org/download-2/',
+        'COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_URL',
         'COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_GET',
         'COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_LINK',
     ],
     'davx5' => [
-        'https://www.davx5.com/download/',
+        'COM_APPOINTMENTS_TEAM_D_GUIDE_DAVX5_URL',
         'COM_APPOINTMENTS_TEAM_D_GUIDE_DAVX5_GET',
         'COM_APPOINTMENTS_TEAM_D_GUIDE_DAVX5_LINK',
     ],
@@ -76,6 +78,14 @@ $download = static function (string $client) use ($downloads): string {
     }
 
     [$url, $note, $label] = $downloads[$client];
+    $url = Text::_($url);
+
+    // Only HTTPS addresses, whatever a language override says.
+    if (!str_starts_with($url, 'https://')) {
+        return '';
+    }
+
+    $url = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
 
     return '<p class="form-text">' . Text::_($note) . ' <a href="' . $url . '" target="_blank" rel="noopener noreferrer">'
         . Text::_($label) . '<span class="visually-hidden"> ' . Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_NEW_WINDOW') . '</span></a></p>';
