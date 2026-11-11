@@ -242,8 +242,8 @@ final class Queue
                 . ' ORDER BY last_attempt ASC, booking_id ASC LIMIT ' . max(1, min(100, $limit)))->loadAssocList();
             foreach ($rows as $row) {
                 $counts['processed']++;
-                // A contact creation and its activity are separate crash-safe checkpoints.
-                for ($step = 0; $step < 3; $step++) {
+                // Destination binding, contact creation and activity are separate crash-safe checkpoints.
+                for ($step = 0; $step < 4; $step++) {
                     $this->profileKey = null;
                     try {
                         $result = $this->deliver((int) $row['booking_id'], $settings);
@@ -339,11 +339,15 @@ final class Queue
             // Prove the destination before any personal data leaves: the authenticated organisation
             // must be the one this record is bound to.
             $organization = $client->organization();
-            if ($row['organization_id'] === '') {
-                $this->save($id, ['organization_id' => $organization]);
-                $row['organization_id'] = $organization;
-            } elseif (!hash_equals($row['organization_id'], $organization)) {
+            if ($row['organization_id'] !== '' && !hash_equals($row['organization_id'], $organization)) {
                 throw new DeliveryException('blocked', 'organization_changed');
+            }
+            if ($row['organization_id'] === '' || $row['binding'] === '') {
+                // Commit the destination before the first request that carries personal data, so a failed
+                // search cannot roll it back and let a later key of another organisation receive the booking.
+                $this->save($id, ['organization_id' => $organization, 'binding' => $profile->binding]);
+                $db->transactionCommit();
+                return 'next';
             }
             if ($row['contact_id'] === '') {
                 $client->validateLeadFields();

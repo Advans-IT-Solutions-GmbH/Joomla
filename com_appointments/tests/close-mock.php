@@ -168,6 +168,9 @@ namespace {
             if ($method === 'GET' && $path === '/api/v1/me/') {
                 return ['code' => 200, 'data' => ['id' => 'user_synthetic', 'organizations' => [['id' => $this->orgId ?? 'orga_' . $this->org]]]];
             }
+            if ($path === '/api/v1/data/search/' && $this->mode === 'search503') {
+                return ['code' => 503];
+            }
             if ($path === '/api/v1/data/search/') {
                 $email = $payload['query']['queries'][1]['related_query']['condition']['value'];
                 $found = array_values(array_filter($this->contacts, static fn ($contact) =>
@@ -493,6 +496,25 @@ namespace {
         && array_column(array_slice($remote['qr']->requests, $before), 1) === ['/api/v1/me/'],
         'an expected organisation that differs blocks before any personal data');
     unset($params->values['close_profiles']['close_profiles1']['organization_id']);
+    $params->values['close_profiles']['close_profiles0']['organization_id'] = 'orga_main';
+    $mutate($late, ['sequence' => 2, 'state' => 1]);
+    $queue->run();
+    $check($state(9)['state'] === 'done', 'adding a matching expected organisation later keeps existing records deliverable');
+    unset($params->values['close_profiles']['close_profiles0']['organization_id']);
+    $remote['main']->mode = 'search503';
+    $enrol($booking(20, 1, 'failed-search@example.test', $lifeSciences));
+    $queue->run();
+    $check($state(20)['state'] === 'retry' && $state(20)['organization_id'] === 'orga_main' && $state(20)['binding'] !== '',
+        'the destination is committed before the first request with personal data');
+    $remote['main']->mode = 'ok';
+    $remote['main']->orgId = 'orga_replaced';
+    $GLOBALS['close_mock_time'] += 301;
+    $before = count($remote['main']->requests);
+    $queue->run();
+    $check($state(20)['reason'] === 'organization_changed'
+        && array_column(array_slice($remote['main']->requests, $before), 1) === ['/api/v1/me/'],
+        'after a failed search a replaced key cannot receive the booking');
+    $remote['main']->orgId = null;
     $check((new Profile(array_replace($profileMain, ['lead_name' => '20,10,20'])))->leadName === [20, 10],
         'field selectors keep their configured precedence');
 

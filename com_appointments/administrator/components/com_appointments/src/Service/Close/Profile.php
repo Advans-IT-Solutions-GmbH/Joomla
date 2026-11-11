@@ -120,7 +120,7 @@ final class Profile
             $this->fields = [];
             $this->activityAnswers = [];
         }
-        $this->binding = hash('sha256', json_encode([$this->origin, $this->credential, $this->organization, $this->mode, $this->type], JSON_THROW_ON_ERROR));
+        $this->binding = hash('sha256', json_encode([$this->origin, $this->credential, $this->mode, $this->type], JSON_THROW_ON_ERROR));
     }
 
     /** All questions whose answers this profile may read; nothing else leaves the website. */
