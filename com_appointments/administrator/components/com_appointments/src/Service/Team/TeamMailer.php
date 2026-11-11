@@ -343,7 +343,9 @@ final class TeamMailer implements TeamMailerInterface
 
     private function logFailure(string $phase, \Throwable $error, int $priority = Log::ERROR): void
     {
-        Log::add('Internet calendar mail failed: phase=' . $phase . ', exception=' . $error::class, $priority, 'com_appointments');
+        // The class and the place only: an exception message may hold an address or a link.
+        Log::add('Internet calendar mail failed: phase=' . $phase . ', exception=' . $error::class . ' at ' . basename($error->getFile()) . ':' . $error->getLine(),
+            $priority, 'com_appointments');
     }
 
     /**
