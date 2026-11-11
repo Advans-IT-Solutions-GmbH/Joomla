@@ -524,6 +524,17 @@ namespace {
             $this->check('Surviving administrator code of a component is still scanned',
                 classifyExtension(null, $legacy, getIssuePatterns())['status'] === 'incompatible');
 
+            // The same removed API in both folders is one finding, not two.
+            foreach ([JPATH_ADMINISTRATOR, JPATH_SITE] as $root) {
+                $both = $root . '/components/com_j2commerce_bothlegacy';
+                mkdir($both, 0777, true);
+                file_put_contents($both . '/legacy.php', '<?php JFactory::getApplication();');
+            }
+            $bothResult = classifyExtension(null, (object) $this->row(3, 'component', 'com_j2commerce_bothlegacy'), getIssuePatterns());
+            $keys = array_map(static fn (array $issue): string => $issue['type'] . ':' . $issue['detail'], $bothResult['issues']);
+            $this->check('Findings from both component folders are deduplicated',
+                $bothResult['status'] === 'incompatible' && $keys !== [] && count($keys) === count(array_unique($keys)));
+
             $db = new FakeDatabase([array_replace($this->row(1, 'component', 'com_j2commerce_partial'), ['client_id' => 1])]);
             Installer::$mode = 'success';
             Installer::$calls = [];
