@@ -291,7 +291,24 @@ return static function (TeamSuite $suite): void {
                     $db->query("UPDATE {$p}appointments_templates SET published=" . ($published ? 1 : 0) . " WHERE eventtype_id=0 AND purpose='team_device_added' AND language='{$language}'");
                     try {
                         $before = AppointmentsMail::snapshot();
-                        $enabled->mailer()->deviceAdded($id, 'Mail fixture device', 'other', new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+                        // The mailer logs the failing phase and exception class only: collect them for the report.
+                        static $mailLog = null;
+
+                        if ($mailLog === null) {
+                            $mailLog = new \ArrayObject();
+                            \Joomla\CMS\Log\Log::addLogger(['logger' => 'callback', 'callback' => static function ($entry) use ($mailLog): void {
+                                $mailLog[] = (string) $entry->message;
+                            }], \Joomla\CMS\Log\Log::ALL, ['com_appointments']);
+                        }
+
+                        $mailLog->exchangeArray([]);
+
+                        try {
+                            $enabled->mailer()->deviceAdded($id, 'Mail fixture device', 'other', new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+                        } catch (\Throwable $e) {
+                            throw new \RuntimeException($e::class . ' ' . $e->getMessage() . ' (' . $language . ', published=' . (int) $published . '): '
+                                . implode(' | ', $mailLog->getArrayCopy()), 0, $e);
+                        }
                         $messages = AppointmentsMail::messagesSince($before);
                         if (count($messages) !== 1) {
                             return false;
