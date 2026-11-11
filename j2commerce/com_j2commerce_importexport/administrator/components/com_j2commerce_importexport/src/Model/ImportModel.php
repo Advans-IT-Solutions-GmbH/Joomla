@@ -1622,7 +1622,7 @@ class ImportModel extends BaseDatabaseModel
     public static function restoreFormulaCell($value)
     {
         if (is_string($value)
-            && preg_match("/^'+[=+\\-@\\t\\r]/", $value)) {
+            && (preg_match("/^'+[=+\\-@\\t\\r\\n]/", $value) || preg_match("/^'+[\\x{FF1D}\\x{FF0B}\\x{FF0D}\\x{FF20}]/u", $value))) {
             return substr($value, 1);
         }
 

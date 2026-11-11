@@ -191,7 +191,10 @@ class ExportController extends BaseController
      */
     public static function neutralizeFormula($value)
     {
-        if (!\is_string($value) || !preg_match("/^'*[=+\\-@\\t\\r]/", $value)) {
+        // = + - @ tab, carriage return and line feed, plus the full-width forms of = + - @ that
+        // some spreadsheets also read as formula starts. Same pattern as ImportModel::restoreFormulaCell().
+        if (!\is_string($value)
+            || (!preg_match("/^'*[=+\\-@\\t\\r\\n]/", $value) && !preg_match("/^'*[\\x{FF1D}\\x{FF0B}\\x{FF0D}\\x{FF20}]/u", $value))) {
             return $value;
         }
 

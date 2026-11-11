@@ -1077,12 +1077,12 @@ namespace {
         }
         // CSV injection: the export neutralizes formulas, the import restores the cell.
         $exportClass = Advans\Component\J2CommerceImportExport\Administrator\Controller\ExportController::class;
-        foreach (['=1+1', '+SUM(A1)', '-2+3', '@SUM(A1)', "\tcmd", "\rcmd", '-cmd|calc'] as $cell) {
+        foreach (['=1+1', '+SUM(A1)', '-2+3', '@SUM(A1)', "\tcmd", "\rcmd", "\ncmd", '-cmd|calc', "\u{FF1D}1+1", "\u{FF0B}1", "\u{FF0D}1", "\u{FF20}SUM(A1)"] as $cell) {
             check($exportClass::neutralizeFormula($cell) === "'" . $cell && ImportModel::restoreFormulaCell("'" . $cell) === $cell,
                 'A formula cell is prefixed and restored: ' . json_encode($cell));
         }
         // A literal leading apostrophe must survive the round trip as well.
-        foreach (["'=1+1", "''-x", "'-5", "'@a", "'abc", "'", "''"] as $cell) {
+        foreach (["'=1+1", "'\u{FF1D}1", "''-x", "'-5", "'@a", "'abc", "'", "''"] as $cell) {
             $exported = $exportClass::neutralizeFormula($cell);
             check(ImportModel::restoreFormulaCell($exported) === $cell,
                 'A literal apostrophe value survives export and import: ' . json_encode($cell));
