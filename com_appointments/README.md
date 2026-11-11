@@ -346,6 +346,17 @@ policies consistently with their legal obligations. Accent differences never est
 and the request's email remains authoritative even if another privacy plugin has already changed
 the associated Joomla user object.
 
+**Staff data.** When Joomla finds an account for the request, the export also contains the data
+the component keeps about that person as staff, whether or not the internet calendars are on:
+blocked periods (absences, with their reason), the host record (dates only, never the feed
+credential), the event types the account hosts with the name, role and photo shown about the
+person, and the schedules it owns. Joomla's own user plugin pseudonymises the account itself, so
+references to its id stay. Removal deletes blocked periods that are over, keeps current and future
+ones for the slot calculation but removes their reason, and deletes the host record with its feed
+credential. Event types and schedules are team configuration and are never changed automatically:
+the removal names them for the administrator to assign another host and check the name, photo and
+role on the booking page. Deleting an account in the user manager does not remove these rows.
+
 ### Scheduler, reminders and retention
 
 The component installs and enables **Task - Appointments**. Updates preserve an existing task's
@@ -685,7 +696,9 @@ addresses against it.
 - **Calendar entries** are searched only in the session of the person handling the request, and
   only in the calendars that person can unlock (owner, manager, or keys recovered with the recovery
   key). Removal deletes the matching entries as normal changes, so clients drop them at the next
-  synchronisation.
+  synchronisation. Entries with the address of a team member (an account in the internet calendar
+  team groups) are never changed automatically: the removal leaves them and reports their number
+  for the administrator to review.
 - **Never silently incomplete:** every calendar that could not be searched is named in the export
   and in the removal result, with the way to search it (sign in as a key holder, or use the
   recovery key).

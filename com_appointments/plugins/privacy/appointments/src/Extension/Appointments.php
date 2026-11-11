@@ -10,13 +10,16 @@ namespace Advans\Plugin\Privacy\Appointments\Extension;
 
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Service\PrivacyService;
+use Advans\Component\Appointments\Administrator\Service\StaffPrivacy;
 use Advans\Plugin\Privacy\Appointments\Team\TeamPrivacy;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Event\Privacy\CanRemoveDataEvent;
 use Joomla\CMS\Event\Privacy\ExportRequestEvent;
 use Joomla\CMS\Event\Privacy\RemoveDataEvent;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\Plugin\CMSPlugin;
+use Joomla\CMS\User\User;
 use Joomla\Component\Privacy\Administrator\Export\Domain;
 use Joomla\Component\Privacy\Administrator\Export\Field;
 use Joomla\Component\Privacy\Administrator\Export\Item;
@@ -86,6 +89,12 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         // No invitee information lives in the erasure audit, and staff actor IDs
         // must not be exposed in an invitee's domain.
         $event->addResult([$domain, $guestDomain]);
+        // Staff data of the account Joomla found (absences, host record, hosted event types,
+        // owned schedules), whether or not the internet calendars are on.
+        $staff = $this->staffDomains($event->getUser());
+        if ($staff !== []) {
+            $event->addResult($staff);
+        }
         // Booking rows that could not be decrypted: the export says it is incomplete, with the count only.
         $incomplete = TeamPrivacy::unreadableBookings($service, $this->getApplication());
         if ($incomplete !== null) {
@@ -132,8 +141,92 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         if ($result['cleanup_failed']) {
             $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_CLEANUP_FAILED'), 'warning');
         }
+        $this->removeStaffData($event->getUser());
         TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase())
             ?->remove((string) $event->getRequest()->email, $event->getUser());
+    }
+
+    /**
+     * @return  Domain[]
+     */
+    private function staffDomains(?User $user): array
+    {
+        $userId = $user !== null ? (int) $user->id : 0;
+        $domains = [];
+
+        if ($userId <= 0) {
+            return $domains;
+        }
+
+        $this->getApplication()->bootComponent('com_appointments');
+        $labels = [
+            'appointments_staff_absences'    => 'PLG_PRIVACY_APPOINTMENTS_STAFF_ABSENCES',
+            'appointments_staff_host'        => 'PLG_PRIVACY_APPOINTMENTS_STAFF_HOST',
+            'appointments_staff_event_types' => 'PLG_PRIVACY_APPOINTMENTS_STAFF_EVENT_TYPES',
+            'appointments_staff_schedules'   => 'PLG_PRIVACY_APPOINTMENTS_STAFF_SCHEDULES',
+        ];
+
+        foreach ((new StaffPrivacy($this->getDatabase()))->export($userId) as $name => $rows) {
+            $domain = new Domain();
+            $domain->name = $name;
+            $domain->description = Text::_($labels[$name]);
+
+            foreach ($rows as $row) {
+                $item = new Item();
+                $item->id = (int) ($row['id'] ?? $row['user_id'] ?? 0);
+
+                foreach ($row as $field => $value) {
+                    $entry = new Field();
+                    $entry->name = (string) $field;
+                    $entry->value = $value === null ? '' : (string) $value;
+                    $item->addField($entry);
+                }
+
+                $domain->addItem($item);
+            }
+
+            $domains[] = $domain;
+        }
+
+        return $domains;
+    }
+
+    /**
+     * Staff data of the account: past absences go, current and future ones lose their reason,
+     * the host feed record goes. Event types and schedules of the person are team configuration
+     * and are never changed automatically: the administrator gets them to review.
+     */
+    private function removeStaffData(?User $user): void
+    {
+        $userId = $user !== null ? (int) $user->id : 0;
+
+        if ($userId <= 0) {
+            return;
+        }
+
+        $app = $this->getApplication();
+
+        try {
+            $result = (new StaffPrivacy($this->getDatabase()))->remove($userId, new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+        } catch (\Throwable $e) {
+            Log::add('Appointments: the privacy removal of staff data failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+            $app->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_STAFF_FAILED'), 'warning');
+
+            return;
+        }
+
+        $app->enqueueMessage(Text::sprintf('PLG_PRIVACY_APPOINTMENTS_STAFF_REMOVED', $result['absences_deleted'],
+            $result['absences_cleared'], $result['host_removed']), 'message');
+        $escape = static fn (array $titles): string => implode(', ', array_map(
+            static fn (string $title): string => htmlspecialchars($title, ENT_QUOTES, 'UTF-8'), $titles));
+
+        if ($result['event_types'] !== []) {
+            $app->enqueueMessage(Text::sprintf('PLG_PRIVACY_APPOINTMENTS_STAFF_EVENT_TYPES_REVIEW', $escape($result['event_types'])), 'warning');
+        }
+
+        if ($result['schedules'] !== []) {
+            $app->enqueueMessage(Text::sprintf('PLG_PRIVACY_APPOINTMENTS_STAFF_SCHEDULES_REVIEW', $escape($result['schedules'])), 'warning');
+        }
     }
 
     private function service(): PrivacyService

@@ -108,6 +108,14 @@ writing it; the mechanics, the event names and the known traps are documented th
 - **Removal check:** if the operator has a legal reason to keep a booking, the plugin reports it as
   blocked rather than silently skipping it. The reason is a component setting with a free-text
   explanation, so an operator with a retention obligation can state it.
+- **Staff data** (`StaffPrivacy`, bound to the account Joomla found, independent of the internet
+  calendars): export of blocked periods with reason, host record without feed credential, hosted
+  event types with the person's name, role and photo, owned schedules. Removal deletes past blocked
+  periods, clears the reason of current and future ones (their period still feeds the slot
+  calculation) and deletes the host record. Event types and schedules are never changed
+  automatically, only named for review; the account itself is pseudonymised by Joomla's user plugin.
+- **Calendar entries with a team member's address** are never changed automatically by a removal
+  (`TeamPrivacy::changesEntriesOf()`); their number is reported for review.
 
 The sub-plugin is declared in the component manifest and ships its own `LICENSE.txt` in its own
 `<files>` list, per `AGENTS.md`.
