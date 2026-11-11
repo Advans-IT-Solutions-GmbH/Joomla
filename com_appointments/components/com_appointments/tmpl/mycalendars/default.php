@@ -61,7 +61,12 @@ $date = static fn (?string $utc): string => $utc === null || $utc === ''
                     <?php foreach ($this->calendars as $calendar) : ?>
                         <?php $colour = preg_match('/\A#[0-9A-Fa-f]{6}\z/', $calendar->colour) === 1 ? $calendar->colour : ''; ?>
                         <li class="com-appointments-mycal-item">
-                            <span class="com-appointments-mycal-swatch"<?php echo $colour !== '' ? ' style="background-color:' . $colour . '"' : ''; ?> aria-hidden="true"></span>
+                            <?php // The swatch only shows the calendar's colour, it is no control. A set colour is named for screen readers; without one the default swatch carries no information. ?>
+                            <?php if ($colour !== '') : ?>
+                                <span class="com-appointments-mycal-swatch" style="background-color:<?php echo $colour; ?>" role="img" aria-label="<?php echo $this->escape(Text::sprintf('COM_APPOINTMENTS_TEAM_D_CALENDAR_COLOUR', $colour)); ?>"></span>
+                            <?php else : ?>
+                                <span class="com-appointments-mycal-swatch" aria-hidden="true"></span>
+                            <?php endif; ?>
                             <span class="com-appointments-mycal-name"><?php echo $this->escape($calendar->title); ?></span>
                             <span class="com-appointments-mycal-meta"><?php echo Text::_($roles[$calendar->role->value]); ?></span>
                         </li>
