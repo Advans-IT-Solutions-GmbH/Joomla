@@ -73,6 +73,7 @@
             <option value="">JNONE</option>
         </field>
         <field name="booking_data_migration" type="hidden" filter="raw" />
+        <field name="feed_token_conversion" type="hidden" filter="cmd" />
         <field name="team_create_groups" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_CONFIG_TEAM_CREATE_GROUPS" description="COM_APPOINTMENTS_CONFIG_TEAM_CREATE_GROUPS_DESC" default="1" filter="integer" validate="options">
             <option value="0">JNO</option><option value="1">JYES</option>
         </field>
