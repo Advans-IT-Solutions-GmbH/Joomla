@@ -107,7 +107,7 @@ When you remove an extension, the component uses **Joomla's Installer API** for 
 
 **Note:** Extension-specific database tables (e.g., `#__j2store_*`) are only removed if the extension's uninstall script handles them.
 
-If an eligible extension has no files, only its `#__extensions` record is deleted and a warning ("DB only — files may remain") is shown; a record that belongs to a package is never removed this way. If Joomla's uninstaller throws an exception, the record stays unless the revalidated extension has no files left, so a failing uninstall script never turns into a database-only removal that leaves code or tables behind. A `false` return from Joomla is treated as an uninstall refusal and is never bypassed with a direct database deletion.
+If an eligible extension has no files, only its `#__extensions` record is deleted and a warning ("DB only — files may remain") is shown; a record that belongs to a package is never removed this way. If Joomla's uninstaller throws an exception, the record stays unless the revalidated extension has no files left, so a failing uninstall script never turns into a database-only removal that leaves code behind. Only the code directories are checked: extension-owned database tables may remain after a failed uninstall. A `false` return from Joomla is treated as an uninstall refusal and is never bypassed with a direct database deletion.
 
 ## What Stays
 
