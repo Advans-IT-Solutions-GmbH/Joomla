@@ -125,6 +125,10 @@ class HtmlView extends BaseHtmlView
 
     public function display($tpl = null)
     {
+        // Never a cached copy, in either state: a form cached while the public site URL was valid
+        // would otherwise still be served (200) after the setting is cleared, and the reverse.
+        \Advans\Component\Appointments\Site\Helper\NoPageCache::apply(Factory::getApplication());
+
         if (self::unavailable()) {
             // No form at all: a booking without its mails is never taken (layout «unavailable»).
             $this->setLayout('unavailable');

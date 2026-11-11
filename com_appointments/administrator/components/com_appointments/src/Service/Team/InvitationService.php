@@ -524,8 +524,10 @@ final class InvitationService implements InvitationServiceInterface
 
         try {
             $this->services->mailer()->activationCompleted((int) $row->id, $userId, self::revokeUrl((int) $row->id));
-        } catch (\Throwable) {
-            // The log holds the completion; the administrators see it in the list.
+        } catch (\Throwable $e) {
+            // The activation stands (the team log holds it and the administrators see it in the
+            // list), but the missing notice to them is an error, e.g. without a public site URL.
+            Log::add('Internet calendar activation notice not sent: exception ' . $e::class, Log::ERROR, 'com_appointments');
         }
 
         return $userId;
