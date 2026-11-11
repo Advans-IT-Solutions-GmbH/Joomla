@@ -576,7 +576,14 @@ function scanForIssues($path, $patterns) {
         }
     }
 
-    // Deduplicate
+    return uniqueIssues($issues);
+}
+
+/**
+ * Keep the first finding per issue type and API, across any number of scans.
+ */
+function uniqueIssues(array $issues): array
+{
     $seen = [];
     $unique = [];
     foreach ($issues as $issue) {
@@ -632,6 +639,7 @@ function classifyExtension($manifest, $ext, $patterns) {
     foreach ($paths as $path) {
         $issues = array_merge($issues, scanForIssues($path, $patterns));
     }
+    $issues = uniqueIssues($issues);
 
     if (empty($issues)) {
         return ['status' => 'compatible', 'reason' => Text::sprintf('COM_J2STORE_CLEANUP_REASON_COMPATIBLE', $info), 'issues' => []];
