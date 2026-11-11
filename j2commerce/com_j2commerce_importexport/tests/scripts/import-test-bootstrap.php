@@ -37,28 +37,12 @@ function importExportBootAuthorizedAdministrator(): array
         $app->loadLanguage($container->get(LanguageFactoryInterface::class)->createLanguage('en-GB'));
         $app->createExtensionNamespaceMap();
 
-        $db     = $container->get(DatabaseInterface::class);
-        $suffix = bin2hex(random_bytes(8));
-        $user   = (object) [
-            'name'         => 'Synthetic Import Test Administrator',
-            'username'     => 'import-test-' . $suffix,
-            'email'        => 'import-test-' . $suffix . '@example.invalid',
-            'password'     => password_hash(bin2hex(random_bytes(24)), PASSWORD_BCRYPT),
-            'block'        => 0,
-            'sendEmail'    => 0,
-            'registerDate' => gmdate('Y-m-d H:i:s'),
-            'params'       => '{}',
-        ];
-
-        $db->insertObject('#__users', $user, 'id');
-        $context['user_id'] = (int) $user->id;
-        $membership = (object) [
-            'user_id'  => (int) $user->id,
-            'group_id' => 8,
-        ];
-        $db->insertObject('#__user_usergroup_map', $membership);
-
-        $identity = $container->get(UserFactoryInterface::class)->loadUserById((int) $user->id);
+        $userId   = 0;
+        try {
+            $identity = importExportCreateTestUser(8, 'Synthetic Import Test Administrator', $userId);
+        } finally {
+            $context['user_id'] = $userId;
+        }
         $app->loadIdentity($identity);
 
         $context['identity'] = $identity;
@@ -73,6 +57,37 @@ function importExportBootAuthorizedAdministrator(): array
 
         throw $e;
     }
+}
+
+/**
+ * Create a synthetic user in one Joomla user group and return its identity.
+ * $userId receives the new ID as soon as the user row exists, so callers can remove it.
+ */
+function importExportCreateTestUser(int $groupId, string $name, int &$userId): object
+{
+    $container = Factory::getContainer();
+    $db        = $container->get(DatabaseInterface::class);
+    $suffix    = bin2hex(random_bytes(8));
+    $user      = (object) [
+        'name'         => $name,
+        'username'     => 'import-test-' . $suffix,
+        'email'        => 'import-test-' . $suffix . '@example.invalid',
+        'password'     => password_hash(bin2hex(random_bytes(24)), PASSWORD_BCRYPT),
+        'block'        => 0,
+        'sendEmail'    => 0,
+        'registerDate' => gmdate('Y-m-d H:i:s'),
+        'params'       => '{}',
+    ];
+
+    $db->insertObject('#__users', $user, 'id');
+    $userId = (int) $user->id;
+    $membership = (object) [
+        'user_id'  => (int) $user->id,
+        'group_id' => $groupId,
+    ];
+    $db->insertObject('#__user_usergroup_map', $membership);
+
+    return $container->get(UserFactoryInterface::class)->loadUserById((int) $user->id);
 }
 
 function importExportRestoreApplication(array $context): void

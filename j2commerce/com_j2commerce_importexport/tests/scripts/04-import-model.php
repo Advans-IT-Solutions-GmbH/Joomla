@@ -161,8 +161,10 @@ class ImportModelTest
                 });
 
                 $context['application']->loadIdentity($context['identity']);
-                $this->test('importProductFull() with minimal data succeeds', function () use ($model, $data) {
+                $adminArticleId = 0;
+                $this->test('importProductFull() with minimal data succeeds', function () use ($model, $data, &$adminArticleId) {
                     $result = $model->importProductFull($data, []);
+                    $adminArticleId = (int) ($result['article_id'] ?? 0);
                     return is_array($result)
                         && ($result['success'] ?? false) === true
                         && isset($result['article_id'])
@@ -170,6 +172,8 @@ class ImportModelTest
                         && (int) $result['article_id'] > 0
                         && (int) $result['product_id'] > 0;
                 });
+
+                $this->testRestrictedAuthor($model, $db, $context, $data, $adminArticleId);
             }
 
             $this->testTranslatedRowErrors($model);
@@ -190,6 +194,112 @@ class ImportModelTest
         echo "Total:  " . ($this->passed + $this->failed) . "\n";
 
         return $this->failed === 0;
+    }
+
+    /**
+     * Real Joomla ACL with a restricted identity: a member of the core "Author"
+     * group may create content but not publish it or edit other users' articles.
+     */
+    private function testRestrictedAuthor(ImportModel $model, object $db, array $context, array $data, int $adminArticleId): void
+    {
+        $authorId = 0;
+        $countAlias = function (string $alias) use ($db): int {
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select('COUNT(*)')
+                ->from($db->quoteName('#__content'))
+                ->where($db->quoteName('alias') . ' = ' . $db->quote($alias));
+            $db->setQuery($query);
+
+            return (int) $db->loadResult();
+        };
+        $denied = function (array $row, array $options) use ($model, $countAlias): bool {
+            try {
+                $model->importProductFull($row, $options);
+                return false;
+            } catch (\RuntimeException $e) {
+                return $e->getCode() === 403 && $countAlias($row['alias']) === 0;
+            }
+        };
+        $row = function (string $label) use ($data): array {
+            $suffix = uniqid();
+            return array_replace($data, [
+                'title' => 'Restricted ' . $label . ' ' . $suffix,
+                'alias' => 'restricted-' . strtolower(str_replace(' ', '-', $label)) . '-' . $suffix,
+                'catid' => 2,
+            ]);
+        };
+
+        try {
+            $author = importExportCreateTestUser(3, 'Synthetic Import Test Author', $authorId);
+            $context['application']->loadIdentity($author);
+
+            $this->test('Precondition: the Author group may create but not publish content in category 2',
+                fn () => $author->authorise('core.create', 'com_content.category.2')
+                    && !$author->authorise('core.edit.state', 'com_content.category.2')
+                    && !$author->authorise('core.edit', 'com_content.category.2'));
+
+            $created = $row('default state');
+            $this->test('A restricted author imports a new product as an unpublished article', function () use ($model, $db, $created) {
+                $result = $model->importProductFull($created, []);
+                $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                $query->select($db->quoteName('state'))
+                    ->from($db->quoteName('#__content'))
+                    ->where($db->quoteName('id') . ' = ' . (int) ($result['article_id'] ?? 0));
+                $db->setQuery($query);
+
+                return ($result['success'] ?? false) === true && (string) $db->loadResult() === '0';
+            });
+
+            $published = $row('publish');
+            $published['article_state'] = 1;
+            $this->test('A restricted author cannot publish an imported article; the row is rolled back',
+                fn () => $denied($published, []));
+
+            $featured = $row('feature');
+            $featured['featured'] = 1;
+            $this->test('A restricted author cannot feature an imported article; the row is rolled back',
+                fn () => $denied($featured, []));
+
+            $this->test('A restricted author cannot update an article created by another user', function () use ($model, $db, $data, $adminArticleId) {
+                if ($adminArticleId < 1) {
+                    return false;
+                }
+                $forged = array_replace($data, [
+                    'title'      => 'Restricted overwrite ' . uniqid(),
+                    'article_id' => $adminArticleId,
+                    'catid'      => 2,
+                ]);
+                try {
+                    $model->importProductFull($forged, ['update_existing' => true]);
+                    return false;
+                } catch (\RuntimeException $e) {
+                    $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                    $query->select($db->quoteName('title'))
+                        ->from($db->quoteName('#__content'))
+                        ->where($db->quoteName('id') . ' = ' . $adminArticleId);
+                    $db->setQuery($query);
+
+                    return $e->getCode() === 403 && (string) $db->loadResult() === $data['title'];
+                }
+            });
+
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select($db->quoteName('menutype'))
+                ->from($db->quoteName('#__menu_types'))
+                ->where($db->quoteName('client_id') . ' = 0')
+                ->order($db->quoteName('id'));
+            $db->setQuery($query, 0, 1);
+            $menutype = (string) $db->loadResult();
+            $menuRow = $row('menu');
+            $menuRow['menu_item'] = ['title' => $menuRow['title'], 'alias' => $menuRow['alias']];
+            $this->test('A restricted author cannot publish a menu item; the whole row is rolled back',
+                fn () => $menutype !== '' && $denied($menuRow, [
+                    'create_menu' => true, 'menu_published' => true, 'default_menutype' => $menutype,
+                ]));
+        } finally {
+            $context['application']->loadIdentity($context['identity']);
+            importExportRemoveTestAdministrator($authorId);
+        }
     }
 
     private function testImportContract(ImportModel $model): void
