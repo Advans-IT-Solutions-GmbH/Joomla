@@ -298,6 +298,18 @@ namespace {
             $fileResult = cleanupExtensions($fileDb, [12]);
             $this->check('A file extension record is never removed database-only', $fileResult['error'] === 1
                 && $fileDb->has(12) && Installer::$calls === []);
+
+            // Joomla's uninstaller refuses locked records; the cleanup must not bypass that.
+            $lockedRow = array_replace($this->row(14, 'plugin', 'payment_locked', 'j2store'), ['locked' => 1]);
+            $this->check('Locked extension records are not candidates', !isCleanupCandidate((object) $lockedRow));
+            $lockedDb = new FakeDatabase([$lockedRow]);
+            Installer::$calls = [];
+            $lockedResult = cleanupExtensions($lockedDb, [14]);
+            $this->check('A locked record with missing files is never removed', $lockedResult['error'] === 1
+                && $lockedDb->has(14) && Installer::$calls === []);
+            $unlocked = (object) $this->row(14, 'plugin', 'payment_locked', 'j2store');
+            $this->check('The database fallback deletes only unlocked rows',
+                !removeCleanupExtensionRecord($lockedDb, $unlocked, getIssuePatterns()) && $lockedDb->has(14));
         }
 
         private function testAuthorizationPermissions(): void
@@ -552,6 +564,7 @@ namespace {
                 'folder' => $folder,
                 'client_id' => 0,
                 'protected' => $protected,
+                'locked' => 0,
                 'manifest_cache' => '{}',
             ];
         }
