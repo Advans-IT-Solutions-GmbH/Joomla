@@ -113,10 +113,10 @@ privacy requests to make a rollback appear complete. Re-enable a verified
 compatible adapter before resuming the Core workflow.
 
 For addresses supported by native Joomla mail, visitors submit an email address,
-then confirm possession using the code delivered to that exact address. Native
-Unicode-local-part delivery is unsupported on the tested stock platforms; the
-operator contact link remains available when this or another delivery failure
-prevents automated confirmation. GET only displays the form or prefills a code; changes require POST
+then confirm possession using the code delivered to that exact address. The operator
+contact link remains available when a delivery failure prevents automated confirmation.
+
+**Unsupported addresses:** requests without an account do not accept email addresses with umlauts or other special characters before the @, as everywhere in Joomla (Datenschutzanfragen ohne Konto: E-Mail-Adressen mit Umlauten oder anderen Sonderzeichen vor dem @ werden wie überall in Joomla nicht angenommen). Such an address is refused with an error message before any request, subject record or mail exists. Visitors can use an ASCII address or the operator contact route. GET only displays the form or prefills a code; changes require POST
 and the real Joomla session form token. There is no return-URL or redirect facility.
 Keep an operator contact route available when automated submission or delivery fails.
 
@@ -154,22 +154,7 @@ Administrator private-message content is translated using each recipient's backe
 language, otherwise the site default. Native `com_messages` still controls delivery
 preferences and its notification mail; no application-wide language is replaced.
 
-**Native mail limitation:** the tested stock Joomla 5.4 and 6 mailers reject Unicode
-local parts such as an accented character before `@`, even with an SMTPUTF8-capable
-transport. This plugin does not change Core's global address validator, transliterate
-the address or fabricate a confirmation token. An accepted pending receipt remains
-actionable with its delivery-failure warning. The contact route permits communication
-and proportionate identity/scope assessment; it does not confirm the Core request,
-substitute another mailbox as ownership proof or supply another token.
-**Stock Core has no supported manual confirmation action for this pending request.**
-Until confirmation to the original address works, its native automated lifecycle
-remains pending and unresolved; do not force confirmed/completed statuses, dispatch
-Remove prematurely or claim that contact alone completes processing. Any separately
-verified manual handling requires its own lawful process and accurate documentation;
-this plugin does not implement a parallel erasure engine.
-Exact Unicode address isolation is not evidence that native
-Unicode mail delivery or its positive confirmation lifecycle works. Internationalized
-domains are a separate case and must not be used to claim local-part support.
+**Unicode local parts are not supported:** the tested stock Joomla 5.4 and 6 mailers reject them, so the form refuses such an address up front instead of recording a pending receipt that can never be confirmed. This plugin does not change Core's global address validator, transliterate the address or fabricate a confirmation token. If another delivery failure occurs (for example a broken mail configuration), the accepted pending receipt remains actionable with its delivery-failure warning. The contact route permits communication and proportionate identity/scope assessment; it does not confirm the Core request, substitute another mailbox as ownership proof or supply another token. **Stock Core has no supported manual confirmation action for such a pending request.** Do not force confirmed/completed statuses, dispatch Remove prematurely or claim that contact alone completes processing.
 
 Confirmation uses the public **site ConfirmModel::confirmRequest**, a request-local
 table/factory and a scoped email principal with ID zero. It does not authenticate a
@@ -268,17 +253,16 @@ controllers/models with synthetic captured mail and normally installed failure p
 `tests/registered.cjs` exercises the unchanged registered-user Core request/confirmation
 route, its genuine user audit, native user pseudonymisation and separate completion.
 `tests/concurrency.cjs` requires two actual PHP processes against the same isolated
-database; an unsupported native Unicode-mail positive remains explicitly open and
-returns a nonzero exit rather than making partial acceptance green.
+database; it also proves that an address with a Unicode local part is refused with a proper
+error, without a 500, request row or mail.
 `tests/admission.cjs` uses independent HTTP sessions on two actual PHP processes to
 exercise the five-address submission and twenty-client thresholds of both operations,
 a genuine code that wrong codes of others cannot lock out, charged denials,
 no-fake-receipt refusal and the persistent API's exact 900-second clock boundary.
 `tests/operator.cjs` exercises the configured native public Contact form, real
 captured operator communication and authorized refusal of premature Remove/Complete,
-while keeping the failed original Unicode receipt unresolved. A separate ASCII
-reply channel in that contact test is communication only, not an address substitution
-or positive Unicode-mail confirmation.
+while keeping the receipt of a genuinely failed delivery unresolved. A separate ASCII
+reply channel in that contact test is communication only, not an address substitution.
 `tests/fixture.php` is CLI-only, requires an explicit synthetic fixture root and never
 writes confirmed/completed Core statuses. The Appointments fixture uses a real staff
 account, native authenticator setup and genuine owner keys; it never creates an account
@@ -290,10 +274,8 @@ does not establish the full browser/locale matrix, legacy-shop coexistence or pr
 readiness. Build, installed upgrade, negative/concurrent cases and relevant UI acceptance
 must be completed before deployment.
 
-See [test setup and limits](tests/README.md) for the isolated native suites. Neither
-CLI mail-failure tests nor exact address isolation establishes positive
-Unicode-local-part delivery; the stock native mail limitation remains unresolved
-unless the original-address confirmation lifecycle actually succeeds.
+See [test setup and limits](tests/README.md) for the isolated native suites. Addresses
+with a Unicode local part are not supported and are refused; no test claims their delivery.
 
 ## Multi-Language Support
 

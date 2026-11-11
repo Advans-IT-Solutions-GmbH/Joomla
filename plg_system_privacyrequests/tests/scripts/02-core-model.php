@@ -27,8 +27,10 @@ foreach (['"<svg/onload=alert(1)>"@example.test', '"<script>alert(1)</script>"@e
         'A quoted, literal or markup-carrying address is refused before Core stores it: '
         . json_encode($unsafe, JSON_INVALID_UTF8_SUBSTITUTE));
 }
-privacyAssert($guestRequests::validAddress("o'brien.ci@example.test") && $guestRequests::validAddress('müller-ci@example.test'),
-    'Dot-atom addresses, including Unicode letters before @, stay accepted');
+privacyAssert($guestRequests::validAddress("o'brien.ci@example.test") && $guestRequests::validAddress('muller-ci@example.test'),
+    'ASCII dot-atom addresses stay accepted');
+privacyAssert(!$guestRequests::validAddress('müller-ci@example.test') && !$guestRequests::validAddress('ö@example.test') && !$guestRequests::validAddress('a@müller.example'),
+    'Addresses with Unicode characters are refused before Core stores anything (unsupported, as everywhere in Joomla)');
 $read = static function () use ($db, $email): array {
     return $db->setQuery('SELECT id,email,requested_at,status,confirm_token FROM #__privacy_requests WHERE email='
         . $db->quote($email))->loadAssocList();

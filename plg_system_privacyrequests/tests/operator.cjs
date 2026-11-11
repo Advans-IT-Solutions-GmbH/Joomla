@@ -37,10 +37,16 @@ async function main() {
         try {
             for (const [tag, subject] of Object.entries(expected)) {
                 fixture('operator-admin-language-set', tag);
-                const email = `operator-locale-ä-${stamp}-${tag.toLowerCase()}@example.test`;
+                const email = `operator-locale-${stamp}-${tag.toLowerCase()}@example.test`;
                 const csrf = /name="([a-f0-9]{32})" value="1"/.exec(await page.content())?.[1];
                 assert(csrf);
-                await page.request.post(route, {form: {email, operation: 'request', [csrf]: '1'}});
+                // A genuine native mail failure, not an unsupported address: the synthetic mail callback throws.
+                try {
+                    fixture('mail-throw');
+                    await page.request.post(route, {form: {email, operation: 'request', [csrf]: '1'}});
+                } finally {
+                    fixture('mail-unthrow');
+                }
                 const pending = fixture('snapshot', email);
                 assert.equal(pending.requests.length, 1);
                 const notification = fixture('operator-notification', pending.requests[0].id);
@@ -59,17 +65,21 @@ async function main() {
         check('Public operator link is available without an account or submitting the email form',
             await link.count() === 1 && await link.isVisible()
             && new URL(await link.getAttribute('href')).origin === new URL(root).origin);
-        const originalEmail = `operator-ä-${stamp}@example.test`;
+        const originalEmail = `operator-original-${stamp}@example.test`;
         const html = await page.content();
         const csrf = /name="([a-f0-9]{32})" value="1"/.exec(html)?.[1];
         assert(csrf, 'A genuine public session token is required');
-        // This is explicit HTTP submission, not a claim that the browser's native
-        // type=email validation or unchanged Joomla mail supports EAI.
-        await page.request.post(route, {form: {email: originalEmail, operation: 'request', [csrf]: '1'}});
+        // A genuine native mail failure on the original address (synthetic mail callback throws).
+        try {
+            fixture('mail-throw');
+            await page.request.post(route, {form: {email: originalEmail, operation: 'request', [csrf]: '1'}});
+        } finally {
+            fixture('mail-unthrow');
+        }
         const pending = fixture('snapshot', originalEmail);
         assert.equal(pending.requests.length, 1);
         const receipt = pending.requests[0];
-        check('Original Unicode native-recipient failure retains the actual pending receipt and delivery-failed record',
+        check('Original-address native mail failure retains the actual pending receipt and delivery-failed record',
             Number(receipt.status) === 0 && pending.deliveries.length === 1
             && Number(pending.deliveries[0].delivery_failed) === 1);
         await page.locator('#privacy-email').fill(originalEmail);

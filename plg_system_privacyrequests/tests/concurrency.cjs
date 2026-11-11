@@ -11,14 +11,19 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const {root, route, mailDir, tokenFor, check} = require('./browser.cjs');
 const {fixture, action} = require('./lifecycle.cjs');
 
-async function post(context, server, email, operation, token = '') {
+async function postFull(context, server, email, operation, token = '') {
     const url = server + new URL(route).pathname + new URL(route).search;
     const html = await (await context.request.get(url)).text();
     const csrf = /name="([a-f0-9]{32})" value="1"/.exec(html)?.[1];
     assert(csrf, 'Real session-bound form token required');
-    return (await context.request.post(url, {
+    const response = await context.request.post(url, {
         form: {email, operation, confirm_token: token, [csrf]: '1'},
-    })).text();
+    });
+    return {status: response.status(), html: await response.text()};
+}
+
+async function post(context, server, email, operation, token = '') {
+    return (await postFull(context, server, email, operation, token)).html;
 }
 
 async function hold(id) {
@@ -100,66 +105,50 @@ async function main() {
             && !confirmed.requests[0].confirm_token);
 
         const stamp = Date.now();
-        const addresses = [`muller-${stamp}@example.test`, `müller-${stamp}@example.test`];
+        const asciiAddress = `muller-${stamp}@example.test`;
+        const unicodeAddress = `müller-${stamp}@example.test`;
         const distinctBefore = new Set(fs.readdirSync(mailDir));
-        const distinct = await Promise.all(addresses.map((address, i) => post(contexts[i], servers[i], address, 'request')));
-        const rows = addresses.map(address => fixture('snapshot', address));
-        check('Collation-equivalent but exact-distinct concurrent addresses create independent actual Core receipts',
-            distinct.every(html => html.includes('does not confirm receipt'))
-            && rows.every(state => state.requests.length === 1 && Number(state.requests[0].status) === 0 && state.accounts === 0)
-            && rows[0].requests[0].id !== rows[1].requests[0].id);
+        // Unicode or other special characters before the @ are not supported, as everywhere in Joomla.
+        // They are refused with a proper error before any receipt, subject row or mail exists.
+        const rejected = await Promise.all(['request', 'confirm'].map((operation, i) =>
+            postFull(contexts[i], servers[i], unicodeAddress, operation, operation === 'confirm' ? 'abcdefghijklmnop' : '')));
+        const rejectedState = fixture('snapshot', unicodeAddress);
+        check('A Unicode local-part address is cleanly rejected with a proper error: no 500, no receipt, no mail',
+            rejected.every(reply => reply.status === 200 && reply.html.includes('Enter a valid email address')
+                && !reply.html.includes('does not confirm receipt') && !reply.html.includes('No data has been removed'))
+            && rejectedState.requests.length === 0 && rejectedState.deliveries.length === 0
+            && fs.readdirSync(mailDir).every(name => distinctBefore.has(name)));
+        const accepted = await post(contexts[0], servers[0], asciiAddress, 'request');
+        const asciiRow = fixture('snapshot', asciiAddress);
+        check('The ASCII address of the same person is still accepted as an actual Core receipt',
+            accepted.includes('does not confirm receipt')
+            && asciiRow.requests.length === 1 && Number(asciiRow.requests[0].status) === 0 && asciiRow.accounts === 0);
 
         const admin = await browser.newPage();
         await admin.goto(`${root}/administrator/index.php`);
         await admin.locator('#mod-login-username').fill(process.env.JOOMLA_ADMIN_USERNAME);
         await admin.locator('#mod-login-password').fill(process.env.JOOMLA_ADMIN_PASSWORD);
         await Promise.all([admin.waitForNavigation(), admin.locator('button[type="submit"]').click()]);
-        const asciiMail = await tokenFor(addresses[0], distinctBefore);
-        const unicodeTransport = fixture('unicode-mail-core-check', addresses[1]);
-        let unicodeMail;
-        if (unicodeTransport.accepted) {
-            unicodeMail = await tokenFor(addresses[1], distinctBefore);
-            check('Unicode mailbox receives an actual captured native confirmation message',
-                Number(fixture('snapshot', addresses[1]).deliveries[0]?.delivery_failed) === 0);
-        } else {
-            const failed = fixture('snapshot', addresses[1]);
-            check('Native Unicode recipient rejection retains its real pending receipt and visible delivery failure',
-                Number(failed.deliveries[0]?.delivery_failed) === 1
-                && failed.requests[0].id === rows[1].requests[0].id
-                && failed.requests[0].requested_at === rows[1].requests[0].requested_at
-                && Number(failed.requests[0].status) === 0);
-            await admin.goto(`${root}/administrator/index.php?option=com_privacy&view=request&id=${failed.requests[0].id}`);
-            check('Authorized native request view exposes the Unicode native-mail failure and actionable original receipt',
-                (await admin.locator('body').innerText()).includes('Confirmation delivery failed.')
-                && (await admin.locator('body').innerText()).includes('Do not bypass confirmation, Remove or Complete.'));
-            console.log('OPEN_CORE_LIMITATION', JSON.stringify({requirement: 'Unicode local-part mail and positive confirmation',
-                ...unicodeTransport}));
-            // A native transport limit must not turn a partial acceptance run green.
-            process.exitCode = 2;
-        }
-        const asciiAccount = fixture('account-create', addresses[0]);
+        const asciiMail = await tokenFor(asciiAddress, distinctBefore);
+        const asciiAccount = fixture('account-create', asciiAddress);
         const originalAsciiAccount = fixture('account-snapshot', asciiAccount.user_id);
-        const wrong = await post(contexts[1], servers[1], addresses[1], 'confirm', asciiMail.token);
-        check('Accent-equivalent address cannot consume another exact address token',
-            wrong.includes('could not be confirmed')
-            && Number(fixture('snapshot', addresses[1]).requests[0].status) === 0
+        const wrong = await postFull(contexts[1], servers[1], unicodeAddress, 'confirm', asciiMail.token);
+        check('A Unicode lookalike address cannot consume the token of the ASCII address',
+            wrong.status === 200 && wrong.html.includes('Enter a valid email address')
+            && Number(fixture('snapshot', asciiAddress).requests[0].status) === 0
+            && fixture('snapshot', unicodeAddress).requests.length === 0
             && JSON.stringify(fixture('account-snapshot', asciiAccount.user_id)) === JSON.stringify(originalAsciiAccount));
         await admin.goto(`${root}/administrator/index.php?option=com_privacy&task=request.add`);
-        await admin.locator('#jform_email').fill(addresses[0]);
+        await admin.locator('#jform_email').fill(asciiAddress);
         await admin.locator('#jform_request_type').selectOption('export');
         await action(admin, 'request.save');
-        const exportRow = fixture('snapshot', addresses[0]).requests.find(row => row.request_type === 'export');
+        const exportRow = fixture('snapshot', asciiAddress).requests.find(row => row.request_type === 'export');
         check('Native Core creates a separate pending export alongside removal', exportRow && Number(exportRow.status) === 0);
-        const confirmAddresses = unicodeMail ? addresses : [addresses[0]];
-        const confirmMails = unicodeMail ? [asciiMail, unicodeMail] : [asciiMail];
-        const exactConfirmations = await Promise.all(confirmAddresses.map((address, i) =>
-            post(contexts[i], servers[i], address, 'confirm', confirmMails[i].token)));
+        const exactConfirmation = await post(contexts[0], servers[0], asciiAddress, 'confirm', asciiMail.token);
         check('Pinned native confirmation selects the exact remove row without confirming the export',
-            exactConfirmations.every(html => html.includes('No data has been removed'))
-            && confirmAddresses.every(address => fixture('snapshot', address).requests
-                .some(row => row.request_type === 'remove' && Number(row.status) === 1))
-            && (unicodeMail || Number(fixture('snapshot', addresses[1]).requests[0].status) === 0)
-            && JSON.stringify(fixture('snapshot', addresses[0]).requests.find(row => row.id === exportRow.id)) === JSON.stringify(exportRow));
+            exactConfirmation.includes('No data has been removed')
+            && fixture('snapshot', asciiAddress).requests.some(row => row.request_type === 'remove' && Number(row.status) === 1)
+            && JSON.stringify(fixture('snapshot', asciiAddress).requests.find(row => row.id === exportRow.id)) === JSON.stringify(exportRow));
         const requestUrl = `${root}/administrator/index.php?option=com_privacy&view=request&id=${receipt.id}`;
         const release = await hold(receipt.id);
         try {
@@ -180,30 +169,6 @@ async function main() {
         await action(admin, 'request.remove');
         check('Released real operation lock admits native Remove again',
             Number(fixture('snapshot', email).outcomes[0]?.reviewed_result) === 1);
-        if (!unicodeMail) {
-            console.log('OPEN_CORE_LIMITATION', JSON.stringify({
-                requirement: 'Positive Unicode confirmation before genuine account-mismatch native Remove',
-                reason: 'No delivered native Unicode token exists; no synthetic confirmation status is substituted.',
-            }));
-            return;
-        }
-        fixture('admission-reset');
-        const accountEmail = `muller-account-${Date.now()}@example.test`;
-        const otherAddress = accountEmail.replace('muller-', 'müller-');
-        const account = fixture('account-create', accountEmail);
-        const originalAccount = fixture('account-snapshot', account.user_id);
-        const accountMailBefore = new Set(fs.readdirSync(mailDir));
-        await post(contexts[0], root, otherAddress, 'request');
-        const otherMail = await tokenFor(otherAddress, accountMailBefore);
-        await post(contexts[0], root, otherAddress, 'confirm', otherMail.token);
-        const mismatch = fixture('snapshot', otherAddress).requests[0];
-        await admin.goto(`${root}/administrator/index.php?option=com_privacy&view=request&id=${mismatch.id}`);
-        await action(admin, 'request.remove');
-        const blocked = fixture('snapshot', otherAddress);
-        check('Native collation account mismatch blocks all removal and preserves the other real account',
-            Number(mismatch.status) === 1 && Number(blocked.outcomes[0]?.reviewed_result) === 0
-            && !blocked.events.some(row => row.stage === 'remove')
-            && JSON.stringify(fixture('account-snapshot', account.user_id)) === JSON.stringify(originalAccount));
     } finally {
         fixture('probe', 'block');
         await browser.close();

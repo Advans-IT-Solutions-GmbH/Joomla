@@ -38,15 +38,17 @@ final class GuestRequests
      * Dot-atom addresses only. FILTER_VALIDATE_EMAIL also accepts quoted local parts and
      * address literals, for example "<svg onload=...>"@example.org, and Core's administrator
      * request view prints the stored address without escaping. Quotes, angle brackets,
-     * backslashes and the other RFC 5322 specials are refused before Core stores anything;
-     * Unicode letters in the local part remain allowed.
+     * backslashes and the other RFC 5322 specials are refused before Core stores anything.
+     * ASCII only: Unicode in the local part (umlauts etc.) is not supported, as everywhere in
+     * Joomla, because the stock mailers reject it; it is refused here instead of leaving a
+     * pending receipt that can never be confirmed.
      */
     public static function validAddress(string $email): bool
     {
-        return strlen($email) <= 100 && preg_match('//u', $email) === 1
+        return strlen($email) <= 100 && !preg_match('/[^\x00-\x7F]/', $email)
             && substr_count($email, '@') === 1
             && !preg_match('/[\x00-\x20\x7f"<>\\\\()\[\],;:]/', $email)
-            && (bool) filter_var($email, FILTER_VALIDATE_EMAIL, FILTER_FLAG_EMAIL_UNICODE);
+            && (bool) filter_var($email, FILTER_VALIDATE_EMAIL);
     }
 
     /**
