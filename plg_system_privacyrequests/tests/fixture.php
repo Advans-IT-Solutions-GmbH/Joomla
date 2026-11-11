@@ -21,6 +21,16 @@ if ($app->get('sitename') !== 'Privacy Test Fixture') {
 $app->createExtensionNamespaceMap();
 $app->loadLanguage($container->get(\Joomla\CMS\Language\LanguageFactoryInterface::class)->createLanguage('en-GB'));
 $db = $container->get(\Joomla\Database\DatabaseInterface::class);
+/** Trigger DDL bypasses prepared statements, which the default mysqli driver uses and MySQL refuses for it. */
+function fixtureDdl(\Joomla\Database\DatabaseInterface $db, string $sql): void
+{
+    $db->connect();
+    $connection = $db->getConnection();
+    $sql = $db->replacePrefix($sql);
+    if (!($connection instanceof \mysqli ? $connection->query($sql) : $connection->exec($sql) !== false)) {
+        throw new RuntimeException('Synthetic trigger DDL failed.');
+    }
+}
 $admin = $db->quote((string) (getenv('JOOMLA_ADMIN_USERNAME') ?: 'fixture-admin'));
 $op = $argv[1] ?? '';
 $email = $argv[2] ?? '';
@@ -533,9 +543,9 @@ switch ($op) {
         $event['host_name'] = $host->name;
         $ics = \Advans\Component\Appointments\Administrator\Service\Team\BookingCalendarBridge::objectIcs($booking, $event);
         $team->objects()->putSealed($calendar, $ics, (int) $email);
-        $db->setQuery('CREATE TRIGGER privacy_fixture_copy_block BEFORE DELETE ON #__appointments_calendar_objects'
+        fixtureDdl($db, 'CREATE TRIGGER privacy_fixture_copy_block BEFORE DELETE ON #__appointments_calendar_objects'
             . ' FOR EACH ROW BEGIN IF OLD.booking_id = ' . (int) $email
-            . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Synthetic copy deletion is unavailable'; END IF; END")->execute();
+            . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Synthetic copy deletion is unavailable'; END IF; END");
         $out['calendar_id'] = $calendar;
         $out['objects'] = count($team->objects()->all($calendar));
         break;
@@ -563,11 +573,11 @@ switch ($op) {
             if (!is_string($subject) || !str_ends_with($subject, '@example.test')) {
                 throw new RuntimeException('Only a synthetic Core request may receive the failure trigger.');
             }
-            $db->setQuery('CREATE TRIGGER ' . $db->quoteName($trigger)
+            fixtureDdl($db, 'CREATE TRIGGER ' . $db->quoteName($trigger)
                 . ' BEFORE INSERT ON #__appointments_privacy_outcomes FOR EACH ROW BEGIN IF NEW.request_id = ' . (int) $email
-                . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected initial outcome write failure'; END IF; END")->execute();
+                . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected initial outcome write failure'; END IF; END");
         } else {
-            $db->setQuery('DROP TRIGGER IF EXISTS ' . $db->quoteName($trigger))->execute();
+            fixtureDdl($db, 'DROP TRIGGER IF EXISTS ' . $db->quoteName($trigger));
         }
         break;
     case 'appointments-copy-block':
@@ -576,11 +586,11 @@ switch ($op) {
             if (!ctype_digit($email)) {
                 throw new RuntimeException('An explicit synthetic booking id is required.');
             }
-            $db->setQuery('CREATE TRIGGER privacy_fixture_copy_block BEFORE DELETE ON #__appointments_calendar_objects'
+            fixtureDdl($db, 'CREATE TRIGGER privacy_fixture_copy_block BEFORE DELETE ON #__appointments_calendar_objects'
                 . ' FOR EACH ROW BEGIN IF OLD.booking_id = ' . (int) $email
-                . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Synthetic copy deletion is unavailable'; END IF; END")->execute();
+                . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Synthetic copy deletion is unavailable'; END IF; END");
         } else {
-            $db->setQuery('DROP TRIGGER IF EXISTS privacy_fixture_copy_block')->execute();
+            fixtureDdl($db, 'DROP TRIGGER IF EXISTS privacy_fixture_copy_block');
         }
         break;
     case 'appointments-booking-purge':
@@ -624,13 +634,13 @@ switch ($op) {
             . " WHERE type='component' AND element='com_appointments'")->execute();
         $db->setQuery('UPDATE #__appointments_eventtypes SET calendar_id=' . $calendar
             . ' WHERE id=(SELECT eventtype_id FROM #__appointments_bookings WHERE id=' . (int) $email . ')')->execute();
-        $db->setQuery('CREATE TRIGGER privacy_fixture_copy_rebuild_block BEFORE INSERT ON #__appointments_calendar_objects'
+        fixtureDdl($db, 'CREATE TRIGGER privacy_fixture_copy_rebuild_block BEFORE INSERT ON #__appointments_calendar_objects'
             . ' FOR EACH ROW BEGIN IF NEW.booking_id = ' . (int) $email
-            . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Synthetic copy rebuild is unavailable'; END IF; END")->execute();
+            . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Synthetic copy rebuild is unavailable'; END IF; END");
         break;
     case 'appointments-rebuild-unblock':
     case 'appointments-rebuild-restore':
-        $db->setQuery('DROP TRIGGER IF EXISTS privacy_fixture_copy_rebuild_block')->execute();
+        fixtureDdl($db, 'DROP TRIGGER IF EXISTS privacy_fixture_copy_rebuild_block');
         if ($op === 'appointments-rebuild-restore'
             && in_array($db->replacePrefix('#__privacy_test_settings'), $db->getTableList(), true)) {
             $original = $db->setQuery("SELECT value FROM #__privacy_test_settings WHERE name='appointments-rebuild'")->loadResult();

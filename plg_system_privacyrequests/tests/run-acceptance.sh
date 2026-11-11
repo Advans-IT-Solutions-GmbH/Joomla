@@ -53,6 +53,13 @@ wait_port "$worker_port"
 joomla config:set mailer=smtp smtphost=127.0.0.1 "smtpport=$smtp_port" smtpauth=false \
     smtpsecure=none mailonline=true
 fixture generic-enable
+# A fresh administrator gets Joomla's autostart welcome tour, which sends every
+# backend page back to the dashboard until it is dismissed. A real operator
+# dismisses it once; the suites drive the backend directly, so switch it off.
+prefix="$(web php -r 'require "/var/www/html/configuration.php"; echo (new JConfig())->dbprefix;')"
+printf "UPDATE \`%sextensions\` SET enabled=0 WHERE type='plugin' AND folder='system' AND element='guidedtours';\n" "$prefix" \
+    | docker compose -p "$CONTAINER_NAME" -f docker-compose.yml -f docker-compose.acceptance.yml exec -T mysql \
+        sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"'
 
 export JOOMLA_URL=http://127.0.0.1
 export PRIVACY_CONCURRENT_URL="http://127.0.0.1:$worker_port"
@@ -74,7 +81,9 @@ run_suite() {
     mkdir -p "$report"
     echo "::group::$suite.cjs"
     set +e
-    PRIVACY_TEST_REPORT_DIR="$report" node "$tests/$suite.cjs" 2>&1 | tee "$report/output.log"
+    # A suite that throws before closing its browser would otherwise hang the job.
+    PRIVACY_TEST_REPORT_DIR="$report" timeout --kill-after=30 1200 node "$tests/$suite.cjs" 2>&1 \
+        | tee "$report/output.log"
     code="${PIPESTATUS[0]}"
     set -e
     echo "::endgroup::"
@@ -94,8 +103,6 @@ for suite in legacy export appointments; do
     run_suite "$suite"
 done
 
-docker exec "$container" cat /tmp/php-errors.log > "$PRIVACY_RESULTS/php-errors.log" 2>&1 || true
-docker cp "$container:$site/administrator/logs" "$PRIVACY_RESULTS/joomla-logs" 2>/dev/null || true
 cat "$summary"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     cat "$summary" >> "$GITHUB_STEP_SUMMARY"

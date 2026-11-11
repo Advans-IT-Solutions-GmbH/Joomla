@@ -224,6 +224,8 @@ jobs:
         run: |
           mkdir -p "$PRIVACY_RESULTS"
           docker compose -p "$CONTAINER_NAME" -f docker-compose.yml -f docker-compose.acceptance.yml logs --no-color > "$PRIVACY_RESULTS/container.txt"
+          docker exec "$CONTAINER_NAME" cat /tmp/php-errors.log > "$PRIVACY_RESULTS/php-errors.log" || true
+          docker cp "$CONTAINER_NAME:/var/www/html/administrator/logs" "$PRIVACY_RESULTS/joomla-logs" || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
