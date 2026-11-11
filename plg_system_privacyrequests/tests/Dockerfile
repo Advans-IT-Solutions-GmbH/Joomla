@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libzip-dev curl
 
 RUN printf '%s\n' 'error_reporting=E_ALL' 'log_errors=On' \
     'display_errors=Off' 'error_log=/tmp/php-errors.log' \
+    'opcache.revalidate_freq=0' \
     > /usr/local/etc/php/conf.d/zz-privacy-tests.ini \
     && touch /tmp/php-errors.log && chmod 666 /tmp/php-errors.log
 

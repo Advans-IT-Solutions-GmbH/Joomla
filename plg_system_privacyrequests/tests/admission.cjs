@@ -70,8 +70,9 @@ async function main() {
         const confirmed = await post(actors[0], root, email, 'confirm', confirmation.token);
         // Earlier deliveries can be superseded, so do not assume the first captured
         // code is current: this assertion only observes the operation's own bucket.
-        check('Confirmation admission has its own persistent operation-scoped counters',
-            Number(fixture('admission-state', email, 'confirm').email.attempts) === 1
+        const confirmCounters = fixture('admission-state', email, 'confirm');
+        check('Confirmation admission has its own persistent client counter and no address bucket',
+            confirmCounters.email === null && Number(confirmCounters.ip.attempts) === 1
             && Number(fixture('admission-state', email, 'request').email.attempts) === 6
             && (confirmed.includes('could not be confirmed') || confirmed.includes('No data has been removed')));
 
@@ -104,18 +105,16 @@ async function main() {
         const confirmContested = await Promise.all([19, 20].map(i =>
             post(actors[i % actors.length], servers[i % 2], clients[i], 'confirm', 'not-the-issued-code')));
         const confirmStates = clients.map(address => fixture('admission-state', address, 'confirm'));
-        const ipDenied = confirmStates.findIndex(state => state.email === null);
         check('Confirmation separately enforces twenty client admissions under actual two-worker contention',
-            ipDenied >= 19 && Number(confirmStates[0].ip.attempts) === 21
-            && confirmStates.filter(state => state.email && Number(state.email.attempts) === 1).length === 20
-            && confirmStates.every(state => state.total_rows === 42)
+            Number(confirmStates[0].ip.attempts) === 21
+            && confirmStates.every(state => state.email === null && state.total_rows === 22)
             && confirmContested.every(html => html.includes('could not be confirmed')));
         const genuine = await tokenFor(clients[0], clientBefore);
         const ipRefusedCurrent = await post(actors[0], root, clients[0], 'confirm', genuine.token);
         const retained = clients.map(address => fixture('snapshot', address));
         check('Client-limit refusal rejects a genuinely delivered current token without changing receipt, token or date',
             ipRefusedCurrent.includes('could not be confirmed')
-            && Number(fixture('admission-state', clients[0], 'confirm').email.attempts) === 1
+            && fixture('admission-state', clients[0], 'confirm').email === null
             && retained.every((snapshot, i) => JSON.stringify(snapshot.requests) === JSON.stringify(snapshots[i].requests)));
 
         fixture('admission-reset');
@@ -126,14 +125,14 @@ async function main() {
         const original = fixture('snapshot', confirmEmail).requests[0];
         const invalid = await Promise.all(actors.map((actor, i) =>
             post(actor, servers[i % 2], confirmEmail, 'confirm', 'not-the-issued-code')));
-        const refusedCurrent = await post(actors[0], root, confirmEmail, 'confirm', actual.token);
+        const acceptedCurrent = await post(actors[0], root, confirmEmail, 'confirm', actual.token);
         const remaining = fixture('snapshot', confirmEmail).requests[0];
         const confirmState = fixture('admission-state', confirmEmail, 'confirm');
-        check('Actual competing confirmation failures enforce the fifth-address limit without consuming the current token',
+        check('Competing wrong codes of other sessions cannot lock out the genuine current code',
             invalid.every(html => html.includes('could not be confirmed'))
-            && refusedCurrent.includes('could not be confirmed') && Number(confirmState.email.attempts) === 6
-            && Number(confirmState.ip.attempts) === 7 && Number(remaining.status) === 0
-            && remaining.confirm_token === original.confirm_token && remaining.requested_at === original.requested_at);
+            && acceptedCurrent.includes('No data has been removed') && confirmState.email === null
+            && Number(confirmState.ip.attempts) === 7 && Number(remaining.status) === 1
+            && !remaining.confirm_token && remaining.requested_at === original.requested_at);
         const boundary = fixture('admission-boundary', `window-${stamp}@example.test`, 'request');
         check('Real persistent buckets refuse at899 seconds and reset at the exact900-second boundary',
             boundary.initial.join(',') === 'true,true,true,true,true,false'

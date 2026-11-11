@@ -49,10 +49,19 @@ final class PrivacyStaffCleanup
                 . ' (request_id, payload) VALUES (' . $this->requestId . ', ' . $this->db->quote($payload) . ')')->execute();
             $current = $this->read();
         }
-        // Validate the winner of a concurrent first binding; never replace it.
+        // Validate the winner of a concurrent first binding; never replace a captured account.
         if ($current === null || !hash_equals($current['address'], $address)
-            || ($userId > 0 && $current['user_id'] !== $userId)) {
+            || ($userId > 0 && $current['user_id'] !== $userId && $current['user_id'] !== 0)) {
             throw new \UnexpectedValueException('The Core request no longer matches its captured staff scope.');
+        }
+        if ($userId > 0 && $current['user_id'] === 0) {
+            // An account with exactly the request address appeared after a scope without one was
+            // captured (a later registration, for example). It is now the subject's account, as on a
+            // first capture; refusing it would block every retry of an unfinished removal for good.
+            // The caller holds the request's operation lock; write() still refuses a concurrent change.
+            $current['user_id'] = $userId;
+            $current['complete'] = $current['complete'] && !$this->hasRows($userId);
+            $this->write($current);
         }
     }
 

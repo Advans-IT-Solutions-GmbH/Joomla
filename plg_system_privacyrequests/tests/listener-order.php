@@ -68,9 +68,9 @@ try {
                 . ' (user_id,public_key,password_salt,pwhash_opslimit,pwhash_memlimit,row_mac,created_utc,modified_utc)'
                 . " VALUES ($uid,REPEAT(CHAR(1),32),REPEAT(CHAR(2),16),1,1,REPEAT(CHAR(0),32),UTC_TIMESTAMP(),UTC_TIMESTAMP())")->execute();
             $trigger = $db->getPrefix() . 'privacy_order_hold';
-            $db->setQuery('CREATE TRIGGER ' . $db->quoteName($trigger)
+            fixtureDdl($db, 'CREATE TRIGGER ' . $db->quoteName($trigger)
                 . " BEFORE DELETE ON #__appointments_user_keys FOR EACH ROW BEGIN IF OLD.user_id=$uid"
-                . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected ordered staff cleanup failure'; END IF; END")->execute();
+                . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Injected ordered staff cleanup failure'; END IF; END");
         }
         $can = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $request, 'user' => $user]);
         $appointments->onPrivacyCanRemoveData($can);
@@ -116,7 +116,7 @@ try {
         $assert(\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($db, $id),
             "$failure: null-user retry remains incomplete while the Appointments failure persists");
         if ($trigger !== null) {
-            $db->setQuery('DROP TRIGGER ' . $db->quoteName($trigger))->execute();
+            fixtureDdl($db, 'DROP TRIGGER ' . $db->quoteName($trigger));
             $trigger = null;
         }
         $params->set('erase_mode', 'anonymise');
@@ -131,7 +131,7 @@ try {
     $params->set('teamcal_enabled', $saved[0]);
     $params->set('erase_mode', $saved[1]);
     if ($trigger !== null) {
-        $db->setQuery('DROP TRIGGER ' . $db->quoteName($trigger))->execute();
+        fixtureDdl($db, 'DROP TRIGGER ' . $db->quoteName($trigger));
     }
     foreach ($requests as $id) {
         foreach (['appointments_privacy_staff', 'appointments_privacy_outcomes', 'privacy_requests'] as $table) {

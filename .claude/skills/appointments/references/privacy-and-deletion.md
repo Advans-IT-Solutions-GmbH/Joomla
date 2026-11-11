@@ -133,7 +133,9 @@ Retries rotate attempted references within bounded batches, including failed one
 never let a permanently failing first page starve later obligations.
 `#__appointments_privacy_staff` captures an authenticated-encrypted request-bound
 staff ID during CanRemove, before Core pseudonymisation. Keep it across null-user
-retries and feature switches; use native revocation/ownership teardown, and independently
+retries and feature switches. A scope without an account (ID 0) takes over a later
+exact-address account under the operation lock; a captured account is never replaced.
+Use native revocation/ownership teardown, and independently
 check staff obligations before accepting any success flag. Unknown older interrupted
 scope fails closed, not a fabricated guest success. A Core removal action-log entry
 for the request with neither staff scope nor outcome row marks such a pre-provenance

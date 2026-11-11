@@ -478,7 +478,10 @@ not process these references, and the removed address no longer finds the bookin
 Before Core pseudonymises an account, **CanRemove** captures its minimal staff scope
 in authenticated-encrypted `#__appointments_privacy_staff`, bound to the Core request
 ID and exact normalized request address. Later **Remove** attempts use that retained
-user ID, not another lookup of the now-cleared account address. Local device/key/grant/
+user ID, not another lookup of the now-cleared account address. A scope captured
+without an account takes over an account with exactly the request address that appears
+later (a registration after the first attempt, for example); a captured account is never
+replaced by another one. Local device/key/grant/
 invitation teardown and ownership release must actually succeed; a successful staff
 teardown does not make an unsearched calendar complete. The completion guard independently
 checks the scope and remaining staff rows, even if an outcome flag says success.

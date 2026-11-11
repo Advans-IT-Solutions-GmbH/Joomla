@@ -37,6 +37,12 @@ final class Admission
             return false;
         }
         $this->purgeExpired($now);
+        if ($operation === 'confirm') {
+            // No address bucket for confirmation: anyone could exhaust it with wrong codes and so
+            // refuse the data subject's genuine code until it expires. The keyed 128-bit code is
+            // not guessable within the client limit; the request bucket still limits mail sends.
+            return true;
+        }
 
         return $this->count($this->hash($operation . ':email', self::address($email)), 5, $now);
     }

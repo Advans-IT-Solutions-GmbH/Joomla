@@ -18,6 +18,17 @@ $service = new \Advans\Plugin\System\PrivacyRequests\Service\GuestRequests(
 $email = 'ci-native-' . bin2hex(random_bytes(8)) . '@example.test';
 privacyAssert($service->request($email), 'Public native administrator RequestModel accepts a pending guest receipt');
 privacyAssert($intercepted > 0, 'Native mail-template pre-render hook prevents transport in this test process');
+$guestRequests = \Advans\Plugin\System\PrivacyRequests\Service\GuestRequests::class;
+foreach (['"<svg/onload=alert(1)>"@example.test', '"<script>alert(1)</script>"@example.test', '"a b"@example.test',
+    'a\\b@example.test', 'ci@[127.0.0.1]', 'a@b@example.test', "ci-\xff@example.test"] as $unsafe) {
+    $before = (int) $db->setQuery('SELECT COUNT(*) FROM #__privacy_requests')->loadResult();
+    privacyAssert(!$guestRequests::validAddress($unsafe) && $service->request($unsafe) === false
+        && (int) $db->setQuery('SELECT COUNT(*) FROM #__privacy_requests')->loadResult() === $before,
+        'A quoted, literal or markup-carrying address is refused before Core stores it: '
+        . json_encode($unsafe, JSON_INVALID_UTF8_SUBSTITUTE));
+}
+privacyAssert($guestRequests::validAddress("o'brien.ci@example.test") && $guestRequests::validAddress('müller-ci@example.test'),
+    'Dot-atom addresses, including Unicode letters before @, stay accepted');
 $read = static function () use ($db, $email): array {
     return $db->setQuery('SELECT id,email,requested_at,status,confirm_token FROM #__privacy_requests WHERE email='
         . $db->quote($email))->loadAssocList();
@@ -129,6 +140,7 @@ try {
 $savedTask = $admin->getInput()->get('task', null, 'raw');
 $savedId = $admin->getInput()->get('id', null, 'raw');
 $savedOption = $admin->getInput()->get('option', null, 'raw');
+$savedController = $admin->getInput()->get('controller', null, 'raw');
 $savedForm = $admin->getInput()->post->get('jform', [], 'array');
 $savedQueryForm = $admin->getInput()->get('jform', null, 'raw');
 $savedHeader = $app->getInput()->server->get('HTTP_X_CSRF_TOKEN', '', 'raw');
@@ -154,6 +166,29 @@ try {
         }
         privacyAssert($refused, 'Missing/false POST remediation acknowledgement cannot be supplied through the query input');
     }
+    // Every request form that Core's dispatcher routes to RequestController::remove is guarded.
+    $admin->getInput()->post->set('jform', []);
+    foreach ([
+        ['remove', 'request', (int) $receipt['id']],
+        ['REQUEST.Remove.x', null, (int) $receipt['id']],
+        ['request.remove', null, -(int) $receipt['id']],
+    ] as [$task, $controller, $id]) {
+        $admin->getInput()->set('task', $task);
+        $admin->getInput()->set('controller', $controller);
+        $admin->getInput()->set('id', $id);
+        $refused = false;
+        try {
+            $plugin->onAfterRoute();
+        } catch (RuntimeException $error) {
+            $refused = $error->getCode() === 409
+                && $error->getMessage() === \Joomla\CMS\Language\Text::_('PLG_SYSTEM_PRIVACYREQUESTS_REMEDIATION_REQUIRED');
+        }
+        privacyAssert($refused, "Core-equivalent Remove route form is guarded ($task, controller "
+            . var_export($controller, true) . ", id $id)");
+    }
+    $admin->getInput()->set('task', 'request.remove');
+    $admin->getInput()->set('controller', null);
+    $admin->getInput()->set('id', (int) $receipt['id']);
     $admin->getInput()->post->set('jform', ['privacy_remediation_reviewed' => '1']);
     $plugin->onAfterRoute();
     $plugin->onBeforeRespond();
@@ -167,6 +202,7 @@ try {
     $admin->getInput()->set('task', $savedTask);
     $admin->getInput()->set('id', $savedId);
     $admin->getInput()->set('option', $savedOption);
+    $admin->getInput()->set('controller', $savedController);
     $admin->getInput()->set('jform', $savedQueryForm);
     $admin->getInput()->post->set('jform', $savedForm);
     $app->getInput()->server->set('HTTP_X_CSRF_TOKEN', $savedHeader);
@@ -198,6 +234,18 @@ try {
     $admission->reserve('request', $address, $ip, $now);
     privacyAssert((int) $db->setQuery('SELECT COUNT(*) FROM #__privacy_guest_attempts WHERE subject_hash IN ('
         . $expiredKeys . ')')->loadResult() === 0, 'Later submissions can finish the bounded expiry backlog');
+    $confirmAddress = 'confirm-' . $bucketTag . '@example.test';
+    $confirmIp = 'confirm-fixture-' . $bucketTag;
+    $confirmations = [];
+    for ($i = 0; $i < 6; $i++) {
+        $confirmations[] = $admission->reserve('confirm', $confirmAddress, $confirmIp, $now);
+    }
+    privacyAssert($confirmations === array_fill(0, 6, true)
+        && $db->setQuery('SELECT attempts FROM #__privacy_guest_attempts WHERE subject_hash='
+            . $db->quote($admission->hash('confirm:email', $confirmAddress)))->loadResult() === null
+        && (int) $db->setQuery('SELECT attempts FROM #__privacy_guest_attempts WHERE subject_hash='
+            . $db->quote($admission->hash('confirm:ip', $confirmIp)))->loadResult() === 6,
+        'Wrong confirmation codes charge only the client: no address bucket can lock out the genuine code');
 } finally {
     $drop = strtolower($db->getServerType()) === 'postgresql'
         ? 'DROP TABLE ' . $db->quoteName('pg_temp.' . $db->replacePrefix('#__privacy_guest_attempts'))

@@ -3,6 +3,7 @@
 // Focused native plugin-event regressions, not a substitute for Core browser E2E.
 $privacyRequests = [];
 $staffUserId = 0;
+$lateUserId = 0;
 $legacyLogs = [];
 $privacyTrigger = null;
 $overlapBooking = 0;
@@ -192,6 +193,38 @@ $overlapBooking = 0;
     $check(!\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $interrupted->id),
         'A repaired successful retry after the failed outcome reset clears the obligation again');
 
+    // A guest scope (no account) is captured, the attempt stays unfinished, and only then an
+    // account with exactly the request address appears: the retry must not be blocked for good.
+    $late = $newPrivacyFixture('late-account-' . bin2hex(random_bytes(6)) . '@example.test');
+    $lateScope = new \Advans\Component\Appointments\Administrator\Service\PrivacyStaffCleanup($joomlaDb, $keys, (int) $late->id);
+    $lateScope->remember((string) $late->email, null);
+    $lateScope->beginAttempt();
+    \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::record($joomlaDb, (int) $late->id, false);
+    $lateAccount = (object) ['name' => 'Late account fixture', 'username' => 'late-' . bin2hex(random_bytes(8)),
+        'email' => (string) $late->email, 'password' => '', 'block' => 1, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}'];
+    $joomlaDb->insertObject('#__users', $lateAccount, 'id');
+    $lateUserId = (int) $lateAccount->id;
+    $lateUser = \Joomla\CMS\Factory::getContainer()->get(\Joomla\CMS\User\UserFactoryInterface::class)->loadUserById($lateUserId);
+    $lateCheck = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData',
+        ['subject' => $late, 'user' => $lateUser]);
+    $plugin->onPrivacyCanRemoveData($lateCheck);
+    $check($lateCheck->getArgument('result')[0]->canRemove && $lateScope->userId() === $lateUserId,
+        'An exact-address account appearing after a guest capture extends the scope instead of blocking every retry');
+    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
+        ['subject' => $late, 'user' => $lateUser]));
+    $check(!\Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $late->id),
+        'The retry with the extended scope can finish the unfinished removal');
+    // A second account with the same address (Core finds one of them by collation) is refused.
+    $impostor = clone $lateUser;
+    $impostor->id = $staffUserId;
+    $otherCheck = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData',
+        ['subject' => $late, 'user' => $impostor]);
+    $plugin->onPrivacyCanRemoveData($otherCheck);
+    $check(!$otherCheck->getArgument('result')[0]->canRemove
+        && $otherCheck->getArgument('result')[0]->reason === \Joomla\CMS\Language\Text::_('PLG_PRIVACY_APPOINTMENTS_STAFF_SCOPE_FAILED')
+        && $lateScope->userId() === $lateUserId,
+        'A captured account is never replaced by another account');
+
     $original = $joomlaDb->setQuery('SELECT payload FROM #__appointments_privacy_staff WHERE request_id=' . $id)->loadResult();
     $foreign = $newPrivacyFixture('foreign-' . bin2hex(random_bytes(6)) . '@example.test');
     $joomlaDb->setQuery('INSERT INTO #__appointments_privacy_staff (request_id,payload) VALUES ('
@@ -274,5 +307,8 @@ $overlapBooking = 0;
     if ($staffUserId > 0) {
         $joomlaDb->setQuery('DELETE FROM #__appointments_user_keys WHERE user_id=' . $staffUserId)->execute();
         $joomlaDb->setQuery('DELETE FROM #__users WHERE id=' . $staffUserId)->execute();
+    }
+    if ($lateUserId > 0) {
+        $joomlaDb->setQuery('DELETE FROM #__users WHERE id=' . $lateUserId)->execute();
     }
 }
