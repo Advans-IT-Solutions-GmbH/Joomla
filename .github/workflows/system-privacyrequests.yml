@@ -160,7 +160,9 @@ jobs:
   # with the coupled Appointments and J2Commerce privacy packages of this commit.
   acceptance:
     name: Installed acceptance suites (${{ matrix.family }})
-    runs-on: ubuntu-latest
+    # Pinned: on the ubuntu-26.04 image behind ubuntu-latest the Ubuntu archives did
+    # not resolve (November 2026), so Playwright could not install browser packages.
+    runs-on: ubuntu-24.04
     needs: build
     timeout-minutes: 75
     permissions:
