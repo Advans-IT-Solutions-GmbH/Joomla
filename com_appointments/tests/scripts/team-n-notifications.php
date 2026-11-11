@@ -150,6 +150,8 @@ return static function (TeamSuite $suite): void {
         }
     };
 
+    $super = 0;
+
     try {
         // The feature on for this process (booking bridge) and in the database (web requests).
         $db->query("UPDATE {$p}extensions SET params='" . $db->real_escape_string(json_encode(array_replace($options, ['teamcal_enabled' => 1])))
@@ -467,8 +469,13 @@ return static function (TeamSuite $suite): void {
         }
 
         foreach ($state['calendars'] as $id) {
-            $db->query("UPDATE {$p}appointments_eventtypes SET calendar_id=NULL WHERE calendar_id=" . (int) $id);
-            $db->query("DELETE FROM {$p}appointments_calendars WHERE id=" . (int) $id);
+            try {
+                // With its objects, grants and keys, like an administrator would.
+                $team->calendars()->delete($super, (int) $id);
+            } catch (\Throwable $e) {
+                $db->query("UPDATE {$p}appointments_eventtypes SET calendar_id=NULL WHERE calendar_id=" . (int) $id);
+                $db->query("DELETE FROM {$p}appointments_calendars WHERE id=" . (int) $id);
+            }
         }
 
         $fixture->cleanup();
