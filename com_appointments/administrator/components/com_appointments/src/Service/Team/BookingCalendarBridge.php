@@ -353,7 +353,6 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
         }
 
         try {
-            $started = $this->services->now()->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
             $requests = $db->setQuery($this->query()
                 ->select($db->quoteName(['eventtype_id', 'token', 'after_booking_id', 'failed', 'passes']))
                 ->from($db->quoteName(self::RESTORE_TABLE))
@@ -375,12 +374,13 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                 $ids = array_map('intval', $db->setQuery($this->restoreCandidates($type, $after, $now)->setLimit($budget))->loadColumn() ?: []);
 
                 foreach ($ids as $bookingId) {
+                    $before = $this->copyEtags($bookingId);
                     $this->onBookingSaved(['id' => $bookingId]);
                     $handled++;
                     $after = $bookingId;
 
                     // Only a copy that is really in place counts; a failed write is retried.
-                    if ($this->restored($bookingId, $started)) {
+                    if ($this->restored($bookingId, $before)) {
                         $restored++;
                     } else {
                         $failed = true;
@@ -423,11 +423,36 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
     }
 
     /**
-     * Whether a booking's copy was written anew in this run (`$since`) and lies only in the
-     * event type's target calendar, or whether there is none without a target. A booking
-     * that is no longer active needs no copy and counts as done.
+     * The ETags of a booking's copies per calendar. A write gives a new random ETag, so a
+     * changed ETag proves that a refresh was committed.
+     *
+     * @return  array<int, string>
      */
-    private function restored(int $bookingId, string $since): bool
+    private function copyEtags(int $bookingId): array
+    {
+        $db = $this->services->db();
+        $rows = $db->setQuery($this->query()->select($db->quoteName(['calendar_id', 'etag']))
+            ->from($db->quoteName('#__appointments_calendar_objects'))
+            ->where($db->quoteName('booking_id') . ' = ' . $bookingId))->loadAssocList() ?: [];
+        $etags = [];
+
+        foreach ($rows as $row) {
+            $etags[(int) $row['calendar_id']] = (string) $row['etag'];
+        }
+
+        return $etags;
+    }
+
+    /**
+     * Whether the write just done for a booking was committed: its copy lies in the event
+     * type's target calendar alone, with an ETag other than before the write (`$before`, from
+     * {@see self::copyEtags()}). Without a target, or when the target cannot take the
+     * booking, it is done when no copy is left. A booking that is no longer active needs no
+     * copy and counts as done.
+     *
+     * @param   array<int, string>  $before
+     */
+    private function restored(int $bookingId, array $before): bool
     {
         $db = $this->services->db();
         $row = $db->setQuery($this->query()
@@ -457,13 +482,10 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             return $holding === [];
         }
 
-        $fresh = (int) $db->setQuery($this->query()->select('COUNT(*)')
-            ->from($db->quoteName('#__appointments_calendar_objects'))
-            ->where($db->quoteName('booking_id') . ' = ' . $bookingId)
-            ->where($db->quoteName('calendar_id') . ' = ' . $target)
-            ->where($db->quoteName('modified_utc') . ' >= ' . $db->quote($since)))->loadResult();
+        $after = $this->copyEtags($bookingId);
 
-        return $holding === [$target] && $fresh > 0;
+        return $holding === [$target] && isset($after[$target])
+            && (!isset($before[$target]) || !hash_equals($before[$target], $after[$target]));
     }
 
     /**

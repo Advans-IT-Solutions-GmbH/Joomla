@@ -654,8 +654,8 @@ an event type records one for that event type. Once the internet calendars are o
 *Appointments: internet calendar retention* writes the copies of all future bookings anew, up to 200
 per run and one worker at a time, and moves copies out of a calendar that is no longer the target.
 All future bookings are written, also those that still have a copy, because a copy that survived
-the switched-off period may be stale. Only a copy written in that run and lying in the target alone
-counts; after a failed write the next run starts another pass, at most five, then
+the switched-off period may be stale. Only a copy whose ETag changed with the write (so the refresh
+was committed) and that lies in the target alone counts; after a failed write the next run starts another pass, at most five, then
 the request is given up and logged. Copies that a device deleted come back as well. Past bookings
 get no new copy. Without such a request nothing is rewritten, so a copy deleted on a device
 otherwise stays deleted.

@@ -100,8 +100,9 @@ interface BookingCalendarBridgeInterface
      * Work through the recorded requests, one worker at a time: for every
      * future, active booking of a requested event type, write the copy anew as
      * after a booking change (a copy that survived a switched-off period may be
-     * stale) and remove it from other calendars. A copy counts only if it was
-     * written in this run and lies in the target alone. A request is closed
+     * stale) and remove it from other calendars. A copy counts only if its ETag
+     * changed with the write (the refresh was committed) and it lies in the
+     * target alone. A request is closed
      * once a pass over its bookings ended without a failed write; after a failed write the next run starts a new pass (at most five,
      * then the request is given up and logged). Without a request nothing is
      * written, so a copy a device deleted stays deleted. While the feature is
