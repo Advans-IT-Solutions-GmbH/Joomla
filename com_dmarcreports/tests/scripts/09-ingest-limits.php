@@ -225,7 +225,7 @@ class IngestLimitsIntegrationTest
         // Each bomb inflates just over 8 MiB before it is discarded. With a
         // 10 MiB run budget the second bomb is still inspected (and held), the
         // third is postponed without being unpacked.
-        $ingestor = $this->ingestor(new IngestLimits(10, 20, 5 * self::MIB, 1000, 10 * self::MIB));
+        $ingestor = $this->ingestor(new IngestLimits(10, 20, 2 * self::MIB, 1000, 10 * self::MIB));
         $summary  = $ingestor->newSummary();
         $results  = [];
 

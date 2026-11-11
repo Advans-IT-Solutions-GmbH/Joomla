@@ -197,21 +197,6 @@ final class Ingestor
 
         $attachments = MimeMessage::attachments((string) ($message['raw'] ?? ''));
 
-        if ($isRetry) {
-            // A retried message is in the retry set because one of its
-            // containers could not be decoded; its other attachments were
-            // stored on the first visit. While the PHP extension is still
-            // missing, report it as blocked again without unpacking anything,
-            // so a large blocked retry cannot cost run budget every poll.
-            foreach ($attachments as $attachment) {
-                if (ReportArchive::decoderMissing((string) $attachment['content'], (string) $attachment['filename'])) {
-                    $summary['blocked'] = (int) ($summary['blocked'] ?? 0) + 1;
-
-                    return self::RESULT_BLOCKED;
-                }
-            }
-        }
-
         if ($this->limits !== null) {
             $reason = $this->limits->checkAttachments(\count($attachments));
 
@@ -249,7 +234,10 @@ final class Ingestor
                 // message behind it. Record it as blocked so the operator is
                 // told to install the extension, and let the caller advance past
                 // it. The report stays in the mailbox and ongoing reports keep
-                // importing once the extension is present.
+                // importing once the extension is present. The extractor throws
+                // before inflating anything, so this costs no run budget, while
+                // the other attachments of the message (for example a gzip whose
+                // decoder is installed now) are still processed.
                 $blocked = true;
                 continue;
             } catch (ArchiveExtractionException) {
@@ -310,8 +298,13 @@ final class Ingestor
         }
 
         if ($this->limits !== null) {
-            $reason = ($isRetry ? $this->limits->checkRetry($reports, $bytes) : null)
-                ?? $this->limits->checkRun($reports, $bytes);
+            // What storing costs: the bytes unpacked in pass 1, twice when pass 2
+            // must extract again because the documents were too large to keep
+            // in memory. The admission checks use the full cost, so a retry
+            // never takes more than its share of the run.
+            $cost   = $cache ? $bytes : 2 * $bytes;
+            $reason = ($isRetry ? $this->limits->checkRetry($reports, $cost) : null)
+                ?? $this->limits->checkRun($reports, $cost);
 
             if ($reason !== null) {
                 // Unpacked already, so the work counts, although the message is
@@ -321,11 +314,7 @@ final class Ingestor
                 return $this->postpone($summary, $sourceId, $uid, $reason, $reports, $bytes);
             }
 
-            $this->limits->charge($reports, $bytes, $isRetry);
-
-            // The second extraction pass 2 needs when the documents were too
-            // large to keep in memory counts as well.
-            $this->limits->chargeInspected($cache ? 0 : $bytes, $isRetry);
+            $this->limits->charge($reports, $cost, $isRetry);
         }
 
         // Pass 2: store what pass 1 measured.

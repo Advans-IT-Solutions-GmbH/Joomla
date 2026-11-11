@@ -78,10 +78,11 @@ final class IngestLimits
     private int $retryBytes = 0;
 
     /**
-     * The run limits are raised to at least twice the per-message limits. Every
-     * message within its own limits then fits into half a run, which is the
-     * share retries may use, so a retry is never starved and new mail always
-     * keeps the other half.
+     * The run limits are raised to at least twice the reports and four times
+     * the unpacked size per message. Every message within its own limits then
+     * fits into half a run, which is the share retries may use, even when it
+     * has to be unpacked twice (see Ingestor). So a retry is never starved and
+     * new mail always keeps the other half.
      */
     public function __construct(int $maxAttachments, int $maxMessageReports, int $maxMessageBytes, int $maxRunReports, int $maxRunBytes)
     {
@@ -89,7 +90,7 @@ final class IngestLimits
         $this->maxMessageReports = max(1, $maxMessageReports);
         $this->maxMessageBytes   = max(1, $maxMessageBytes);
         $this->maxRunReports     = max($maxRunReports, 2 * $this->maxMessageReports);
-        $this->maxRunBytes       = max($maxRunBytes, 2 * $this->maxMessageBytes);
+        $this->maxRunBytes       = max($maxRunBytes, 4 * $this->maxMessageBytes);
     }
 
     /**
@@ -217,9 +218,9 @@ final class IngestLimits
     /**
      * Whether a retried message (from the retry set) still fits the retry share:
      * half of each run limit. The share is checked in addition to
-     * {@see checkRun()}. Because the run limits are at least twice the
-     * per-message limits, a message within its own limits always fits an
-     * unused share, so every run retries at least one message.
+     * {@see checkRun()}. Because of the raised run limits (see the
+     * constructor), a message within its own limits always fits an unused
+     * share, so every run retries at least one message.
      *
      * @return  string|null  A REASON_RUN_* constant, or null when admitted.
      */

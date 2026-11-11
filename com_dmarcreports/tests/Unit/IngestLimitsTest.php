@@ -92,7 +92,7 @@ class IngestLimitsTest extends TestCase
             'max_reports_per_message'     => 5,
             'max_message_unpacked_mb'     => '8',
             'max_reports_per_run'         => '50',
-            'max_run_unpacked_mb'         => '16',
+            'max_run_unpacked_mb'         => '32',
         ];
 
         $limits = IngestLimits::fromOptions(static fn (string $key): mixed => $values[$key] ?? null);
@@ -101,7 +101,7 @@ class IngestLimitsTest extends TestCase
         $this->assertSame(5, $limits->maxMessageReports());
         $this->assertSame(8 * self::MIB, $limits->maxMessageBytes());
         $this->assertSame(50, $limits->maxRunReports());
-        $this->assertSame(16 * self::MIB, $limits->maxRunBytes());
+        $this->assertSame(32 * self::MIB, $limits->maxRunBytes());
     }
 
     public function testAttachmentLimit(): void
@@ -128,12 +128,13 @@ class IngestLimitsTest extends TestCase
 
     public function testRunLimitsAreAtLeastTwiceTheMessageLimits(): void
     {
-        // A run limit below two maximal messages is raised, so every message
-        // within its own limits fits into half a run (the retry share).
+        // A run limit below two maximal messages (four for the size, as a
+        // message may be unpacked twice) is raised, so every message within
+        // its own limits fits into half a run (the retry share).
         $limits = new IngestLimits(10, 100, 10000, 2, 100);
 
         $this->assertSame(200, $limits->maxRunReports());
-        $this->assertSame(20000, $limits->maxRunBytes());
+        $this->assertSame(40000, $limits->maxRunBytes());
 
         $kept = new IngestLimits(10, 5, 500, 1000, 100000);
         $this->assertSame(1000, $kept->maxRunReports());
@@ -143,7 +144,7 @@ class IngestLimitsTest extends TestCase
     public function testFirstMessageOfARunIsAlwaysAdmitted(): void
     {
         // With nothing charged yet the run always admits a message.
-        $limits = new IngestLimits(10, 5, 500, 10, 1000);
+        $limits = new IngestLimits(10, 5, 250, 10, 1000);
 
         $this->assertNull($limits->checkRun(5, 500));
         $limits->charge(5, 500);
@@ -155,7 +156,7 @@ class IngestLimitsTest extends TestCase
 
     public function testRunLimitsPostponeOnceTheBudgetIsSpent(): void
     {
-        $limits = new IngestLimits(10, 5, 500, 10, 1000);
+        $limits = new IngestLimits(10, 5, 250, 10, 1000);
 
         $limits->charge(4, 400);
         $this->assertNull($limits->checkRun(6, 600));        // exactly at both ceilings
@@ -171,7 +172,7 @@ class IngestLimitsTest extends TestCase
         // A flood of held messages (zip bombs, oversized archives) is unpacked
         // before it is held. That work counts, so it cannot repeat without bound
         // in one run.
-        $limits = new IngestLimits(10, 100, 500, 1000, 1000);
+        $limits = new IngestLimits(10, 100, 250, 1000, 1000);
 
         $limits->chargeInspected(900);
         $this->assertSame(IngestLimits::REASON_RUN_SIZE, $limits->checkRun(1, 200));
@@ -180,7 +181,7 @@ class IngestLimitsTest extends TestCase
 
     public function testExhaustedRunStopsInspectingFurtherMessages(): void
     {
-        $limits = new IngestLimits(10, 2, 500, 5, 1000);
+        $limits = new IngestLimits(10, 2, 250, 5, 1000);
 
         // A fresh run is never exhausted, so its first message is inspected.
         $this->assertNull($limits->runExhausted());
@@ -192,14 +193,14 @@ class IngestLimitsTest extends TestCase
         $limits->chargeInspected(600);
         $this->assertSame(IngestLimits::REASON_RUN_SIZE, $limits->runExhausted());
 
-        $reports = new IngestLimits(10, 2, 500, 5, 1000);
+        $reports = new IngestLimits(10, 2, 250, 5, 1000);
         $reports->charge(5, 10);
         $this->assertSame(IngestLimits::REASON_RUN_REPORTS, $reports->runExhausted());
     }
 
     public function testRetriesUseAtMostHalfOfEachRunLimit(): void
     {
-        $limits = new IngestLimits(10, 5, 500, 10, 1000);
+        $limits = new IngestLimits(10, 5, 250, 10, 1000);
 
         // An unused retry share admits any message within its own limits.
         $this->assertNull($limits->checkRetry(5, 500));
@@ -213,13 +214,13 @@ class IngestLimitsTest extends TestCase
         $this->assertNull($limits->checkRun(5, 500));
 
         // Bytes of held retries count against the share as well.
-        $bytes = new IngestLimits(10, 5, 500, 10, 1000);
+        $bytes = new IngestLimits(10, 5, 250, 10, 1000);
         $bytes->chargeInspected(500, true);
         $this->assertSame(IngestLimits::REASON_RUN_SIZE, $bytes->retryShareExhausted());
         $this->assertNull($bytes->runExhausted());
 
         // Charges of new mail do not touch the retry share.
-        $fresh = new IngestLimits(10, 5, 500, 10, 1000);
+        $fresh = new IngestLimits(10, 5, 250, 10, 1000);
         $fresh->charge(5, 500);
         $this->assertNull($fresh->retryShareExhausted());
         $this->assertNull($fresh->checkRetry(5, 500));
@@ -229,11 +230,11 @@ class IngestLimitsTest extends TestCase
     {
         // Every poll builds a fresh limits object, so a message postponed by
         // one run is the first message of the next one and is admitted there.
-        $first = new IngestLimits(10, 5, 500, 10, 1000);
+        $first = new IngestLimits(10, 5, 250, 10, 1000);
         $first->charge(10, 1000);
         $this->assertSame(IngestLimits::REASON_RUN_REPORTS, $first->checkRun(5, 500));
 
-        $next = new IngestLimits(10, 5, 500, 10, 1000);
+        $next = new IngestLimits(10, 5, 250, 10, 1000);
         $this->assertNull($next->checkRun(5, 500));
     }
 

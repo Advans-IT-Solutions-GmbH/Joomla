@@ -57,29 +57,6 @@ final class ReportArchive
     private const MAX_ENTRIES = 4096;
 
     /**
-     * Whether the payload is a compressed container (gzip or zip, detected
-     * like {@see extract()} and {@see TlsReportArchive::extract()}: magic bytes
-     * first, file name second) whose PHP extension is not installed. Lets a
-     * caller recognise a still undecodable message without unpacking anything.
-     *
-     * @since  1.2.0
-     */
-    public static function decoderMissing(string $payload, string $filename = ''): bool
-    {
-        $name   = strtolower($filename);
-        $isGzip = str_starts_with($payload, "\x1f\x8b");
-        $isZip  = str_starts_with($payload, "PK\x03\x04");
-
-        if (!$isGzip && !$isZip) {
-            $isGzip = str_ends_with($name, '.gz');
-            $isZip  = str_ends_with($name, '.zip');
-        }
-
-        return ($isGzip && !\function_exists('gzdecode'))
-            || ($isZip && !class_exists(\ZipArchive::class));
-    }
-
-    /**
      * Extract every XML document contained in a raw attachment payload.
      *
      * @param   string      $payload   The raw bytes of the attachment.

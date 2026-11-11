@@ -67,22 +67,6 @@ class ReportArchiveTest extends TestCase
         $this->assertStringStartsWith('<?xml', $documents[0]);
     }
 
-    public function testDecoderMissingFollowsTheInstalledExtensions(): void
-    {
-        $noZlib = !\function_exists('gzdecode');
-        $noZip  = !class_exists(\ZipArchive::class);
-
-        // Detected by magic bytes first, file name second, like extract().
-        $this->assertSame($noZlib, ReportArchive::decoderMissing("\x1f\x8b\x08rest", 'report.xml'));
-        $this->assertSame($noZip, ReportArchive::decoderMissing("PK\x03\x04rest", 'report.gz'));
-        $this->assertSame($noZlib, ReportArchive::decoderMissing('no magic', 'report.xml.gz'));
-        $this->assertSame($noZip, ReportArchive::decoderMissing('no magic', 'report.zip'));
-
-        // Raw documents never need a decoder.
-        $this->assertFalse(ReportArchive::decoderMissing(self::XML, 'report.xml'));
-        $this->assertFalse(ReportArchive::decoderMissing('{"report-id":"1"}', 'report.json'));
-    }
-
     public function testUnknownPayloadYieldsNothing(): void
     {
         $this->assertSame([], ReportArchive::extract('just some text', 'note.txt'));
