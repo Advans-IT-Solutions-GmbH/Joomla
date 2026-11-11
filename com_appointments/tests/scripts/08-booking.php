@@ -29,7 +29,7 @@ $admin = new AppointmentsHttp('http://localhost', 'booking-admin');
 
 $prepare = static function (int $event, string $start) use ($check): array {
     $client = new AppointmentsHttp('http://localhost', 'booking-guest');
-    $html = $client->request('/index.php?option=com_appointments&view=eventtype&id=' . $event . '&timezone=UTC&start=' . urlencode($start));
+    $html = $client->request(appointments_page($event, '&timezone=UTC&start=' . urlencode($start)));
     $check($client->status === 200 && str_contains($html, 'name="booking[start]"'), 'No-JavaScript booking form rendered');
     $document = new DOMDocument();
     @$document->loadHTML($html);
@@ -280,8 +280,8 @@ try {
         && str_contains($body, 'com_appointments.focusSystemMessage')
         && $xpath->query('//*[@data-appointments-result]')->length === 0,
         'A forged form signature is present in Joomla\'s live region without a result fragment');
-    $cleanPage = $request[0]->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventIds[0]
-        . '&timezone=UTC&start=' . urlencode($slot));
+    $cleanPage = $request[0]->request(appointments_page($eventIds[0],
+        '&timezone=UTC&start=' . urlencode($slot)));
     $check(!str_contains($cleanPage, 'com_appointments.focusSystemMessage'),
         'The one-request error-message focus option is consumed after the refused submission');
 
@@ -310,7 +310,7 @@ try {
     // stored. Acknowledge: a required checkbox, nothing stored.
     $db->query("DELETE FROM {$prefix}appointments_ratelimit");
     $modeForm = static fn (int $event, string $start): DOMXPath => $dom((new AppointmentsHttp('http://localhost', 'booking-mode'))
-        ->request('/index.php?option=com_appointments&view=eventtype&id=' . $event . '&timezone=UTC&start=' . urlencode($start)));
+        ->request(appointments_page($event, '&timezone=UTC&start=' . urlencode($start))));
     $stored = static fn (int $event, string $start): ?array => $db->query("SELECT id,consent_utc,consent_version FROM {$prefix}appointments_bookings"
         . " WHERE eventtype_id={$event} AND start_utc='{$start}' AND state IN (0,1)")->fetch_assoc();
     $setParams(['consent_mode' => 'unknown-mode']);
@@ -392,7 +392,9 @@ try {
 
     // Release test 22.10.: dates in words of the site language, times without a zone abbreviation.
     $dates = new AppointmentsHttp('http://localhost', 'booking-dates');
+    // Below the list of event types, so the booking page has no menu item of its own.
     $html = $dates->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventIds[1]
+        . '&Itemid=' . appointments_menu_item('index.php?option=com_appointments&view=eventtypes')
         . '&timezone=UTC&month=' . substr($day, 0, 7) . '&day=' . $day);
     $xpath = $dom($html);
     $date = new DateTimeImmutable($day, $utc);
@@ -439,8 +441,8 @@ try {
     $db->query("INSERT INTO {$prefix}appointments_eventtypes (title,alias,schedule_id,host_user_id,duration_minutes,slot_step_minutes,horizon_days,feed_token,created_utc,modified_utc) VALUES ('{$title}','{$title}',{$schedule},{$host},60,60,400,'{$token}','{$time}','{$time}')");
     $eventIds[] = $repeatedEvent = (int) $db->insert_id;
     $localDay = (new DateTimeImmutable('@' . ($back - 3600)))->setTimezone($zurich);
-    $html = $dates->request('/index.php?option=com_appointments&view=eventtype&id=' . $repeatedEvent
-        . '&timezone=Europe%2FZurich&month=' . $localDay->format('Y-m') . '&day=' . $localDay->format('Y-m-d'));
+    $html = $dates->request(appointments_page($repeatedEvent,
+        '&timezone=Europe%2FZurich&month=' . $localDay->format('Y-m') . '&day=' . $localDay->format('Y-m-d')));
     $xpath = $dom($html);
     $labels = [];
     foreach ($xpath->query('//div[contains(@class, "com-appointments-slot")]/label') as $label) {
@@ -460,8 +462,8 @@ try {
     $db->query("DELETE FROM {$prefix}appointments_ratelimit");
     $page = new AppointmentsHttp('http://localhost', 'booking-page');
     // Step 1 shows the times of the day, step 2 (start=) the details form of the chosen time.
-    $show = static fn (int $event, string $start = ''): DOMXPath => $dom($page->request('/index.php?option=com_appointments&view=eventtype&id=' . $event
-        . '&timezone=UTC' . ($start === '' ? '&month=' . substr($day, 0, 7) . '&day=' . $day : '&start=' . urlencode($start))));
+    $show = static fn (int $event, string $start = ''): DOMXPath => $dom($page->request(appointments_page($event,
+        '&timezone=UTC' . ($start === '' ? '&month=' . substr($day, 0, 7) . '&day=' . $day : '&start=' . urlencode($start)))));
     $freeSlot = $day . ' 15:00:00';
 
     // Without JavaScript every step is a link or a form; the script is an external, deferred

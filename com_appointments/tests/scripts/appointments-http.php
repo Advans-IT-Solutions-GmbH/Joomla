@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/appointments-menu.php';
+
 final class AppointmentsHttp
 {
     public int $status = 0;
@@ -161,8 +163,8 @@ final class AppointmentsHttp
 
     public function bookingForm(int $event, string $start, array $details = []): array
     {
-        $html = $this->request('/index.php?option=com_appointments&view=eventtype&id=' . $event
-            . '&timezone=UTC&start=' . urlencode($start));
+        // The booking page through its menu item, the only way it opens (appointments-menu.php).
+        $html = $this->request(appointments_page($event, '&timezone=UTC&start=' . urlencode($start)));
 
         if ($this->status !== 200 || !str_contains($html, 'name="booking[start]"')) {
             throw new RuntimeException('The public booking form did not render: HTTP ' . $this->status . '.');

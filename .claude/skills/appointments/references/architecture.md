@@ -86,10 +86,11 @@ Joomla expects.
 
 ## Routing
 
-The site router (`Site\Service\Router`, a `RouterView` with Joomla's `MenuRules`, `StandardRules`
-and `NomenuRules`, registered through `RouterFactory` in the service provider) registers only the
-two menu views, `eventtypes` and `eventtype` (key `id`, segment = alias). Menu items in a content
-language and in "All" are both found by `MenuRules`. The confirmation page, the signed manage
+The site router (`Site\Service\Router`, a `RouterView` with Joomla's `MenuRules` and
+`StandardRules`, registered through `RouterFactory` in the service provider) registers only the
+three menu views, `eventtypes`, `eventtype` (key `id`, segment = alias of a published event type)
+and `mycalendars`. There are no `NomenuRules`: `/component/appointments/<view>/…` is a 404. Menu
+items in a content language and in "All" are both found by `MenuRules`. The confirmation page, the signed manage
 pages, the tasks and the feed keep their query string. The signed links in e-mails are built
 non-SEF from the public site URL, without the router, because the reminder task runs on the CLI;
 they must keep resolving unchanged. The "Book an appointment" menu item picks its event type with
@@ -102,6 +103,18 @@ item, in the reader's language before "All", published and open to guests. The s
 cover the `Itemid`. The controller looks it up only after the signature is verified. The way back
 (`Site\Helper\BackLink`) is hidden on a one-event-type menu item unless its "Navigation" options
 show it.
+
+**Only what a menu item opens.** `Site\Dispatcher\Dispatcher` checks every request with
+`Administrator\Helper\MenuViews::allows()` before a controller runs. The list, a booking page and
+«My calendars» open only through the active menu item of their own type, with its event type,
+layout and format (`format=raw` only for the booking page's date-and-time part); an "Event types"
+item also opens the booking pages of the event types it lists. `booking`, `manage` and
+`activation` need no menu item (session, signature, token). Tasks are an explicit list
+(`MenuViews::TASKS`); every other task, including the inherited `display` task of each controller
+and the default task an unknown task falls back to, is refused. Refusals are
+`RouteNotFoundException` (404, `JERROR_PAGE_NOT_FOUND`), like an unknown address. A new view,
+layout or task is unreachable until it is added there; mails link «My calendars» with
+`MenuViews::itemFor()`. Suites open the pages through menu items (`tests/scripts/appointments-menu.php`).
 
 ## Domain logic lives in helpers, not in models
 

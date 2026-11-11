@@ -9,6 +9,7 @@
 
 defined('_JEXEC') or die;
 
+use Advans\Component\Appointments\Site\Helper\BackLink;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
@@ -64,6 +65,6 @@ $error = fn (string $key): string => isset($errors[$key])
                 </div>
             </form>
         <?php endif; ?>
-        <p><a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtypes'); ?>"><?php echo Text::_('JCANCEL'); ?></a></p>
+        <p><a class="btn btn-secondary" href="<?php echo BackLink::overview(); ?>"><?php echo Text::_('JCANCEL'); ?></a></p>
     </div>
 </div>

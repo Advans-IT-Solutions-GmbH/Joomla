@@ -17,7 +17,8 @@ defined('_JEXEC') or die;
 /**
  * The way back of the public pages: the button «Back to appointments» (on a form «Cancel»).
  *
- * By default it leads to the list of all event types. A "Book an appointment" menu item points at
+ * By default it leads to the list of all event types (its menu item, or the home page when the site
+ * has no list menu item, see overview()). A "Book an appointment" menu item points at
  * one event type, so on its pages the list would show a visitor the other event types the site
  * deliberately left out of that menu item. There the button is hidden by default; the menu item's
  * options can show it again and choose where it leads ("Navigation" tab).
@@ -85,7 +86,27 @@ final class BackLink
             }
         }
 
-        return Route::_('index.php?option=com_appointments&view=eventtypes');
+        return self::overview();
+    }
+
+    /**
+     * The list of all event types through its menu item, HTML-escaped by Route. The list opens only
+     * through a menu item of its own (MenuViews), so without one that the visitor can open the way
+     * back leads to the home page instead of to an address that answers 404.
+     */
+    public static function overview(): string
+    {
+        $app = Factory::getApplication();
+        $menu = $app->getMenu();
+
+        // getItems() of the site menu only returns items of the visitor's access levels and language.
+        if ($menu->getItems('link', 'index.php?option=com_appointments&view=eventtypes') !== []) {
+            return Route::_('index.php?option=com_appointments&view=eventtypes');
+        }
+
+        $home = $menu->getDefault($app->getLanguage()->getTag());
+
+        return $home !== null ? Route::_('index.php?Itemid=' . (int) $home->id) : Route::_('index.php');
     }
 
     /**

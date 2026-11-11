@@ -14,7 +14,6 @@ use Joomla\CMS\Categories\CategoryFactoryInterface;
 use Joomla\CMS\Component\Router\RouterView;
 use Joomla\CMS\Component\Router\RouterViewConfiguration;
 use Joomla\CMS\Component\Router\Rules\MenuRules;
-use Joomla\CMS\Component\Router\Rules\NomenuRules;
 use Joomla\CMS\Component\Router\Rules\StandardRules;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Menu\AbstractMenu;
@@ -27,9 +26,13 @@ defined('_JEXEC') or die;
  *
  * - MenuRules finds the menu item of a booking page in the current language or in "All", so a
  *   link to an event type uses its own "Book an appointment" item, otherwise an "Event types"
- *   list item, otherwise the component address.
- * - StandardRules builds and parses the event type below a list item by its alias.
- * - NomenuRules handles /component/appointments/eventtype/<alias> without a menu item.
+ *   list item.
+ * - StandardRules builds and parses the event type below a list item by its alias. Below any
+ *   other menu item a further segment is not parsed, so it answers 404.
+ *
+ * There are no rules for addresses without a menu item (no NomenuRules): a page of these views
+ * opens only through its menu item (Site\Dispatcher\Dispatcher, MenuViews), so
+ * /component/appointments/<view>/… answers 404 instead of naming a view.
  *
  * Only the three menu views are registered. The confirmation page, the signed manage pages and
  * the tasks keep their query string, so a signed link carries its parameters unchanged and the
@@ -42,7 +45,7 @@ class Router extends RouterView
     private DatabaseInterface $db;
 
     /**
-     * Alias of every event type by id, loaded once per request in one query, so a list of
+     * Alias of every published event type by id, loaded once per request in one query, so a list of
      * event types does not cost one lookup per routed link.
      *
      * @var array<int, string>|null
@@ -71,7 +74,6 @@ class Router extends RouterView
 
         $this->attachRule(new MenuRules($this));
         $this->attachRule(new StandardRules($this));
-        $this->attachRule(new NomenuRules($this));
     }
 
     /**
@@ -91,8 +93,8 @@ class Router extends RouterView
     }
 
     /**
-     * Event type id of a segment: the alias first, then a plain id of an existing event type.
-     * Publication, access and language are enforced by the page, which answers 404.
+     * Event type id of a segment: the alias first, then a plain id of a published event type.
+     * Access level and language are enforced by the page, which answers 404.
      *
      * @param   string  $segment  The URL segment.
      * @param   array   $query    The variables parsed so far.
@@ -125,8 +127,11 @@ class Router extends RouterView
     {
         if ($this->aliases === null) {
             $query = method_exists($this->db, 'createQuery') ? $this->db->createQuery() : $this->db->getQuery(true);
+            // Published event types only: an unpublished one has no address, so a link built for it
+            // (for example a redirect to the canonical address) does not name its alias.
             $query->select($this->db->quoteName(['id', 'alias']))
-                ->from($this->db->quoteName('#__appointments_eventtypes'));
+                ->from($this->db->quoteName('#__appointments_eventtypes'))
+                ->where($this->db->quoteName('published') . ' = 1');
             $this->aliases = [];
 
             foreach ($this->db->setQuery($query)->loadObjectList() as $row) {

@@ -173,6 +173,9 @@ function team_d_totp(string $base32, int $time): string
 return static function (TeamSuite $suite): void {
     $db = $suite->db;
     $p = $suite->prefix;
+    // «My calendars» opens only through its menu item (appointments-menu.php).
+    require_once __DIR__ . '/appointments-menu.php';
+    $myCalendars = '/index.php?option=com_appointments&view=mycalendars&Itemid=' . appointments_menu_item('index.php?option=com_appointments&view=mycalendars');
 
     // ------------------------------------------------------------------
     // Part 1: always
@@ -185,10 +188,10 @@ return static function (TeamSuite $suite): void {
             && !in_array('password', $columns, true) && !in_array('app_password', $columns, true);
     });
 
-    $suite->test('«My calendars» answers 404 while the internet calendars are off', static function () use ($suite) {
+    $suite->test('«My calendars» answers 404 while the internet calendars are off', static function () use ($suite, $myCalendars) {
         // With strict routing Joomla first redirects to the SEF address of the view; follow it.
         $browser = new TeamDBrowser($suite->base);
-        $browser->request('/index.php?option=com_appointments&view=mycalendars');
+        $browser->request($myCalendars);
 
         if ($browser->status !== 404) {
             throw new RuntimeException('HTTP ' . $browser->status);
@@ -491,9 +494,9 @@ return static function (TeamSuite $suite): void {
             'D: A device whose owner was changed in the database stays revoked for its real owner',
             'D: A device row with a broken MAC is refused without an exception',
             'D: A user key row with a broken MAC refuses every device and «Add device»',
-            'D: An eligible member opens «My calendars» at the address without a menu item',
+            'D: An eligible member opens «My calendars» through its menu item',
             'D: A guest gets 404 for «My calendars» and every device task while the feature is on',
-            'D: A signed-in account outside the internet calendar groups gets 403 for the page, the device layout and devices.display',
+            'D: A signed-in account outside the internet calendar groups gets 403 for the page and the device layout, devices.display is 404',
             'D: A Super User outside the internet calendar groups gets 403 for «My calendars»',
             'D: «Add device» refuses a signed-in account outside the groups with 403 and creates nothing',
             'D: «Rename device» refuses a signed-in account outside the groups with 403 and changes nothing',
@@ -571,7 +574,7 @@ return static function (TeamSuite $suite): void {
 
             return true;
         };
-        $page = static fn (TeamDBrowser $browser): string => $browser->request('/index.php?option=com_appointments&view=mycalendars');
+        $page = static fn (TeamDBrowser $browser): string => $browser->request($myCalendars);
         $submit = static function (TeamDBrowser $browser, string $html, array $fields) {
             $form = TeamDBrowser::form($html, 'devices.create');
 
@@ -891,11 +894,11 @@ return static function (TeamSuite $suite): void {
 
             return $browser->status === 423 && $noForm && $noPassword && $unchanged;
         });
-        $suite->test($flow[8], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page) {
+        $suite->test($flow[8], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page, $myCalendars) {
             $browser = new TeamDBrowser($suite->base);
             $signIn($browser, $tag . 'member', $password, $secret);
             $id = (int) $suite->count("SELECT id FROM {$p}appointments_devices WHERE user_id = {$member} AND state = 1 ORDER BY id LIMIT 1");
-            $html = $browser->request('/index.php?option=com_appointments&view=mycalendars&layout=device&id=' . $id);
+            $html = $browser->request($myCalendars . '&layout=device&id=' . $id);
             $form = TeamDBrowser::form($html, 'devices.remove');
 
             if ($form === null) {
@@ -1031,10 +1034,10 @@ return static function (TeamSuite $suite): void {
         $outsiderBefore = $deviceRow($outsiders['outsider']['device']);
         $outsiderStatuses = $outsiderToken !== '' ? $tasks($outsiderBrowser, $outsiderToken, $outsiders['outsider']['device']) : [];
 
-        $suite->test($flow[21], static function () use ($suite, $tag, $password, $secret, $signIn) {
+        $suite->test($flow[21], static function () use ($suite, $tag, $password, $secret, $signIn, $myCalendars) {
             $browser = new TeamDBrowser($suite->base);
             $signIn($browser, $tag . 'member', $password, $secret);
-            $html = $browser->request('/index.php?option=com_appointments&view=mycalendars');
+            $html = $browser->request($myCalendars);
 
             if ($browser->status !== 200) {
                 echo '    eligible member: page answered ' . $browser->status . "\n";
@@ -1043,9 +1046,9 @@ return static function (TeamSuite $suite): void {
             return $browser->status === 200 && str_contains($html, 'appointments');
         });
 
-        $suite->test($flow[22], static function () use ($suite, $tokenOf, $tasks, $outsiders) {
+        $suite->test($flow[22], static function () use ($suite, $tokenOf, $tasks, $outsiders, $myCalendars) {
             $guest = new TeamDBrowser($suite->base);
-            $guest->request('/index.php?option=com_appointments&view=mycalendars');
+            $guest->request($myCalendars);
             $page = $guest->status;
             $token = $tokenOf($guest);
             $statuses = $token !== '' ? $tasks($guest, $token, $outsiders['outsider']['device']) : [];
@@ -1057,7 +1060,7 @@ return static function (TeamSuite $suite): void {
             return $page === 404 && \count($statuses) === 4 && array_values(array_unique($statuses)) === [404];
         });
 
-        $suite->test($flow[23], static function () use ($outsiderBrowser, $outsiderSignedIn, $outsiders) {
+        $suite->test($flow[23], static function () use ($outsiderBrowser, $outsiderSignedIn, $outsiders, $myCalendars) {
             if (!$outsiderSignedIn) {
                 return false;
             }
@@ -1065,8 +1068,9 @@ return static function (TeamSuite $suite): void {
             $statuses = [];
 
             foreach ([
-                'page' => '/index.php?option=com_appointments&view=mycalendars',
-                'device' => '/index.php?option=com_appointments&view=mycalendars&layout=device&id=' . $outsiders['outsider']['device'],
+                'page' => $myCalendars,
+                'device' => $myCalendars . '&layout=device&id=' . $outsiders['outsider']['device'],
+                // No task of the site displays a view: the dispatcher answers 404 for everyone (MenuViews).
                 'display' => '/index.php?option=com_appointments&task=devices.display',
             ] as $key => $path) {
                 $html = $outsiderBrowser->request($path);
@@ -1075,21 +1079,23 @@ return static function (TeamSuite $suite): void {
                 $statuses[$key] = $outsiderBrowser->status . ($content ? '' : ' (empty or with the form)');
             }
 
-            if (array_values(array_unique($statuses)) !== ['403']) {
+            $expected = ['page' => '403', 'device' => '403', 'display' => '404'];
+
+            if ($statuses !== $expected) {
                 echo '    outsider: ' . json_encode($statuses) . "\n";
             }
 
-            return array_values(array_unique($statuses)) === ['403'];
+            return $statuses === $expected;
         });
 
-        $suite->test($flow[24], static function () use ($suite, $tag, $secret, $signIn, $outsiders) {
+        $suite->test($flow[24], static function () use ($suite, $tag, $secret, $signIn, $outsiders, $myCalendars) {
             $browser = new TeamDBrowser($suite->base);
 
             if (!$signIn($browser, $tag . 'superuser', $outsiders['superuser']['password'], $secret)) {
                 return false;
             }
 
-            $browser->request('/index.php?option=com_appointments&view=mycalendars');
+            $browser->request($myCalendars);
 
             return $browser->status === 403;
         });
@@ -1108,7 +1114,7 @@ return static function (TeamSuite $suite): void {
             });
         }
 
-        $suite->test($flow[28], static function () use ($suite, $db, $p, $tag, $password, $secret, $signIn, $tokenOf, $tasks, $decoded, $member, $deviceRow) {
+        $suite->test($flow[28], static function () use ($suite, $db, $p, $tag, $password, $secret, $signIn, $tokenOf, $tasks, $decoded, $member, $deviceRow, $myCalendars) {
             // A level that holds no group: the member keeps the team group but lacks the level.
             $db->query("INSERT INTO {$p}viewlevels (title, ordering, rules) VALUES ('" . $db->real_escape_string($tag . ' level') . "', 0, '[]')");
             $level = (int) $db->insert_id;
@@ -1122,7 +1128,7 @@ return static function (TeamSuite $suite): void {
             try {
                 $browser = new TeamDBrowser($suite->base);
                 $signIn($browser, $tag . 'member', $password, $secret);
-                $browser->request('/index.php?option=com_appointments&view=mycalendars');
+                $browser->request($myCalendars);
                 $page = $browser->status;
                 $token = $tokenOf($browser);
                 $statuses = $token !== '' && $deviceId > 0 ? $tasks($browser, $token, $deviceId) : [];
