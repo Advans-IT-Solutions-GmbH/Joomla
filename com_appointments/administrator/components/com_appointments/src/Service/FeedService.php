@@ -12,6 +12,8 @@ use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\FeedCalendar;
 use Advans\Component\Appointments\Administrator\Helper\FeedToken;
 use Advans\Component\Appointments\Administrator\Helper\IcsWriter;
+use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Registry\Registry;
 
@@ -26,8 +28,47 @@ defined('_JEXEC') or die;
  */
 final class FeedService
 {
-    public function __construct(private DatabaseInterface $db)
+    /** Without keys, they are derived from the site secret of the running application. */
+    public function __construct(private DatabaseInterface $db, private ?KeyProvider $keys = null)
     {
+    }
+
+    /**
+     * Converts every stored clear-text credential from before 1.5.0 into its keyed
+     * digest. The token itself stays valid, so every existing subscription keeps
+     * working. Idempotent: a stored digest is never touched again. A malformed
+     * clear-text value, which never authenticated, becomes an unissued feed.
+     *
+     * @return  int  The number of converted credentials.
+     */
+    public function convertLegacy(): int
+    {
+        $db = $this->db;
+        $key = $this->key();
+        $converted = 0;
+
+        foreach (['#__appointments_eventtypes' => 'id', '#__appointments_hosts' => 'user_id'] as $table => $column) {
+            $db->transactionStart();
+            try {
+                $query = $this->query()->select($db->quoteName([$column, 'feed_token']))->from($db->quoteName($table))
+                    ->where($db->quoteName('feed_token') . ' NOT LIKE ' . $db->quote(FeedToken::PREFIX . '%'));
+                foreach ($db->setQuery((string) $query . ' FOR UPDATE')->loadAssocList() as $row) {
+                    $stored = (string) $row['feed_token'];
+                    $digest = preg_match('/\A[a-f0-9]{64}\z/D', $stored) === 1 ? FeedToken::digest($key, $stored) : FeedToken::unissued();
+                    $query = $this->query()->update($db->quoteName($table))
+                        ->set($db->quoteName('feed_token') . ' = ' . $db->quote($digest))
+                        ->where($db->quoteName($column) . ' = ' . (int) $row[$column]);
+                    $db->setQuery($query)->execute();
+                    $converted++;
+                }
+                $db->transactionCommit();
+            } catch (\Throwable $e) {
+                $db->transactionRollback();
+                throw $e;
+            }
+        }
+
+        return $converted;
     }
 
     /**
@@ -46,7 +87,7 @@ final class FeedService
         $scope = $validScope ? $scope : 'event';
         $id = $validScope && $id > 0 ? $id : 0;
         $credential = $this->credential($scope, $id);
-        $authenticated = FeedCalendar::verify((string) ($credential['feed_token'] ?? ''), $token);
+        $authenticated = FeedToken::verify($this->key(), (string) ($credential['feed_token'] ?? ''), $token);
 
         if (!$authenticated || !$validScope || $id === 0) {
             return null;
@@ -71,8 +112,12 @@ final class FeedService
         return ['body' => $body, 'etag' => $etag, 'filename' => 'appointments-' . $scope . '-' . $id . '.ics'];
     }
 
-    /** Caller must require component manage/options and event edit where applicable. */
-    public function rotate(string $scope, int $id, \DateTimeImmutable $now): void
+    /**
+     * Caller must require component manage/options and event edit where applicable.
+     * Stores only the digest of the new token and returns the token itself, which
+     * the caller shows once and never stores.
+     */
+    public function rotate(string $scope, int $id, \DateTimeImmutable $now): string
     {
         if (!in_array($scope, ['event', 'host'], true) || $id < 1) {
             throw new \DomainException('COM_APPOINTMENTS_FEEDS_ERROR_NOT_FOUND');
@@ -96,8 +141,10 @@ final class FeedService
             if ($stored === null) {
                 throw new \DomainException('COM_APPOINTMENTS_FEEDS_ERROR_NOT_FOUND');
             }
+            $key = $this->key();
+            $token = FeedToken::rotate($key, (string) $stored);
             $query = $this->query()->update($db->quoteName($table))
-                ->set($db->quoteName('feed_token') . ' = ' . $db->quote(FeedToken::rotate((string) $stored)))
+                ->set($db->quoteName('feed_token') . ' = ' . $db->quote(FeedToken::digest($key, $token)))
                 ->set($db->quoteName('modified_utc') . ' = ' . $db->quote($now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')))
                 ->where($db->quoteName($column) . ' = ' . $id);
             $db->setQuery($query)->execute();
@@ -106,14 +153,16 @@ final class FeedService
             $db->transactionRollback();
             throw $e;
         }
+
+        return $token;
     }
 
-    /** No credentials are fetched until the caller has filtered the event IDs by ACL. */
-    public function eventCredentials(array $ids): array
+    /** The feeds of the given event types, without their digests; the caller has filtered the IDs by ACL. */
+    public function eventFeeds(array $ids): array
     {
         $ids = array_values(array_filter(array_map('intval', $ids), static fn ($id) => $id > 0));
         $db = $this->db;
-        $query = $this->query()->select($db->quoteName(['id', 'title', 'feed_token']))
+        $query = $this->query()->select($db->quoteName(['id', 'title']))
             ->from($db->quoteName('#__appointments_eventtypes'))
             ->where($ids === [] ? '1 = 0' : $db->quoteName('id') . ' IN (' . implode(',', $ids) . ')')
             ->order($db->quoteName('title'));
@@ -121,8 +170,8 @@ final class FeedService
         return $db->setQuery($query)->loadAssocList();
     }
 
-    /** Caller must require component manage/options before invoking this method. */
-    public function hostCredentials(\DateTimeImmutable $now, array $authorisedHosts): array
+    /** The host feeds, without their digests. Caller must require component manage/options first. */
+    public function hostFeeds(\DateTimeImmutable $now, array $authorisedHosts): array
     {
         $db = $this->db;
         $authorisedHosts = array_values(array_filter(array_map('intval', $authorisedHosts), static fn ($id) => $id > 0));
@@ -134,7 +183,7 @@ final class FeedService
         foreach ($ids as $id) {
             (new HostStore($db))->ensure((int) $id, $now);
         }
-        $query = $this->query()->select($db->quoteName(['h.user_id', 'h.feed_token']))
+        $query = $this->query()->select($db->quoteName('h.user_id'))
             ->select($db->quoteName('u.name', 'title'))
             ->from($db->quoteName('#__appointments_hosts', 'h'))
             ->join('INNER', $db->quoteName('#__users', 'u'), $db->quoteName('u.id') . ' = ' . $db->quoteName('h.user_id'))
@@ -258,6 +307,13 @@ final class FeedService
         return $this->query()->select($db->quoteName(array_merge(['b.id', 'b.eventtype_id', 'b.sequence', 'b.state',
             'b.start_utc', 'b.end_utc', 'b.modified_utc'], BookingData::readColumns('b'))))
             ->from($db->quoteName('#__appointments_bookings', 'b'));
+    }
+
+    private function key(): string
+    {
+        $this->keys ??= new KeyProvider((string) Factory::getApplication()->get('secret', ''));
+
+        return $this->keys->key(KeyProvider::PURPOSE_FEED_TOKEN);
     }
 
     private function plainDescription(string $description): string

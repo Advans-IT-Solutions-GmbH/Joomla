@@ -216,6 +216,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->installBundledPlugins($parent);
         $this->initialiseLegacyFeedSetting($type);
         $this->encryptExistingBookings($type);
+        $this->convertLegacyFeedTokens();
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
@@ -630,6 +631,32 @@ class Com_appointmentsInstallerScript extends InstallerScript
             $app = Factory::getApplication();
             $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
             $app->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_BOOKING_ENCRYPTION_PENDING'), 'warning');
+        }
+    }
+
+    /**
+     * Token feed credentials up to 1.4 were stored in clear text. Replace each with
+     * its keyed digest (FeedToken), so the database holds no usable credential; the
+     * token in every existing subscription address stays valid. Idempotent. Should it
+     * fail, the Calendar feeds view repeats it, and until then such a feed answers 404.
+     */
+    private function convertLegacyFeedTokens(): void
+    {
+        $class = '\\Advans\\Component\\Appointments\\Administrator\\Service\\FeedService';
+
+        if (!class_exists($class) || !method_exists($class, 'convertLegacy')) {
+            return;
+        }
+
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) Factory::getApplication()->get('secret', ''));
+
+        try {
+            (new $class($db, $keys))->convertLegacy();
+        } catch (\Throwable $e) {
+            $app = Factory::getApplication();
+            $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
+            $app->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_FEED_TOKENS_PENDING'), 'warning');
         }
     }
 

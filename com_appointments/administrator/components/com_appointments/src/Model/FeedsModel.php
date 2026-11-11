@@ -44,19 +44,34 @@ class FeedsModel extends BaseDatabaseModel
         $hosts = array_values(array_diff_key($hosts, $deniedHosts));
         $service = new FeedService($db);
         $items = [];
-        foreach ($service->eventCredentials($ids) as $row) {
-            $items[] = ['scope' => 'event', 'id' => (int) $row['id'], 'title' => $row['title'],
-                'url' => $this->url('event', (int) $row['id'], $row['feed_token'])];
+        // Only digests are stored, so no address can be listed: a rotation issues one and shows it once.
+        foreach ($service->eventFeeds($ids) as $row) {
+            $items[] = ['scope' => 'event', 'id' => (int) $row['id'], 'title' => $row['title']];
         }
-        foreach ($service->hostCredentials(new \DateTimeImmutable('now', new \DateTimeZone('UTC')), $hosts) as $row) {
-            $items[] = ['scope' => 'host', 'id' => (int) $row['user_id'], 'title' => $row['title'],
-                'url' => $this->url('host', (int) $row['user_id'], $row['feed_token'])];
+        foreach ($service->hostFeeds(new \DateTimeImmutable('now', new \DateTimeZone('UTC')), $hosts) as $row) {
+            $items[] = ['scope' => 'host', 'id' => (int) $row['user_id'], 'title' => $row['title']];
         }
 
         return $items;
     }
 
-    private function url(string $scope, int $id, string $token): string
+    /**
+     * The installer converts clear-text credentials from before 1.5.0 into keyed digests.
+     * This repeats it, whether the feeds are on or off, in case that step failed or the
+     * tables were kept from an older installation. Idempotent.
+     */
+    public function convertLegacy(): void
+    {
+        $user = Factory::getApplication()->getIdentity();
+        if (!$user->authorise('core.manage', 'com_appointments') || !$user->authorise('core.options', 'com_appointments')) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+
+        (new FeedService($this->getDatabase()))->convertLegacy();
+    }
+
+    /** The subscription address of a token that a rotation has just issued. */
+    public function url(string $scope, int $id, string $token): string
     {
         $root = new Uri(Uri::root());
         if (Uri::getInstance()->isSSL() || (int) Factory::getApplication()->get('force_ssl') === 2) {

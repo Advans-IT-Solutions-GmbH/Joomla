@@ -25,6 +25,20 @@ class HtmlView extends BaseHtmlView
     /** Whether the deprecated token feeds are switched on (option `legacy_feeds`). */
     protected $legacy = false;
 
+    /**
+     * The address a rotation has just issued, keyed "scope-id". Only the digest of its
+     * token is stored, so this response is the only place it is ever shown.
+     */
+    protected $issued = [];
+
+    /** @var array{scope: string, id: int, token: string}|null */
+    private ?array $issuedToken = null;
+
+    public function issue(string $scope, int $id, string $token): void
+    {
+        $this->issuedToken = ['scope' => $scope, 'id' => $id, 'token' => $token];
+    }
+
     public function display($tpl = null)
     {
         $app = Factory::getApplication();
@@ -35,9 +49,15 @@ class HtmlView extends BaseHtmlView
         $app->setHeader('Cache-Control', 'private, no-store', true);
         $app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
         $app->setHeader('Referrer-Policy', 'no-referrer', true);
-        // Switched off, no credential is read and no address is shown, only the replacement.
+        $this->getModel()->convertLegacy();
+        // Switched off, no feed is listed and no address is shown, only the replacement.
         $this->legacy = FeedService::legacyEnabled(ComponentHelper::getParams('com_appointments'));
         $this->items = $this->legacy ? $this->getModel()->getItems() : [];
+        if ($this->legacy && $this->issuedToken !== null) {
+            $issued = $this->issuedToken;
+            $this->issued[$issued['scope'] . '-' . $issued['id']]
+                = $this->getModel()->url($issued['scope'], $issued['id'], $issued['token']);
+        }
         ToolbarHelper::title(Text::_('COM_APPOINTMENTS_FEEDS_TITLE'), 'calendar');
         Toolbar::getInstance('toolbar')->linkButton('dashboard')->url('index.php?option=com_appointments')
             ->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'));

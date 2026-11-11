@@ -595,8 +595,10 @@ possible with CalDAV clients.
   extension) shows no content and no times of calendar entries, no app password and no key. Of
   the bookings, the personal fields (names, addresses, phone, answers) are encrypted, while their
   dates, times, event types and states stay readable, because reminders and the slot calculation
-  need them. A row added or changed in the database without the site
-  secret grants nothing. A Super User without a grant sees calendar lists and the log, never
+  need them. The token feeds of the section "Calendar subscriptions" store only a keyed digest
+  of their secret address (from 1.5.0; up to 1.4 it was stored in clear text, which let a copy of
+  the database alone read every feed while the feeds were switched on). A row added or changed in
+  the database without the site secret grants nothing. A Super User without a grant sees calendar lists and the log, never
   contents. Active accounts with `core.admin` on the component can edit settings, delete valid
   foreign or orphan calendars (with `core.delete`), revoke any grant and assign an owner.
   Grants, including self-grants and owner assignments, require a password-authenticated session
@@ -742,13 +744,25 @@ client, including the clean-up and the refresh interval. It runs only against a 
 ### Calendar subscriptions
 
 Open **Components → Appointments → Calendar feeds** with component management and options
-permission. Copy an event-type URL or a host URL into your calendar client's subscription settings.
+permission. The view lists one event-type feed per event type and one combined host feed per host.
 Event credentials also require edit permission for that event. A combined host credential is
 available and rotatable only when you may edit every event type included in that host's feed.
 Each credential controls only that feed; rotating a host URL does not rotate its event-type URLs,
 and vice versa. Rotation requires explicit confirmation and revokes the old URL immediately.
-Replace the URL in the calendar client afterwards. Normal event-type edits cannot restore an old
-credential.
+
+The database stores only a keyed digest of each credential ("h1:" plus HMAC-SHA256, with a key
+derived from the site secret), never the URL itself. Therefore the view cannot show an existing
+URL: **Rotate credential** issues a new URL and shows it once, in that response only (no redirect,
+session or message stores it). Copy it into your calendar client's subscription settings right
+away; reloading the response rotates again. A new event type or host starts with a credential that
+no URL matches until it is rotated for the first time. Normal event-type edits cannot restore an
+old credential.
+
+Updating to 1.5.0 converts every stored clear-text credential into its digest, so every existing
+subscription keeps working without any action. If that step fails, the installer says so, the
+affected feeds answer 404 and opening the Calendar feeds view repeats the conversion. The view
+repeats it on every visit, whether the feeds are on or off, so tables kept from an older
+installation are converted as well.
 
 **Treat the full URL as a password.** Anyone who obtains it can read the calendar's appointment
 details. Never put it in an invitee email, a public page, an error report or application logs.
@@ -1349,7 +1363,9 @@ storing derived keys in the database, displaying them or logging them. Component
 change them. Booking changes invalidate action links through their revision; changing Joomla's
 site secret deliberately invalidates existing signatures and changes derived room identities.
 The independently random subscription credentials and optional operator JWT signing secret are
-different capabilities and have their own rotation/configuration paths.
+different capabilities and have their own rotation/configuration paths. The database holds only
+a keyed digest of each subscription credential, so changing the site secret also invalidates every
+subscription URL; rotate each feed afterwards to issue a new one.
 
 ## Uninstall
 

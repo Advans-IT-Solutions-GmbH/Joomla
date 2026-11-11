@@ -116,7 +116,7 @@ engine is where the bugs will be, and it has to be testable in isolation.
 | `BookingGuard` | Re-validate a slot at submission time inside the locked transaction: still in the future, still within the horizon and the minimum notice, no overlap with another booking of any event type of the same host once buffers are applied, still within the daily and weekly caps. See "Concurrency". |
 | `IcsWriter` | Build RFC 5545 output for a booking and for a feed. See `references/calendar-and-ics.md`. |
 | `KeyProvider` | Derive one signing key per purpose from the Joomla site secret. See `references/data-model.md`, section "Signing keys". |
-| `FeedToken` | Create, verify and rotate the per-feed token; constant-time comparison. |
+| `FeedToken` | Create, verify and rotate the per-feed token; stores only its keyed digest, constant-time comparison. |
 | `SignedLink` | Create and verify the reschedule, cancel and erasure links. The action is part of the signature, so a cancel link is rejected for an erasure. |
 | `MailComposer` | Render a template with booking placeholders, in the recipient's language, and attach the ICS. |
 | `ConferenceManager` | Resolve the configured provider and ask it for a link. See `references/conferencing.md`. |

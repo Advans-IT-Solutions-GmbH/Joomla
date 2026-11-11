@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_schedule_rules` (
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_hosts` (
     `user_id` INT UNSIGNED NOT NULL,
-    `feed_token` CHAR(64) NOT NULL,
+    `feed_token` CHAR(67) NOT NULL,
     `created_utc` DATETIME NOT NULL,
     `modified_utc` DATETIME NOT NULL,
     PRIMARY KEY (`user_id`),
@@ -85,10 +85,13 @@ CREATE TABLE IF NOT EXISTS `#__appointments_hosts` (
 -- `max_per_day` and `max_per_week` = 0 mean unlimited. `retention_days` NULL
 -- means the component default applies.
 --
--- `feed_token` has no default on purpose. It is a bearer credential of 32
--- random bytes, and a default of '' would hand an empty one to the first row
--- inserted by a code path that forgot to generate it; the unique index would
--- only catch the second such row. Without a default, that insert fails instead.
+-- `feed_token` has no default on purpose. It holds a keyed digest ("h1:" plus
+-- HMAC-SHA256 in hex, key derived from the site secret) of a bearer credential
+-- of 32 random bytes, never the credential itself (FeedToken), and a
+-- default of '' would hand an empty one to the first row inserted by a code
+-- path that forgot to generate it; the unique index would only catch the
+-- second such row. Without a default, that insert fails instead. The same
+-- applies to `feed_token` of `#__appointments_hosts`.
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_eventtypes` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -126,7 +129,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_eventtypes` (
     `language` CHAR(7) NOT NULL DEFAULT '*',
     `published` TINYINT(1) NOT NULL DEFAULT 1,
     `ordering` INT NOT NULL DEFAULT 0,
-    `feed_token` CHAR(64) NOT NULL,
+    `feed_token` CHAR(67) NOT NULL,
     `created_utc` DATETIME NOT NULL,
     `modified_utc` DATETIME NOT NULL,
     `checked_out` INT UNSIGNED DEFAULT NULL,
