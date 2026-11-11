@@ -10,6 +10,7 @@ namespace Advans\Component\Appointments\Site\Helper;
 
 use Joomla\CMS\Factory;
 use Joomla\CMS\Router\Route;
+use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
 
@@ -62,7 +63,8 @@ final class BackLink
     /**
      * The address of the way back on the current page, HTML-escaped by Route, or '' for none.
      * A configured menu item that the visitor cannot open, that does not exist in the visitor's
-     * language or that is no page of the site (heading, separator, external URL) falls back to the list.
+     * language, that is no page of the site (heading, separator, external URL) or whose booking
+     * page is no longer available falls back to the list.
      */
     public static function resolve(bool $bookingPage): string
     {
@@ -77,11 +79,47 @@ final class BackLink
             // getItems() of the site menu only returns items of the visitor's access levels and language.
             $item = $menu->getItems(['id'], [$itemId], true);
 
-            if (is_object($item) && in_array($item->type ?? '', ['component', 'alias'], true)) {
+            if (is_object($item) && in_array($item->type ?? '', ['component', 'alias'], true) && self::opens($item)) {
                 return Route::_('index.php?Itemid=' . (int) $item->id);
             }
         }
 
         return Route::_('index.php?option=com_appointments&view=eventtypes');
+    }
+
+    /**
+     * Whether the visitor can open the page of $item. A booking page of this component answers 404
+     * once its event type or schedule is unpublished, or for another access level or language,
+     * although its menu item is still published (EventtypeModel::getItem); the signed pages of an
+     * existing booking still work then, so their way back must not lead there.
+     */
+    private static function opens(object $item): bool
+    {
+        $query = is_array($item->query ?? null) ? $item->query : [];
+
+        if (($query['option'] ?? '') !== 'com_appointments' || ($query['view'] ?? '') !== 'eventtype') {
+            return true;
+        }
+
+        $app = Factory::getApplication();
+        $levels = array_values(array_unique(array_map('intval', $app->getIdentity()->getAuthorisedViewLevels())));
+        $id = (int) ($query['id'] ?? 0);
+
+        if ($id < 1 || $levels === []) {
+            return false;
+        }
+
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $sql = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $sql->select('COUNT(*)')
+            ->from($db->quoteName('#__appointments_eventtypes', 'e'))
+            ->join('INNER', $db->quoteName('#__appointments_schedules', 's'), $db->quoteName('s.id') . ' = ' . $db->quoteName('e.schedule_id'))
+            ->where($db->quoteName('e.id') . ' = ' . $id)
+            ->where($db->quoteName('e.published') . ' = 1')
+            ->where($db->quoteName('s.published') . ' = 1')
+            ->where($db->quoteName('e.access') . ' IN (' . implode(',', $levels) . ')')
+            ->where($db->quoteName('e.language') . ' IN (' . $db->quote('*') . ', ' . $db->quote($app->getLanguage()->getTag()) . ')');
+
+        return (int) $db->setQuery($sql)->loadResult() > 0;
     }
 }

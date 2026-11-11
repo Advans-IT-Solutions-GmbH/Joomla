@@ -140,9 +140,10 @@ class ManageModel extends BaseDatabaseModel
             Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'), 'warning');
         }
         // The receipt belongs to this browser session. After a reschedule it also keeps the version
-        // of the moved appointment, for which receiptLinks() shows the new signed links.
+        // this reschedule committed (not a later reread, which could already be someone else's
+        // change), for which receiptLinks() shows the new signed links.
         Factory::getApplication()->setUserState($this->receiptKey(), $action === 'reschedule'
-            ? ['modified_utc' => (string) $this->version((int) $booking->id)] : true);
+            ? ['modified_utc' => (string) ($messageBooking['_rescheduled_version'] ?? '')] : true);
 
         if ($messageBooking !== null && empty($messageBooking['_conference_missing']) && empty($messageBooking['_conference_error'])) {
             try {
@@ -195,15 +196,6 @@ class ManageModel extends BaseDatabaseModel
         }
 
         return array_intersect_key($links, array_flip(['reschedule_url', 'cancel_url']));
-    }
-
-    /** The stored row version of booking $id, as the signed links are bound to it. */
-    private function version(int $id): string
-    {
-        $db = $this->getDatabase();
-
-        return (string) $db->setQuery('SELECT ' . $db->quoteName('modified_utc') . ' FROM ' . $db->quoteName('#__appointments_bookings')
-            . ' WHERE ' . $db->quoteName('id') . ' = ' . $id)->loadResult();
     }
 
     private function links(): SignedLink

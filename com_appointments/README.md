@@ -404,7 +404,8 @@ a *Book an appointment* menu item, which publishes one event type, it is hidden 
 list does not show that item's visitors the other event types. The menu item's **Navigation** tab
 shows it again and chooses its target (another menu item, otherwise the list). While it is hidden,
 the confirmation, the signed pages and their receipts in that item's frame lead back to its booking
-page instead.
+page instead, or to the list once that booking page can no longer be opened (event type or schedule
+unpublished, another access level or language).
 
 Adding a device checks existing account and address locks without reserving a password attempt;
 successful device creation neither consumes sign-in attempts nor clears a real sign-in lock.
