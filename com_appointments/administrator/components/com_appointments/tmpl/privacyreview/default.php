@@ -80,6 +80,8 @@ $actions = [
                                         <?php endforeach; ?>
                                     </fieldset>
                                     <input type="hidden" name="id" value="<?php echo $rowId; ?>">
+                                    <input type="hidden" name="etag" value="<?php echo $this->escape((string) $row['etag']); ?>">
+                                    <input type="hidden" name="start" value="<?php echo (int) $this->start; ?>">
                                     <?php echo HTMLHelper::_('form.token'); ?>
                                     <button class="btn btn-primary btn-sm mt-2" type="submit"><?php echo Text::_('COM_APPOINTMENTS_PRIVACY_REVIEW_APPLY'); ?></button>
                                 </form>
@@ -89,5 +91,16 @@ $actions = [
                 </tbody>
             </table>
         </div>
+        <?php if ($this->total > 100) : ?>
+            <nav aria-label="<?php echo $this->escape(Text::_('COM_APPOINTMENTS_PRIVACY_REVIEW_PAGES')); ?>">
+                <p><?php echo Text::sprintf('COM_APPOINTMENTS_PRIVACY_REVIEW_PAGE', intdiv($this->start, 100) + 1, (int) ceil($this->total / 100)); ?></p>
+                <?php if ($this->start > 0) : ?>
+                    <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=privacyreview&start=' . ($this->start - 100)); ?>"><?php echo Text::_('JPREV'); ?></a>
+                <?php endif; ?>
+                <?php if ($this->start + 100 < $this->total) : ?>
+                    <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=privacyreview&start=' . ($this->start + 100)); ?>"><?php echo Text::_('JNEXT'); ?></a>
+                <?php endif; ?>
+            </nav>
+        <?php endif; ?>
     <?php endif; ?>
 </div>

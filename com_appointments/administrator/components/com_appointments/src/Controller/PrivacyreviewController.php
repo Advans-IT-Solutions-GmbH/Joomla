@@ -39,7 +39,7 @@ class PrivacyreviewController extends BaseController
             throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
         }
 
-        $this->setRedirect(Route::_('index.php?option=com_appointments&view=privacyreview', false));
+        $this->setRedirect(Route::_('index.php?option=com_appointments&view=privacyreview&start=' . max(0, $this->input->post->getInt('start', 0)), false));
         $result = 'COM_APPOINTMENTS_PRIVACY_REVIEW_ERROR';
 
         try {
@@ -47,7 +47,8 @@ class PrivacyreviewController extends BaseController
 
             if ($services->enabled()) {
                 $result = (new PrivacyReview($services))->apply($this->input->post->getInt('id', 0),
-                    $this->input->post->getCmd('decision', ''), (int) $user->id, Text::_('COM_APPOINTMENTS_PRIVACY_REVIEW_PLACEHOLDER'));
+                    $this->input->post->getCmd('decision', ''), (int) $user->id, Text::_('COM_APPOINTMENTS_PRIVACY_REVIEW_PLACEHOLDER'),
+                    $this->input->post->getAlnum('etag', ''));
             }
         } catch (\Throwable $e) {
             $result = 'COM_APPOINTMENTS_PRIVACY_REVIEW_ERROR';

@@ -121,9 +121,11 @@ final class PrivacyReview
      * the session of `$actor` where possible. An entry that cannot be opened is
      * listed without content (`readable` false), never skipped.
      *
-     * @return  array<int, array{id: int, request_id: int, request_found: bool, calendar_id: int, calendar: string, readable: bool, writable: bool, start: string, summary: string, roles: string[]}>
+     * `etag` is the version shown: a decision applies only to that version.
+     *
+     * @return  array<int, array{id: int, request_id: int, request_found: bool, calendar_id: int, calendar: string, readable: bool, writable: bool, etag: string, start: string, summary: string, roles: string[]}>
      */
-    public function pending(int $actor, int $limit = 100): array
+    public function pending(int $actor, int $limit = 100, int $offset = 0): array
     {
         $db = $this->services->db();
         $query = $this->query()
@@ -134,7 +136,7 @@ final class PrivacyReview
             ->join('LEFT', $db->quoteName('#__privacy_requests', 'q'), $db->quoteName('q.id') . ' = ' . $db->quoteName('r.request_id'))
             ->order($db->quoteName('r.request_id') . ' ASC')
             ->order($db->quoteName('r.id') . ' ASC')
-            ->setLimit(max(1, min(500, $limit)));
+            ->setLimit(max(1, min(500, $limit)), max(0, $offset));
         $rows = [];
         $keyrings = [];
 
@@ -144,7 +146,7 @@ final class PrivacyReview
                 $email = (string) ($row['email'] ?? '');
                 $item = ['id' => (int) $row['id'], 'request_id' => (int) $row['request_id'], 'request_found' => $email !== '',
                     'calendar_id' => $calendarId, 'calendar' => (string) ($row['title'] ?? ''), 'readable' => false, 'writable' => false,
-                    'start' => '', 'summary' => '', 'roles' => []];
+                    'etag' => '', 'start' => '', 'summary' => '', 'roles' => []];
 
                 if (!\array_key_exists($calendarId, $keyrings)) {
                     $keyrings[$calendarId] = $this->keyring($actor, $calendarId, false);
@@ -155,7 +157,7 @@ final class PrivacyReview
                 $ics = $object !== null ? $this->services->keys()->decryptObject($keyring, $object) : null;
 
                 if ($ics !== null) {
-                    $item = array_replace($item, ['readable' => true, 'writable' => $writable] + self::overview($ics),
+                    $item = array_replace($item, ['readable' => true, 'writable' => $writable, 'etag' => $object->etag] + self::overview($ics),
                         ['roles' => $email !== '' ? self::roles($ics, $email) : []]);
                 }
 
@@ -173,10 +175,11 @@ final class PrivacyReview
     }
 
     /**
-     * Carry out one decision. Returns a language key describing the result; on
+     * Carry out one decision on the version the handler saw (`$etag`, from
+     * {@see self::pending()}). Returns a language key describing the result; on
      * success the entry leaves the list.
      */
-    public function apply(int $id, string $action, int $actor, string $placeholder): string
+    public function apply(int $id, string $action, int $actor, string $placeholder, string $etag = ''): string
     {
         if (!\in_array($action, [self::ACTION_ADDRESS, self::ACTION_DELETE, self::ACTION_KEEP], true)) {
             return 'COM_APPOINTMENTS_PRIVACY_REVIEW_ERROR';
@@ -206,7 +209,8 @@ final class PrivacyReview
 
         $email = mb_strtolower(trim((string) ($row['email'] ?? '')), 'UTF-8');
 
-        if ($email === '') {
+        // Removing the address needs it, deleting the entry does not.
+        if ($action === self::ACTION_ADDRESS && $email === '') {
             return 'COM_APPOINTMENTS_PRIVACY_REVIEW_REQUEST_MISSING';
         }
 
@@ -228,8 +232,13 @@ final class PrivacyReview
                 return 'COM_APPOINTMENTS_PRIVACY_REVIEW_GONE';
             }
 
+            // A device changed the entry since the page was opened: decided again on the new version.
+            if ($etag === '' || !hash_equals($object->etag, $etag)) {
+                return 'COM_APPOINTMENTS_PRIVACY_REVIEW_CHANGED';
+            }
+
             if ($action === self::ACTION_DELETE) {
-                $this->services->objects()->delete($calendarId, $uri, $object->etag, null);
+                $this->services->objects()->delete($calendarId, $uri, $etag, null);
             } else {
                 $ics = $this->services->keys()->decryptObject($keyring, $object);
 
@@ -245,7 +254,7 @@ final class PrivacyReview
                 }
 
                 if ($changed !== $ics) {
-                    $this->services->objects()->put($keyring, $uri, $changed, $object->etag, false, null);
+                    $this->services->objects()->put($keyring, $uri, $changed, $etag, false, null);
                 }
             }
         } catch (\Throwable $e) {
@@ -270,13 +279,11 @@ final class PrivacyReview
     public static function withoutAddress(string $ics, string $email, string $placeholder): string
     {
         $email = mb_strtolower(trim($email), 'UTF-8');
-        $at = strrpos($email, '@');
 
-        if ($email === '' || $at === false) {
+        if ($email === '' || !str_contains($email, '@')) {
             return $ics;
         }
 
-        $span = self::span($email);
         $replacement = str_replace(['\\', '$'], ['\\\\', '\\$'], self::text($placeholder));
         $lines = [];
 
@@ -290,7 +297,7 @@ final class PrivacyReview
                 continue;
             }
 
-            $lines[] = (string) preg_replace($span, $replacement, $line);
+            $lines[] = self::replaceAddress($line, $email, $replacement);
         }
 
         return implode("\r\n", array_map([self::class, 'fold'], $lines)) . "\r\n";
@@ -311,7 +318,7 @@ final class PrivacyReview
             if (preg_match('/^(ATTENDEE|ORGANIZER)(?:;(?:[^:"]|"[^"]*")*)?:(.*)$/is', $line, $match) === 1
                 && self::address($match[2]) === $email) {
                 $roles[strtoupper($match[1]) === 'ORGANIZER' ? self::ROLE_ORGANIZER : self::ROLE_ATTENDEE] = true;
-            } elseif ($email !== '' && str_contains($email, '@') && preg_match(self::span($email), $line) === 1) {
+            } elseif ($email !== '' && str_contains($email, '@') && self::replaceAddress($line, $email, '') !== $line) {
                 $roles[self::ROLE_TEXT] = true;
             }
         }
@@ -349,15 +356,25 @@ final class PrivacyReview
     }
 
     /**
-     * The address as a whole word in a line, also with a percent-encoded «@»: not a part of a
-     * longer address such as the same name at a subdomain.
+     * Every complete address in a line that is the requested one, replaced. Addresses are
+     * found with the character rules of the timing index's text search, also with a
+     * percent-encoded «@», and compared as a whole: another address that merely contains
+     * the requested one (`x!anna@…`, `anna@….com`) stays untouched. A line that is not
+     * valid UTF-8 stays as it is (the final check then refuses the change).
      */
-    private static function span(string $email): string
+    private static function replaceAddress(string $line, string $email, string $replacement): string
     {
-        $at = (int) strrpos($email, '@');
+        $label = '[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?';
+        $pattern = '/[\p{L}\p{N}.!#$%&\'*+\/=?^_`{|}~-]{1,64}(?:@|%40)' . $label . '(?:\.' . $label . ')+/iu';
+        $result = preg_replace_callback($pattern, static function (array $match) use ($email, $replacement): string {
+            $found = rtrim(ltrim($match[0], '.'), '.');
+            $lead = substr($match[0], 0, strpos($match[0], $found));
+            $tail = substr($match[0], \strlen($lead) + \strlen($found));
 
-        return '/(?<![A-Za-z0-9._%+\-])' . preg_quote(substr($email, 0, $at), '/') . '(?:@|%40)'
-            . preg_quote(substr($email, $at + 1), '/') . '(?![A-Za-z0-9\-]|\.[A-Za-z0-9])/iu';
+            return mb_strtolower(str_ireplace('%40', '@', $found), 'UTF-8') === $email ? $lead . $replacement . $tail : $match[0];
+        }, $line);
+
+        return $result ?? $line;
     }
 
     /** An address as compared: mailto: and a query removed, percent-decoded, lower case. */

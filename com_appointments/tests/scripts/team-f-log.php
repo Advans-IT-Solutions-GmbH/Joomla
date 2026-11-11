@@ -1201,7 +1201,8 @@ sleep(3);
                         $actor = (int) $application->getIdentity()->id;
                         $pending = $review->pending($actor);
                         $row = $pending[0] ?? [];
-                        $applied = $review->apply((int) ($row["id"] ?? 0), "address", $actor, "[removed]");
+                        $stale = $review->apply((int) ($row["id"] ?? 0), "address", $actor, "[removed]", "0");
+                        $applied = $review->apply((int) ($row["id"] ?? 0), "address", $actor, "[removed]", (string) ($row["etag"] ?? ""));
                         $again = new \Joomla\CMS\Event\Privacy\ExportRequestEvent("onPrivacyExportRequest", ["subject" => $request, "user" => $user]);
                         $plugin->onPrivacyExportRequest($again);
                         $itemsAfter = 0;
@@ -1215,7 +1216,7 @@ sleep(3);
                         $joomlaDb->setQuery("DELETE FROM #__privacy_requests WHERE id = " . (int) $request->id)->execute();
                         $result = ["domain" => $domainFound, "items" => $items, "content" => $content, "remaining" => $remaining,
                             "actor" => $actor, "recorded" => $recorded, "pending" => \count($pending), "readable" => (bool) ($row["readable"] ?? false),
-                            "roles" => $row["roles"] ?? [], "applied" => $applied, "items_after" => $itemsAfter, "kept" => $kept, "left" => $left];
+                            "roles" => $row["roles"] ?? [], "stale" => $stale, "applied" => $applied, "items_after" => $itemsAfter, "kept" => $kept, "left" => $left];
                         echo "\n@@TEAMFPRIV@@".json_encode($result);';
                     token_get_all("<?php\n" . $php, TOKEN_PARSE);
                     exec('cd /var/www/html && php -r ' . escapeshellarg($php) . ' 2>&1', $output, $exit);
@@ -1242,6 +1243,7 @@ sleep(3);
                         && $result['pending'] >= 1
                         && $result['readable'] === true
                         && $result['roles'] === ['attendee']
+                        && $result['stale'] === 'COM_APPOINTMENTS_PRIVACY_REVIEW_CHANGED'
                         && $result['applied'] === 'COM_APPOINTMENTS_PRIVACY_REVIEW_ADDRESS_REMOVED'
                         && $result['items_after'] === 0
                         && $result['kept'] === 1

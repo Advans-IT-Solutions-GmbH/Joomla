@@ -48,6 +48,22 @@ final class PrivacyReviewTest extends TestCase
         self::assertStringContainsString("END:VCALENDAR\r\n", $changed);
     }
 
+    public function testOtherAddressesThatContainTheRequestedOneStay(): void
+    {
+        $ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:own-3\r\nATTENDEE:mailto:x!anna@example.test\r\n"
+            . "DESCRIPTION:éanna@example.test\\, anna@example.test.com\\, anna@sub.example.test and .anna@example.test.\r\n"
+            . "ATTENDEE;SENT-BY=\"mailto:anna@example.test\":mailto:other@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        $changed = str_replace("\r\n ", '', PrivacyReview::withoutAddress($ics, 'anna@example.test', '[removed]'));
+
+        // Punctuation and Unicode before the name make another, complete address.
+        self::assertStringContainsString('ATTENDEE:mailto:x!anna@example.test', $changed);
+        self::assertStringContainsString('éanna@example.test', $changed);
+        self::assertStringContainsString('anna@example.test.com', $changed);
+        self::assertStringContainsString('anna@sub.example.test', $changed);
+        // The requested address goes as a whole, also between dots and inside a parameter.
+        self::assertStringContainsString('and .[removed].', $changed);
+        self::assertStringContainsString('SENT-BY="mailto:[removed]":mailto:other@example.test', $changed);
+    }
     public function testAnOrganiserAddressAndLongLines(): void
     {
         $ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:own-2\r\nORGANIZER:mailto:anna@example.test\r\n"

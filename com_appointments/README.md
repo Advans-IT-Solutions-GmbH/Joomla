@@ -443,8 +443,10 @@ line goes, every other occurrence becomes a placeholder, and the entry is writte
 would no longer find the address), **Delete the entry** (for every attendee and every device) or
 **Leave unchanged** (only taken off the list). If the address belongs to a user of the internet
 calendars (a grant, a device, a personal key, an owned calendar or an activation link), the request
-changes no calendar entry at all, booking copies included, and says so; the account is handled by
-blocking or deleting the user.
+changes no calendar entry in which the address appears and says so; only the copies of that
+person's own bookings go with those bookings, because a copy never outlives its booking. The
+account is handled by blocking or deleting the user. A decision applies only to the version shown:
+if a device changed the entry in the meantime, it is shown again. The list has pages of 100.
 
 **The calendar retention only deletes booking copies.** Each calendar has the field **Delete
 booking copies after (days)**, default `0` (never). Booking retention deletes booking copies anyway;

@@ -36,6 +36,10 @@ class HtmlView extends BaseHtmlView
     /** @var array<int, array<string, mixed>> */
     protected array $rows = [];
 
+    protected int $start = 0;
+
+    protected int $total = 0;
+
     public function display($tpl = null)
     {
         $app = Factory::getApplication();
@@ -54,7 +58,11 @@ class HtmlView extends BaseHtmlView
 
             if ($this->enabled) {
                 $this->unlocked = $services->keySession()->current() !== null;
-                $this->rows = (new PrivacyReview($services))->pending((int) $user->id);
+                $review = new PrivacyReview($services);
+                $this->total = $review->count();
+                $this->start = min(max(0, $app->getInput()->getInt('start', 0)), max(0, (int) (ceil($this->total / 100) - 1) * 100));
+                $this->start = intdiv($this->start, 100) * 100;
+                $this->rows = $review->pending((int) $user->id, 100, $this->start);
             }
         } catch (\Throwable $e) {
             $this->enabled = false;
