@@ -137,6 +137,12 @@ backend views, installer messages, uninstall). The
 `official-j5-j2c4` job runs the safety checks against J2Store 4 as expected core
 component; `official-j6-j2c6` asserts that the Joomla 6 matrix passed.
 
+The job `layout-j6` opens the page in a real browser on the Joomla 6 stack
+(`tests/browser/`, Playwright from `shared/tests/browser/package.json`): Chromium and
+Firefox, 375 and 1600 px, light and dark color scheme. It asserts that the component
+surface and Atum's page share the active scheme, that the text contrast reaches 4.5:1, and
+that the page never scrolls sideways while wide tables scroll inside their containers.
+
 ### Test Suites
 
 Order as in `tests/test.env`:
