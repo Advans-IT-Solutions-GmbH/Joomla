@@ -115,6 +115,31 @@ class ProfileTest
         $this->test('A legacy request clears no custom field', !array_key_exists('com_fields', $legacy) && $legacy['name'] === 'B');
     }
 
+    /** Omitted custom fields get their stored value before validation; submitted values and clears stay. */
+    private function testOmittedFieldsAreFilledFromStoredValues(): void
+    {
+        echo "\n--- Stored values of omitted custom fields ---\n";
+
+        $class = \Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms::class;
+
+        $filled = $class::fillOmittedFields(
+            ['name' => 'A', 'com_fields' => ['shown' => 'new', 'cleared' => false]],
+            ['shown' => 'old', 'cleared' => 'old', 'hidden' => 'kept', 'empty' => '']
+        );
+        $this->test(
+            'An omitted field gets its stored value, a submitted value and a clear stay',
+            ($filled['com_fields']['hidden'] ?? null) === 'kept'
+            && ($filled['com_fields']['shown'] ?? null) === 'new'
+            && ($filled['com_fields']['cleared'] ?? null) === false
+            && !array_key_exists('empty', $filled['com_fields'])
+        );
+
+        $bare = $class::fillOmittedFields(['name' => 'B'], ['hidden' => 'kept']);
+        $this->test('A request without custom fields receives them', ($bare['com_fields']['hidden'] ?? null) === 'kept');
+        $none = $class::fillOmittedFields(['name' => 'C'], []);
+        $this->test('Nothing stored adds nothing', !array_key_exists('com_fields', $none));
+    }
+
     private function testUnauthenticatedRejected(): void
     {
         echo "\n--- HTTP: unauthenticated profile save → rejected ---\n";
@@ -275,7 +300,35 @@ class ProfileTest
             $legacy     = $this->ajax('saveProfile', ['name' => 'Legacy User', 'email' => $user->email, $token => '1'], $jar);
             $this->test('A legacy save with plain name and email is accepted as JSON', ($legacy['success'] ?? null) === true, $this->lastAnswer);
             $this->test('That save stores the name and keeps the password', $nameOf() === 'Legacy User' && $hashOf() === $hashBefore, 'stored: ' . $nameOf());
-        } finally {
+
+            // A required custom field with a stored value that a name/email-only
+            // override does not render must not block the save.
+            $fieldId = 0;
+            try {
+                $fieldTable = Factory::getApplication()->bootComponent('com_fields')->getMVCFactory()->createTable('Field', 'Administrator');
+                $bound = $fieldTable->bind([
+                    'context' => 'com_users.user', 'title' => 'Ajaxforms required', 'name' => 'ajaxforms-required',
+                    'label' => 'Ajaxforms required', 'type' => 'text', 'required' => 1, 'state' => 1,
+                    'access' => 1, 'language' => '*', 'params' => [], 'fieldparams' => [],
+                ]);
+                $stored = $bound && $fieldTable->check() && $fieldTable->store();
+                $fieldId = $stored ? (int) $fieldTable->id : 0;
+                $this->test('A required custom field for users exists', $fieldId > 0);
+
+                if ($fieldId > 0) {
+                    $db->insertObject('#__fields_values', (object) ['field_id' => $fieldId, 'item_id' => (string) $user->id, 'value' => 'stored value']);
+                    $required = $this->ajax('saveProfile', ['jform' => ['name' => 'Required User', 'username' => $user->username, 'email' => $user->email], $token => '1'], $jar);
+                    $this->test('A name/email-only save is accepted although a required custom field is not rendered', ($required['success'] ?? null) === true, $this->lastAnswer);
+                    $this->test('That save stores the name', $nameOf() === 'Required User', 'stored: ' . $nameOf());
+                    $db->setQuery('SELECT value FROM #__fields_values WHERE field_id = ' . $fieldId . ' AND item_id = ' . $db->quote((string) $user->id));
+                    $this->test('The stored value of the required field is kept', (string) $db->loadResult() === 'stored value');
+                }
+            } finally {
+                if ($fieldId > 0) {
+                    $db->setQuery('DELETE FROM #__fields_values WHERE field_id = ' . $fieldId)->execute();
+                    $db->setQuery('DELETE FROM #__fields WHERE id = ' . $fieldId)->execute();
+                }
+            }        } finally {
             $db->setQuery('DELETE FROM #__privacy_consents WHERE user_id = ' . (int) $user->id)->execute();
             ajaxforms_restore_component_params('com_users', $original);
             ajaxforms_delete_test_user('profile');
@@ -306,6 +359,7 @@ class ProfileTest
 
         $this->testMethodsViaReflection();
         $this->testOnlyRenderedCustomFieldsAreCleared();
+        $this->testOmittedFieldsAreFilledFromStoredValues();
         $this->testUnauthenticatedRejected();
         $this->testNoTokenRejected();
         $this->testSignedInSaveUsesTheCoreProfileForm();

@@ -29,6 +29,7 @@ use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
 use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\UserFactoryInterface;
+use Joomla\Component\Fields\Administrator\Helper\FieldsHelper;
 use Joomla\CMS\User\UserHelper;
 use Joomla\Database\DatabaseAwareTrait;
 use Joomla\Database\DatabaseInterface;
@@ -880,6 +881,62 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Supply the stored value of every custom field the request does not carry.
+     *
+     * After keepRenderedClears() a field the form never displayed is missing from
+     * the data, and Joomla validates it as empty, so a required field with a
+     * stored value would block a name/email-only save. Submitted values and
+     * deliberate clears (false) stay untouched.
+     *
+     * @param   array  $data    Request data after keepRenderedClears()
+     * @param   array  $stored  Stored values by field name
+     *
+     * @return  array
+     */
+    public static function fillOmittedFields(array $data, array $stored): array
+    {
+        foreach ($stored as $name => $value) {
+            if ($value === null || $value === '' || $value === []) {
+                continue;
+            }
+
+            if (!isset($data['com_fields']) || !\is_array($data['com_fields'])) {
+                $data['com_fields'] = [];
+            }
+
+            if (!\array_key_exists((string) $name, $data['com_fields'])) {
+                $data['com_fields'][(string) $name] = $value;
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * The stored custom field values of the user, by field name.
+     *
+     * @param   object  $user  The signed-in user
+     *
+     * @return  array
+     */
+    private function storedFieldValues($user): array
+    {
+        $values = [];
+
+        try {
+            foreach ((array) FieldsHelper::getFields('com_users.user', $user, false) as $field) {
+                if (isset($field->name, $field->rawvalue)) {
+                    $values[(string) $field->name] = $field->rawvalue;
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::add('Stored profile field values not readable: ' . $e->getMessage(), Log::WARNING, 'plg_ajax_joomlaajaxforms');
+        }
+
+        return $values;
+    }
+
+    /**
      * A request value as a string, or an empty string for an array or other
      * non-scalar input.
      *
@@ -1523,6 +1580,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 ])
             );
             $data       = self::keepRenderedClears((array) $objData, $rendered);
+            // A field the form never showed keeps its stored value, also for the
+            // validation: a required one would otherwise fail as missing.
+            $data       = self::fillOmittedFields($data, $this->storedFieldValues($user));
             $data['id'] = $userId;
 
             $validated = $model->validate($form, $data);
