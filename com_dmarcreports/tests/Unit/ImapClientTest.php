@@ -698,6 +698,41 @@ class ImapClientTest extends TestCase
         $this->assertSame(5, $result['stats']['last_uid']);
     }
 
+    public function testRetryQuotaRotatesAcrossPolls(): void
+    {
+        // The run takes two messages, so one retry per poll. UIDs 1 to 5 are
+        // still blocked, UID 6 decodes now. Without rotation every poll would
+        // retry UID 1 again and UID 6 would never be reached.
+        $pending = [1, 2, 3, 4, 5, 6];
+        $visited = [];
+
+        for ($poll = 1; $poll <= 6; $poll++) {
+            $uid    = $pending[0];
+            $script = "* OK IMAP4rev1 ready\r\n"
+                . "A0001 OK LOGIN completed\r\n"
+                . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+                . "A0003 OK SELECT completed\r\n"
+                . "* SEARCH\r\nA0004 OK SEARCH completed\r\n"
+                . $this->fetchResponse(1, $uid, "Subject: Late " . $uid . "\r\n\r\nlate", 'A0005')
+                . "A0006 OK STORE completed\r\n"
+                . "* BYE\r\nA0007 OK LOGOUT completed\r\n";
+
+            $result = $this->drive(
+                $script,
+                ['delete_after_import' => 0, 'last_uid' => 10, 'deferred_uids' => $pending, 'limit' => 2],
+                static fn (array $m): string => $m['uid'] === 6 ? 'new' : 'blocked'
+            );
+
+            $visited[] = array_key_first($result['seen']);
+            $pending   = $result['stats']['deferred_uids'];
+        }
+
+        // Each poll retried the next UID in line; UID 6 was imported in the
+        // sixth poll and left the retry set, the blocked ones stay in it.
+        $this->assertSame([1, 2, 3, 4, 5, 6], $visited);
+        $this->assertSame([1, 2, 3, 4, 5], $pending);
+    }
+
     public function testRetriesUseAtMostHalfOfTheRun(): void
     {
         // Three retries wait, one fresh message arrives, and the run takes two

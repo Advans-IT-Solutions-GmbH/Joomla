@@ -535,15 +535,14 @@ final class SourcePoller
     }
 
     /**
-     * Serialise a UID retry list to an ascending, de-duplicated CSV for storage.
+     * Serialise a UID retry list to a de-duplicated CSV for storage. The order
+     * is kept: the IMAP client stores the retry set in round-robin order, so
+     * the next run continues where this one stopped.
      *
      * @param   int[]  $ids
      */
     private function formatUidList(array $ids): string
     {
-        $ids = array_values(array_unique(array_map('intval', $ids)));
-        sort($ids);
-
-        return implode(',', $ids);
+        return implode(',', array_values(array_unique(array_map('intval', $ids))));
     }
 }

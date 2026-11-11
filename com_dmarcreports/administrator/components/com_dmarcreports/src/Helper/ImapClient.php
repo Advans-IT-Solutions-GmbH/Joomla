@@ -45,7 +45,8 @@ final class ImapClient
      * remembered so it can be re-fetched once the extension is installed, rather
      * than being lost below the import cursor. Capping the set stops a badly
      * misconfigured host from growing the stored list without limit; the lowest
-     * (oldest) UIDs are kept.
+     * (oldest) UIDs are kept. The list is stored in round-robin order, not
+     * sorted (see {@see process()}).
      */
     private const MAX_DEFERRED_UIDS = 512;
 
@@ -206,7 +207,8 @@ final class ImapClient
             $handled = []; // produced a new report
             $touched = []; // processed but no new report (empty, duplicate or invalid)
             $held    = []; // over a per-message limit, flagged for manual review
-            $deferred = []; // UIDs still awaiting decode support, re-tried next run
+            $deferred = []; // retry UIDs not visited in this run, first in line next run
+            $retried  = []; // UIDs tried in this run that still await decode support, last in line
             $idsSet   = array_flip($ids); // UIDs the scan below handles, skipped in the retry pass
             $budget  = self::MAX_TOTAL_BYTES;
 
@@ -277,14 +279,14 @@ final class ImapClient
 
                 if ($result === 'blocked') {
                     $stats['blocked']++;
-                    $deferred[] = $uid;
+                    $retried[]  = $uid;
                     $touched[]  = $uid;
                 } elseif ($result === 'retry') {
                     // A transient failure on a below-cursor message: the UID scan
                     // cannot re-reach it, so keep it in the retry set rather than
                     // relying on the cursor to re-present it next run.
                     $stats['deferred']++;
-                    $deferred[] = $uid;
+                    $retried[] = $uid;
                 } elseif ($result === 'new') {
                     $stats['ingested']++;
                     $handled[] = $uid;
@@ -366,7 +368,7 @@ final class ImapClient
                     // once the extension is installed. Count it so the caller can
                     // surface the missing requirement to the operator.
                     $stats['blocked']++;
-                    $deferred[] = $id;
+                    $retried[] = $id;
                     $touched[]  = $id;
 
                     if ($progressOpen) {
@@ -408,14 +410,21 @@ final class ImapClient
             $this->advance($handled, $touched, $delete);
             $this->flagForReview($held);
 
-            // Persist a bounded, ascending retry set so the stored list cannot
-            // grow without limit; the lowest (oldest) UIDs are kept so the
-            // earliest undecoded reports remain the ones re-tried.
-            $deferred = array_values(array_unique($deferred));
-            sort($deferred);
+            // Persist the retry set in round-robin order: UIDs this run did not
+            // visit come first, those it tried and that still wait come last.
+            // The retry share of the next run therefore starts where this one
+            // stopped, so a quota smaller than the set cannot keep retrying the
+            // same UIDs and starve the later ones.
+            $deferred = array_values(array_unique(array_merge($deferred, $retried)));
 
             if (\count($deferred) > self::MAX_DEFERRED_UIDS) {
-                $deferred = \array_slice($deferred, 0, self::MAX_DEFERRED_UIDS);
+                // Bound the stored list. The lowest (oldest) UIDs are kept, so
+                // the earliest undecoded reports remain the ones re-tried; the
+                // round-robin order of the kept UIDs is preserved.
+                $keep     = $deferred;
+                sort($keep);
+                $keep     = array_flip(\array_slice($keep, 0, self::MAX_DEFERRED_UIDS));
+                $deferred = array_values(array_filter($deferred, static fn (int $uid): bool => isset($keep[$uid])));
             }
 
             $stats['uidvalidity']   = $this->uidvalidity;
