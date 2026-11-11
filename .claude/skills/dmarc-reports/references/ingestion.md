@@ -80,6 +80,16 @@ Streaming design (do not revert to loading all messages into an array):
   messages. The returned stats carry the advanced `uidvalidity`/`last_uid` the controller persists;
   a failed run leaves the stored cursor intact so the next run re-examines the same range.
 - A `MAX_TOTAL_BYTES` (128 MiB) run budget caps memory for a single run.
+- Ingestion limits (`IngestLimits`, options `max_attachments_per_message`, `max_reports_per_message`,
+  `max_message_unpacked_mb`, `max_reports_per_run`, `max_run_unpacked_mb`): `SourcePoller` sets one
+  limits object per poll on the `Ingestor`. `ingestMessage()` measures a message first (pass 1) and
+  stores only afterwards (pass 2), so a message is never half imported. Over a per-message limit, or
+  with a document over the 8 MiB decoder limit (`stats['oversized']`/`bomb`), it returns
+  `RESULT_HELD`: the client advances the cursor, never marks it `\Seen` or deletes it, and flags it
+  `\Flagged` (best effort). Over a run limit it returns `RESULT_POSTPONE`: the client stops the run
+  like the byte budget, the next run starts with it. The first message of a run is always admitted.
+  `IngestLog` writes UID, limit and counts to `com_dmarcreports.php`, never content or addresses.
+  Rationale and defaults: component `README.md`, "Mailbox ingestion limits".
 - `advance()` flags a processed message `\Seen` with `UID STORE +FLAGS.SILENT (\Seen)`. When
   `delete_after_import` is set it removes it instead: with the UIDPLUS capability (RFC 4315) it
   marks the message `\Deleted` and issues a **targeted `UID EXPUNGE`** so only the named messages
@@ -101,13 +111,14 @@ Streaming design (do not revert to loading all messages into an array):
   compressed container the host cannot decode) is **also advanced** — counted as `stats['blocked']`
   and surfaced to the operator — so it cannot pin the cursor and starve newer messages, but its UID
   is added to the durable retry set so a later run re-fetches it once the decoder is available. The
-  callback advances on everything except `RESULT_RETRY`.
+  callback advances on everything except `RESULT_RETRY` and `RESULT_POSTPONE`.
 - The cursor is scoped to one mailbox. `SourceModel::save()` resets it (via `SourceIdentity`) when
   any identity field (`protocol`, `host`, `port`, `security`, `username`, `folder`) changes, and
   `SourcePoller::recordRun()` re-checks the identity under a `SourceLock` row lock before
   advancing it, so a poll of the old mailbox cannot revive a stale high-water UID after an edit.
 
-IMAP is **not** integration-tested in CI (no IMAP server); correctness rests on review. Keep the
+IMAP is **not** integration-tested against a real IMAP server in CI. The unit tests and the
+`09-ingest-limits.php` suite drive `ImapClient` over a scripted in-memory server instead. Keep the
 streaming contract intact.
 
 ## MIME reader (`MimeMessage`)

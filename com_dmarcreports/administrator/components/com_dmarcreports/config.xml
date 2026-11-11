@@ -75,6 +75,81 @@
         />
 
         <field
+            name="max_reports_per_run"
+            type="number"
+            label="COM_DMARCREPORTS_CONFIG_MAX_RUN_REPORTS_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_MAX_RUN_REPORTS_DESC"
+            default="1000"
+            min="50"
+            max="20000"
+            step="50"
+            validate="range"
+            filter="raw"
+            required="true"
+            message="COM_DMARCREPORTS_CONFIG_MAX_RUN_REPORTS_ERROR"
+        />
+
+        <field
+            name="max_run_unpacked_mb"
+            type="number"
+            label="COM_DMARCREPORTS_CONFIG_MAX_RUN_UNPACKED_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_MAX_RUN_UNPACKED_DESC"
+            default="256"
+            min="16"
+            max="2048"
+            step="1"
+            validate="range"
+            filter="raw"
+            required="true"
+            message="COM_DMARCREPORTS_CONFIG_MAX_RUN_UNPACKED_ERROR"
+        />
+
+        <field
+            name="max_attachments_per_message"
+            type="number"
+            label="COM_DMARCREPORTS_CONFIG_MAX_MESSAGE_ATTACHMENTS_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_MAX_MESSAGE_ATTACHMENTS_DESC"
+            default="10"
+            min="1"
+            max="100"
+            step="1"
+            validate="range"
+            filter="raw"
+            required="true"
+            message="COM_DMARCREPORTS_CONFIG_MAX_MESSAGE_ATTACHMENTS_ERROR"
+        />
+
+        <field
+            name="max_reports_per_message"
+            type="number"
+            label="COM_DMARCREPORTS_CONFIG_MAX_MESSAGE_REPORTS_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_MAX_MESSAGE_REPORTS_DESC"
+            default="20"
+            min="1"
+            max="256"
+            step="1"
+            validate="range"
+            filter="raw"
+            required="true"
+            message="COM_DMARCREPORTS_CONFIG_MAX_MESSAGE_REPORTS_ERROR"
+        />
+
+        <field
+            name="max_message_unpacked_mb"
+            type="number"
+            label="COM_DMARCREPORTS_CONFIG_MAX_MESSAGE_UNPACKED_LABEL"
+            description="COM_DMARCREPORTS_CONFIG_MAX_MESSAGE_UNPACKED_DESC"
+            default="32"
+            min="8"
+            max="256"
+            step="1"
+            validate="range"
+            filter="raw"
+            required="true"
+            message="COM_DMARCREPORTS_CONFIG_MAX_MESSAGE_UNPACKED_ERROR"
+        />
+
+        <field
             name="csv_delimiter"
             type="list"
             label="COM_DMARCREPORTS_CONFIG_CSV_DELIMITER_LABEL"

@@ -136,6 +136,30 @@ class ReportArchiveTest extends TestCase
         $this->assertSame('bomb', $stats['reason']);
     }
 
+    public function testZipCountsAnOversizedEntryNextToAValidReport(): void
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            $this->markTestSkipped('zip extension not available');
+        }
+
+        $tmp = tempnam(sys_get_temp_dir(), 'dmarc_test_zip_');
+        $zip = new \ZipArchive();
+        $zip->open($tmp, \ZipArchive::OVERWRITE);
+        $zip->addFromString('small.xml', self::XML);
+        $zip->addFromString('large.xml', '<?xml version="1.0"?><feedback>' . str_repeat('A', 9437184) . '</feedback>');
+        $zip->close();
+        $payload = file_get_contents($tmp);
+        @unlink($tmp);
+
+        $documents = ReportArchive::extract($payload, 'mixed.zip', $stats);
+
+        // The small report is extracted, and the skipped large one is counted,
+        // so the mailbox path can hold the message instead of losing it.
+        $this->assertCount(1, $documents);
+        $this->assertSame('', $stats['reason']);
+        $this->assertSame(1, $stats['oversized']);
+    }
+
     public function testZipDocumentCountIsCapped(): void
     {
         if (!class_exists(\ZipArchive::class)) {

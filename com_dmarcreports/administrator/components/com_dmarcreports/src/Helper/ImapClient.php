@@ -123,6 +123,11 @@ final class ImapClient
      * flagged \Seen (or \Deleted and expunged when the source opts into deletion)
      * as mailbox housekeeping, but the import no longer depends on that flag, so a
      * report another client, rule or operator marks read is still imported.
+     * Two more outcomes come from the ingestion limits: "held" (over a
+     * per-message limit) advances the cursor but leaves the message unread and
+     * flags it \Flagged for manual review, never deleting it; "postpone" (the
+     * run limits are reached) stops the run like the byte budget does, so the
+     * next run starts with that message.
      *
      * @param   array<string, mixed>  $config     host, port, security (ssl|tls),
      *                                            username, password, folder, limit,
@@ -200,6 +205,7 @@ final class ImapClient
 
             $handled = []; // produced a new report
             $touched = []; // processed but no new report (empty, duplicate or invalid)
+            $held    = []; // over a per-message limit, flagged for manual review
             $deferred = []; // UIDs still awaiting decode support, re-tried next run
             $idsSet   = array_flip($ids); // UIDs seen in the scan below, to skip in the retry pass
             $budget  = self::MAX_TOTAL_BYTES;
@@ -282,6 +288,21 @@ final class ImapClient
                     if ($progressOpen) {
                         $highWater = $id;
                     }
+                } elseif ($result === 'held') {
+                    // Over a per-message limit: nothing was stored. Advance the
+                    // cursor so the message cannot block newer mail, but never
+                    // mark it \Seen or delete it. It is flagged instead, so it
+                    // stays unread and visible for manual review.
+                    $held[] = $id;
+
+                    if ($progressOpen) {
+                        $highWater = $id;
+                    }
+                } elseif ($result === 'postpone') {
+                    // The run limits are reached. Leave this message untouched
+                    // and stop here; the next run starts with it.
+                    $progressOpen = false;
+                    break;
                 } else {
                     $stats['skipped']++;
                     $touched[] = $id;
@@ -336,6 +357,13 @@ final class ImapClient
                 } elseif ($result === 'new') {
                     $stats['ingested']++;
                     $handled[] = $uid;
+                } elseif ($result === 'held') {
+                    // Now over a per-message limit: flag it for review and stop
+                    // re-fetching it.
+                    $held[] = $uid;
+                } elseif ($result === 'postpone') {
+                    // No run budget left; keep it for the next run.
+                    $deferred[] = $uid;
                 } else {
                     $stats['skipped']++;
                     $touched[] = $uid;
@@ -343,6 +371,7 @@ final class ImapClient
             }
 
             $this->advance($handled, $touched, $delete);
+            $this->flagForReview($held);
 
             // Persist a bounded, ascending retry set so the stored list cannot
             // grow without limit; the lowest (oldest) UIDs are kept so the
@@ -384,6 +413,33 @@ final class ImapClient
 
         if ($delete && $handled !== []) {
             $this->deleteMessages($handled);
+        }
+    }
+
+    /**
+     * Flag messages held by an ingestion limit with the standard \Flagged
+     * system flag (RFC 3501), so they stand out in any mail client for manual
+     * review. Best effort: a server that refuses the flag must not fail the
+     * run, because the cursor and the other messages are already handled and
+     * the run summary and log still name the held UIDs.
+     *
+     * @param  int[]  $ids
+     */
+    private function flagForReview(array $ids): void
+    {
+        $set = $this->sequenceSet($ids);
+
+        if ($set === '') {
+            return;
+        }
+
+        $tag = $this->nextTag();
+        $this->write($tag . ' UID STORE ' . $set . ' +FLAGS.SILENT (\\Flagged)');
+
+        while (true) {
+            if (str_starts_with($this->readLine(), $tag . ' ')) {
+                return;
+            }
         }
     }
 

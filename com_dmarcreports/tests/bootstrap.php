@@ -21,6 +21,7 @@ require_once $helperDir . '/TlsReportArchive.php';
 require_once $helperDir . '/MimeMessage.php';
 require_once $helperDir . '/ImapException.php';
 require_once $helperDir . '/ImapClient.php';
+require_once $helperDir . '/IngestLimits.php';
 require_once $helperDir . '/DnsResolverInterface.php';
 require_once $helperDir . '/DnsDiagnostics.php';
 require_once $helperDir . '/ActionCenter.php';

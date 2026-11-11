@@ -97,6 +97,11 @@ class ConfigFormsTest
             'reject_pass_threshold'     => '99',
             'imap_timeout'              => '20',
             'max_messages_per_run'      => '200',
+            'max_reports_per_run'         => '1000',
+            'max_run_unpacked_mb'         => '256',
+            'max_attachments_per_message' => '10',
+            'max_reports_per_message'     => '20',
+            'max_message_unpacked_mb'     => '32',
             'csv_delimiter'             => 'semicolon',
             'dns_diagnostics'           => '0',
         ];
@@ -108,6 +113,10 @@ class ConfigFormsTest
             'quarantine_pass_threshold with decimals ("50.5")'  => ['quarantine_pass_threshold' => '50.5'],
             'quarantine_pass_threshold in exponent form ("1e2")' => ['quarantine_pass_threshold' => '1e2'],
             'default_policy_target with an invalid option'      => ['default_policy_target' => 'bogus'],
+            'max_reports_per_message below the minimum (0)'     => ['max_reports_per_message' => '0'],
+            'max_reports_per_message above the maximum (257)'   => ['max_reports_per_message' => '257'],
+            'max_message_unpacked_mb below the minimum (7)'     => ['max_message_unpacked_mb' => '7'],
+            'max_run_unpacked_mb non-numeric ("abc")'          => ['max_run_unpacked_mb' => 'abc'],
         ] as $label => $override) {
             $res = $this->saveConfig($configTask, $extensionId, array_merge($validConfig, $override));
             $this->test("Options save rejects {$label} and preserves the stored params", function () use ($res, $paramsSnapshot) {

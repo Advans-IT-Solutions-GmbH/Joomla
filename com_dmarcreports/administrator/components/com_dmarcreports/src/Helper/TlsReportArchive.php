@@ -235,7 +235,8 @@ final class TlsReportArchive
      * @param   string      $payload   The raw bytes of the attachment.
      * @param   string      $filename  The attachment file name (used as a hint).
      * @param   array|null  $stats     Optional out-parameter filled with 'reason'
-     *          ('' | 'empty' | 'format' | 'bomb') and 'dropped'.
+     *          ('' | 'empty' | 'format' | 'bomb'), 'dropped' and 'oversized' (zip
+     *          entries skipped for exceeding a size ceiling).
      *
      * @return  string[]  A list of JSON document strings (possibly empty).
      *
@@ -247,7 +248,7 @@ final class TlsReportArchive
      */
     public static function extract(string $payload, string $filename = '', ?array &$stats = null): array
     {
-        $stats = ['reason' => '', 'dropped' => 0];
+        $stats = ['reason' => '', 'dropped' => 0, 'oversized' => 0];
 
         if ($payload === '') {
             $stats['reason'] = 'empty';
@@ -445,12 +446,14 @@ final class TlsReportArchive
 
                 if ((int) $entry['size'] > self::MAX_BYTES) {
                     $sizeLimited = true;
+                    $stats['oversized']++;
 
                     continue;
                 }
 
                 if ($total + (int) $entry['size'] > self::MAX_TOTAL_BYTES) {
                     $sizeLimited = true;
+                    $stats['oversized']++;
 
                     continue;
                 }

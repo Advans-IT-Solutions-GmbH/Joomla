@@ -67,7 +67,9 @@ final class ReportArchive
      *          extracted), 'empty' (no payload), 'format' (not a recognised or
      *          decodable report) or 'bomb' (a size/decompression limit tripped);
      *          'dropped' is the number of valid XML reports skipped because the
-     *          archive held more than {@see self::MAX_DOCUMENTS}.
+     *          archive held more than {@see self::MAX_DOCUMENTS}; 'oversized'
+     *          is the number of XML entries of a zip skipped because they exceed
+     *          the per-document or the per-archive size ceiling.
      *
      * @return  string[]  A list of XML document strings (possibly empty).
      *
@@ -81,7 +83,7 @@ final class ReportArchive
      */
     public static function extract(string $payload, string $filename = '', ?array &$stats = null): array
     {
-        $stats = ['reason' => '', 'dropped' => 0];
+        $stats = ['reason' => '', 'dropped' => 0, 'oversized' => 0];
 
         if ($payload === '') {
             $stats['reason'] = 'empty';
@@ -303,6 +305,7 @@ final class ReportArchive
                 // operator as a size/bomb problem rather than "not a report".
                 if ((int) $entry['size'] > self::MAX_BYTES) {
                     $sizeLimited = true;
+                    $stats['oversized']++;
 
                     continue;
                 }
@@ -314,6 +317,7 @@ final class ReportArchive
                 // in the same archive can still be processed.
                 if ($total + (int) $entry['size'] > self::MAX_TOTAL_BYTES) {
                     $sizeLimited = true;
+                    $stats['oversized']++;
 
                     continue;
                 }

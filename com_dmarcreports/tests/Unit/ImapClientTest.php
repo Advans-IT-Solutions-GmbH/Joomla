@@ -10,6 +10,7 @@ namespace Advans\Component\DmarcReports\Tests\Unit;
 
 use Advans\Component\DmarcReports\Administrator\Helper\ImapClient;
 use Advans\Component\DmarcReports\Administrator\Helper\ImapException;
+use Advans\Component\DmarcReports\Administrator\Helper\IngestLimits;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -446,6 +447,190 @@ class ImapClientTest extends TestCase
         // \Deleted and \Seen but never expunged by us.
         $this->assertStringContainsString('UID STORE 1 +FLAGS.SILENT (\\Deleted \\Seen)', $result['sent']);
         $this->assertStringNotContainsString('EXPUNGE', $result['sent']);
+    }
+
+    public function testHeldMessageAdvancesTheCursorButStaysUnreadAndFlagged(): void
+    {
+        $body1 = "Subject: Flood\r\n\r\nheld";
+        $body2 = "Subject: Report\r\n\r\nreal";
+
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 1 2\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, $body1, 'A0005')
+            . $this->fetchResponse(2, 2, $body2, 'A0006')
+            . "A0007 OK STORE completed\r\n"
+            . "A0008 OK STORE completed\r\n"
+            . "* BYE\r\nA0009 OK LOGOUT completed\r\n";
+
+        // UID 1 exceeds a per-message limit; UID 2 is a normal report.
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0],
+            static fn (array $m): string => $m['uid'] === 1 ? 'held' : 'new'
+        );
+
+        // The held message cannot block newer mail: the cursor moves past it.
+        $this->assertSame(2, $result['stats']['last_uid']);
+        $this->assertSame(1, $result['stats']['ingested']);
+        $this->assertSame(0, $result['stats']['skipped']);
+        $this->assertSame([], $result['stats']['deferred_uids']);
+
+        // It is not marked read but flagged for manual review.
+        $this->assertStringContainsString('UID STORE 2 +FLAGS.SILENT (\\Seen)', $result['sent']);
+        $this->assertStringNotContainsString('UID STORE 1,2', $result['sent']);
+        $this->assertStringContainsString('UID STORE 1 +FLAGS.SILENT (\\Flagged)', $result['sent']);
+    }
+
+    public function testHeldMessageIsNeverDeleted(): void
+    {
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1 UIDPLUS\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 1\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, "Subject: Flood\r\n\r\nheld", 'A0005')
+            . "A0006 OK STORE completed\r\n"
+            . "* BYE\r\nA0007 OK LOGOUT completed\r\n";
+
+        $result = $this->drive($script, ['delete_after_import' => 1], static fn (): string => 'held');
+
+        $this->assertSame(1, $result['stats']['last_uid']);
+        $this->assertStringContainsString('UID STORE 1 +FLAGS.SILENT (\\Flagged)', $result['sent']);
+        $this->assertStringNotContainsString('Deleted', $result['sent']);
+        $this->assertStringNotContainsString('EXPUNGE', $result['sent']);
+        $this->assertStringNotContainsString('\\Seen', $result['sent']);
+    }
+
+    public function testRefusedReviewFlagDoesNotFailTheRun(): void
+    {
+        // A server without the \Flagged permanent flag answers NO. The run
+        // must still complete and keep its cursor; the run message and the log
+        // still name the held message.
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 1\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, "Subject: Flood\r\n\r\nheld", 'A0005')
+            . "A0006 NO STORE not permitted\r\n"
+            . "* BYE\r\nA0007 OK LOGOUT completed\r\n";
+
+        $result = $this->drive($script, ['delete_after_import' => 0], static fn (): string => 'held');
+
+        $this->assertSame(1, $result['stats']['last_uid']);
+    }
+
+    public function testPostponedMessageStopsTheRunAndTheNextRunContinues(): void
+    {
+        $bodies = [
+            1 => "Subject: Report 1\r\n\r\none",
+            2 => "Subject: Report 2\r\n\r\ntwo",
+            3 => "Subject: Report 3\r\n\r\nthree",
+        ];
+
+        // Each message carries one report. The run budget admits two reports,
+        // so the third message is postponed. The callback applies the real
+        // limits object the ingestor uses.
+        $ingest = static function (IngestLimits $limits): callable {
+            return static function () use ($limits): string {
+                if ($limits->checkRun(1, 100) !== null) {
+                    return 'postpone';
+                }
+
+                $limits->charge(1, 100);
+
+                return 'new';
+            };
+        };
+
+        $run1 = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 1 2 3\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, $bodies[1], 'A0005')
+            . $this->fetchResponse(2, 2, $bodies[2], 'A0006')
+            . $this->fetchResponse(3, 3, $bodies[3], 'A0007')
+            . "A0008 OK STORE completed\r\n"
+            . "* BYE\r\nA0009 OK LOGOUT completed\r\n";
+
+        $first = $this->drive($run1, ['delete_after_import' => 0], $ingest(new IngestLimits(10, 10, 1000, 2, 100000)));
+
+        // UID 3 is left untouched and the cursor stops before it.
+        $this->assertSame(2, $first['stats']['ingested']);
+        $this->assertSame(2, $first['stats']['last_uid']);
+        $this->assertStringContainsString('UID STORE 1,2 +FLAGS.SILENT (\\Seen)', $first['sent']);
+        $this->assertStringNotContainsString('UID STORE 1,2,3', $first['sent']);
+        $this->assertStringNotContainsString('Flagged', $first['sent']);
+
+        // The next run resumes at the stored cursor with a fresh budget and
+        // imports the postponed message first.
+        $run2 = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 3\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 3, $bodies[3], 'A0005')
+            . "A0006 OK STORE completed\r\n"
+            . "* BYE\r\nA0007 OK LOGOUT completed\r\n";
+
+        $second = $this->drive(
+            $run2,
+            ['delete_after_import' => 0, 'last_uid' => $first['stats']['last_uid']],
+            $ingest(new IngestLimits(10, 10, 1000, 2, 100000))
+        );
+
+        $this->assertStringContainsString('UID SEARCH UID 3:*', $second['sent']);
+        $this->assertSame(1, $second['stats']['ingested']);
+        $this->assertSame(3, $second['stats']['last_uid']);
+        $this->assertSame($bodies[3], $second['seen'][3] ?? null);
+    }
+
+    public function testPostponeStopsFetchingFurtherMessages(): void
+    {
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH 1 2 3\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, "Subject: Report 1\r\n\r\none", 'A0005')
+            . $this->fetchResponse(2, 2, "Subject: Report 2\r\n\r\ntwo", 'A0006')
+            . "A0007 OK STORE completed\r\n"
+            . "* BYE\r\nA0008 OK LOGOUT completed\r\n";
+
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0],
+            static fn (array $m): string => $m['uid'] === 1 ? 'new' : 'postpone'
+        );
+
+        $this->assertSame(1, $result['stats']['last_uid']);
+        $this->assertStringNotContainsString('UID FETCH 3', $result['sent']);
+        $this->assertStringContainsString('UID STORE 1 +FLAGS.SILENT (\\Seen)', $result['sent']);
+    }
+
+    public function testPostponedRetryUidStaysInTheRetrySet(): void
+    {
+        $script = "* OK IMAP4rev1 ready\r\n"
+            . "A0001 OK LOGIN completed\r\n"
+            . "* CAPABILITY IMAP4rev1\r\nA0002 OK CAPABILITY completed\r\n"
+            . "A0003 OK SELECT completed\r\n"
+            . "* SEARCH\r\nA0004 OK SEARCH completed\r\n"
+            . $this->fetchResponse(1, 1, "Subject: Late\r\n\r\nlate", 'A0005')
+            . "* BYE\r\nA0006 OK LOGOUT completed\r\n";
+
+        $result = $this->drive(
+            $script,
+            ['delete_after_import' => 0, 'last_uid' => 5, 'deferred_uids' => [1]],
+            static fn (): string => 'postpone'
+        );
+
+        $this->assertSame(5, $result['stats']['last_uid']);
+        $this->assertSame([1], $result['stats']['deferred_uids']);
+        $this->assertStringNotContainsString('UID STORE', $result['sent']);
     }
 
     public function testRejectsPlaintextTransport(): void
