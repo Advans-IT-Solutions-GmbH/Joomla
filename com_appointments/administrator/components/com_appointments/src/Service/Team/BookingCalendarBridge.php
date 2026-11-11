@@ -434,6 +434,12 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                         . $db->quoteName('passes') . ' = ' . self::RESTORE_PASSES . $where)->execute();
                 } else {
                     $db->setQuery('DELETE FROM ' . $table . $where)->execute();
+
+                    // A completed request for all event types also settles the given-up
+                    // requests of single event types: their bookings were written in this pass.
+                    if ($type === 0) {
+                        $db->setQuery('DELETE FROM ' . $table . ' WHERE ' . $db->quoteName('passes') . ' >= ' . self::RESTORE_PASSES)->execute();
+                    }
                 }
             }
         } catch (\Throwable $e) {
