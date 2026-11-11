@@ -65,7 +65,7 @@ interface BookingCalendarBridgeInterface
      * no key; runs also when the feature is switched off. Called after each
      * booking change with a small limit and by the Scheduler in batches.
      *
-     * @return  int  Objects removed.
+     * @return  int  Objects removed, -1 when the clean-up could not run.
      */
     public function removeOrphans(int $limit): int;
 
@@ -93,8 +93,10 @@ interface BookingCalendarBridgeInterface
      * again, or of every event type with `0`: after its target calendar changed,
      * or after the copies were removed while the feature was switched off.
      * Recorded only; {@see self::restoreCopies()} does the work. Needs no key.
+     *
+     * @return  bool  False when the request could not be recorded (logged).
      */
-    public function requestRestore(int $eventTypeId): void;
+    public function requestRestore(int $eventTypeId): bool;
 
     /**
      * Work through the recorded requests, one worker at a time: for every
@@ -105,7 +107,7 @@ interface BookingCalendarBridgeInterface
      * target alone. An entry of the target's own with the booking's UID is never
      * adopted by a restore and stays as it is. A request is closed
      * once a pass over its bookings ended without a failed write; after a failed write the next run starts a new pass (at most five,
-     * then the request is given up and logged). Without a request nothing is
+     * then the request is kept as failed, logged and reported by restoreFailed()). Without a request nothing is
      * written, so a copy a device deleted stays deleted. While the feature is
      * switched off, every clean-up records a request for all event types, so
      * the copies come back when it is switched on again; nothing is written
@@ -120,4 +122,11 @@ interface BookingCalendarBridgeInterface
      * task reports it as `restore_pending`: a restore is complete at 0.
      */
     public function restorePending(): int;
+
+    /**
+     * Restore requests given up after five passes with failed writes (-1 when they cannot
+     * be counted). The calendar retention task reports it as `restore_failed` and then fails;
+     * a new request (target change, switching on again) starts such a request again.
+     */
+    public function restoreFailed(): int;
 }

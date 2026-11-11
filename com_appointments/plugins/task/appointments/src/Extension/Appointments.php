@@ -150,6 +150,7 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             $result['copies_restored'] = $services->bookings()->restoreCopies(200);
             // The explicit completion signal: 0 once every restore request is done.
             $result['restore_pending'] = $services->bookings()->restorePending();
+            $result['restore_failed'] = $services->bookings()->restoreFailed();
 
             $db = $services->db();
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
@@ -227,6 +228,14 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
 
             $result = $routine($services, $services->now());
             $this->logTask('Appointments ' . $name . ': ' . json_encode($result, JSON_THROW_ON_ERROR));
+
+            // Copies that could not be written after every pass, or a clean-up that could not run:
+            // the run fails, so it is seen.
+            if (($result['restore_failed'] ?? 0) !== 0 || ($result['orphans_removed'] ?? 0) < 0) {
+                $this->logTask('Appointments ' . $name . ': calendar copies could not be restored.', 'error');
+
+                return Status::KNOCKOUT;
+            }
 
             return Status::OK;
         } catch (\Throwable $e) {
