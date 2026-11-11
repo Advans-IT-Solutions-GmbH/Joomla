@@ -222,6 +222,49 @@ class ConfigFormsTest
             return $this->sourceCount($validSource) === 1;
         });
 
+        // The stored password must not follow the source to another server: a
+        // user who may edit sources but does not know the password could
+        // otherwise receive it at the next LOGIN. A folder change keeps it.
+        $before = $this->sourceRow($validSource);
+
+        if ($before !== null) {
+            $edit        = $this->request($this->baseUrl . '/administrator/index.php?option=com_dmarcreports&task=source.edit&id=' . $before['id'], [], true);
+            $this->token = $this->extractToken($edit['body']) ?: $this->token;
+            $moved       = $this->saveSource([
+                'id'       => (string) $before['id'],
+                'name'     => $validSource,
+                'host'     => 'imap.other.example',
+                'password' => '',
+            ]);
+            $afterMove = $this->sourceRow($validSource);
+
+            $this->test('Moving a source to another server without its password is refused', function () use ($moved, $before, $afterMove) {
+                return $this->containsString($moved['body'], 'COM_DMARCREPORTS_SOURCE_ERROR_PASSWORD_REENTER')
+                    && $afterMove !== null
+                    && $afterMove['host'] === $before['host']
+                    && $afterMove['secret'] === $before['secret'];
+            });
+
+            $edit        = $this->request($this->baseUrl . '/administrator/index.php?option=com_dmarcreports&task=source.edit&id=' . $before['id'], [], true);
+            $this->token = $this->extractToken($edit['body']) ?: $this->token;
+            $this->saveSource([
+                'id'       => (string) $before['id'],
+                'name'     => $validSource,
+                'folder'   => 'Archive',
+                'password' => '',
+            ]);
+            $afterFolder = $this->sourceRow($validSource);
+
+            $this->test('A folder change with a blank password keeps the stored password', function () use ($before, $afterFolder) {
+                return $afterFolder !== null
+                    && $afterFolder['folder'] === 'Archive'
+                    && $afterFolder['secret'] === $before['secret']
+                    && $before['secret'] !== '';
+            });
+        } else {
+            $this->test('Saved source row can be read back', static fn () => false);
+        }
+
         // Server-side port bounds: 0, 70000 and "abc" must all be rejected with
         // the localized message and must never create a row (K-E5c). The decimal
         // and exponent forms guard the non-coercing raw filter: with
@@ -474,6 +517,29 @@ class ConfigFormsTest
         $row     = $result ? $result->fetch_assoc() : null;
 
         return $row ? (int) $row['c'] : 0;
+    }
+
+    /**
+     * The id, host, folder and a digest of the stored credential of a source.
+     * Only the digest is read, so the test never handles the ciphertext itself.
+     *
+     * @return array{id:int, host:string, folder:string, secret:string}|null
+     */
+    private function sourceRow(string $name): ?array
+    {
+        $escaped = $this->db->real_escape_string($name);
+        $result  = $this->db->query(
+            "SELECT id, host, folder, IF(password_enc = '', '', SHA2(password_enc, 256)) AS secret"
+            . " FROM {$this->dbPrefix}dmarc_sources WHERE name = '{$escaped}' LIMIT 1"
+        );
+        $row = $result ? $result->fetch_assoc() : null;
+
+        return $row ? [
+            'id'     => (int) $row['id'],
+            'host'   => (string) $row['host'],
+            'folder' => (string) $row['folder'],
+            'secret' => (string) $row['secret'],
+        ] : null;
     }
 
     private function domainId(string $domain): int

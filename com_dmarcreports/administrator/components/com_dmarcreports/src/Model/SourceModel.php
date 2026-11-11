@@ -101,7 +101,18 @@ class SourceModel extends AdminModel
         if ($newPassword !== '') {
             $data['password_enc'] = CryptoHelper::encrypt($newPassword);
         } elseif ($pk > 0) {
-            // Keep the existing credential when the field is left blank on edit.
+            // Keep the existing credential when the field is left blank on edit,
+            // but only for the same server and account. Otherwise a user who may
+            // edit sources could point the source at a server of their own and
+            // receive the stored password at the next LOGIN.
+            $existing = $this->getExistingIdentity($pk);
+
+            if ($existing !== null && SourceIdentity::credentialTargetChanged($existing, $data)) {
+                $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_PASSWORD_REENTER'));
+
+                return false;
+            }
+
             $current = $this->getExistingPassword($pk);
             $data['password_enc'] = $current;
         } else {
@@ -125,7 +136,7 @@ class SourceModel extends AdminModel
             // mailbox identity changes. An in-flight poll of the old mailbox
             // cannot revive the cursor afterwards, because it re-checks the
             // identity under a row lock before advancing it (see
-            // IngestController::recordRun()). The parent-domain lock that guards
+            // SourcePoller::recordRun()). The parent-domain lock that guards
             // this write against a concurrent domain delete is taken one layer
             // down, in SourceTable::store().
             $existing = $this->getExistingIdentity($pk);

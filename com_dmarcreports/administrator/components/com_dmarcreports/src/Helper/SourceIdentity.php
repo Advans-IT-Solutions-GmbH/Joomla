@@ -64,4 +64,34 @@ abstract class SourceIdentity
     {
         return self::fingerprint($before) !== self::fingerprint($after);
     }
+
+    /**
+     * The source columns that decide which server receives the stored
+     * credential at LOGIN.
+     */
+    public const CREDENTIAL_TARGET_FIELDS = ['protocol', 'host', 'port', 'security', 'username'];
+
+    /**
+     * Whether the stored password would be sent to a different server or
+     * account. A user who may edit a source but does not know its password
+     * must not be able to redirect the saved credential to a server of their
+     * choice, so such a change requires the password to be entered again.
+     * A change of the folder alone keeps the stored password.
+     *
+     * @param   array<string, mixed>|object  $before
+     * @param   array<string, mixed>|object  $after
+     */
+    public static function credentialTargetChanged($before, $after): bool
+    {
+        $old = self::fingerprint($before);
+        $new = self::fingerprint($after);
+
+        foreach (self::CREDENTIAL_TARGET_FIELDS as $field) {
+            if ($old[$field] !== $new[$field]) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

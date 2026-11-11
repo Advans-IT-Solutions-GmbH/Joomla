@@ -24,7 +24,7 @@ Beyond showing the numbers, the component includes an **Action Center** that rea
 
 - Multi-domain, multi-tenant: monitor several domains, each with its own report source
 - On-demand IMAP ingestion (host, port, SSL/TLS, folder) with the password encrypted at rest; optional scheduled ingestion through the companion task plugin
-- Manual upload of `.xml`, `.gz` and `.zip` aggregate reports as an alternative input
+- Manual upload of DMARC aggregate reports (`.xml`, `.gz`, `.zip`) and TLS-RPT reports (`.json`, `.json.gz`, `.zip`) as an alternative input
 - RFC 8460 TLS-RPT JSON ingestion through the same mailbox/upload pipeline, including gzip and ZIP containers; TLS results are stored separately from DMARC reports
 - MTA-STS policy and DNS-record generation, with optional policy hosting through the companion system plugin
 - Native RFC 7489 aggregate-report XML parser (no external tools)
@@ -53,7 +53,7 @@ The component resolves the database through `DatabaseInterface`. Queries use `cr
 
 ## Installation
 
-**Availability:** No component release or `dmarcreports-v*` tag has been published yet. Build from source for now. The component is individually buildable; the [DMARC Reports package](../pkg_dmarcreports) bundles it with the module and both plugins for a single installation and update channel.
+**Availability:** Component releases are published as `dmarcreports-v*` GitHub releases (latest only). The component is also individually buildable; the [DMARC Reports package](../pkg_dmarcreports) bundles it with the module and both plugins for a single installation and update channel.
 
 From a repository checkout with Bash, rsync and zip available, run `cd com_dmarcreports` followed by `./build.sh`.
 
@@ -184,7 +184,7 @@ com_dmarcreports/
 ├── updates/
 │   └── update.xml                             # Joomla update server
 └── tests/
-    ├── scripts/                               # Integration test scripts (01–05, 10)
+    ├── scripts/                               # Integration test scripts (01–08, 10)
     ├── Unit/                                   # PHPUnit unit tests
     ├── docker-compose.yml
     ├── docker-compose.joomla6.yml

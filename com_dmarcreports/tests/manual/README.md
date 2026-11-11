@@ -252,7 +252,8 @@ and confirm that an update never drops a previously populated `#__dmarc_*` table
 | SR-04 | NEG | Submit an empty required host, username or folder. | Server-side refusal. |
 | SR-05 | NEG | Submit a `security` value other than `ssl`/`tls` through a manipulated POST. | Rejected server-side; no cleartext session is ever opened. |
 | SR-06 | POS | Edit an identity field (`host`, `port`, `security`, `username`, `folder`) on a source that already has a cursor. | The stored cursor (`uidvalidity`, `last_uid`, `deferred_uids`) is reset via `SourceIdentity`, so a stale high-water UID cannot survive the edit. |
-| SR-07 | POS | Edit a source leaving the password field blank. | The existing encrypted password is retained, not wiped. |
+| SR-07 | POS | Edit a source leaving the password field blank and changing only the name or folder. | The existing encrypted password is retained, not wiped. |
+| SR-07a | NEG | As `EDITOR`, change `host`, `port`, `security` or `username` of a saved source and leave the password blank. | Refused with the localized "enter the mailbox password again" message; host and `password_enc` are unchanged, so the stored password can never be sent to another server or account. |
 | SR-08 | POS | Inspect the database, logs and `last_message` after saving and a failed run. | The password never appears in plaintext, in a log or in `last_message`. |
 | SR-09 | POS | Unpublish a source, then run an on-demand poll and the task. | The unpublished source is skipped by both paths (`activeSources()`); publishing it again restores processing. |
 | SR-10 | POS | Delete a source that has ingested reports. | Source removed; its DMARC and TLS-RPT reports are preserved but their `source_id` is reset to `0` by `ReportProvenance::unbindSources()`, leaving no dangling source reference. |

@@ -91,4 +91,31 @@ class SourceIdentityTest extends TestCase
         // populated source: the absent fields differ from the stored values.
         $this->assertTrue(SourceIdentity::changed($this->source(), ['host' => 'mail.example.org']));
     }
+
+    public function testCredentialTargetChangesWithServerOrAccount(): void
+    {
+        // The stored password must not follow a source to another server, port,
+        // transport or account without being entered again.
+        foreach ([
+            ['host' => 'imap.attacker.example'],
+            ['port' => '143'],
+            ['security' => 'tls'],
+            ['username' => 'other@example.org'],
+        ] as $change) {
+            $this->assertTrue(
+                SourceIdentity::credentialTargetChanged($this->source(), $this->source($change)),
+                'Change not detected: ' . json_encode($change)
+            );
+        }
+    }
+
+    public function testFolderOrPasswordChangeKeepsTheCredentialTarget(): void
+    {
+        $this->assertFalse(
+            SourceIdentity::credentialTargetChanged($this->source(), $this->source(['folder' => 'Archive']))
+        );
+        $this->assertFalse(
+            SourceIdentity::credentialTargetChanged($this->source(['port' => 993]), (object) $this->source(['port' => '993', 'password_enc' => 'x']))
+        );
+    }
 }
