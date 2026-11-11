@@ -35,13 +35,18 @@ final class MimeMessage
     /**
      * Extract every decoded attachment from a raw message.
      *
-     * @param   string  $raw  The raw RFC 822 message.
+     * @param   string     $raw        The raw RFC 822 message.
+     * @param   bool|null  $truncated  Optional out-parameter: true when the
+     *          part or nesting ceiling stopped the walk before the end of the
+     *          message, so the result may miss attachments. A caller that must
+     *          not import a message partly holds it instead.
      *
      * @return  array<int, array{filename: string, content: string}>
      */
-    public static function attachments(string $raw): array
+    public static function attachments(string $raw, ?bool &$truncated = null): array
     {
-        $raw = str_replace("\r\n", "\n", $raw);
+        $truncated = false;
+        $raw       = str_replace("\r\n", "\n", $raw);
 
         [$headers, $body] = self::split($raw);
 
@@ -63,7 +68,7 @@ final class MimeMessage
         // multiparts cannot multiply the work past the overall part ceiling.
         $budget = self::MAX_PARTS;
 
-        return self::walk($body, $boundary, 1, $budget);
+        return self::walk($body, $boundary, 1, $budget, $truncated);
     }
 
     /**
@@ -88,17 +93,20 @@ final class MimeMessage
     }
 
     /**
-     * @param   int  $depth   Current nesting depth (1 at the top-level body).
-     * @param   int  $budget  Remaining global part budget, decremented in place.
+     * @param   int   $depth      Current nesting depth (1 at the top-level body).
+     * @param   int   $budget     Remaining global part budget, decremented in place.
+     * @param   bool  $truncated  Set to true when a ceiling cuts the walk short.
      *
      * @return array<int, array{filename: string, content: string}>
      */
-    private static function walk(string $body, string $boundary, int $depth, int &$budget): array
+    private static function walk(string $body, string $boundary, int $depth, int &$budget, bool &$truncated): array
     {
         // Stop recursing past the nesting ceiling or once the shared part budget
         // is spent, so a deeply nested or part-flooded message degrades to an
         // empty result instead of exhausting memory.
         if ($depth > self::MAX_DEPTH || $budget <= 0) {
+            $truncated = true;
+
             return [];
         }
 
@@ -125,6 +133,15 @@ final class MimeMessage
             return [];
         }
 
+        // The split stops at the budget and leaves the rest of the body in its
+        // last segment. If that remainder still holds an opening delimiter
+        // (not just the closing one), parts were left unread.
+        $opening = '/\n--' . preg_quote($boundary, '/') . '[\t ]*(?=\n|$)/';
+
+        if (\count($segments) > $budget && preg_match($opening, "\n" . (string) end($segments)) === 1) {
+            $truncated = true;
+        }
+
         // Drop the preamble before the opening delimiter; it is never a part.
         array_shift($segments);
 
@@ -138,6 +155,7 @@ final class MimeMessage
             }
 
             if ($budget <= 0) {
+                $truncated = true;
                 break;
             }
 
@@ -151,7 +169,7 @@ final class MimeMessage
                 : null;
 
             if ($childBoundary !== null) {
-                $attachments = array_merge($attachments, self::walk($partBody, $childBoundary, $depth + 1, $budget));
+                $attachments = array_merge($attachments, self::walk($partBody, $childBoundary, $depth + 1, $budget, $truncated));
                 continue;
             }
 

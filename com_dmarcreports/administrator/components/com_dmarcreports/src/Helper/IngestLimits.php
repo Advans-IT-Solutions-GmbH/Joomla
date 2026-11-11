@@ -35,6 +35,7 @@ defined('_JEXEC') or die;
 final class IngestLimits
 {
     public const REASON_ATTACHMENTS   = 'attachments';
+    public const REASON_PARTS         = 'parts';
     public const REASON_REPORTS       = 'reports';
     public const REASON_SIZE          = 'size';
     public const REASON_ARCHIVE_LIMIT = 'archive_limit';

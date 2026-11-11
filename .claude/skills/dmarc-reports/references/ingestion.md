@@ -84,7 +84,8 @@ Streaming design (do not revert to loading all messages into an array):
   `max_message_unpacked_mb`, `max_reports_per_run`, `max_run_unpacked_mb`): `SourcePoller` sets one
   limits object per poll on the `Ingestor`. `ingestMessage()` measures a message first (pass 1) and
   stores only afterwards (pass 2), so a message is never half imported. Over a per-message limit, or
-  with a document over the 8 MiB decoder limit (`stats['oversized']`/`bomb`), it returns
+  with a document over the 8 MiB decoder limit (`stats['oversized']`/`bomb`), or cut by the MIME part/depth
+  ceiling (`MimeMessage::attachments($raw, $truncated)`), it returns
   `RESULT_HELD`: the client advances the cursor, never marks it `\Seen` or deletes it, and flags it
   `\Flagged` (best effort). Over a run limit it returns `RESULT_POSTPONE`: the client stops the run
   like the byte budget, the next run starts with it. The first message of a run is always admitted.

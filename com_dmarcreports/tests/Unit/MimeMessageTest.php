@@ -280,6 +280,67 @@ class MimeMessageTest extends TestCase
 
         // No attachment is present, and the depth guard prevents unbounded
         // recursion; the call simply returns an empty set.
-        $this->assertSame([], MimeMessage::attachments($raw));
+        $this->assertSame([], MimeMessage::attachments($raw, $truncated));
+        // The walk did not reach the end, so the caller is told.
+        $this->assertTrue($truncated);
+    }
+
+    public function testPartFloodIsReportedAsTruncated(): void
+    {
+        $raw = "From: attacker@example.net\r\n"
+            . "MIME-Version: 1.0\r\n"
+            . "Content-Type: multipart/mixed; boundary=\"B\"\r\n"
+            . "\r\n"
+            . str_repeat("--B\r\n", 500000)
+            . "--B--\r\n";
+
+        MimeMessage::attachments($raw, $truncated);
+
+        $this->assertTrue($truncated);
+    }
+
+    public function testAttachmentBehindThePartCeilingIsReportedAsTruncated(): void
+    {
+        // 1100 small text parts, then a report. The reader stops at its part
+        // ceiling before the report, so the caller must not treat the empty
+        // result as the whole message.
+        $raw = $this->partsMessage(1100) . "--B\r\n"
+            . "Content-Type: application/gzip; name=\"report.xml.gz\"\r\n"
+            . "Content-Disposition: attachment; filename=\"report.xml.gz\"\r\n"
+            . "Content-Transfer-Encoding: base64\r\n\r\n"
+            . base64_encode('payload') . "\r\n"
+            . "--B--\r\n";
+
+        $this->assertSame([], MimeMessage::attachments($raw, $truncated));
+        $this->assertTrue($truncated);
+    }
+
+    public function testMessageWithinThePartCeilingIsComplete(): void
+    {
+        // Exactly the ceiling of 1000 parts, closed properly: nothing is left
+        // unread, so the message is not reported as truncated.
+        MimeMessage::attachments($this->partsMessage(1000) . "--B--\r\n", $truncated);
+        $this->assertFalse($truncated);
+
+        MimeMessage::attachments("Subject: plain\r\n\r\nbody", $truncated);
+        $this->assertFalse($truncated);
+    }
+
+    /**
+     * A multipart message head with the given number of small text parts and
+     * no closing delimiter.
+     */
+    private function partsMessage(int $parts): string
+    {
+        $raw = "From: reporter@example.net\r\n"
+            . "MIME-Version: 1.0\r\n"
+            . "Content-Type: multipart/mixed; boundary=\"B\"\r\n"
+            . "\r\n";
+
+        for ($i = 0; $i < $parts; $i++) {
+            $raw .= "--B\r\nContent-Type: text/plain\r\n\r\npart " . $i . "\r\n";
+        }
+
+        return $raw;
     }
 }

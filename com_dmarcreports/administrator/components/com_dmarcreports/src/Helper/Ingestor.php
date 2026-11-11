@@ -195,10 +195,15 @@ final class Ingestor
             }
         }
 
-        $attachments = MimeMessage::attachments((string) ($message['raw'] ?? ''));
+        $attachments = MimeMessage::attachments((string) ($message['raw'] ?? ''), $truncated);
 
         if ($this->limits !== null) {
-            $reason = $this->limits->checkAttachments(\count($attachments));
+            // The MIME reader stops at its part and nesting ceilings. A message
+            // it could not read to the end is held as a whole rather than
+            // imported partly and then marked read or deleted.
+            $reason = $truncated
+                ? IngestLimits::REASON_PARTS
+                : $this->limits->checkAttachments(\count($attachments));
 
             if ($reason !== null) {
                 return $this->hold($summary, $sourceId, $uid, $reason, \count($attachments), 0, 0);

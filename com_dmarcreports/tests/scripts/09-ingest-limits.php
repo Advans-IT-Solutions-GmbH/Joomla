@@ -91,6 +91,7 @@ class IngestLimitsIntegrationTest
 
             $this->testUnderTheLimits();
             $this->testAttachmentLimit();
+            $this->testPartCeiling();
             $this->testReportsPerArchive();
             $this->testGzipBomb();
             $this->testConsecutiveBombsStopAtTheRunBudget();
@@ -158,6 +159,22 @@ class IngestLimitsIntegrationTest
         $this->test('nothing of the held message is stored', $this->storedLike('over-%-' . $this->suffix) === 0);
         $this->test('held message is counted with its UID', $summary['held'] === 1 && $summary['held_uids'] === [22]);
         $this->test('log names UID and limit', $this->logContains('UID 22 held') && $this->logContains('limit: attachments'));
+    }
+
+    private function testPartCeiling(): void
+    {
+        echo "\n--- MIME part ceiling ---\n";
+
+        // 1100 filler parts push the report past the MIME reader's ceiling of
+        // 1000 parts. The message must be held, not treated as report-free and
+        // marked read.
+        $ingestor = $this->ingestor(IngestLimits::defaults());
+        $summary  = $ingestor->newSummary();
+        $result   = $ingestor->ingestMessage(['uid' => 25, 'raw' => $this->message([$this->gz('parts-' . $this->suffix)], 1100)], null, $this->domainId, $summary);
+
+        $this->test('message cut by the part ceiling is held', $result === Ingestor::RESULT_HELD, $result);
+        $this->test('nothing of it is stored', $this->stored('parts-' . $this->suffix) === 0);
+        $this->test('log names the parts limit', $this->logContains('UID 25 held') && $this->logContains('limit: parts'));
     }
 
     private function testReportsPerArchive(): void
