@@ -485,6 +485,7 @@ function getExtensionCodePaths($ext): array
         return [
             JPATH_ADMINISTRATOR . '/components/' . $ext->element,
             JPATH_SITE . '/components/' . $ext->element,
+            (defined('JPATH_API') ? JPATH_API : JPATH_SITE . '/api') . '/components/' . $ext->element,
         ];
     }
 
@@ -650,7 +651,7 @@ function classifyExtension($manifest, $ext, $patterns) {
     $author  = is_object($manifest) ? ($manifest->author ?? '?') : '?';
     $info    = Text::sprintf('COM_J2STORE_CLEANUP_REASON_INFO', $author, $version);
 
-    // A component has code in both the administrator and the site directory.
+    // A component has code in the administrator, site and API directories.
     // Files count as missing only when every directory is gone, so a
     // database-only removal can never orphan surviving code.
     $paths = array_values(array_filter(getExtensionCodePaths($ext), static fn (string $path): bool => is_dir($path)));

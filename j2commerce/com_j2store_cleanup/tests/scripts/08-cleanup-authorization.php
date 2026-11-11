@@ -98,6 +98,7 @@ namespace {
     mkdir($fixtureRoot, 0777, true);
     define('JPATH_SITE', $fixtureRoot);
     define('JPATH_ADMINISTRATOR', $fixtureRoot . DIRECTORY_SEPARATOR . 'administrator');
+    define('JPATH_API', $fixtureRoot . DIRECTORY_SEPARATOR . 'api');
     define('JPATH_PLUGINS', $fixtureRoot . DIRECTORY_SEPARATOR . 'plugins');
     define('JPATH_LIBRARIES', $fixtureRoot . DIRECTORY_SEPARATOR . 'libraries');
     define('J2STORE_CLEANUP_FUNCTIONS_ONLY', true);
@@ -602,6 +603,19 @@ namespace {
             $legacy = (object) array_replace($this->row(2, 'component', 'com_j2commerce_legacyadmin'), ['client_id' => 0]);
             $this->check('Surviving administrator code of a component is still scanned',
                 classifyExtension(null, $legacy, getIssuePatterns())['status'] === 'incompatible');
+
+            // Only the API folder survives: still not "no files", and never removed database-only.
+            $apiPath = JPATH_API . '/components/com_j2commerce_apionly';
+            mkdir($apiPath, 0777, true);
+            file_put_contents($apiPath . '/api.php', '<?php echo "ok";');
+            $apiOnly = (object) $this->row(4, 'component', 'com_j2commerce_apionly');
+            $this->check('A component with surviving API code is not classified as missing files',
+                classifyExtension(null, $apiOnly, getIssuePatterns())['status'] === 'compatible');
+            $apiDb = new FakeDatabase([$this->row(4, 'component', 'com_j2commerce_apionly')]);
+            Installer::$calls = [];
+            $apiResult = cleanupExtensions($apiDb, [4]);
+            $this->check('A component with surviving API code is never removed database-only',
+                $apiResult['error'] === 1 && $apiDb->has(4) && Installer::$calls === []);
 
             // The same removed API in both folders is one finding, not two.
             foreach ([JPATH_ADMINISTRATOR, JPATH_SITE] as $root) {
