@@ -429,7 +429,22 @@ calendar it is and whatever a device writes into it later. This variant was chos
 the field for calendars that hold entries of their own, because a device can add such an entry at
 any time after the field was set, and because the check then sits at the only place that deletes.
 An entry of its own disappears only if somebody deletes it on a device, if the whole calendar is
-deleted, or if a Joomla privacy request covers it (see «Privacy requests and retention»).
+deleted, or if the person handling a privacy request decides to delete it (next rule).
+
+**Privacy requests change entries of their own only after a decision.** A Joomla privacy request
+removes the bookings and their copies automatically. It never changes an entry of a calendar's own
+that contains the address: such entries are recorded (request, calendar and object address only,
+no address and no content) and listed in **Privacy: review calendar entries**
+(`index.php?option=com_appointments&view=privacyreview`, for users with `core.manage` on
+com_privacy). The list shows calendar, start, title and the role of the address (organiser,
+attendee, in the text) in the session of the person handling the request, with their own key
+access. Per entry they choose **Remove only the address** (preselected: the attendee or organiser
+line goes, every other occurrence becomes a placeholder, and the entry is written only if the search
+would no longer find the address), **Delete the entry** (for every attendee and every device) or
+**Leave unchanged** (only taken off the list). If the address belongs to a user of the internet
+calendars (a grant, a device, a personal key, an owned calendar or an activation link), the request
+changes no calendar entry at all, booking copies included, and says so; the account is handled by
+blocking or deleting the user.
 
 **The calendar retention only deletes booking copies.** Each calendar has the field **Delete
 booking copies after (days)**, default `0` (never). Booking retention deletes booking copies anyway;
@@ -473,6 +488,7 @@ on the deletions at once:
 | Booking | After the booking retention from the end of the appointment, for example 30 days. At once through the deletion link or a deletion in the administrator. | Website. Anonymised or deleted entirely, depending on **On erasure**. |
 | Booking copy | With the booking. At once on a cancellation. Earlier if a calendar retention is set. | Every internet calendar and, at their next synchronisation, every device, Outlook included. |
 | Entry of its own | Never because of its age. | Remains until somebody deletes it. |
+| Entry of its own with the address from a privacy request | Only after a decision. Removing only the address is preselected. | Website and, at their next synchronisation, every device. |
 | Booking copies while internet calendars are switched off | At the next run of the task or the next change of the booking. | Every internet calendar. Devices synchronise only after switching on again. |
 | Calendars on a device set to **Clean up** | At the next synchronisation after removing the device, a block or a password reset. A device set to **Block only** is only refused and deletes nothing. | Only on the device. The server keeps everything. |
 | Whole internet calendar | At once when somebody deletes it with all its entries in the administrator. | Website. On devices depending on the program. |
@@ -521,6 +537,8 @@ the booking retention, as long as the device synchronises.
 - A booking, by deleting its copy on a device.
 - Erasure records before their own retention ends, and the internet calendar log before twelve
   months.
+- Entries of their own by a privacy request without a decision, and entries with the address of a
+  user of the internet calendars.
 
 #### What the website cannot delete
 
@@ -824,8 +842,9 @@ addresses against it.
   addresses.
 - **Calendar entries** are searched only in the session of the person handling the request, and
   only in the calendars that person can unlock (owner, manager, or keys recovered with the recovery
-  key). Removal deletes the matching entries as normal changes, so clients drop them at the next
-  synchronisation.
+  key). Removal deletes the matching booking copies as normal changes, so clients drop them at the
+  next synchronisation. Matching entries of a calendar's own are only recorded for a decision, see
+  «Retention and deletion rules».
 - **Never silently incomplete:** every calendar that could not be searched is named in the export
   and in the removal result, with the way to search it (sign in as a key holder, or use the
   recovery key).

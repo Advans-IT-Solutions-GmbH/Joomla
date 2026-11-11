@@ -42,6 +42,7 @@ class UninstallTest
         'appointments_auth_failures',
         'appointments_eventtype_calendars',
         'appointments_copy_restore',
+        'appointments_privacy_review',
     ];
 
     private const TASK_TYPES = [

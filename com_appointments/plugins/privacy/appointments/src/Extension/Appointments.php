@@ -133,7 +133,7 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             $this->getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_APPOINTMENTS_CLEANUP_FAILED'), 'warning');
         }
         TeamPrivacy::forApplication($this->getApplication(), $this->getDatabase())
-            ?->remove((string) $event->getRequest()->email, $event->getUser());
+            ?->remove((string) $event->getRequest()->email, $event->getUser(), (int) ($event->getRequest()->id ?? 0));
     }
 
     private function service(): PrivacyService
