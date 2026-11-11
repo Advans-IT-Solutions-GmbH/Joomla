@@ -98,11 +98,15 @@ interface BookingCalendarBridgeInterface
      * Work through the recorded requests: for every future, active booking of a
      * requested event type whose copy is missing in the target calendar, or
      * lies in another calendar, write the copy as after a booking change. A
-     * request is closed once all its bookings were handled. Without a request
-     * nothing is written, so a copy a device deleted stays deleted. Does nothing
-     * while the feature is switched off.
+     * request is closed once a pass over its bookings ended without a failed
+     * write; after a failed write the next run starts a new pass (at most five,
+     * then the request is given up and logged). Without a request nothing is
+     * written, so a copy a device deleted stays deleted. While the feature is
+     * switched off, every clean-up records a request for all event types, so
+     * the copies come back when it is switched on again; nothing is written
+     * while it is off.
      *
-     * @return  int  Bookings handled.
+     * @return  int  Copies written and verified in place.
      */
     public function restoreCopies(int $limit): int;
 }
