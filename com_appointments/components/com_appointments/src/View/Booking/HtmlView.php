@@ -37,6 +37,8 @@ class HtmlView extends BaseHtmlView
     {
         $app = Factory::getApplication();
         $app->setHeader('Cache-Control', 'private, no-store', true);
+        // Nor Joomla's page cache: the page carries signed links of one browser session (like GuestController).
+        $app->allowCache(false);
         $this->item = $this->getModel()->getItem();
 
         // A cancelled appointment has nothing to add to a calendar and nothing left to change.

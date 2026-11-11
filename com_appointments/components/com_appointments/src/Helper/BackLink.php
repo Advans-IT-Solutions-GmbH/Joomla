@@ -63,7 +63,7 @@ final class BackLink
     /**
      * The address of the way back on the current page, HTML-escaped by Route, or '' for none.
      * A configured menu item that the visitor cannot open, that does not exist in the visitor's
-     * language, that is no page of the site (heading, separator, external URL) or whose booking
+     * language, that is no component page (alias, heading, separator, external URL) or whose booking
      * page is no longer available falls back to the list.
      */
     public static function resolve(bool $bookingPage): string
@@ -79,7 +79,8 @@ final class BackLink
             // getItems() of the site menu only returns items of the visitor's access levels and language.
             $item = $menu->getItems(['id'], [$itemId], true);
 
-            if (is_object($item) && in_array($item->type ?? '', ['component', 'alias'], true) && self::opens($item)) {
+            // Only a component page: an alias names another item, whose page this check would not see.
+            if (is_object($item) && ($item->type ?? '') === 'component' && self::opens($item)) {
                 return Route::_('index.php?Itemid=' . (int) $item->id);
             }
         }

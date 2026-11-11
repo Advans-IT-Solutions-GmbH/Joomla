@@ -123,7 +123,7 @@ $links = static function (string $html, string $class): array {
 $admin = new AppointmentsHttp('http://localhost', 'menu-admin');
 $state = [
     'filter' => null, 'contentLanguage' => false, 'siteLanguage' => false, 'languageFolder' => false,
-    'menuItems' => [], 'configuration' => null,
+    'menuItems' => [], 'configuration' => null, 'pageCache' => null,
 ];
 $tag = 'menu' . bin2hex(random_bytes(4));
 $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+3 days')->format('Y-m-d');
@@ -477,6 +477,10 @@ try {
     // Reschedule with the link of the confirmation mail: the receipt stands at the booking page and
     // gives this browser the new signed links, as the confirmation of a booking does.
     if (isset($mailLinks['reschedule'], $booking['id'])) {
+        // With Joomla's page cache on, the receipt with its new signed links must not be cached for
+        // another browser: the signed pages switch the page cache off for their responses.
+        $state['pageCache'] = (int) $scalar("SELECT enabled FROM {$prefix}extensions WHERE type='plugin' AND folder='system' AND element='cache'");
+        $db->query("UPDATE {$prefix}extensions SET enabled=1 WHERE type='plugin' AND folder='system' AND element='cache'");
         $mover = new AppointmentsHttp('http://localhost', 'menu-reschedule');
         $oldReschedule = preg_replace('#^https?://[^/]+#', '', $mailLinks['reschedule']);
         $html = $mover->request($oldReschedule);
@@ -526,9 +530,11 @@ try {
         $outsider = new AppointmentsHttp('http://localhost', 'menu-reschedule-outsider');
         $html = $outsider->request($landing);
         $check($outsider->status === 404 && !str_contains($html, 'com-appointments-cancel'),
-            'Another browser gets neither the receipt nor the new links from its address');
+            'Another browser gets neither the receipt nor the new links from its address, also with the page cache on');
         $outsider->request($oldReschedule);
         $check($outsider->status === 404, 'The reschedule link of the confirmation mail is rejected after the reschedule');
+        $db->query("UPDATE {$prefix}extensions SET enabled=" . (int) $state['pageCache'] . " WHERE type='plugin' AND folder='system' AND element='cache'");
+        $state['pageCache'] = null;
 
         // The cancellation below uses the links of the newest mail.
         if (isset($rescheduleMail['cancel'], $rescheduleMail['erase'])) {
@@ -598,6 +604,9 @@ try {
         $db->query("DELETE FROM {$prefix}menu WHERE id=" . (int) $id);
     }
     $db->query("DELETE FROM {$prefix}menu WHERE client_id=0 AND alias LIKE '" . $escape($tag) . "-%'");
+    if ($state['pageCache'] !== null) {
+        $db->query("UPDATE {$prefix}extensions SET enabled=" . (int) $state['pageCache'] . " WHERE type='plugin' AND folder='system' AND element='cache'");
+    }
     if ($state['filter'] !== null) {
         $db->query("UPDATE {$prefix}extensions SET enabled=" . (int) $state['filter'] . " WHERE type='plugin' AND folder='system' AND element='languagefilter'");
     }

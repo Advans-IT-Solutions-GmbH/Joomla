@@ -45,6 +45,8 @@ class HtmlView extends BaseHtmlView
         $app->setHeader('Referrer-Policy', 'no-referrer', true);
         $app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
         $app->setHeader('Cache-Control', 'private, no-store', true);
+        // Nor Joomla's page cache: the page carries signed links of one browser session (like GuestController).
+        $app->allowCache(false);
         $model = $this->getModel();
         $this->action = $model->action();
         $this->applyPageTitle('manage', Text::_(['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL', 'erase' => 'COM_APPOINTMENTS_MANAGE_ERASE'][$this->action]));
