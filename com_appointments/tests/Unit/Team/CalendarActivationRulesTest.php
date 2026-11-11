@@ -133,6 +133,33 @@ final class CalendarActivationRulesTest extends TestCase
         }
     }
 
+    public function testRevokeLinksUseTheConfiguredBaseLikeActivationLinks(): void
+    {
+        $suffix = '/administrator/index.php?option=com_appointments&view=invitations&layout=revoke&id=7';
+
+        foreach ([
+            'http://example.test/' => 'https://example.test',
+            'https://example.test/site/' => 'https://example.test/site',
+            'https://example.test:8443/site/index.php/' => 'https://example.test:8443/site',
+        ] as $base => $expected) {
+            self::assertSame($expected . $suffix, InvitationService::revokeLink($base, 7));
+        }
+
+        foreach ([['', 7], ['/site', 7], ['https://user@example.test/', 7], ['https://example.test/?x=1', 7], ['https://example.test/', 0]] as [$base, $id]) {
+            try {
+                InvitationService::revokeLink($base, $id);
+                self::fail('Accepted an invalid revoke link.');
+            } catch (\Advans\Component\Appointments\Administrator\Helper\Team\TeamException $e) {
+                self::assertSame(400, $e->getCode());
+            }
+        }
+
+        // revokeUrl() resolves its base through the same method as the activation link.
+        $source = (string) file_get_contents(dirname(__DIR__, 3) . '/administrator/components/com_appointments/src/Service/Team/InvitationService.php');
+        self::assertMatchesRegularExpression('#function revokeUrl\(int \$invitationId\): string\s*\{\s*return self::revokeLink\(self::siteBase\(\), \$invitationId\);#', $source);
+        self::assertStringNotContainsString('rtrim(Uri::root()', $source);
+    }
+
     public function testActivationMacFields(): void
     {
         $row = (object) [

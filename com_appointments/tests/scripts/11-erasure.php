@@ -38,6 +38,8 @@ try {
         'One-confirmation erasure page explains exactly what remains and identifies the booking');
     $before = AppointmentsMail::snapshot();
     $html = $fixture->apply($client, $link);
+    $check($client->landedAt($html, 'appointment-result'),
+        'A completed erasure lands at #appointment-result with a focusable status region the screen reader announces');
     $erased = $fixture->row($id);
     $check(str_contains($html, 'Your data has already been erased') && $erased['anonymised_utc'] !== null && (int) $erased['state'] === 2,
         'Future booking is cancelled and anonymised in the self-service operation');

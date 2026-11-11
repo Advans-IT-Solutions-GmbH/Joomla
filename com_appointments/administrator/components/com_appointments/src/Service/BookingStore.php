@@ -245,13 +245,16 @@ final class BookingStore
 
         // Same UID, new times. A new conference link rewrites the object once more.
         $this->mirror('saved', $booking);
+        // _rescheduled_version: the row version this reschedule committed. The snapshots below may
+        // already carry a later change of someone else (a stale conference result returns the current row).
+        $version = ['_rescheduled_version' => $booking['modified_utc']];
         $cleared = $this->conference()->destroy($previous);
         if (!empty($cleared['_conference_missing']) || !empty($cleared['_conference_error'])) {
-            return $cleared;
+            return $version + $cleared;
         }
         $provisioned = $this->conference()->provision($cleared, $now);
 
-        return $provisioned + ['_conference_cleanup_error' => !empty($cleared['_conference_cleanup_error'])];
+        return $version + $provisioned + ['_conference_cleanup_error' => !empty($cleared['_conference_cleanup_error'])];
     }
 
     public function erase(int $bookingId, \DateTimeImmutable $now, string $path, bool $delete = false, ?int $actor = null, ?SignedLink $links = null, string $signature = '', ?int $retentionDays = null, ?PrivacyCleanup $privacyCleanup = null): array

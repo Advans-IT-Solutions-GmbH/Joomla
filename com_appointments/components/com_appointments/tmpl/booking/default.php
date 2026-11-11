@@ -8,8 +8,8 @@
 
 use Advans\Component\Appointments\Administrator\Helper\DateDisplay;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Site\Helper\BackLink;
 use Joomla\CMS\Language\Text;
-use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 
@@ -31,17 +31,29 @@ $mark = match ($state) {
     2 => '<path d="M7 7l10 10M17 7 7 17"/>',
     default => '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 1.5"/>',
 };
+$conferenceFailed = $this->item->conference_state === 'failed';
+// The focused status names everything that qualifies the outcome, so it is read out with it.
+$describedBy = trim(($this->notices ? 'appointment-notices' : '') . ($conferenceFailed ? ' appointment-conference-missing' : ''));
 ?>
 <div class="com-appointments com-appointments-confirmation">
     <div class="com-appointments-container">
-        <div class="com-appointments-card com-appointments-confirmation-card com-appointments-state-<?php echo $state; ?>">
+        <?php // The redirect after the booking lands at the card; its status takes the focus. ?>
+        <div id="appointment-confirmation" class="com-appointments-card com-appointments-confirmation-card com-appointments-state-<?php echo $state; ?>">
             <span class="com-appointments-confirmation-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" focusable="false" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><?php echo $mark; ?></svg></span>
             <h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
-            <p class="com-appointments-status"><?php echo Text::_(match ($state) {
+            <p class="com-appointments-status" role="status" tabindex="-1" autofocus data-appointments-result<?php echo $describedBy !== '' ? ' aria-describedby="' . $describedBy . '"' : ''; ?>><?php echo Text::_(match ($state) {
                 0 => 'COM_APPOINTMENTS_BOOKING_PENDING',
                 1 => 'COM_APPOINTMENTS_BOOKING_CONFIRMED',
                 2 => 'COM_APPOINTMENTS_MANAGE_CANCELLED',
             }); ?></p>
+            <?php if ($this->notices) : ?>
+                <?php // Messages of this outcome (see ResultNoticesTrait), rendered like Joomla's system messages. ?>
+                <div id="appointment-notices" class="com-appointments-notices">
+                    <?php foreach ($this->notices as $notice) : ?>
+                        <div class="alert alert-<?php echo $notice['type']; ?> com-appointments-alert"><?php echo $notice['message']; ?></div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
             <h2 class="com-appointments-title"><?php echo $this->escape($this->item->title); ?></h2>
             <dl class="com-appointments-summary">
                 <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_DATE'); ?></dt>
@@ -60,8 +72,8 @@ $mark = match ($state) {
                     <a class="btn btn-primary" href="<?php echo $this->escape($this->item->conference_url); ?>" rel="noreferrer noopener"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_JOIN'); ?></a>
                 </p>
             <?php endif; ?>
-            <?php if ($this->item->conference_state === 'failed') : ?>
-                <p class="alert alert-warning com-appointments-alert"><?php echo Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'); ?></p>
+            <?php if ($conferenceFailed) : ?>
+                <p id="appointment-conference-missing" class="alert alert-warning com-appointments-alert"><?php echo Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'); ?></p>
             <?php endif; ?>
             <?php if ($this->calendarLink !== '' || $this->manageLinks !== []) : ?>
                 <div class="com-appointments-actions com-appointments-confirmation-actions">
@@ -81,6 +93,6 @@ $mark = match ($state) {
                 <p class="form-text com-appointments-confirmation-note"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_CONFIRMATION_NOTE'); ?></p>
             <?php endif; ?>
         </div>
-        <p><a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtypes'); ?>"><?php echo Text::_('COM_APPOINTMENTS_BACK_TO_OVERVIEW'); ?></a></p>
+        <p><a class="btn btn-secondary com-appointments-return" href="<?php echo BackLink::resolve(false); ?>"><?php echo Text::_('COM_APPOINTMENTS_BACK_TO_OVERVIEW'); ?></a></p>
     </div>
 </div>

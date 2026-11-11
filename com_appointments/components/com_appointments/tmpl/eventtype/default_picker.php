@@ -48,7 +48,7 @@ $checked = is_string($values['start'] ?? null) ? $values['start'] : '';
 <div id="appointment-picker" class="com-appointments-picker<?php echo $chosen ? ' com-appointments-picker-day' : ''; ?>" data-appointments-picker data-month="<?php echo $this->escape($month); ?>" data-day="<?php echo $chosen ? $this->escape($this->day) : ''; ?>" data-zone="<?php echo $this->escape($zone); ?>" data-clock="<?php echo $this->escape($this->clock); ?>" data-has-slots="<?php echo $hasSlots ? '1' : '0'; ?>">
     <?php if ($slotError !== null && !$chosen) : ?>
         <?php /* A refusal without a usable time names no day: the reason stands above the calendar. */ ?>
-        <div id="booking-start-error" class="invalid-feedback com-appointments-field-error" role="alert"><?php echo $this->escape(Text::_($slotError)); ?></div>
+        <div id="booking-start-error" class="invalid-feedback com-appointments-field-error" role="alert" tabindex="-1" autofocus><?php echo $this->escape(Text::_($slotError)); ?></div>
     <?php endif; ?>
     <div class="com-appointments-picker-grid">
         <section class="com-appointments-calendar" aria-labelledby="appointment-calendar-title">
@@ -103,7 +103,7 @@ $checked = is_string($values['start'] ?? null) ? $values['start'] : '';
                     <span><?php echo Text::_('COM_APPOINTMENTS_BOOKING_BACK_CALENDAR'); ?></span>
                 </a>
                 <?php if ($slotError !== null && !$hasSlots) : ?>
-                    <div id="booking-start-error" class="invalid-feedback com-appointments-field-error" role="alert"><?php echo $this->escape(Text::_($slotError)); ?></div>
+                    <div id="booking-start-error" class="invalid-feedback com-appointments-field-error" role="alert" tabindex="-1" autofocus><?php echo $this->escape(Text::_($slotError)); ?></div>
                 <?php endif; ?>
                 <?php if (!$hasSlots) : ?>
                     <p class="com-appointments-empty"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_NO_SLOTS'); ?></p>

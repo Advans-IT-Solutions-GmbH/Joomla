@@ -123,7 +123,7 @@ $links = static function (string $html, string $class): array {
 $admin = new AppointmentsHttp('http://localhost', 'menu-admin');
 $state = [
     'filter' => null, 'contentLanguage' => false, 'siteLanguage' => false, 'languageFolder' => false,
-    'menuItems' => [], 'configuration' => null,
+    'menuItems' => [], 'configuration' => null, 'pageCache' => null,
 ];
 $tag = 'menu' . bin2hex(random_bytes(4));
 $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+3 days')->format('Y-m-d');
@@ -292,6 +292,18 @@ try {
     $check($items['list'] !== null && $items['list']['link'] === 'index.php?option=com_appointments&view=eventtypes',
         'Event type list menu item is saved');
 
+    // The options of the back button on the menu item form, translated.
+    if ($items['star'] !== null) {
+        $html = $admin->request('/administrator/index.php?option=com_menus&task=item.edit&id=' . (int) $items['star']['id']);
+        $check(str_contains($html, 'name="jform[params][show_back_link]"') && str_contains($html, 'name="jform[params][back_link_itemid]"')
+            // Also covers the tab label COM_APPOINTMENTS_MENU_FIELDSET_NAVIGATION.
+            && !str_contains($html, 'COM_APPOINTMENTS_MENU_FIELD'),
+            'The "Book an appointment" menu item form offers the translated back button options');
+        [$action, $fields] = $formData($html, '//form[@id="item-form"]');
+        $fields['task'] = 'item.cancel';
+        $admin->request($action, $fields);
+    }
+
     // An existing item keeps its target after the event type was unpublished.
     if ($items['star'] !== null) {
         $db->query("UPDATE {$prefix}appointments_eventtypes SET published=0 WHERE id={$events['star']['id']}");
@@ -440,6 +452,96 @@ try {
     $check(isset($mailLinks['cancel']) && str_starts_with($mailLinks['cancel'], 'http://localhost/index.php?option=com_appointments&view=manage&id='),
         'Mail links stay non-SEF and independent of the router');
 
+    // The signed pages and their receipts run in the frame of the booking page of the event type
+    // (its Itemid), not in the frame of the home page. The way back of these pages shows the frame:
+    // on a menu item of one event type it leads to that booking page.
+    $starItem = (int) ($items['star']['id'] ?? 0);
+    $bookingPage = '#^/index\.php/(?:en|de)/' . preg_quote($tag . '-all', '#') . '$#';
+    $first = static fn (array $found): string => (string) (reset($found) ?: '');
+    $check($starItem > 0 && isset($mailLinks['cancel']) && str_contains($mailLinks['cancel'], '&Itemid=' . $starItem),
+        'The mail links carry the Itemid of the booking page of their event type: ' . ($mailLinks['cancel'] ?? '(missing)'));
+    $check(str_contains($first($links($html, 'com-appointments-reschedule')), '&Itemid=' . $starItem)
+        && preg_match($bookingPage, $first($links($html, 'com-appointments-return'))) === 1,
+        'The confirmation page links the signed pages with the Itemid and leads back to the booking page: '
+        . $first($links($html, 'com-appointments-return')));
+
+    /** The values of the options of a select, in order. */
+    $optionValues = static function (string $html, string $id): array {
+        $document = new DOMDocument();
+        @$document->loadHTML($html);
+
+        return array_map(static fn (DOMElement $option): string => $option->getAttribute('value'),
+            iterator_to_array((new DOMXPath($document))->query('//select[@id="' . $id . '"]/option')));
+    };
+
+    // Reschedule with the link of the confirmation mail: the receipt stands at the booking page and
+    // gives this browser the new signed links, as the confirmation of a booking does.
+    if (isset($mailLinks['reschedule'], $booking['id'])) {
+        // With Joomla's page cache on, the receipt with its new signed links must not be cached for
+        // another browser: the signed pages switch the page cache off for their responses.
+        $state['pageCache'] = (int) $scalar("SELECT enabled FROM {$prefix}extensions WHERE type='plugin' AND folder='system' AND element='cache'");
+        $db->query("UPDATE {$prefix}extensions SET enabled=1 WHERE type='plugin' AND folder='system' AND element='cache'");
+        $mover = new AppointmentsHttp('http://localhost', 'menu-reschedule');
+        $oldReschedule = preg_replace('#^https?://[^/]+#', '', $mailLinks['reschedule']);
+        $html = $mover->request($oldReschedule);
+        $check($mover->status === 200 && preg_match($bookingPage, $first($links($html, 'com-appointments-return'))) === 1,
+            'The reschedule page of the mail link runs in the frame of the booking page: ' . $first($links($html, 'com-appointments-return')));
+        [$action, $fields] = $formData($html, '//form[contains(@class, "com-appointments-manage-form")]');
+        $current = (string) $fixture->row((int) $booking['id'])['start_utc'];
+        $other = array_values(array_filter($optionValues($html, 'new-start'), static fn (string $value): bool => $value !== $current));
+        $fields['start'] = $other[0] ?? '';
+        $fields[$mover->token($html)] = 1;
+        $fields['confirm'] = 1;
+        $before = AppointmentsMail::snapshot();
+        $html = $mover->request(preg_replace('#^https?://[^/]+#', '', $action), $fields);
+        $landing = preg_replace('#^https?://[^/]+#', '', (string) end($mover->locations));
+        $check($other !== [] && (string) $fixture->row((int) $booking['id'])['start_utc'] === $other[0],
+            'The mail link reschedules the booking');
+        $check($mover->landedAt($html, 'appointment-result')
+            && preg_match('#^/index\.php/(?:en|de)/' . preg_quote($tag . '-all', '#') . '\?#', $landing) === 1
+            && !str_contains($landing, 'component/appointments'),
+            'The receipt of the reschedule stands at the booking page, not in the frame of the home page: ' . $landing);
+        $newReschedule = $first($links($html, 'com-appointments-reschedule'));
+        $newCancel = $first($links($html, 'com-appointments-cancel'));
+        $check($newReschedule !== '' && $newCancel !== '' && $newReschedule !== $oldReschedule
+            && str_contains($newCancel, '&Itemid=' . $starItem) && str_contains($newCancel, 'action=cancel'),
+            'The receipt of the reschedule shows the new signed reschedule and cancel links');
+        $check(preg_match($bookingPage, $first($links($html, 'com-appointments-return'))) === 1,
+            'The receipt of the reschedule leads back to the booking page');
+
+        $rescheduleMail = [];
+        foreach (AppointmentsMail::messagesSince($before) as $mime) {
+            $decoded = html_entity_decode(AppointmentsMail::decoded($mime), ENT_QUOTES | ENT_HTML5);
+            if (preg_match_all('#https?://[^\s"<>]+view=manage[^\s"<>]+#', $decoded, $matches)) {
+                foreach ($matches[0] as $url) {
+                    parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+                    $linkAction = (string) ($query['action'] ?? '');
+                    if (strlen($url) > strlen($rescheduleMail[$linkAction] ?? '')) {
+                        $rescheduleMail[$linkAction] = $url;
+                    }
+                }
+            }
+        }
+        $check(isset($rescheduleMail['cancel']) && preg_replace('#^https?://[^/]+#', '', $rescheduleMail['cancel']) === $newCancel,
+            'The receipt shows the same new cancel link as the reschedule mail');
+
+        $html = $mover->request($newCancel);
+        $check($mover->status === 200 && str_contains($html, 'booking.manage'), 'The new cancel link of the receipt opens its page');
+        $outsider = new AppointmentsHttp('http://localhost', 'menu-reschedule-outsider');
+        $html = $outsider->request($landing);
+        $check($outsider->status === 404 && !str_contains($html, 'com-appointments-cancel'),
+            'Another browser gets neither the receipt nor the new links from its address, also with the page cache on');
+        $outsider->request($oldReschedule);
+        $check($outsider->status === 404, 'The reschedule link of the confirmation mail is rejected after the reschedule');
+        $db->query("UPDATE {$prefix}extensions SET enabled=" . (int) $state['pageCache'] . " WHERE type='plugin' AND folder='system' AND element='cache'");
+        $state['pageCache'] = null;
+
+        // The cancellation below uses the links of the newest mail.
+        if (isset($rescheduleMail['cancel'], $rescheduleMail['erase'])) {
+            $mailLinks = $rescheduleMail;
+        }
+    }
+
     if (isset($mailLinks['cancel'], $booking['id'])) {
         $guest = new AppointmentsHttp('http://localhost', 'menu-mail-link');
         $path = preg_replace('#^https?://[^/]+#', '', $mailLinks['cancel']);
@@ -455,12 +557,44 @@ try {
         [$action, $fields] = $formData($html, '//form[contains(@class, "com-appointments-manage-form")]');
         $fields[$guest->token($html)] = 1;
         $fields['confirm'] = 1;
-        $guest->request(preg_replace('#^https?://[^/]+#', '', $action), $fields);
+        $html = $guest->request(preg_replace('#^https?://[^/]+#', '', $action), $fields);
         $check((int) $fixture->row((int) $booking['id'])['state'] === 2, 'The signed cancel link cancels the booking after confirmation');
+        $landing = preg_replace('#^https?://[^/]+#', '', (string) end($guest->locations));
+        $check($guest->landedAt($html, 'appointment-result') && str_contains($landing, '/' . $tag . '-all?')
+            && !str_contains($landing, 'component/appointments') && $links($html, 'com-appointments-cancel') === []
+            && preg_match($bookingPage, $first($links($html, 'com-appointments-return'))) === 1,
+            'The cancellation receipt stands at the booking page, without links to the cancelled appointment: ' . $landing);
         // Another browser: the acting session is shown its completion notice instead.
         $outsider = new AppointmentsHttp('http://localhost', 'menu-used-link');
         $outsider->request($path);
         $check($outsider->status === 404, 'The used cancel link is rejected afterwards');
+    }
+
+    // The back button of a booking page: hidden on a menu item of one event type, so the list of
+    // all event types stays out of its reach; its options show it and choose where it leads.
+    $setParams = static function (int $id, array $values) use ($db, $prefix): void {
+        $row = $db->query("SELECT params FROM {$prefix}menu WHERE id=" . $id)->fetch_row();
+        $params = array_replace(json_decode((string) ($row[0] ?? ''), true) ?: [], $values);
+        $db->query("UPDATE {$prefix}menu SET params='" . $db->real_escape_string(json_encode($params)) . "' WHERE id=" . $id);
+    };
+    $html = $page('/index.php/en/' . $tag . '-all');
+    $check($site->status === 200 && $shows($html, $events['star']) && $links($html, 'com-appointments-return') === [],
+        'A menu item of one event type hides the back button by default');
+    $html = $page('/index.php/en/' . $tag . '-list/' . $events['list']['alias']);
+    $check($first($links($html, 'com-appointments-return')) === '/index.php/en/' . $tag . '-list',
+        'Below the list the back button still leads to the list: ' . $first($links($html, 'com-appointments-return')));
+    if ($starItem > 0 && isset($items['en']['id'])) {
+        $setParams($starItem, ['show_back_link' => '1']);
+        $html = $page('/index.php/en/' . $tag . '-all');
+        $check($first($links($html, 'com-appointments-return')) === '/index.php/en/' . $tag . '-list',
+            'Shown without a target, the back button leads to the list of all event types: ' . $first($links($html, 'com-appointments-return')));
+        $setParams($starItem, ['show_back_link' => '1', 'back_link_itemid' => (string) $items['en']['id']]);
+        $html = $page('/index.php/en/' . $tag . '-all');
+        $check($first($links($html, 'com-appointments-return')) === '/index.php/en/' . $tag . '-english',
+            'Shown with a target, the back button leads to the chosen menu item: ' . $first($links($html, 'com-appointments-return')));
+        $setParams($starItem, ['show_back_link' => '0']);
+        $html = $page('/index.php/en/' . $tag . '-all');
+        $check($links($html, 'com-appointments-return') === [], 'Hidden again, a chosen target shows no button');
     }
 } catch (Throwable $e) {
     echo 'FAIL ' . get_class($e) . ': ' . $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ")\n";
@@ -470,6 +604,9 @@ try {
         $db->query("DELETE FROM {$prefix}menu WHERE id=" . (int) $id);
     }
     $db->query("DELETE FROM {$prefix}menu WHERE client_id=0 AND alias LIKE '" . $escape($tag) . "-%'");
+    if ($state['pageCache'] !== null) {
+        $db->query("UPDATE {$prefix}extensions SET enabled=" . (int) $state['pageCache'] . " WHERE type='plugin' AND folder='system' AND element='cache'");
+    }
     if ($state['filter'] !== null) {
         $db->query("UPDATE {$prefix}extensions SET enabled=" . (int) $state['filter'] . " WHERE type='plugin' AND folder='system' AND element='languagefilter'");
     }

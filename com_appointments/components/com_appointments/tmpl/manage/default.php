@@ -8,6 +8,7 @@
 
 use Advans\Component\Appointments\Administrator\Helper\DateDisplay;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Site\Helper\BackLink;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
@@ -32,11 +33,39 @@ $error = fn (string $key): string => isset($errors[$key])
     ? '<div id="manage-' . $key . '-error" class="invalid-feedback com-appointments-field-error">' . $this->escape(Text::_($errors[$key])) . '</div>'
     : '';
 ?>
-<div class="com-appointments com-appointments-manage">
+<?php
+/*
+ * The completed state is the target of the redirect after a successful change
+ * (#appointment-result), so the outcome is in the first screen even below template modules;
+ * the status takes the focus (autofocus, or the booking script when the address has the
+ * fragment, which suppresses autofocus), so a screen reader reads it out.
+ */
+?>
+<div class="com-appointments com-appointments-manage"<?php echo $this->completed ? ' id="appointment-result"' : ''; ?>>
     <div class="com-appointments-container">
         <h1 class="com-appointments-heading"><?php echo $this->escape($this->pageHeading); ?></h1>
         <?php if ($this->completed) : ?>
-            <p class="com-appointments-status"><?php echo Text::_($results[$this->action]); ?></p>
+            <p class="com-appointments-status" role="status" tabindex="-1" autofocus data-appointments-result<?php echo $this->notices ? ' aria-describedby="appointment-notices"' : ''; ?>><?php echo Text::_($results[$this->action]); ?></p>
+            <?php if ($this->notices) : ?>
+                <?php // Messages of this outcome (see ResultNoticesTrait), rendered like Joomla's system messages. ?>
+                <div id="appointment-notices" class="com-appointments-notices">
+                    <?php foreach ($this->notices as $notice) : ?>
+                        <div class="alert alert-<?php echo $notice['type']; ?> com-appointments-alert"><?php echo $notice['message']; ?></div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+            <?php if ($this->manageLinks !== []) : ?>
+                <?php // After a reschedule the earlier links no longer apply: the new ones, as on the confirmation of a booking. ?>
+                <div class="com-appointments-actions com-appointments-confirmation-actions">
+                    <?php if (isset($this->manageLinks['reschedule_url'])) : ?>
+                        <a class="btn btn-outline-secondary com-appointments-reschedule" href="<?php echo $this->escape($this->manageLinks['reschedule_url']); ?>"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_RESCHEDULE'); ?></a>
+                    <?php endif; ?>
+                    <?php if (isset($this->manageLinks['cancel_url'])) : ?>
+                        <a class="btn btn-outline-secondary com-appointments-cancel" href="<?php echo $this->escape($this->manageLinks['cancel_url']); ?>"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_CANCEL'); ?></a>
+                    <?php endif; ?>
+                </div>
+                <p class="form-text com-appointments-confirmation-note"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_CONFIRMATION_NOTE'); ?></p>
+            <?php endif; ?>
         <?php else : ?>
             <?php
             $start = UtcTimestamp::parse($this->item->start_utc)->setTimezone($this->zone);
@@ -67,6 +96,10 @@ $error = fn (string $key): string => isset($errors[$key])
                     <input type="hidden" name="id" value="<?php echo (int) $this->item->id; ?>">
                     <input type="hidden" name="action" value="<?php echo $this->escape($this->action); ?>">
                     <input type="hidden" name="signature" value="<?php echo $this->escape($this->signature); ?>">
+                    <?php if ($this->itemId > 0) : ?>
+                        <?php // A GET form drops the query of its action: the frame of the page stays with this field. ?>
+                        <input type="hidden" name="Itemid" value="<?php echo $this->itemId; ?>">
+                    <?php endif; ?>
                     <div class="com-appointments-field">
                         <label class="form-label" for="manage-month"><?php echo Text::_('COM_APPOINTMENTS_MANAGE_MONTH'); ?></label>
                         <input class="form-control" id="manage-month" type="month" name="month" value="<?php echo $this->escape($this->month); ?>" required>
@@ -124,6 +157,6 @@ $error = fn (string $key): string => isset($errors[$key])
                 <p class="com-appointments-empty"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_NO_SLOTS'); ?></p>
             <?php endif; ?>
         <?php endif; ?>
-        <p><a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtypes'); ?>"><?php echo Text::_($this->completed ? 'COM_APPOINTMENTS_BACK_TO_OVERVIEW' : 'JCANCEL'); ?></a></p>
+        <p><a class="btn btn-secondary com-appointments-return" href="<?php echo BackLink::resolve(false); ?>"><?php echo Text::_($this->completed ? 'COM_APPOINTMENTS_BACK_TO_OVERVIEW' : 'JCANCEL'); ?></a></p>
     </div>
 </div>
