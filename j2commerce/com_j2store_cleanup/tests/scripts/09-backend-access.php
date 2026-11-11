@@ -4,7 +4,9 @@
  *
  * A synthetic member of the core "Manager" group logs into the administrator.
  * The component's permission rules are switched between three states and the
- * scan page and the cleanup task are requested the way a browser would:
+ * scan page and the cleanup task are requested the way a browser would. The
+ * run starts by upgrading the installed component from a state without the
+ * permission files, so every later check runs on an upgraded installation.
  *  - core.manage denied: the page and the task are refused.
  *  - core.manage allowed, core.delete denied: the scan is visible, but no
  *    selection is offered and a forged POST removes nothing.
@@ -16,6 +18,7 @@ require_once JPATH_BASE . '/includes/defines.php';
 $_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST']   ?? 'localhost';
 $_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
+require_once __DIR__ . '/shared-test-helpers.php';
 
 use Joomla\CMS\Factory;
 use Joomla\Database\DatabaseInterface;
@@ -110,6 +113,36 @@ try {
     );
     $original = $db->loadResult();
     ba_check('Precondition: the component has its own permission asset', $original !== null);
+
+    // 0. Upgrade from an installation without the permission files: earlier
+    // releases had no access.xml/config.xml, and an administrator may already
+    // have delegated core.manage. The upgrade must deliver both files and keep
+    // the rules exactly as they were (no automatic core.delete or core.admin).
+    $componentDir = JPATH_BASE . '/administrator/components/com_j2store_cleanup';
+    $package      = getenv('BACKEND_VIEWS_PACKAGE') ?: '/tmp/extension.zip';
+    $manifest     = sh_read_package_manifest($package);
+    ba_check('Precondition: the installation package is readable', $manifest !== null);
+    @unlink($componentDir . '/access.xml');
+    @unlink($componentDir . '/config.xml');
+    $legacyRules = '{"core.manage":{"6":1}}';
+    ba_set_rules($db, $legacyRules);
+    $upgrade = sys_get_temp_dir() . '/cleanup-upgrade-' . bin2hex(random_bytes(4)) . '.zip';
+    $built   = $manifest !== null && copy($package, $upgrade)
+        && sh_set_package_version($upgrade, $manifest['xmlfile'], sh_bump_version($manifest['version'])) !== null;
+    [$upgradeCode, $upgradeOutput] = $built ? sh_cli_install_reviewed_fixture(JPATH_BASE, $upgrade) : [1, ''];
+    @unlink($upgrade);
+    ba_check('The package upgrades the installed component', $built && $upgradeCode === 0);
+    clearstatcache();
+    ba_check('The upgrade delivers access.xml and config.xml',
+        is_file($componentDir . '/access.xml') && is_file($componentDir . '/config.xml'));
+    $db->setQuery(
+        ba_query($db)
+            ->select($db->quoteName('rules'))
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = ' . $db->quote('com_j2store_cleanup'))
+    );
+    ba_check('The upgrade keeps the existing rules and grants neither core.delete nor core.admin',
+        json_decode((string) $db->loadResult(), true) === json_decode($legacyRules, true));
 
     // Synthetic Manager with a random password that exists only for this run.
     $suffix   = bin2hex(random_bytes(6));
