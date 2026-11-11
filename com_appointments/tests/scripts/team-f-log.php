@@ -1085,6 +1085,39 @@ sleep(3);
             }
         });
 
+        $suite->test('A removal for a team member keeps their calendar entries, also on a retry after the account was pseudonymised', static function () use ($run) {
+            $result = $run('
+                $db = $services->db();
+                $group = (int) (((array) $services->params()->get("team_groups", []))[0] ?? 0);
+                $name = "teamfprivteam" . bin2hex(random_bytes(3));
+                $db->setQuery("INSERT INTO #__users (name, username, email, password, block, registerDate, params) VALUES (\"F team\", \"$name\", \"$name@example.test\", \"\", 0, UTC_TIMESTAMP(), \"{}\")")->execute();
+                $uid = (int) $db->insertid();
+                $db->setQuery("INSERT INTO #__user_usergroup_map (user_id, group_id) VALUES ($uid, $group)")->execute();
+
+                try {
+                    $application->bootComponent("com_privacy");
+                    $plugin = $application->bootPlugin("appointments", "privacy");
+                    $request = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
+                    $request->id = 800000 + random_int(1, 99999);
+                    $request->email = "$name@example.test";
+                    $request->status = 1;
+                    // First run with the account, then a retry in which Joomla no longer finds it.
+                    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance($uid)]));
+                    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => null]));
+                    $rows = $db->setQuery("SELECT details FROM #__appointments_teamlog WHERE event = " . $db->quote(AuditEvent::PRIVACY_DELETE) . " ORDER BY id DESC", 0, 2)->loadColumn();
+
+                    return ["request" => (int) $request->id, "rows" => array_map(static fn ($d): ?array => AuditService::decodeDetails($d), $rows)];
+                } finally {
+                    $db->setQuery("DELETE FROM #__user_usergroup_map WHERE user_id = $uid")->execute();
+                    $db->setQuery("DELETE FROM #__users WHERE id = $uid")->execute();
+                }');
+            $rows = $result['rows'] ?? [];
+
+            return \count($rows) === 2
+                && (int) ($rows[0]['request'] ?? 0) === $result['request'] && !empty($rows[0]['team_member'])
+                && (int) ($rows[1]['request'] ?? 0) === $result['request'] && !empty($rows[1]['team_member']);
+        });
+
         $privacyOpen = $openPackages(['A', 'B', 'C', 'D', 'E', 'F']);
 
         if ($privacyOpen !== '') {
