@@ -97,6 +97,18 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             return;
         }
 
+        // This shortcut answers before Joomla's own checks for a signed-in
+        // user: the MFA captive page and the forced password reset. A user who
+        // has not passed them yet goes the regular com_ajax way instead, so the
+        // shortcut never lets a password alone reach the profile or cart tasks.
+        $identity = $app->getIdentity();
+
+        if ($identity && !$identity->guest
+            && ((int) $app->getSession()->get('com_users.mfa_checked', 0) !== 1 || !empty($identity->requireReset))
+        ) {
+            return;
+        }
+
         // This is our AJAX request — handle it directly
         $result = $this->onAjaxJoomlaajaxforms();
 
