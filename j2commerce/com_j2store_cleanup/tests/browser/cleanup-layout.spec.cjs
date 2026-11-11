@@ -19,12 +19,19 @@ function contrast(a, b) {
 }
 
 test('cleanup page follows the Atum color scheme and fits the viewport', async ({ page }, testInfo) => {
+    // Atum's own color-scheme switch stores the choice in this cookie; it wins over
+    // the template and user settings, so each project renders the scheme it tests.
+    await page.context().addCookies([{
+        name: 'userColorScheme',
+        value: testInfo.project.use.colorScheme,
+        url: fixture.baseURL,
+    }]);
     await page.goto('/administrator/index.php');
     await page.fill('#mod-login-username', fixture.username);
     await page.fill('#mod-login-password', fixture.password);
     await page.click('#btn-login-submit');
-    // Wait until the login form has gone, i.e. the session is established.
-    await expect(page.locator('#mod-login-username')).toHaveCount(0, { timeout: 30_000 });
+    // The logout link exists only once the administrator session is established.
+    await expect(page.locator('a[href*="task=logout"]').first()).toBeAttached({ timeout: 30_000 });
 
     await page.goto('/administrator/index.php?option=com_j2store_cleanup');
     await expect(page.locator('.j2cleanup')).toBeVisible();
@@ -59,6 +66,8 @@ test('cleanup page follows the Atum color scheme and fits the viewport', async (
     console.log(`${testInfo.project.name}: ${details}`);
 
     const dark = testInfo.project.use.colorScheme === 'dark';
+    expect(m.scheme.colorScheme, `Atum renders the requested scheme: ${details}`)
+        .toBe(testInfo.project.use.colorScheme);
     // The component surface sits on the same side of the scheme as Atum's page.
     expect(luminance(m.page) < 0.4, `Atum page follows the scheme: ${details}`).toBe(dark);
     expect(luminance(m.surface) < 0.4, `component surface follows the scheme: ${details}`).toBe(dark);
