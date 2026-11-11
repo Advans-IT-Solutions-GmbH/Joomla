@@ -305,7 +305,7 @@ class ProfileTest
             // override does not render must not block the save.
             $fieldId = 0;
             try {
-                $fieldTable = Factory::getApplication()->bootComponent('com_fields')->getMVCFactory()->createTable('Field', 'Administrator');
+                $fieldTable = ajaxforms_bootstrap_site_application()->bootComponent('com_fields')->getMVCFactory()->createTable('Field', 'Administrator');
                 $bound = $fieldTable->bind([
                     'context' => 'com_users.user', 'title' => 'Ajaxforms required', 'name' => 'ajaxforms-required',
                     'label' => 'Ajaxforms required', 'type' => 'text', 'required' => 1, 'state' => 1,
