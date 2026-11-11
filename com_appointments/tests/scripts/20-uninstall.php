@@ -170,10 +170,30 @@ class UninstallTest
             $this->removeConflictAsset($conflict);
         }
 
+        // Kept tables of a version up to 1.4: CHAR(64) feed credential columns holding clear text.
+        $legacyFeedToken = bin2hex(random_bytes(32));
+        foreach (['appointments_hosts' => 'user_id', 'appointments_eventtypes' => 'id'] as $table => $key) {
+            $this->db->query("UPDATE {$this->dbPrefix}{$table} SET feed_token=SHA2(CONCAT({$key}, '-', RAND()), 256)");
+            $this->db->query("ALTER TABLE {$this->dbPrefix}{$table} MODIFY feed_token CHAR(64) NOT NULL");
+        }
+        $this->db->query("UPDATE {$this->dbPrefix}appointments_eventtypes SET feed_token='{$legacyFeedToken}' WHERE id = {$aclFixture['eventtype_id']}");
+
         $output = [];
         $exitCode = 0;
         exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/tmp/extension.zip --no-interaction 2>&1', $output, $exitCode);
         clearstatcache(true);
+        $this->test('Reinstall over kept tables of up to 1.4 widens the feed credential columns and stores only the keyed digest', function () use ($legacyFeedToken, $aclFixture) {
+            foreach (['appointments_hosts', 'appointments_eventtypes'] as $table) {
+                $column = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}{$table} LIKE 'feed_token'")->fetch_assoc();
+                if (!$column || strtolower((string) $column['Type']) !== 'char(67)') {
+                    return false;
+                }
+            }
+            $row = $this->db->query("SELECT feed_token FROM {$this->dbPrefix}appointments_eventtypes WHERE id = {$aclFixture['eventtype_id']}")->fetch_assoc();
+            $key = hash_hmac('sha256', 'com_appointments:feed-token', $this->siteSecret, true);
+
+            return $row && $row['feed_token'] === 'h1:' . hash_hmac('sha256', $legacyFeedToken, $key);
+        });
         $this->test('Component can be reinstalled with retained data and its stable epoch anchor', function () use ($exitCode, $anchorPath, $legacyAnchorPath, $anchorContent) {
             return $exitCode === 0 && $this->extensionId() > 0
                 && is_file($anchorPath) && file_get_contents($anchorPath) === $anchorContent

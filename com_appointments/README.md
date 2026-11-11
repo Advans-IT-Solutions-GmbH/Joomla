@@ -759,10 +759,10 @@ no URL matches until it is rotated for the first time. Normal event-type edits c
 old credential.
 
 Updating to 1.5.0 converts every stored clear-text credential into its digest, so every existing
-subscription keeps working without any action. If that step fails, the installer says so, the
-affected feeds answer 404 and opening the Calendar feeds view repeats the conversion. The view
-repeats it on every visit, whether the feeds are on or off, so tables kept from an older
-installation are converted as well.
+subscription keeps working without any action. A new installation over tables kept from an older
+version converts them the same way. The conversion runs only then, once: a clear-text value
+written into the database afterwards is never converted and never opens a feed. If the
+conversion fails, the installer says so and the affected feeds answer 404 until they are rotated.
 
 **Treat the full URL as a password.** Anyone who obtains it can read the calendar's appointment
 details. Never put it in an invitee email, a public page, an error report or application logs.

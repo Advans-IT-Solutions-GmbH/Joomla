@@ -118,15 +118,19 @@ $digests = static function (int $event) use ($fixture): array {
 // the server key of purpose feed-token (HMAC of "com_appointments:feed-token" with the site secret).
 $feedKey = hash_hmac('sha256', 'com_appointments:feed-token', (string) (new JConfig())->secret, true);
 $digest = static fn (string $token): string => 'h1:' . hash_hmac('sha256', $token, $feedKey);
-// A clear-text credential as an installation before 1.5.0 stored it.
-$seed = static function (string $scope, int $id) use ($fixture): string {
-    $token = bin2hex(random_bytes(32));
+// Writes a stored value straight into the database.
+$store = static function (string $scope, int $id, string $value) use ($fixture): void {
     $table = $scope === 'event' ? 'appointments_eventtypes' : 'appointments_hosts';
     $column = $scope === 'event' ? 'id' : 'user_id';
-    $fixture->db->query("UPDATE {$fixture->prefix}{$table} SET feed_token='{$token}' WHERE {$column}={$id}");
+    $fixture->db->query("UPDATE {$fixture->prefix}{$table} SET feed_token='{$value}' WHERE {$column}={$id}");
     if ($fixture->db->affected_rows !== 1) {
         throw new RuntimeException('The feed fixture credential was not stored.');
     }
+};
+// A known credential, stored as its keyed digest.
+$seed = static function (string $scope, int $id) use ($store, $digest): string {
+    $token = bin2hex(random_bytes(32));
+    $store($scope, $id, $digest($token));
     return $token;
 };
 // The address a rotation response shows once, for exactly the rotated feed.
@@ -173,22 +177,21 @@ try {
     $booking = $created['booking'];
     $check(preg_match('/^h1:[a-f0-9]{64}$/D', $digests($event)[1]) === 1,
         'A host created by the booking flow gets an unissued credential digest, never a clear-text credential');
-    // Clear-text credentials as stored before 1.5.0: they no longer authenticate as they are ...
+    // A clear-text credential written into the database after the 1.5.0 migration (a database
+    // writer without the site secret) never authenticates, and nothing ever converts it.
+    $planted = bin2hex(random_bytes(32));
+    $store('event', $event, $planted);
+    $http->request($feedPath('event', $event, $planted));
+    $check($http->status === 404, 'A clear-text credential planted in the database does not authenticate');
+    $admin->login();
+    $admin->request('/administrator/index.php?option=com_appointments&view=feeds');
+    $http->request($feedPath('event', $event, $planted));
+    $check($admin->status === 200 && $digests($event)[0] === $planted && $http->status === 404,
+        'Opening the feeds view does not convert a planted clear-text credential into a valid one');
     $eventToken = $seed('event', $event);
     $hostToken = $seed('host', $fixture->host);
     $otherToken = $seed('event', $otherEvent);
-    $http->request($feedPath('event', $event, $eventToken));
-    $check($http->status === 404, 'A clear-text credential in the database does not authenticate');
-    // ... until they are converted, which the installer does and the feeds view repeats.
-    $admin->login();
-    $admin->request('/administrator/index.php?option=com_appointments&view=feeds');
     [$eventDigest, $hostDigest] = $digests($event);
-    $check($admin->status === 200 && $eventDigest === $digest($eventToken) && $hostDigest === $digest($hostToken)
-        && $digests($otherEvent)[0] === $digest($otherToken)
-        && !str_contains($eventDigest . $hostDigest, $eventToken) && !str_contains($eventDigest . $hostDigest, $hostToken),
-        'Clear-text credentials are converted into their keyed digests, never kept');
-    $admin->request('/administrator/index.php?option=com_appointments&view=feeds');
-    $check($digests($event) === [$eventDigest, $hostDigest], 'Conversion is idempotent: a stored digest is never digested again');
     $http->request($feedPath('event', $event, substr($eventDigest, 3)));
     $check($http->status === 404, 'The stored digest itself does not open the feed');
     $path = $feedPath('event', $event, $eventToken);

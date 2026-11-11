@@ -36,8 +36,10 @@ final class FeedService
     /**
      * Converts every stored clear-text credential from before 1.5.0 into its keyed
      * digest. The token itself stays valid, so every existing subscription keeps
-     * working. Idempotent: a stored digest is never touched again. A malformed
-     * clear-text value, which never authenticated, becomes an unissued feed.
+     * working. A stored digest is never touched again. A malformed clear-text value,
+     * which never authenticated, becomes an unissued feed. Only the installer calls
+     * this, once, for tables of up to 1.4: a clear-text value written into the
+     * database later must stay unusable, so nothing else may convert it.
      *
      * @return  int  The number of converted credentials.
      */

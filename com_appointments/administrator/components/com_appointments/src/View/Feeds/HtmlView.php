@@ -49,7 +49,6 @@ class HtmlView extends BaseHtmlView
         $app->setHeader('Cache-Control', 'private, no-store', true);
         $app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
         $app->setHeader('Referrer-Policy', 'no-referrer', true);
-        $this->getModel()->convertLegacy();
         // Switched off, no feed is listed and no address is shown, only the replacement.
         $this->legacy = FeedService::legacyEnabled(ComponentHelper::getParams('com_appointments'));
         $this->items = $this->legacy ? $this->getModel()->getItems() : [];

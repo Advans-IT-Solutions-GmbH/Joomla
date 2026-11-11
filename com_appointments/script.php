@@ -34,6 +34,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
     private bool $hasExistingAppointmentsTables = false;
 
+    /** Whether the existing tables still have the clear-text feed credential columns of up to 1.4. */
+    private bool $hasLegacyFeedTokens = false;
+
     /**
      * The plugins this package bundles: group => [element, enabled on first install].
      * The team calendar plugins (CalDAV endpoint, key handling at sign-in) stay
@@ -168,6 +171,10 @@ class Com_appointmentsInstallerScript extends InstallerScript
         if (($type === 'install' || $type === 'discover_install') && !$this->restoreRetainedAssets()) {
             return false;
         }
+
+        // Read before the schema update widens the columns: only tables of a version before
+        // 1.5.0 hold clear-text feed credentials, and only those are converted, exactly once.
+        $this->hasLegacyFeedTokens = $type !== 'uninstall' && $this->feedTokenColumnsAreLegacy();
 
         return true;
     }
@@ -635,16 +642,42 @@ class Com_appointmentsInstallerScript extends InstallerScript
     }
 
     /**
-     * Token feed credentials up to 1.4 were stored in clear text. Replace each with
-     * its keyed digest (FeedToken), so the database holds no usable credential; the
-     * token in every existing subscription address stays valid. Idempotent. Should it
-     * fail, the Calendar feeds view repeats it, and until then such a feed answers 404.
+     * Whether the feed credential columns are still the CHAR(64) clear-text columns of up to 1.4.
+     * False when the tables do not exist (yet).
+     */
+    private function feedTokenColumnsAreLegacy(): bool
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+
+        try {
+            foreach (['#__appointments_eventtypes', '#__appointments_hosts'] as $table) {
+                $column = $db->setQuery('SHOW COLUMNS FROM ' . $db->quoteName($table) . ' LIKE ' . $db->quote('feed_token'))->loadAssoc();
+
+                if (\is_array($column) && strtolower((string) ($column['Type'] ?? '')) === 'char(64)') {
+                    return true;
+                }
+            }
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        return false;
+    }
+
+    /**
+     * Token feed credentials up to 1.4 were stored in clear text. Replace each with its keyed
+     * digest (FeedToken), so the database holds no usable credential; the token in every
+     * existing subscription address stays valid. Runs only when the installation found the
+     * columns of up to 1.4 (an update, or a new installation over kept tables, whose columns
+     * the schema update does not widen), so it happens exactly once: clear text written into
+     * the database later is never converted and never authenticates. Should it fail, the
+     * affected feeds answer 404 until they are rotated.
      */
     private function convertLegacyFeedTokens(): void
     {
         $class = '\\Advans\\Component\\Appointments\\Administrator\\Service\\FeedService';
 
-        if (!class_exists($class) || !method_exists($class, 'convertLegacy')) {
+        if (!$this->hasLegacyFeedTokens || !class_exists($class) || !method_exists($class, 'convertLegacy')) {
             return;
         }
 
@@ -652,11 +685,16 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) Factory::getApplication()->get('secret', ''));
 
         try {
+            // A new installation over kept tables does not run the schema update that widens them.
+            foreach (['#__appointments_hosts', '#__appointments_eventtypes'] as $table) {
+                $db->setQuery('ALTER TABLE ' . $db->quoteName($table) . ' MODIFY ' . $db->quoteName('feed_token') . ' CHAR(67) NOT NULL')->execute();
+            }
+
             (new $class($db, $keys))->convertLegacy();
         } catch (\Throwable $e) {
             $app = Factory::getApplication();
             $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
-            $app->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_FEED_TOKENS_PENDING'), 'warning');
+            $app->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_FEED_TOKENS_FAILED'), 'warning');
         }
     }
 

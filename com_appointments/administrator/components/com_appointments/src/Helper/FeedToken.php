@@ -19,7 +19,8 @@ defined('_JEXEC') or die;
  * without the site secret matches no token.
  *
  * A stored value without the prefix is a clear-text token from before 1.5.0.
- * It never authenticates; the installer converts it (FeedService::convertLegacy).
+ * It never authenticates. The installer converts the values of tables from up to 1.4
+ * once (FeedService::convertLegacy); a value written later is never converted.
  */
 final class FeedToken
 {

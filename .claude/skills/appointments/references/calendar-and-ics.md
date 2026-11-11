@@ -234,8 +234,10 @@ The feed URL is a bearer secret: anyone holding it sees the bookings. Treat it a
   token under the server key of purpose `feed-token` (`FeedToken`, from 1.5.0), never the token, so a
   database copy alone opens no feed and a row written without the site secret matches no token. The
   digests are compared with `hash_equals()`. A stored value without the prefix is a clear-text token
-  from before 1.5.0: it never authenticates, and `FeedService::convertLegacy()` (installer and every
-  visit of the Calendar feeds view) replaces it with its digest, so existing addresses keep working.
+  from before 1.5.0: it never authenticates. The installer replaces it with its digest once, when it
+  finds the `CHAR(64)` columns of up to 1.4 (update, or new installation over kept tables), with
+  `FeedService::convertLegacy()`, so existing addresses keep working. Nothing else converts: a value
+  planted later stays unusable.
 - Rotatable from the administrator interface, per feed. Rotation invalidates the old URL at once and
   the interface says so before rotating. Because only the digest is stored, the rotation response is
   the only place a URL is ever shown (no redirect, session or message queue holds it).

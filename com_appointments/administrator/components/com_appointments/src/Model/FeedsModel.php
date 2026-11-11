@@ -55,21 +55,6 @@ class FeedsModel extends BaseDatabaseModel
         return $items;
     }
 
-    /**
-     * The installer converts clear-text credentials from before 1.5.0 into keyed digests.
-     * This repeats it, whether the feeds are on or off, in case that step failed or the
-     * tables were kept from an older installation. Idempotent.
-     */
-    public function convertLegacy(): void
-    {
-        $user = Factory::getApplication()->getIdentity();
-        if (!$user->authorise('core.manage', 'com_appointments') || !$user->authorise('core.options', 'com_appointments')) {
-            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
-        }
-
-        (new FeedService($this->getDatabase()))->convertLegacy();
-    }
-
     /** The subscription address of a token that a rotation has just issued. */
     public function url(string $scope, int $id, string $token): string
     {
