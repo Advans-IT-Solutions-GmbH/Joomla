@@ -576,6 +576,44 @@ it implicitly.
 | Write | view, create, change and delete events | same |
 | Manage | as write | shares with team members, revokes, edits title, colour and description |
 
+#### Notifications
+
+Who receives which mail about a booking depends on whether its event type has a **target calendar
+in use**: internet calendars switched on, the calendar active and the host with effective write
+access to it. Only then does the booking land in the calendar as a copy.
+
+| Recipient | Without target calendar in use | With target calendar in use |
+|---|---|---|
+| Booking person and additional guests | their mail with calendar invitation (ICS) and their own links | unchanged |
+| Host | `host_*` mail with calendar invitation | calendar user mail **without** invitation, as below |
+| Every other user with effective access to the calendar | nothing | calendar user mail **without** invitation |
+
+Effective access means an active grant, an active account in an internet calendar group and an
+approved second factor, for internal and external users alike. Calendar users get a mail on a new
+booking (also one awaiting approval), an approval, a reschedule and a cancellation (also an
+erasure); only the host gets the reminder. There is no invitation because the appointment already
+reaches every calendar user through the synchronisation; an accepted invitation would show it a
+second time, for example in Outlook when the calendar is synchronised with the main calendar.
+
+| Role | Contents of the calendar user mail |
+|---|---|
+| Read, write, manage | What the calendar copy shows: event type, time, host, name and address of the booking person, guests, location and conference link. The host also gets the telephone number and the moderator link. Accounts that may open the booking list in the administrator also get a link to the booking. |
+| Free/busy | The calendar and the time only, when a time becomes busy, moves or becomes free again; no mail on an approval. Templates of this role can use `{calendar_title}`, `{start}`, `{end}` and `{timezone}` only; any other placeholder stays empty, so no edited template can reveal a name, an address or a title. |
+
+External users get what their role allows, like internal users with the same role. Each person
+gets each mail once: the host who is also a calendar user, an account with several grants and an
+address that already receives the booking person's or a guest's mail. Every mail uses the
+recipient's account language and time zone, otherwise the site defaults.
+
+**Switching the mails off:** in **My calendars** every calendar user switches the booking mails of
+each calendar off and on again, for their own account only; the default is on. The task takes the
+account from the signed-in session, never from the request, so neither a calendar owner nor an
+administrator can change another person's setting. A host of an event type that books into the
+calendar is warned that, with the mails off, they learn of new bookings only through the calendar.
+The setting is kept in the account's own parameters and disappears with the account. Mails about
+the account and its security cannot be switched off: new device, activation, changed grants,
+suspended access, deleted calendar and locked account.
+
 #### Devices and app passwords
 
 In **My calendars → Add device**, the user names the device, picks the client and confirms the usage
@@ -1206,6 +1244,12 @@ for them: the booking person the plain purpose, each additional guest the guest 
 neutrally, never with the booking person's name), and the host `host_notice` for a new or pending
 booking, the host template for approval, reschedule, cancellation and reminder (host wording with
 the booking person's details, never a mail addressed to the booking person), and the erasure notice.
+With a target calendar in use, the host and the other users of that calendar get the eight calendar
+user templates instead, without calendar invitation: `calendar_booked`, `calendar_approved`,
+`calendar_rescheduled`, `calendar_cancelled` and `calendar_reminder` for the roles that read
+contents, `calendar_busy`, `calendar_busy_moved` and `calendar_free` for the free/busy role (see
+[Notifications](#notifications)). They know the placeholder `{calendar_title}` in addition and
+append a link to «My calendars», where each user switches them off.
 An update adds missing templates, including the guest and host templates on an existing
 installation, and never overwrites a template you edited. If you customised the invitee templates
 of those purposes for the host as well, adapt the new host templates.
@@ -1242,6 +1286,7 @@ empty, so a telephone appointment shows no empty location:
 | `{start_utc}`, `{end_utc}`, `{state}`, `{id}`, `{uid}`, `{sequence}` and the other booking columns | Raw booking values |
 | `{reschedule_url}`, `{cancel_url}`, `{erase_url}` | Signed links, in mails to the booking person only |
 | `{guest_email}`, `{guest_remove_url}` | In a guest template only: the guest's own address and the signed link that removes only that address |
+| `{calendar_title}` | In a calendar user template only: the title of the target calendar |
 
 Use only single-line values in subjects.
 

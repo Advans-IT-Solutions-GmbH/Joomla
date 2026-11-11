@@ -58,8 +58,11 @@ See the component README, "Email templates", and the repository-wide language co
 2. **The component owns the calendar.** It does not read a user's existing mailbox or calendar to
    detect conflicts. Conflicts are prevented by the component's own availability rules, its own
    bookings and its own blocked periods. Anything else is a later, opt-in extension.
-3. **Every outgoing e-mail carries the iCalendar entry**, as an attachment, for every state change:
-   confirmation, reschedule and cancellation. See `references/calendar-and-ics.md`.
+3. **Every e-mail to the invitee and the guests carries the iCalendar entry**, as an attachment, for
+   every state change: confirmation, reschedule and cancellation. So does the host's mail while the
+   event type has no target calendar in use. With one, the host and every user of the target
+   calendar get a mail without attachment (the entry arrives through the synchronisation). See
+   `references/calendar-and-ics.md` and `references/team-calendars.md`, section 12.
 4. **An invitee can get their data deleted without an account**, from a link in the e-mail they
    already hold, and through Joomla's own data subject request workflow. See
    `references/privacy-and-deletion.md`. This is a shipped feature, not a manual database task for

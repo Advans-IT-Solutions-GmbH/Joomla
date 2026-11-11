@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Administrator\Service;
 
 use Advans\Component\Appointments\Administrator\Helper\BookingData;
+use Advans\Component\Appointments\Administrator\Helper\CalendarNotice;
 use Advans\Component\Appointments\Administrator\Helper\DefaultTemplates;
 use Advans\Component\Appointments\Administrator\Helper\IcsWriter;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
@@ -17,16 +18,20 @@ use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Helper\MailLanguage;
 use Advans\Component\Appointments\Administrator\Helper\MailPresentation;
 use Advans\Component\Appointments\Administrator\Helper\ManageMenuItem;
+use Advans\Component\Appointments\Administrator\Helper\NotificationSwitch;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
+use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Language\Language;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Mail\MailerFactoryInterface;
 use Joomla\CMS\Mail\Exception\MailDisabledException;
+use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
+use Joomla\Database\ParameterType;
 
 defined('_JEXEC') or die;
 
@@ -34,7 +39,10 @@ final class NotificationService
 {
     private ?BookingData $data = null;
 
-    public function __construct(private DatabaseInterface $db)
+    /**
+     * @param   TeamServices|null  $team  The internet calendars; null reads them from the application when needed.
+     */
+    public function __construct(private DatabaseInterface $db, private ?TeamServices $team = null)
     {
     }
 
@@ -101,6 +109,9 @@ final class NotificationService
         // Every recipient uses their own account language, else the site's default.
         $siteLanguage = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
         $hostLanguage = MailLanguage::resolve((string) ($hostParams['language'] ?? ''), $siteLanguage);
+        // With a target calendar in use, the host and every other user of that calendar get a mail
+        // without invitation (CalendarNotice); without one, the host keeps the mail with invitation.
+        $calendar = $this->calendarAudience($booking, $event);
         $recipients = [];
         // The guests of the stored booking now, not of the copy the caller loaded earlier: a guest
         // who removed their address in the meantime gets no further mail and is no attendee of the
@@ -127,7 +138,10 @@ final class NotificationService
                     $recipients[] = [$guest, $languages[$guest], false, false, true];
                 }
             }
-            $recipients[] = [$event['host_email'], $hostLanguage, true, false, false];
+            if ($calendar === null) {
+                $recipients[] = [$event['host_email'], $hostLanguage, true, false, false];
+            }
+
             $failures = 0;
             $conferences = ConferenceService::forComponent($this->db);
 
@@ -217,6 +231,24 @@ final class NotificationService
                     $failures++;
                 }
             }
+
+            if ($calendar !== null) {
+                $taken = array_map(static fn (array $recipient): string => (string) $recipient[0], $recipients);
+                $accounts = [];
+
+                foreach ($calendar['members'] as $member) {
+                    $accounts[(int) $member['user_id']] = $member['account'];
+                }
+
+                foreach (CalendarNotice::plan($purpose, (int) $event['host_user_id'], $calendar['members'], $taken) as $entry) {
+                    try {
+                        $this->sendToCalendarUser($entry, $accounts[$entry['user_id']], $booking, $event, $calendar, $siteLanguage, $now, $conferences);
+                    } catch (NotificationException | MailDisabledException | \PHPMailer\PHPMailer\Exception | \InvalidArgumentException | \JsonException $e) {
+                        Log::add('Appointment calendar notification failed: booking ' . (int) $booking['id'] . ', purpose ' . $purpose, Log::ERROR, 'com_appointments');
+                        $failures++;
+                    }
+                }
+            }
         } finally {
             // Nothing is written here: committing only releases the lock (or the savepoint).
             if ($stored) {
@@ -229,11 +261,202 @@ final class NotificationService
         }
     }
 
+    /**
+     * The users of the target calendar the booking is copied into, or null when no target calendar
+     * is in use: none set, internet calendars off, the calendar inactive, or the host without an
+     * effective write access (BookingCalendarBridge writes the copy only then). Null keeps the host's
+     * mail with invitation, so the host always learns of a booking. A calendar that cannot be read
+     * counts as none, for the same reason.
+     *
+     * @return  array{id: int, title: string, members: list<array{user_id: int, email: string, role: int, muted: bool, backend: bool, account: object}>}|null
+     */
+    private function calendarAudience(array $booking, array $event): ?array
+    {
+        $calendarId = (int) ($event['calendar_id'] ?? 0);
+        $host = (int) ($event['host_user_id'] ?? 0);
+
+        if ($calendarId < 1 || $host < 1 || (int) ($booking['host_user_id'] ?? $host) !== $host) {
+            return null;
+        }
+
+        try {
+            $team = $this->team ??= TeamServices::fromApplication();
+
+            if (!$team->enabled()) {
+                return null;
+            }
+
+            $calendar = $team->calendars()->get($calendarId);
+            $grants = $team->grants();
+            $hostAccess = $calendar !== null && (int) $calendar->state === 1 ? $grants->accessFor($host, $calendarId) : null;
+
+            if ($hostAccess === null || !$hostAccess->role->canWrite()) {
+                return null;
+            }
+
+            $members = [];
+
+            foreach ($grants->grantsOf($calendarId) as $grant) {
+                $userId = (int) $grant->user_id;
+                // Effective only: active grant, valid row, active account in a calendar group, second factor.
+                $access = $userId === $host ? $hostAccess : $grants->accessFor($userId, $calendarId);
+                $account = $access === null ? null : $this->account($userId);
+
+                if ($account === null || (int) $account->block !== 0) {
+                    continue;
+                }
+
+                $members[] = [
+                    'user_id' => $userId,
+                    'email' => (string) $account->email,
+                    'role' => $access->role->value,
+                    'muted' => \in_array($calendarId, NotificationSwitch::mutedFrom((string) $account->params), true),
+                    'backend' => $access->role->holdsKey() && $this->opensBackend($userId),
+                    'account' => $account,
+                ];
+            }
+
+            return ['id' => $calendarId, 'title' => (string) $calendar->title, 'members' => $members];
+        } catch (\Throwable $e) {
+            Log::add('Appointment notification: the target calendar of event type ' . (int) $event['id'] . ' could not be read (' . $e::class . ').', Log::WARNING, 'com_appointments');
+
+            return null;
+        }
+    }
+
+    /**
+     * One booking mail to one user of the target calendar, in that user's account language and
+     * time zone, without calendar invitation. A role that reads contents gets the details of the
+     * calendar copy (the host also the telephone and the moderator link); free/busy gets the time
+     * only. Links: the booking in the administrator for whoever may open it, and «My calendars»,
+     * where the mails of the calendar are switched off.
+     *
+     * @param   array{user_id: int, email: string, purpose: string, content: bool, host: bool, backend: bool}  $entry
+     * @param   array{id: int, title: string}  $calendar
+     */
+    private function sendToCalendarUser(array $entry, object $account, array $booking, array $event, array $calendar, string $siteLanguage,
+        \DateTimeImmutable $now, ConferenceService $conferences): void
+    {
+        $app = Factory::getApplication();
+        $params = json_decode((string) $account->params, true) ?: [];
+        $tag = MailLanguage::resolve((string) ($params['language'] ?? ''), $siteLanguage);
+        $timezone = (string) ($params['timezone'] ?? '');
+
+        if (!\in_array($timezone, \DateTimeZone::listIdentifiers(), true)) {
+            $timezone = (string) $app->get('offset', 'UTC');
+        }
+
+        $template = $this->template((int) $booking['eventtype_id'], $entry['purpose'], $tag);
+        $language = new Language($tag);
+        $language->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments', $tag, true);
+        $labelFormat = $language->_('COM_APPOINTMENTS_MAIL_LINK_LABEL');
+        $labelFormat = str_contains($labelFormat, '%s') ? $labelFormat : '%s:';
+        $presentation = (new MailPresentation())->placeholders($booking, $tag, $timezone);
+        $title = trim((string) preg_replace('/[\r\n\t]+/', ' ', $calendar['title']));
+        $base = $this->publicBase();
+        $links = [];
+
+        if ($entry['content']) {
+            $presentation['{state_label}'] = $language->_(match ((int) $booking['state']) {
+                0 => 'COM_APPOINTMENTS_MAIL_STATE_PENDING',
+                1 => 'COM_APPOINTMENTS_MAIL_STATE_CONFIRMED',
+                2 => 'COM_APPOINTMENTS_MAIL_STATE_CANCELLED',
+                default => throw new \InvalidArgumentException('Invalid notification booking state.'),
+            });
+            $template['subject'] = strtr($template['subject'], $presentation);
+            $template['body'] = strtr($template['body'], $presentation);
+            $recipientBooking = $booking;
+
+            if ($entry['host']) {
+                if (!empty($booking['conference_url'])) {
+                    $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
+                }
+            } else {
+                // What the calendar copy shows, no more: the telephone and the answers stay with the host.
+                $recipientBooking['invitee_phone'] = null;
+                $recipientBooking['custom_fields'] = null;
+            }
+
+            $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $event, [], $now);
+            $message = ['subject' => strtr($message['subject'], ['{calendar_title}' => $title]), 'body' => strtr($message['body'], ['{calendar_title}' => $title])];
+            $conference = (string) ($recipientBooking['conference_url'] ?? '');
+
+            if ($conference !== '' && (int) $booking['state'] !== 2) {
+                $links[$conference] = 'COM_APPOINTMENTS_MAIL_JOIN';
+            }
+
+            if ($entry['backend'] && $base !== null) {
+                $links[rtrim($base, '/') . '/administrator/index.php?option=com_appointments&view=booking&id=' . (int) $booking['id']] = 'COM_APPOINTMENTS_MAIL_CALENDAR_LINK_BOOKING';
+            }
+        } else {
+            $message = CalendarNotice::freeBusyText($template, $presentation + ['{calendar_title}' => $title]);
+        }
+
+        if ($base !== null) {
+            $links[rtrim($base, '/') . '/index.php?option=com_appointments&view=mycalendars'] = 'COM_APPOINTMENTS_MAIL_CALENDAR_LINK_SETTINGS';
+        }
+
+        $known = [];
+
+        foreach ($links as $url => $key) {
+            $known[(string) $url] = $language->_($key);
+
+            if (!str_contains($message['body'], (string) $url)) {
+                $message['body'] .= "\n\n" . sprintf($labelFormat, $language->_($key)) . "\n" . $url;
+            }
+        }
+
+        if (preg_match('/[\x00-\x1f\x7f]/', $message['subject'])) {
+            throw new \InvalidArgumentException('Invalid mail subject.');
+        }
+
+        $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
+        $mailer->setSender([(string) $app->get('mailfrom'), (string) $app->get('fromname')]);
+        $mailer->addRecipient($entry['email']);
+        $mailer->setSubject($message['subject']);
+        $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'), null, $mailer, $known, $base);
+
+        if ($html !== null) {
+            $mailer->isHtml(true);
+            $mailer->setBody($html);
+            $mailer->AltBody = $message['body'];
+        } else {
+            $mailer->setBody($message['body']);
+            $mailer->isHtml(false);
+        }
+
+        // No attachment: the entry arrives through the calendar synchronisation.
+        if (!$mailer->send()) {
+            throw new NotificationException('Mail delivery was rejected.');
+        }
+    }
+
+    /** Name, address, parameters and state of an account, or null. */
+    private function account(int $userId): ?object
+    {
+        $db = $this->db;
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName(['id', 'name', 'email', 'params', 'block']))->from($db->quoteName('#__users'))
+            ->where($db->quoteName('id') . ' = :id')->bind(':id', $userId, ParameterType::INTEGER);
+
+        return $db->setQuery($query)->loadObject() ?: null;
+    }
+
+    /** Whether the account may open the booking in the administrator. */
+    private function opensBackend(int $userId): bool
+    {
+        $user = Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById($userId);
+
+        return (int) $user->id === $userId && (int) $user->block === 0
+            && $user->authorise('core.login.admin') && $user->authorise('core.manage', 'com_appointments');
+    }
+
     public function event(int $eventId): array
     {
         $db = $this->db;
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['e.id', 'e.title', 'e.description', 'e.duration_minutes', 'e.location_type', 'e.location_text']))
+        $query->select($db->quoteName(['e.id', 'e.title', 'e.description', 'e.duration_minutes', 'e.location_type', 'e.location_text',
+            'e.host_user_id', 'e.calendar_id']))
             ->select($db->quoteName('u.email', 'host_email'))->select($db->quoteName('u.name', 'host_name'))
             ->select($db->quoteName('u.params', 'host_params'))
             ->from($db->quoteName('#__appointments_eventtypes', 'e'))

@@ -69,9 +69,35 @@ $date = static fn (?string $utc): string => $utc === null || $utc === ''
                             <?php endif; ?>
                             <span class="com-appointments-mycal-name"><?php echo $this->escape($calendar->title); ?></span>
                             <span class="com-appointments-mycal-meta"><?php echo Text::_($roles[$calendar->role->value]); ?></span>
+                            <?php if ($this->mailOff !== null) : ?>
+                                <?php
+                                // The user's own switch for the booking mails of this calendar; the task takes the
+                                // account from the session, the form names only the calendar and the new state.
+                                $mailOn = !\in_array($calendar->calendarId, $this->mailOff, true);
+                                $hosts = \in_array($calendar->calendarId, $this->hosted, true);
+                                $notifyId = 'mycal-notify-' . (int) $calendar->calendarId;
+                                ?>
+                                <form method="post" action="<?php echo Route::_('index.php?option=com_appointments&task=notifications.save'); ?>" class="com-appointments-mycal-notify">
+                                    <span id="<?php echo $notifyId; ?>" class="com-appointments-mycal-notify-state">
+                                        <?php echo Text::sprintf('COM_APPOINTMENTS_NOTIFY_LABEL', '<strong>' . Text::_($mailOn ? 'COM_APPOINTMENTS_NOTIFY_STATE_ON' : 'COM_APPOINTMENTS_NOTIFY_STATE_OFF') . '</strong>'); ?>
+                                    </span>
+                                    <input type="hidden" name="calendar" value="<?php echo (int) $calendar->calendarId; ?>">
+                                    <input type="hidden" name="enabled" value="<?php echo $mailOn ? '0' : '1'; ?>">
+                                    <?php echo HTMLHelper::_('form.token'); ?>
+                                    <button type="submit" class="btn btn-secondary" aria-describedby="<?php echo $notifyId . ($hosts && $mailOn ? ' ' . $notifyId . '-host' : ''); ?>">
+                                        <?php echo Text::_($mailOn ? 'COM_APPOINTMENTS_NOTIFY_TURN_OFF' : 'COM_APPOINTMENTS_NOTIFY_TURN_ON'); ?><span class="visually-hidden">: <?php echo $this->escape($calendar->title); ?></span>
+                                    </button>
+                                    <?php if ($hosts && $mailOn) : ?>
+                                        <p id="<?php echo $notifyId; ?>-host" class="com-appointments-notice" role="note"><?php echo Text::_('COM_APPOINTMENTS_NOTIFY_HOST_WARNING'); ?></p>
+                                    <?php endif; ?>
+                                </form>
+                            <?php endif; ?>
                         </li>
                     <?php endforeach; ?>
                 </ul>
+                <?php if ($this->mailOff !== null) : ?>
+                    <p class="com-appointments-mycal-notify-hint"><?php echo Text::_('COM_APPOINTMENTS_NOTIFY_HINT'); ?></p>
+                <?php endif; ?>
             <?php endif; ?>
         </section>
 
