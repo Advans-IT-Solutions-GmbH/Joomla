@@ -248,8 +248,10 @@ final class PrivacyReview
 
                 $changed = self::withoutAddress($ics, $email, $placeholder);
 
-                // Written only when the address is really gone, as the search would see it.
-                if (\in_array($email, $this->services->timing()->emails($changed), true)) {
+                // Written only when the address is really gone: as the search sees it, and in
+                // every property and parameter (a second pass would change nothing).
+                if (\in_array($email, $this->services->timing()->emails($changed), true)
+                    || self::withoutAddress($changed, $email, $placeholder) !== $changed) {
                     return 'COM_APPOINTMENTS_PRIVACY_REVIEW_NOT_REMOVABLE';
                 }
 
@@ -284,7 +286,8 @@ final class PrivacyReview
             return $ics;
         }
 
-        $replacement = str_replace(['\\', '$'], ['\\\\', '\\$'], self::text($placeholder));
+        // Inserted literally by a callback, so only the iCalendar escaping applies.
+        $replacement = self::text($placeholder);
         $lines = [];
 
         foreach (preg_split('/\r?\n/', (string) preg_replace('/\r?\n[ \t]/', '', $ics)) ?: [] as $line) {
@@ -297,7 +300,7 @@ final class PrivacyReview
                 continue;
             }
 
-            $lines[] = self::replaceAddress($line, $email, $replacement);
+            $lines[] = self::replaceInLine($line, $email, $replacement);
         }
 
         return implode("\r\n", array_map([self::class, 'fold'], $lines)) . "\r\n";
@@ -318,7 +321,7 @@ final class PrivacyReview
             if (preg_match('/^(ATTENDEE|ORGANIZER)(?:;(?:[^:"]|"[^"]*")*)?:(.*)$/is', $line, $match) === 1
                 && self::address($match[2]) === $email) {
                 $roles[strtoupper($match[1]) === 'ORGANIZER' ? self::ROLE_ORGANIZER : self::ROLE_ATTENDEE] = true;
-            } elseif ($email !== '' && str_contains($email, '@') && self::replaceAddress($line, $email, '') !== $line) {
+            } elseif ($email !== '' && str_contains($email, '@') && self::replaceInLine($line, $email, '') !== $line) {
                 $roles[self::ROLE_TEXT] = true;
             }
         }
@@ -356,7 +359,31 @@ final class PrivacyReview
     }
 
     /**
-     * Every complete address in a line that is the requested one, replaced. Addresses are
+     * One content line with the address replaced in its parameter values (each value on its
+     * own, so `CN=anna@…` is not read as the address `CN=anna@…`) and in its value. A quoted
+     * parameter value stays quoted; an unquoted one is quoted when the replacement needs it.
+     */
+    private static function replaceInLine(string $line, string $email, string $replacement): string
+    {
+        if (preg_match('/^([A-Za-z0-9-]+)((?:;(?:[^:"]|"[^"]*")*)?):(.*)$/s', $line, $parts) !== 1) {
+            return self::replaceAddress($line, $email, $replacement);
+        }
+
+        $params = preg_replace_callback('/([=,])("[^"]*"|[^;:,"]*)/', static function (array $item) use ($email, $replacement): string {
+            if (str_starts_with($item[2], '"')) {
+                return $item[1] . '"' . self::replaceAddress(substr($item[2], 1, -1), $email, $replacement) . '"';
+            }
+
+            $value = self::replaceAddress($item[2], $email, $replacement);
+
+            return $item[1] . ($value !== $item[2] && preg_match('/[;:,]/', $value) === 1 ? '"' . $value . '"' : $value);
+        }, $parts[2]);
+
+        return $parts[1] . ($params ?? $parts[2]) . ':' . self::replaceAddress($parts[3], $email, $replacement);
+    }
+
+    /**
+     * Every complete address in a text that is the requested one, replaced. Addresses are
      * found with the character rules of the timing index's text search, also with a
      * percent-encoded «@», and compared as a whole: another address that merely contains
      * the requested one (`x!anna@…`, `anna@….com`) stays untouched. A line that is not

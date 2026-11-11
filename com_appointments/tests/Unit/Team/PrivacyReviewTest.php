@@ -64,6 +64,18 @@ final class PrivacyReviewTest extends TestCase
         self::assertStringContainsString('and .[removed].', $changed);
         self::assertStringContainsString('SENT-BY="mailto:[removed]":mailto:other@example.test', $changed);
     }
+    public function testAnAddressInAnUnquotedParameterOfAnotherAttendeeGoes(): void
+    {
+        $ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:own-4\r\nSUMMARY:Call anna@example.test\r\n"
+            . "ATTENDEE;CN=anna@example.test:mailto:other@example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        $changed = PrivacyReview::withoutAddress($ics, 'anna@example.test', '[removed]');
+
+        // The parameter value is read on its own, not as the address «CN=anna@…».
+        self::assertStringContainsString('ATTENDEE;CN=[removed]:mailto:other@example.test', $changed);
+        self::assertStringNotContainsString('anna@example.test', $changed);
+        // A second pass changes nothing: the address is gone everywhere.
+        self::assertSame($changed, PrivacyReview::withoutAddress($changed, 'anna@example.test', '[removed]'));
+    }
     public function testAnOrganiserAddressAndLongLines(): void
     {
         $ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:own-2\r\nORGANIZER:mailto:anna@example.test\r\n"
