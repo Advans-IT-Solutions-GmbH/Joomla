@@ -121,35 +121,38 @@ final class MimeMessage
         // truncating the report; the IMAP path would then mark the message
         // processed as unparseable. The pattern is newline-anchored (a leading
         // newline is prepended so a delimiter at the very start of the body is
-        // matched too) and matches both the opening and the closing delimiter;
-        // the epilogue left after the closing one carries no part headers and is
-        // skipped below. The split is still capped by the remaining budget:
-        // preg_split() allocates its whole array up front, so an unbounded split
-        // on a short, heavily repeated boundary is the core exhaustion vector.
-        $pattern  = '/\n--' . preg_quote($boundary, '/') . '(?:--)?[\t ]*(?=\n|$)/';
-        $segments = preg_split($pattern, "\n" . $body, $budget + 1);
+        // matched too). Everything after the closing delimiter is the epilogue,
+        // which is never a part, so it is cut off first and only opening
+        // delimiters are split on. The split is still capped by the remaining
+        // budget: preg_split() allocates its whole array up front, so an
+        // unbounded split on a short, heavily repeated boundary is the core
+        // exhaustion vector.
+        $quoted  = preg_quote($boundary, '/');
+        $closing = '/\n--' . $quoted . '--[\t ]*(?=\n|$)/';
+        $pattern = '/\n--' . $quoted . '[\t ]*(?=\n|$)/';
+        $body    = "\n" . $body;
+
+        if (preg_match($closing, $body, $match, PREG_OFFSET_CAPTURE) === 1) {
+            $body = substr($body, 0, $match[0][1]);
+        }
+
+        $segments = preg_split($pattern, $body, $budget + 1);
 
         if ($segments === false) {
             return [];
         }
 
         // The split stops at the budget and leaves the rest of the body in its
-        // last segment: the last part plus everything after it. Cut that
-        // remainder at its first delimiter so the last part is read without
-        // the delimiter (otherwise, for example, a base64 report would fail to
-        // decode). A closing delimiter there only leaves the epilogue; an
-        // opening one means parts were left unread.
+        // last segment: the last part plus every later one. Cut that remainder
+        // at its next delimiter so the last part is read without it (otherwise,
+        // for example, a base64 report would fail to decode); a delimiter there
+        // means parts were left unread.
         if (\count($segments) > $budget) {
             $last = (string) array_pop($segments);
 
             if (preg_match($pattern, $last, $match, PREG_OFFSET_CAPTURE) === 1) {
-                $closing = '/^\n--' . preg_quote($boundary, '/') . '--/';
-
-                if (preg_match($closing, $match[0][0]) !== 1) {
-                    $truncated = true;
-                }
-
-                $last = substr($last, 0, $match[0][1]);
+                $truncated = true;
+                $last      = substr($last, 0, $match[0][1]);
             }
 
             $segments[] = $last;

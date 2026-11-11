@@ -326,6 +326,44 @@ class MimeMessageTest extends TestCase
         $this->assertFalse($truncated);
     }
 
+    public function testNestedMessageUsingTheWholeCeilingWithEpiloguesIsComplete(): void
+    {
+        // One nested multipart (1 part) holding 998 text parts and a report
+        // (999 parts) uses the whole ceiling of 1000. Both levels end with a
+        // closing delimiter and an epilogue. Epilogues are not parts, so the
+        // complete message must not be reported as truncated.
+        $nested = '';
+
+        for ($i = 0; $i < 998; $i++) {
+            $nested .= "--N\r\nContent-Type: text/plain\r\n\r\nnested " . $i . "\r\n";
+        }
+
+        $nested .= "--N\r\n"
+            . "Content-Type: application/gzip; name=\"report.xml.gz\"\r\n"
+            . "Content-Disposition: attachment; filename=\"report.xml.gz\"\r\n"
+            . "Content-Transfer-Encoding: base64\r\n\r\n"
+            . base64_encode('payload') . "\r\n"
+            . "--N--\r\n"
+            . "nested epilogue\r\n";
+
+        $raw = "From: reporter@example.net\r\n"
+            . "MIME-Version: 1.0\r\n"
+            . "Content-Type: multipart/mixed; boundary=\"B\"\r\n"
+            . "\r\n"
+            . "--B\r\n"
+            . "Content-Type: multipart/mixed; boundary=\"N\"\r\n"
+            . "\r\n"
+            . $nested
+            . "--B--\r\n"
+            . "outer epilogue\r\n";
+
+        $attachments = MimeMessage::attachments($raw, $truncated);
+
+        $this->assertFalse($truncated);
+        $this->assertCount(1, $attachments);
+        $this->assertSame('payload', $attachments[0]['content']);
+    }
+
     public function testReportAsTheLastPartAtTheCeilingIsDecoded(): void
     {
         // 999 text parts and a base64 report as part 1000, then the closing
