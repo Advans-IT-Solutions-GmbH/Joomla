@@ -301,8 +301,10 @@ a menu item of its type on any menu item, a further path segment below a *Book a
 item, an unpublished event type below an *Event types* item, every task not in the table
 (including `<controller>.display`, an empty or unknown task, `controller=…` without a task) and
 `/component/appointments/…` or `index.php?option=com_appointments&view=…` without a menu item.
-With Joomla's *Strict Routing* (SEF plugin) a non-SEF address of a reachable page is first
-redirected to its menu item's address; a refused request stays refused.
+With Joomla's *Strict Routing* (SEF plugin) a request whose parameters have a canonical address
+without a query is first redirected there; that address is answered by the same rules, so a
+refused combination is never shown at the requested address. An update of the component empties
+Joomla's page cache, so no page an earlier version answered is served from it.
 
 The confirmation, the signed pages and their receipts carry the `Itemid` of the event type's
 booking page (see *Links in e-mails* above). The mails of the internet calendars link «My

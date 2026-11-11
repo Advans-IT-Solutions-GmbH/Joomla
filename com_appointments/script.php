@@ -13,6 +13,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     ? __DIR__ . '/advansinstaller/load.php'
     : dirname(__DIR__) . '/shared/installer/load.php';
 
+use Joomla\CMS\Cache\CacheControllerFactoryInterface;
 use Joomla\CMS\Factory;
 use Advans\Installer\InstallerScript;
 use Joomla\CMS\Installer\Installer;
@@ -216,6 +217,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->installBundledPlugins($parent);
         $this->initialiseLegacyFeedSetting($type);
         $this->encryptExistingBookings($type);
+        $this->clearSitePageCache();
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
@@ -847,6 +849,26 @@ class Com_appointmentsInstallerScript extends InstallerScript
             } catch (\Throwable $e) {
                 $app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_INSTALL_TASK_FAILED', Text::_($titleKey)), 'warning');
             }
+        }
+    }
+
+    /**
+     * Empties the site's page cache («System - Page Cache»), which serves a stored page before any
+     * component runs. A page an earlier version answered, for example the list of event types at the
+     * address of one booking page, which the site now refuses with 404, would otherwise be served
+     * until it expires. Best effort: a cache that cannot be emptied does not fail the installation.
+     */
+    private function clearSitePageCache(): void
+    {
+        try {
+            $path = (string) Factory::getApplication()->get('cache_path', '');
+            $controller = Factory::getContainer()->get(CacheControllerFactoryInterface::class)->createCacheController('output', [
+                'defaultgroup' => 'page',
+                'cachebase' => $path !== '' ? $path : JPATH_SITE . '/cache',
+            ]);
+            $controller->cache->clean('page');
+        } catch (\Throwable $e) {
+            // The page cache expires by itself; the update goes on.
         }
     }
 

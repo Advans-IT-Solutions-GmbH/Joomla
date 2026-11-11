@@ -256,7 +256,7 @@ class HtmlView extends BaseHtmlView
      */
     public function bookingLink(array $query = [], string $fragment = ''): string
     {
-        $url = 'index.php?option=com_appointments&view=eventtype&id=' . (int) $this->item->id
+        $url = 'index.php?option=com_appointments&view=eventtype&id=' . (int) $this->item->id . $this->menuLayout()
             . '&timezone=' . urlencode($this->zone->getName())
             . ($this->clock !== $this->defaultClock ? '&clock=' . $this->clock : '');
 
@@ -276,7 +276,7 @@ class HtmlView extends BaseHtmlView
      */
     public function formTarget(): array
     {
-        $action = Route::_('index.php?option=com_appointments&view=eventtype&id=' . (int) $this->item->id, false);
+        $action = Route::_('index.php?option=com_appointments&view=eventtype&id=' . (int) $this->item->id . $this->menuLayout(), false);
         $fields = [];
         $position = strpos($action, '?');
 
@@ -292,6 +292,25 @@ class HtmlView extends BaseHtmlView
         }
 
         return [$action, $fields];
+    }
+
+    /**
+     * '&layout=…' of the active "Book an appointment" menu item of this event type when it uses an
+     * alternative layout, else ''. The links of the page keep that layout, so they lead to the same
+     * menu item with the same layout, the only layout the page opens with there (MenuViews).
+     */
+    private function menuLayout(): string
+    {
+        $active = Factory::getApplication()->getMenu()->getActive();
+        $query = $active !== null && is_array($active->query ?? null) ? $active->query : [];
+
+        if (($query['option'] ?? '') !== 'com_appointments' || ($query['view'] ?? '') !== 'eventtype'
+            || (int) ($query['id'] ?? 0) !== (int) $this->item->id || (string) ($query['layout'] ?? '') === ''
+        ) {
+            return '';
+        }
+
+        return '&layout=' . urlencode((string) $query['layout']);
     }
 
     /**
