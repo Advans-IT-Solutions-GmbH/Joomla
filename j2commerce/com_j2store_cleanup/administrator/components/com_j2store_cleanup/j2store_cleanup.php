@@ -58,6 +58,15 @@ function isCleanupCandidate(object $ext): bool
         return false;
     }
 
+    // Element and folder become filesystem paths: accept only plain extension
+    // names (a library may have one sub-folder), never a traversal.
+    $name = '[a-z0-9_.-]+';
+    if (str_contains($element, '..') || str_contains($folder, '..')
+        || preg_match('#^' . $name . ($type === 'library' ? '(?:/' . $name . ')?' : '') . '$#', $element) !== 1
+        || preg_match('#^[a-z0-9_.-]*$#', $folder) !== 1) {
+        return false;
+    }
+
     switch ($type) {
         case 'component':
             return str_starts_with($element, 'com_j2store_')
@@ -83,8 +92,13 @@ function isCleanupCandidate(object $ext): bool
 
 function isCleanupEligible(object $ext, array $classification): bool
 {
+    $status = $classification['status'] ?? '';
+
+    // A package child is never removed database-only: its package tracks it and
+    // may block a separate uninstall, which only Joomla's installer enforces.
     return isCleanupCandidate($ext)
-        && in_array($classification['status'] ?? '', ['incompatible', 'no-files'], true);
+        && ($status === 'incompatible'
+            || ($status === 'no-files' && (int) ($ext->package_id ?? 0) === 0));
 }
 
 function canAccessCleanup($user): bool
@@ -92,10 +106,16 @@ function canAccessCleanup($user): bool
     return is_object($user) && $user->authorise('core.manage', 'com_j2store_cleanup');
 }
 
+/**
+ * Removing extensions is an uninstall, so the user also needs Joomla's own
+ * Extensions permissions (com_installer); this component never widens them.
+ */
 function canRemoveExtensions($user): bool
 {
     return canAccessCleanup($user)
-        && $user->authorise('core.delete', 'com_j2store_cleanup');
+        && $user->authorise('core.delete', 'com_j2store_cleanup')
+        && $user->authorise('core.manage', 'com_installer')
+        && $user->authorise('core.delete', 'com_installer');
 }
 
 function addCleanupPreferences($user): void
@@ -145,7 +165,7 @@ function getCleanupExtension(\Joomla\Database\DatabaseInterface $db, int $id): ?
 {
     $db->setQuery(
         createDbQuery($db)
-            ->select($db->quoteName(['extension_id', 'type', 'element', 'folder', 'client_id', 'protected', 'locked', 'manifest_cache']))
+            ->select($db->quoteName(['extension_id', 'type', 'element', 'folder', 'client_id', 'protected', 'locked', 'package_id', 'manifest_cache']))
             ->from($db->quoteName('#__extensions'))
             ->where($db->quoteName('extension_id') . ' = :extId')
             ->bind(':extId', $id, \Joomla\Database\ParameterType::INTEGER)
@@ -157,11 +177,14 @@ function getCleanupExtension(\Joomla\Database\DatabaseInterface $db, int $id): ?
 }
 
 /**
- * Delete only the same unprotected extension record that was just revalidated.
+ * Delete only the same unprotected extension record that was just revalidated,
+ * and only while its files are verifiably missing.
  */
 function removeCleanupExtensionRecord(\Joomla\Database\DatabaseInterface $db, object $ext, array $patterns): bool
 {
-    if (!isCleanupEligible($ext, classifyExtension(json_decode((string) $ext->manifest_cache), $ext, $patterns))) {
+    $classification = classifyExtension(json_decode((string) $ext->manifest_cache), $ext, $patterns);
+
+    if (($classification['status'] ?? '') !== 'no-files' || !isCleanupEligible($ext, $classification)) {
         return false;
     }
 
@@ -181,6 +204,7 @@ function removeCleanupExtensionRecord(\Joomla\Database\DatabaseInterface $db, ob
             ->where($db->quoteName('client_id') . ' = :clientId')
             ->where($db->quoteName('protected') . ' = 0')
             ->where($db->quoteName('locked') . ' = 0')
+            ->where($db->quoteName('package_id') . ' = 0')
             ->bind(':extId', $extensionId, \Joomla\Database\ParameterType::INTEGER)
             ->bind(':type', $type, \Joomla\Database\ParameterType::STRING)
             ->bind(':element', $element, \Joomla\Database\ParameterType::STRING)
@@ -199,11 +223,7 @@ function removeEligibleCleanupRecord(\Joomla\Database\DatabaseInterface $db, int
 {
     $ext = getCleanupExtension($db, $id);
 
-    if (!$ext || !isCleanupEligible($ext, classifyExtension(json_decode((string) $ext->manifest_cache), $ext, $patterns))) {
-        return null;
-    }
-
-    return removeCleanupExtensionRecord($db, $ext, $patterns) ? $ext : null;
+    return $ext && removeCleanupExtensionRecord($db, $ext, $patterns) ? $ext : null;
 }
 
 /**
@@ -243,7 +263,7 @@ function cleanupExtensions(\Joomla\Database\DatabaseInterface $db, array $ids): 
     }
 
     $query = createDbQuery($db)
-        ->select($db->quoteName(['extension_id', 'type', 'element', 'folder', 'client_id', 'protected', 'locked', 'manifest_cache']))
+        ->select($db->quoteName(['extension_id', 'type', 'element', 'folder', 'client_id', 'protected', 'locked', 'package_id', 'manifest_cache']))
         ->from($db->quoteName('#__extensions'))
         ->whereIn($db->quoteName('extension_id'), $ids);
     $db->setQuery($query);
@@ -311,11 +331,11 @@ function cleanupExtensions(\Joomla\Database\DatabaseInterface $db, array $ids): 
 
             if ($removed) {
                 $result['warning']++;
-                $warnings[] = Text::sprintf('COM_J2STORE_CLEANUP_MSG_DB_ONLY', $removed->element);
+                $warnings[] = Text::sprintf('COM_J2STORE_CLEANUP_MSG_DB_ONLY', htmlspecialchars((string) $removed->element));
             } else {
                 $result['error']++;
                 $errors[] = $fallbackError
-                    ? $ext->element . ': ' . $fallbackError->getMessage()
+                    ? htmlspecialchars($ext->element . ': ' . $fallbackError->getMessage())
                     : Text::sprintf('COM_J2STORE_CLEANUP_MSG_NOT_ELIGIBLE', $id);
             }
 
@@ -334,8 +354,9 @@ function cleanupExtensions(\Joomla\Database\DatabaseInterface $db, array $ids): 
                 $errors[] = Text::sprintf('COM_J2STORE_CLEANUP_MSG_UNINSTALL_REFUSED', $id);
             }
         } catch (\Throwable $e) {
-            // An exception is a failed uninstall, but fallback remains limited to
-            // the same freshly revalidated J2Store/J2Commerce candidate.
+            // An exception is a failed uninstall. The record is removed
+            // database-only only if the extension's files are verifiably gone
+            // afterwards; otherwise it stays, so no code or data is orphaned.
             try {
                 $removed = removeEligibleCleanupRecord($db, $id, $patterns);
                 $fallbackError = null;
@@ -346,13 +367,14 @@ function cleanupExtensions(\Joomla\Database\DatabaseInterface $db, array $ids): 
 
             if ($removed) {
                 $result['warning']++;
-                $warnings[] = Text::sprintf('COM_J2STORE_CLEANUP_MSG_DB_ONLY', $removed->element);
+                $warnings[] = Text::sprintf('COM_J2STORE_CLEANUP_MSG_DB_ONLY', htmlspecialchars((string) $removed->element));
             } else {
                 $result['error']++;
                 $details = $fallbackError
-                    ? Text::sprintf('COM_J2STORE_CLEANUP_MSG_FALLBACK_FAILED', $e->getMessage(), $fallbackError->getMessage())
-                    : $e->getMessage();
-                $errors[] = $ext->element . ': ' . $details;
+                    ? Text::sprintf('COM_J2STORE_CLEANUP_MSG_FALLBACK_FAILED',
+                        htmlspecialchars($e->getMessage()), htmlspecialchars($fallbackError->getMessage()))
+                    : htmlspecialchars($e->getMessage());
+                $errors[] = htmlspecialchars((string) $ext->element) . ': ' . $details;
             }
         }
     }
@@ -740,7 +762,7 @@ if ($task === 'cleanup' && Session::checkToken()) {
 
 // The same candidate predicate is used here and by the mutation path.
 $query = createDbQuery($db)
-    ->select($db->quoteName(['extension_id', 'name', 'type', 'element', 'folder', 'enabled', 'client_id', 'protected', 'locked', 'manifest_cache']))
+    ->select($db->quoteName(['extension_id', 'name', 'type', 'element', 'folder', 'enabled', 'client_id', 'protected', 'locked', 'package_id', 'manifest_cache']))
     ->from('#__extensions')
     ->order('type, name');
 
