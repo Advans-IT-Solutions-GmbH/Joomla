@@ -103,7 +103,7 @@ final class SchedulerService
             ->where($db->quoteName('start_utc') . ' > ' . $db->quote($this->time($now)))
             ->where('(' . implode(' OR ', $conditions) . ')')
             ->order($db->quoteName('start_utc') . ' ASC')->order($db->quoteName('id') . ' ASC')->setLimit($batchSize);
-        $candidates = $db->setQuery($query)->loadAssocList();
+        $candidates = $db->setQuery($query)->loadColumn();
         $store = new BookingStore($db);
         $mail = new NotificationService($db);
 
@@ -165,7 +165,7 @@ final class SchedulerService
         $retention = 'COALESCE(' . $db->quoteName('e.retention_days') . ',' . $days . ')';
         // A booking queued for the CRM transfer and not delivered yet waits, at most
         // CLOSE_WAIT_DAYS longer (see waitsForClose()); without a delivery record nothing waits.
-        $query = $this->query()->select($db->quoteName(['b.id', 'd.state']))->from($db->quoteName('#__appointments_bookings', 'b'))
+        $query = $this->query()->select($db->quoteName('b.id'))->from($db->quoteName('#__appointments_bookings', 'b'))
             ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e') . ' ON '
                 . $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
             ->join('LEFT', $db->quoteName('#__appointments_close_delivery', 'd') . ' ON '
@@ -177,22 +177,18 @@ final class SchedulerService
                 . ' OR ' . $db->quoteName('b.end_utc') . ' < DATE_SUB(' . $db->quote($this->time($now))
                 . ', INTERVAL ' . $retention . ' + ' . self::CLOSE_WAIT_DAYS . ' DAY))')
             ->order($db->quoteName('b.end_utc') . ' ASC')->order($db->quoteName('b.id') . ' ASC')->setLimit($batchSize);
-        $candidates = $db->setQuery($query)->loadAssocList();
+        $candidates = $db->setQuery($query)->loadColumn();
         $result = ['bookings' => 0, 'audit' => 0, 'rate_limits' => 0, 'failed' => 0, 'close_undelivered' => 0];
         $store = new BookingStore($db);
-        foreach ($candidates as $candidate) {
-            $id = (int) $candidate['id'];
+        foreach ($candidates as $id) {
+            $id = (int) $id;
             $erasure = $store->erase($id, $now, 'retention', $mode === 'delete', retentionDays: $days);
             $result['bookings'] += $erasure['changed'] ? 1 : 0;
             $result['failed'] += !empty($erasure['_conference_cleanup_error']) ? 1 : 0;
 
-            if ($erasure['changed'] && $candidate['state'] !== null && $candidate['state'] !== 'done') {
-                // Erased after the longest wait without reaching the CRM: the dashboard says so.
-                $db->setQuery('INSERT IGNORE INTO ' . $db->quoteName(self::CLOSE_MISSED) . ' ('
-                    . implode(', ', $db->quoteName(['booking_id', 'erased_utc'])) . ') VALUES (' . $id . ', '
-                    . $db->quote($this->time($now)) . ')')->execute();
-                $result['close_undelivered']++;
-            }
+            // The erasure decides the wait and records a missed transfer itself, under the lock
+            // and in its own transaction; the selection above is only a pre-filter.
+            $result['close_undelivered'] += !empty($erasure['_close_missed']) ? 1 : 0;
         }
 
         if ($result['close_undelivered'] > 0) {

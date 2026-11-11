@@ -303,6 +303,18 @@ final class BookingStore
 
                     return ['changed' => false, 'notification' => null];
                 }
+                // The Close transfer, decided here on the current delivery state under the lock:
+                // an undelivered booking waits at most SchedulerService::CLOSE_WAIT_DAYS longer.
+                // Only the retention waits; an explicit erasure never does.
+                $delivery = $db->setQuery('SELECT ' . $db->quoteName('state') . ' FROM ' . $db->quoteName(Close\Queue::TABLE)
+                    . ' WHERE ' . $db->quoteName('booking_id') . ' = ' . $bookingId . ' FOR UPDATE')->loadResult();
+                $delivery = $delivery === null ? null : (string) $delivery;
+                if (SchedulerService::waitsForClose($delivery, $end, $days, $now->setTimezone(new \DateTimeZone('UTC')))) {
+                    $db->transactionCommit();
+
+                    return ['changed' => false, 'notification' => null];
+                }
+                $closeMissed = $delivery !== null && $delivery !== 'done';
             }
             $cleanupKey = $privacyCleanup?->remember($booking, false);
             $anonymiser = new Anonymiser();
@@ -322,6 +334,13 @@ final class BookingStore
             $audit = (object) ['booking_id' => $bookingId, 'action' => $delete ? 'delete' : 'anonymise',
                 'path' => $path, 'actor_user_id' => $actor, 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')];
             $db->insertObject('#__appointments_audit', $audit);
+            if (!empty($closeMissed)) {
+                // Erased after the longest wait without reaching Close: recorded in the same
+                // transaction, so the dashboard warning can never be lost.
+                $db->setQuery('INSERT IGNORE INTO ' . $db->quoteName(SchedulerService::CLOSE_MISSED) . ' ('
+                    . implode(', ', $db->quoteName(['booking_id', 'erased_utc'])) . ') VALUES (' . $bookingId . ', '
+                    . $db->quote($now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')) . ')')->execute();
+            }
             Close\Queue::changed($db, $erased, true);
             $db->transactionCommit();
         } catch (\Throwable $e) {
@@ -337,6 +356,7 @@ final class BookingStore
         }
 
         return ['changed' => true, 'notification' => $notification,
+            '_close_missed' => !empty($closeMissed),
             '_calendar_cleanup_error' => !$mirrored,
             '_conference_cleanup_error' => $conferenceFailed];
     }
