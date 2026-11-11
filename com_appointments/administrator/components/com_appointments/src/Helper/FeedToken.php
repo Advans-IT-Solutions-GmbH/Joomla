@@ -54,7 +54,7 @@ final class FeedToken
 
     public static function isDigest(string $stored): bool
     {
-        return preg_match('/\Ah1:[a-f0-9]{64}\z/D', $stored) === 1;
+        return preg_match('/\A' . preg_quote(self::PREFIX, '/') . '[a-f0-9]{64}\z/D', $stored) === 1;
     }
 
     /**
