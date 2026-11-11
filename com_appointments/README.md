@@ -233,10 +233,16 @@ components. The guest links in e-mails and the calendar subscriptions stay non-S
   `/component/appointments/?view=eventtype&id=…` and non-SEF
   `index.php?option=com_appointments&view=eventtype&id=…` keep working.
 - **Links in e-mails** (reschedule, cancel, erase) are built as
-  `index.php?option=com_appointments&view=manage&id=…&action=…&signature=…` from the public site URL.
-  They are signed, are also sent by the reminder task from the command line, where no site router is
-  available, and must stay valid for as long as the booking exists. On a multilingual site Joomla
-  adds the language prefix when such a link is opened.
+  `index.php?option=com_appointments&view=manage&id=…&action=…&signature=…&Itemid=…` from the public
+  site URL. They are signed, are also sent by the reminder task from the command line, where no site
+  router is available, and must stay valid for as long as the booking exists. On a multilingual site
+  Joomla adds the language prefix when such a link is opened. The `Itemid` frames the page: the
+  *Book an appointment* item of the booking's event type, otherwise an *Event types* item, each in the
+  reader's language or in *All*, published and open to guests. Without one the link has no `Itemid`.
+  The signature does not cover the `Itemid`, which only chooses the frame. The confirmation, the
+  receipts after a change and the guest's removal page use the same frame, so they are not shown
+  in the frame of the home page (its modules and content above the result). A link without an
+  `Itemid` from an earlier mail gets it with the redirect after the change.
 - **Calendar subscriptions** use `index.php?option=com_appointments&task=feed.download&…`.
 
 A site that blocks direct component addresses in its `.htaccess` therefore needs two exceptions,
@@ -392,6 +398,14 @@ disabled and recoverable error states. Administrator edit forms leave through Sa
 Cancel so their checkout is released. Authorisation and deliberate privacy-preserving 403/404
 responses take precedence over navigation; public links never grant access to another person's
 booking. Component options retain Joomla's native Close action.
+
+The button **Back to appointments** (on a form **Cancel**) leads to the list of all event types. On
+a *Book an appointment* menu item, which publishes one event type, it is hidden by default, so the
+list does not show that item's visitors the other event types. The menu item's **Navigation** tab
+shows it again and chooses its target (another menu item, otherwise the list). While it is hidden,
+the confirmation, the signed pages and their receipts in that item's frame lead back to its booking
+page instead, or to the list once that booking page can no longer be opened (event type or schedule
+unpublished, another access level or language).
 
 Adding a device checks existing account and address locks without reserving a password attempt;
 successful device creation neither consumes sign-in attempts nor clears a real sign-in lock.
@@ -846,6 +860,9 @@ open, submission returns to the times of the same day with a friendly message an
 choices; an address of step 2 whose time is no longer offered shows the times of its day with the
 same message. A refusal the visitor can fix in a field returns to step 2 of the same time.
 Confirmation pages require the submitting browser's session and are not public booking lookups.
+The confirmation, the signed pages, their receipts and the guest removal page are kept out of
+Joomla's page cache (they exclude themselves from **System - Page Cache**, which ignores the
+browser cache headers), so a cached copy never hands their links or form tokens to another visitor.
 Public requests use the directly connected address for rate limiting, not untrusted forwarding
 headers. Only its keyed hash is stored; no raw address is added to a booking.
 
@@ -1043,6 +1060,7 @@ copies, because the booking script and the server rely on them.
 | Part | Structure and classes |
 |---|---|
 | Page | `.com-appointments` plus the view (`-eventtypes`, `-eventtype`, `-confirmation`, `-manage`), inside it `.com-appointments-container` (centred column, `max-width: var(--appointments-max-width)`, on the other views `--appointments-narrow-width`); on the booking page `[data-appointments-view]` with `data-step="time"` or `"details"`, the part the script replaces |
+| Way back | `a.btn.com-appointments-return`, the button **Back to appointments** (on a form **Cancel**) at the top of the booking page and below the confirmation, manage and guest pages; left out on a *Book an appointment* menu item unless its **Navigation** options show it |
 | Card | `#appointment-booking.com-appointments-layout` with `.com-appointments-layout-time` or `-details`, `.com-appointments-layout-day` while the times of a day are shown and `.com-appointments-info-logo` or `-person`; inside it `header.com-appointments-info.com-appointments-header` and `.com-appointments-main` |
 | Information column | On step 2 first `a.btn.btn-outline-secondary.com-appointments-back[data-appointments-step]`; the logo `.com-appointments-info-media.com-appointments-info-logo > img.com-appointments-logo`, or the person `.com-appointments-info-media.com-appointments-host` with `img.com-appointments-host-photo` and `p.com-appointments-host-text` (`.com-appointments-host-name`, `.com-appointments-host-role`); then `h1.com-appointments-heading`, `ul.com-appointments-meta` (`li.com-appointments-duration`, `li.com-appointments-location-type`, on step 2 `li.com-appointments-selected` with `.com-appointments-selected-date` and `.com-appointments-selected-time`, and `li.com-appointments-selected-zone`, each with an inline `svg.com-appointments-icon`), `.com-appointments-description` and `p.com-appointments-location` |
 | Step title | `h2#appointment-step-title.com-appointments-step-title` (`tabindex="-1"`, receives the focus after a step change) with a visually hidden "Step 1 of 3:" |
@@ -1087,7 +1105,10 @@ so automatic browser-zone detection does not reload the picker and discard its e
 `task=booking.ics&id=<booking>` (a link of an earlier confirmation is refused), with the same UID and sequence as the attachment of the confirmation email, and
 the signed reschedule and cancel links of that email; like the confirmation page itself it is
 only available to the browser session that made the booking. When the links cannot be built (an
-invalid public site address in **Options**), only the `.ics` download is shown.
+invalid public site address in **Options**), only the `.ics` download is shown. The receipt of a
+reschedule likewise shows the new signed reschedule and cancel links, the same as in the reschedule
+email: only to the browser session that made the change and only while the appointment is still the
+version this change produced. The receipts of a cancellation or erasure show no links.
 
 **Booking script and slot endpoint.** `media/com_appointments/js/booking.js` is registered as the
 web asset `com_appointments.booking` (deferred, no dependency) and loaded by the booking page, the confirmation and a completed manage
