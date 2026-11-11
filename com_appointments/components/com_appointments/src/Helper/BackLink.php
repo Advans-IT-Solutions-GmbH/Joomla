@@ -100,8 +100,22 @@ final class BackLink
         $menu = $app->getMenu();
 
         // getItems() of the site menu only returns items of the visitor's access levels and language.
-        if ($menu->getItems('link', 'index.php?option=com_appointments&view=eventtypes') !== []) {
-            return Route::_('index.php?option=com_appointments&view=eventtypes');
+        // The list item by its view, also with an alternative layout; the visitor's language first.
+        $tag = $app->getLanguage()->getTag();
+        $list = null;
+
+        foreach ($menu->getItems('component', 'com_appointments') as $item) {
+            $query = \is_array($item->query ?? null) ? $item->query : [];
+
+            if (($item->type ?? '') === 'component' && ($query['view'] ?? '') === 'eventtypes'
+                && ($list === null || ($item->language === $tag && $list->language !== $tag))
+            ) {
+                $list = $item;
+            }
+        }
+
+        if ($list !== null) {
+            return Route::_('index.php?Itemid=' . (int) $list->id);
         }
 
         $home = $menu->getDefault($app->getLanguage()->getTag());

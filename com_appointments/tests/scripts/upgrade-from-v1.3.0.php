@@ -310,6 +310,20 @@ function upgrade_seed(): void
         && file_put_contents($pageCacheEntry, "<?php die(\"Direct Access Not Permitted\"); ?>\n#x#cached page") !== false,
         'a page cached by the previous version is present before the update');
 
+    // Joomla's page cache serves a stored page before any component runs. Warm it with an address
+    // the previous release answered, the list of event types on the menu item of one booking page,
+    // which the updated site refuses: the update must not leave it in the cache.
+    require_once __DIR__ . '/appointments-http.php';
+    $cacheProbeItem = appointments_menu_item('index.php?option=com_appointments&view=eventtype&id=' . $eventtypeId, true, false);
+    $cachePlugin = $db->query("SELECT extension_id, enabled FROM `$extensions` WHERE type = 'plugin' AND folder = 'system' AND element = 'cache'")->fetch_assoc();
+    upgrade_require($cachePlugin !== null, 'the page cache plugin is installed');
+    $db->query("UPDATE `$extensions` SET enabled = 1 WHERE extension_id = " . (int) $cachePlugin['extension_id']);
+    $cacheProbe = '/index.php?option=com_appointments&view=eventtypes&Itemid=' . $cacheProbeItem;
+    $warm = new AppointmentsHttp('http://localhost', 'upgrade-v130-cache-warm');
+    $warm->request($cacheProbe);
+    upgrade_check('the previous release answers the list on the menu item of one booking page (page cache warmed)', $warm->status === 200,
+        'HTTP ' . $warm->status);
+
     $fixture = [
         'extension_id' => $extensionId,
         'schedule_id' => $scheduleId,
@@ -318,6 +332,9 @@ function upgrade_seed(): void
         'migration_trigger' => $migrationTrigger,
         'page_cache_entry' => $pageCacheEntry,
         'bookings' => $bookings,
+        'cache_probe' => $cacheProbe,
+        'cache_probe_item' => $cacheProbeItem,
+        'cache_plugin' => ['id' => (int) $cachePlugin['extension_id'], 'enabled' => (int) $cachePlugin['enabled']],
     ];
     $fixturePath = sys_get_temp_dir() . '/appointments-upgrade-v1.3.0.json';
     $written = file_put_contents($fixturePath, json_encode($fixture, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT), LOCK_EX);
@@ -595,6 +612,17 @@ function upgrade_verify(): void
             . '; fields_v2_and_readable=' . ($allFieldsSealed ? 'yes' : 'no')
             . '; admin_encrypt_audit_rows=' . $auditCount
             . '; all_booking_audit_rows=' . implode(',', $auditSummary));
+    }
+
+    // The update empties the page cache: the address the previous release answered is refused now.
+    if (isset($fixture['cache_probe'])) {
+        require_once __DIR__ . '/appointments-http.php';
+        $probe = new AppointmentsHttp('http://localhost', 'upgrade-v130-cache-probe');
+        $html = $probe->request((string) $fixture['cache_probe']);
+        upgrade_check('after the update the page cache no longer serves the list on the menu item of one booking page',
+            $probe->status === 404 && !str_contains($html, 'com-appointments-'), 'HTTP ' . $probe->status);
+        $db->query("UPDATE `$extensionsTable` SET enabled = " . (int) $fixture['cache_plugin']['enabled'] . ' WHERE extension_id = ' . (int) $fixture['cache_plugin']['id']);
+        $db->query('DELETE FROM `' . sh_table('menu') . '` WHERE id = ' . (int) $fixture['cache_probe_item']);
     }
 
     $finalParams = $db->query("SELECT params FROM `$extensionsTable` WHERE extension_id = " . (int) $fixture['extension_id'])->fetch_assoc();

@@ -240,9 +240,9 @@ function setup(): void
     $state = ['admin' => $admin, 'users' => [], 'calendars' => [], 'devices' => []];
     saveState($state);
 
-    // «My calendars» opens only through its menu item, as on a site; kept until teardown.
+    // «My calendars» opens only through its menu item, as on a site: a row of its own, removed by teardown.
     require_once __DIR__ . '/../scripts/appointments-menu.php';
-    $state['mycalendars_item'] = appointments_menu_item('index.php?option=com_appointments&view=mycalendars', true);
+    $state['mycalendars_item'] = appointments_menu_item('index.php?option=com_appointments&view=mycalendars', true, false);
     saveState($state);
 
     if ($team->keys()->recoveryFingerprint() === null) {

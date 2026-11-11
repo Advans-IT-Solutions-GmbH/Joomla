@@ -93,6 +93,52 @@ final class MenuViewsTest extends TestCase
         }
     }
 
+    public function testTheLayoutOfAFrameIsNoLayoutOfThePageInIt(): void
+    {
+        // Joomla merges the frame's layout into the request; the dispatcher then resets it (inFrame()).
+        $compactPage = self::BOOKING_PAGE + ['layout' => 'mytemplate:compact'];
+        $compactList = self::LIST + ['layout' => 'mytemplate:cards'];
+
+        self::assertTrue(self::page('manage', 0, $compactPage, 'mytemplate:compact'));
+        self::assertTrue(self::page('booking', 0, $compactPage, 'mytemplate:compact'));
+        self::assertFalse(self::page('manage', 0, $compactPage, 'mytemplate:other'));
+        self::assertTrue(self::page('eventtype', 8, $compactList, 'mytemplate:cards'));
+        self::assertTrue(self::page('eventtype', 8, $compactList));
+        self::assertFalse(self::page('eventtype', 8, $compactList, 'mytemplate:other'));
+
+        self::assertTrue(MenuViews::inFrame('manage', $compactPage));
+        self::assertTrue(MenuViews::inFrame('eventtype', $compactList));
+        self::assertFalse(MenuViews::inFrame('eventtype', $compactPage), 'Its own menu item is no frame.');
+        self::assertFalse(MenuViews::inFrame('booking', null));
+        self::assertFalse(MenuViews::inFrame('booking', self::ARTICLE), 'Another component merges nothing.');
+    }
+
+    public function testTheMailLinksTheMenuItemTheReaderMayOpenInTheReadersLanguage(): void
+    {
+        $rows = [
+            ['id' => 30, 'language' => '*', 'access' => 2],
+            ['id' => 31, 'language' => 'de-DE', 'access' => 2],
+            ['id' => 32, 'language' => 'en-GB', 'access' => 2],
+            ['id' => 20, 'language' => 'de-DE', 'access' => 9],
+        ];
+
+        self::assertSame(31, MenuViews::pickItem($rows, 'de-DE', [1, 2]), 'The reader\'s language before "All".');
+        self::assertSame(30, MenuViews::pickItem($rows, 'fr-FR', [1, 2]), '"All" when there is none in the language.');
+        self::assertSame(20, MenuViews::pickItem($rows, 'de-DE', [1, 2, 9]), 'The lowest id within the language.');
+        self::assertSame(0, MenuViews::pickItem([['id' => 32, 'language' => 'en-GB', 'access' => 2]], 'de-DE', [2]),
+            'Never an item of another language.');
+        self::assertSame(0, MenuViews::pickItem($rows, 'de-DE', [1]), 'Never an item the reader may not open.');
+        self::assertSame(30, MenuViews::pickItem($rows, '', [2]), 'Without a language "All" first.');
+
+        // By the view of the link: an alternative layout qualifies, a similar view name does not.
+        $links = [
+            ['id' => 40, 'language' => '*', 'access' => 2, 'link' => 'index.php?option=com_appointments&view=mycalendarsx'],
+            ['id' => 41, 'language' => '*', 'access' => 2, 'link' => 'index.php?option=com_appointments&view=mycalendars&layout=mytemplate:wide'],
+        ];
+        self::assertSame(41, MenuViews::pickItem($links, 'de-DE', [2], 'mycalendars'));
+        self::assertSame(0, MenuViews::pickItem([$links[0]], 'de-DE', [2], 'mycalendars'));
+    }
+
     public function testOnlyTheListedTasksRun(): void
     {
         foreach (MenuViews::TASKS as $controller => $tasks) {

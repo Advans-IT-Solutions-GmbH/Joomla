@@ -61,8 +61,8 @@ final class TeamMailer implements TeamMailerInterface
         4 => 'COM_APPOINTMENTS_TEAM_D_ROLE_MANAGE',
     ];
 
-    /** Address of «My calendars» (myCalendarsUrl()), null until first needed. */
-    private ?string $myCalendarsUrl = null;
+    /** @var array<string, string> Address of «My calendars» by language and view levels (myCalendarsUrl()). */
+    private array $myCalendarsUrls = [];
 
     public function __construct(private readonly TeamServices $services)
     {
@@ -81,9 +81,9 @@ final class TeamMailer implements TeamMailerInterface
                 '{device_name}' => $deviceName,
                 '{client}' => $language->_(DeviceService::CLIENT_LABELS[$client] ?? DeviceService::CLIENT_LABELS['other']),
                 '{created}' => $this->when($createdUtc, $language, $recipient),
-                '{mycalendars_url}' => $this->myCalendarsUrl(),
+                '{mycalendars_url}' => $this->myCalendarsUrl($recipient, $language->getTag()),
             ];
-        }, [$this->myCalendarsUrl() => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
+        }, fn (object $recipient, string $tag): array => [$this->myCalendarsUrl($recipient, $tag) => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
     }
 
     public function invitation(string $email, #[\SensitiveParameter] string $link, \DateTimeImmutable $expiresUtc): void
@@ -180,15 +180,15 @@ final class TeamMailer implements TeamMailerInterface
         $actor = $this->user($actorUserId);
         $title = (string) $calendar->title;
 
-        $this->deliver('team_grant_changed', $recipients, function (Language $language) use ($title, $grantee, $actor, $roleLabelKey): array {
+        $this->deliver('team_grant_changed', $recipients, function (Language $language, object $recipient) use ($title, $grantee, $actor, $roleLabelKey): array {
             return [
                 '{calendar_title}' => $title,
                 '{grantee_name}' => $grantee !== null ? (string) $grantee->name : '',
                 '{actor_name}' => $actor !== null ? (string) $actor->name : '',
                 '{role}' => $this->role($language, $roleLabelKey),
-                '{mycalendars_url}' => $this->myCalendarsUrl(),
+                '{mycalendars_url}' => $this->myCalendarsUrl($recipient, $language->getTag()),
             ];
-        }, [$this->myCalendarsUrl() => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
+        }, fn (object $recipient, string $tag): array => [$this->myCalendarsUrl($recipient, $tag) => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
     }
 
     public function accessSuspended(int $userId, string $reason): void
@@ -247,9 +247,10 @@ final class TeamMailer implements TeamMailerInterface
     /**
      * @param   object[]                                          $recipients  Rows with id, name, email, params.
      * @param   callable(Language, object): array<string,string>  $values
-     * @param   array<string, string>                             $links       URL => language key of its label in the HTML part.
+     * @param   array<string, string>|\Closure                    $links       URL => language key of its label in the HTML part, or a
+     *                                                                    function of recipient and language tag that returns them.
      */
-    private function deliver(string $purpose, array $recipients, callable $values, array $links = []): void
+    private function deliver(string $purpose, array $recipients, callable $values, array|\Closure $links = []): void
     {
         try {
             $app = Factory::getApplication();
@@ -295,11 +296,12 @@ final class TeamMailer implements TeamMailerInterface
                 $language->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments', $tag, true);
                 $phase = 'template';
                 $template = $this->template($purpose, $tag, $language);
+                $recipientLinks = $links instanceof \Closure ? $links($recipient, $tag) : $links;
                 $phase = 'message-compose';
                 $message = self::fill($template, [
                     '{site_name}' => $siteName,
                     '{user_name}' => (string) $recipient->name,
-                ] + $values($language, $recipient), array_keys($links));
+                ] + $values($language, $recipient), array_keys($recipientLinks));
 
                 $phase = 'mailer-setup';
                 $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
@@ -308,7 +310,7 @@ final class TeamMailer implements TeamMailerInterface
                 $mailer->setSubject($message['subject']);
                 $known = [];
 
-                foreach ($links as $url => $labelKey) {
+                foreach ($recipientLinks as $url => $labelKey) {
                     $known[$url] = $language->_($labelKey);
                 }
 
@@ -501,16 +503,25 @@ final class TeamMailer implements TeamMailerInterface
     /**
      * Address of «My calendars» through its menu item: the page opens only through a published menu
      * item of its type (MenuViews), so without one the link has no Itemid and the page answers 404.
-     * Looked up once per mailer, not once per recipient.
+     * The item the recipient may open, in the recipient's language or in "All" (MenuViews::itemFor()),
+     * looked up once per language and set of view levels. A language-specific item adds its `lang`
+     * code, so the page opens in that language whatever the reader's cookie or browser names.
      */
-    private function myCalendarsUrl(): string
+    private function myCalendarsUrl(object $recipient, string $tag): string
     {
-        if ($this->myCalendarsUrl === null) {
-            $itemId = MenuViews::itemFor($this->services->db(), 'mycalendars');
-            $this->myCalendarsUrl = $this->siteUrl('index.php?option=com_appointments&view=mycalendars' . ($itemId > 0 ? '&Itemid=' . $itemId : ''));
+        $levels = array_values(array_unique(array_map('intval', Access::getAuthorisedViewLevels((int) ($recipient->id ?? 0)))));
+        sort($levels);
+        $key = $tag . '|' . implode(',', $levels);
+
+        if (!isset($this->myCalendarsUrls[$key])) {
+            $db = $this->services->db();
+            $itemId = MenuViews::itemFor($db, 'mycalendars', $tag, $levels);
+            $code = MenuViews::languageCode($db, $itemId);
+            $this->myCalendarsUrls[$key] = $this->siteUrl('index.php?option=com_appointments&view=mycalendars'
+                . ($itemId > 0 ? '&Itemid=' . $itemId : '') . ($code !== '' ? '&lang=' . urlencode($code) : ''));
         }
 
-        return $this->myCalendarsUrl;
+        return $this->myCalendarsUrls[$key];
     }
 
     private function siteUrl(string $path): string

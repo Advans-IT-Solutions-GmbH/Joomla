@@ -13,6 +13,7 @@ use Advans\Component\Appointments\Administrator\Helper\MenuViews;
 use Joomla\CMS\Dispatcher\ComponentDispatcher;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Exception\RouteNotFoundException;
+use Joomla\CMS\Uri\Uri;
 
 defined('_JEXEC') or die;
 
@@ -45,7 +46,19 @@ class Dispatcher extends ComponentDispatcher
             (string) $controller, (string) $task, $this->input->getCmd('view', ''), $this->input->getInt('id', 0),
             $this->input->getString('layout', ''), $this->input->getCmd('format', 'html'), $menu
         )) {
+            // Joomla's 404 handling (e.g. «System - Redirect» collecting URLs) sees the address
+            // without the credentials a refused request may carry: the one-time activation or feed
+            // token and the signature of a manage link.
+            $uri = Uri::getInstance();
+            $uri->delVar('token');
+            $uri->delVar('signature');
+
             throw new RouteNotFoundException(Text::_('JERROR_PAGE_NOT_FOUND'));
+        }
+
+        // A layout Joomla merged in from the frame's menu item belongs to that item's view.
+        if (MenuViews::inFrame($this->input->getCmd('view', ''), $menu)) {
+            $this->input->set('layout', 'default');
         }
 
         parent::dispatch();

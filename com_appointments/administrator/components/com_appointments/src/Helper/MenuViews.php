@@ -80,8 +80,12 @@ final class MenuViews
         $layout = self::layout($layout);
         $format = strtolower($format === '' ? 'html' : $format);
 
+        // In the frame of a menu item of another view, Joomla merges that item's layout into the
+        // request: it belongs to the frame, not to this page (inFrame(), the dispatcher resets it).
+        $frameLayout = self::inFrame($view, $menu) ? self::layout((string) ($menu['layout'] ?? '')) : 'default';
+
         if (\in_array($view, self::UNFRAMED, true)) {
-            return $format === 'html' && $layout === 'default';
+            return $format === 'html' && ($layout === 'default' || $layout === $frameLayout);
         }
 
         if ($menu === null || ($menu['option'] ?? '') !== 'com_appointments') {
@@ -96,7 +100,7 @@ final class MenuViews
             // The date-and-time part on its own (format=raw) is the background update of the same page.
             'eventtype' => $id > 0 && \in_array($format, ['html', 'raw'], true) && (
                 ($menuView === 'eventtype' && (int) ($menu['id'] ?? 0) === $id && $layout === $menuLayout)
-                || ($menuView === 'eventtypes' && $layout === 'default')
+                || ($menuView === 'eventtypes' && ($layout === 'default' || $layout === $frameLayout))
             ),
             'mycalendars' => $menuView === 'mycalendars' && $format === 'html'
                 && ($layout === $menuLayout || \in_array($layout, self::MYCALENDARS_LAYOUTS, true)),
@@ -105,35 +109,127 @@ final class MenuViews
     }
 
     /**
-     * The published site menu item of a view without further parameters (for example «My calendars»),
-     * from the database, so a mail sent from the administrator or the command line links its page.
-     * An item in "All" languages first, then the lowest id; 0 when there is none.
+     * Whether $view is shown in the frame of a menu item of this component that points at another
+     * view: the confirmation and the signed pages in the frame of a booking page, a booking page below
+     * the list. Joomla merges the frame's layout into such a request; the page uses its own default.
+     *
+     * @param   array|null  $menu  Query of the active menu item, null without one.
      */
-    public static function itemFor(DatabaseInterface $db, string $view): int
+    public static function inFrame(string $view, ?array $menu): bool
     {
+        $view = strtolower($view === '' ? 'eventtypes' : $view);
+        $menuView = strtolower((string) ($menu['view'] ?? ''));
+
+        return $menu !== null && ($menu['option'] ?? '') === 'com_appointments' && $menuView !== '' && $menuView !== $view;
+    }
+
+    /**
+     * Pure choice among menu item rows of one view, testable without Joomla: an item the reader may
+     * open (its access level among $levels), in the reader's language first, then in "All", the
+     * lowest id within each; an item of another language is never chosen, because it would switch
+     * the page to that language. Without a language every language qualifies, "All" first. With a
+     * $view, a row with a link must point at that view of this component; further parameters of the
+     * link (an alternative layout) do not matter.
+     *
+     * @param   iterable<array{id: int|string, language: string, access: int|string, link?: string}>  $rows
+     * @param   int[]                                                                                $levels  Authorised view levels of the reader.
+     *
+     * @return  int  The Itemid, or 0 for none.
+     */
+    public static function pickItem(iterable $rows, string $language, array $levels, string $view = ''): int
+    {
+        $best = [PHP_INT_MAX, PHP_INT_MAX];
+        $chosen = 0;
+
+        foreach ($rows as $row) {
+            if ($view !== '' && isset($row['link'])) {
+                parse_str((string) parse_url((string) $row['link'], PHP_URL_QUERY), $query);
+
+                if (($query['option'] ?? '') !== 'com_appointments' || ($query['view'] ?? '') !== $view) {
+                    continue;
+                }
+            }
+
+            if (!\in_array((int) $row['access'], $levels, true)) {
+                continue;
+            }
+
+            $itemLanguage = (string) $row['language'];
+            $rank = match (true) {
+                $language !== '' && $itemLanguage === $language => 0,
+                $itemLanguage === '*' => 1,
+                $language === '' => 2,
+                default => null,
+            };
+
+            if ($rank === null) {
+                continue;
+            }
+
+            $candidate = [$rank, (int) $row['id']];
+
+            if ($candidate < $best) {
+                $best = $candidate;
+                $chosen = (int) $row['id'];
+            }
+        }
+
+        return $chosen;
+    }
+
+    /**
+     * The published site menu item of a view without further parameters (for example «My calendars»)
+     * for a reader with $levels in $language (a tag such as de-DE), from the database, so a mail sent
+     * from the administrator or the command line links its page (pickItem()); 0 when there is none.
+     *
+     * @param   int[]  $levels  Authorised view levels of the reader.
+     */
+    public static function itemFor(DatabaseInterface $db, string $view, string $language, array $levels): int
+    {
+        $levels = array_values(array_unique(array_map('intval', $levels)));
+
+        if ($levels === []) {
+            return 0;
+        }
+
         $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
         $link = 'index.php?option=com_appointments&view=' . $view;
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['id', 'language']))
+        $query->select($db->quoteName(['id', 'link', 'language', 'access']))
             ->from($db->quoteName('#__menu'))
             ->where($db->quoteName('client_id') . ' = 0')
             ->where($db->quoteName('published') . ' = 1')
             ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->where($db->quoteName('link') . ' = ' . $db->quote($link))
+            // The link may carry an alternative layout; pickItem() checks option and view exactly.
+            ->where($db->quoteName('link') . ' LIKE ' . $db->quote($link . '%'))
             ->where('(' . $db->quoteName('publish_up') . ' IS NULL OR ' . $db->quoteName('publish_up') . ' <= ' . $db->quote($now) . ')')
             ->where('(' . $db->quoteName('publish_down') . ' IS NULL OR ' . $db->quoteName('publish_down') . ' >= ' . $db->quote($now) . ')')
-            ->order($db->quoteName('id'));
-        $chosen = 0;
+            ->where($db->quoteName('access') . ' IN (' . implode(',', $levels) . ')');
 
-        foreach ($db->setQuery($query)->loadAssocList() as $row) {
-            if ((string) $row['language'] === '*') {
-                return (int) $row['id'];
-            }
+        return self::pickItem($db->setQuery($query)->loadAssocList(), $language, $levels, $view);
+    }
 
-            $chosen = $chosen ?: (int) $row['id'];
+    /**
+     * URL code of the content language of a menu item (for example "de" for a de-DE item, the
+     * `lang` parameter of Joomla's language filter), or '' for an item in "All" or an unknown or
+     * unpublished content language. A link to a language-specific item carries it, so the page opens
+     * in that item's language instead of the one the visitor's cookie or browser names.
+     */
+    public static function languageCode(DatabaseInterface $db, int $itemId): string
+    {
+        if ($itemId < 1) {
+            return '';
         }
 
-        return $chosen;
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName('l.sef'))
+            ->from($db->quoteName('#__menu', 'm'))
+            ->join('INNER', $db->quoteName('#__languages', 'l'), $db->quoteName('l.lang_code') . ' = ' . $db->quoteName('m.language'))
+            ->where($db->quoteName('m.id') . ' = ' . $itemId)
+            ->where($db->quoteName('l.published') . ' = 1');
+        $code = (string) $db->setQuery($query)->loadResult();
+
+        return preg_match('/\A[a-z0-9_-]{1,7}\z/i', $code) === 1 ? $code : '';
     }
 
     /**

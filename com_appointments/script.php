@@ -259,6 +259,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->initialiseLegacyFeedSetting($type);
         $this->encryptExistingBookings($type);
         $this->convertLegacyFeedTokens();
+        // Also removes pages an earlier version answered that the strict menu views now refuse.
         $this->cleanPageCache();
         $this->ensureDeviceRemovalMode();
 
