@@ -283,8 +283,10 @@ $overlapBooking = 0;
         public function onBookingSaved(array $booking): bool { ($this->copies)::rememberCopy($this->db, $this->id); return true; }
         public function onBookingCancelled(array $booking): void {}
         public function onBookingErased(int $bookingId): bool { return true; }
-        public function requestRestore(int $eventTypeId): void {}
+        public function requestRestore(int $eventTypeId): bool { return true; }
         public function restoreCopies(int $limit): int { return 0; }
+        public function restorePending(): int { return 0; }
+        public function restoreFailed(): int { return 0; }
     };
     $result = $copies::retryCopies($joomlaDb, $bridge, 200);
     $check($result['guest_copies_repaired'] === 0 && $references() === 1,

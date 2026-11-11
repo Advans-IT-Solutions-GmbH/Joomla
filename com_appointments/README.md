@@ -787,6 +787,15 @@ on the deletions at once:
    (see «Restoring a backup» for the epoch anchor).
 4. Check the devices; at their next synchronisation they receive the state of the website.
 
+**With Close, the booking retention waits for the transfer.** If the Close delivery is set up for a
+booking (it has a delivery record), *Appointments: retention* skips it while the delivery is not
+`done`, for at most 30 more days after its own retention (`SchedulerService::CLOSE_WAIT_DAYS`).
+After that it is erased anyway and recorded in `#__appointments_close_missed` (booking id and time
+only, kept 30 days). The dashboard warns while bookings wait, with the day the first one is erased
+anyway, and reports bookings erased without the transfer for 30 days. A booking without a delivery
+record never waits. The website never deletes anything in Close; Close is a separate system with
+its own deletion rules. State the waiting period in the privacy policy.
+
 #### What is deleted when
 
 | What | When | Where |
@@ -801,6 +810,7 @@ on the deletions at once:
 | Erasure record | After the erasure-audit retention in years. | Website. |
 | Internet calendar log | After twelve months. | Website. |
 | Backup of the website | After 30 days at most. | Backup storage. |
+| Data in Close | Never by the website. A booking with a pending transfer stays on the website for up to 30 more days. | Close, under the rules of the CRM. |
 
 #### Main Outlook calendar: choose «Block only» for the device
 
@@ -835,6 +845,7 @@ the booking retention, as long as the device synchronises.
 
 #### What is never deleted
 
+- Data in Close; the website only creates and updates there.
 - Entries of their own because of their age, neither by the booking retention nor by the calendar
   retention.
 - Contents on the server during the clean-up of a device; only the device empties its copy.

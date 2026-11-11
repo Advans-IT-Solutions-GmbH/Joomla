@@ -66,7 +66,7 @@ final class DeletionRulesTest extends TestCase
         $keys = array_values(array_unique($found[0]));
 
         foreach (['RULE_ORIGIN_DESC', 'RULE_BOOKINGS_DESC', 'RULE_OWNER_DESC', 'RULE_DEVICE_DELETE_DESC', 'RULE_OWN_DESC', 'RULE_PRIVACY_DESC',
-            'RULE_CALRET_DESC', 'RULE_CLEANUP_DESC', 'RULE_RESTORE_DESC', 'RULE_BACKUP_DESC', 'TABLE_TITLE',
+            'RULE_CALRET_DESC', 'RULE_CLEANUP_DESC', 'RULE_RESTORE_DESC', 'RULE_BACKUP_DESC', 'RULE_CLOSE_DESC', 'TABLE_TITLE',
             'OUTLOOK_TITLE', 'OUTLOOK_WHY', 'NEVER_TITLE', 'BEYOND_TITLE'] as $rule) {
             self::assertContains('COM_APPOINTMENTS_HELP_DEL_' . $rule, $keys, $rule);
         }

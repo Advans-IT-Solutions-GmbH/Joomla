@@ -35,6 +35,9 @@ class HtmlView extends BaseHtmlView
     protected bool $closeEnabled = false;
     protected bool $closeConfigured = false;
 
+    /** @var array{waiting: int, first_forced: ?string, missed: int} */
+    protected array $closeWaiting = ['waiting' => 0, 'first_forced' => null, 'missed' => 0];
+
     public function display($tpl = null)
     {
         // An administrator's visit continues the migration of booking rows (team-calendars.md, 5.10).
@@ -46,6 +49,17 @@ class HtmlView extends BaseHtmlView
 
         $this->counts = $this->getModel()->getCounts();
         $this->eventCounts = $this->getModel()->getEventCounts();
+
+        // Bookings whose retention waits for the CRM transfer, or that were erased without it: a warning
+        // for everybody who manages the bookings, with counts and a date only.
+        try {
+            $this->closeWaiting = (new \Advans\Component\Appointments\Administrator\Service\SchedulerService(
+                Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class),
+                \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments')))
+                ->closeWaiting(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+        } catch (\Throwable $e) {
+            $this->closeWaiting = ['waiting' => 0, 'first_forced' => null, 'missed' => 0];
+        }
         if (Factory::getApplication()->getIdentity()->authorise('core.admin', 'com_appointments')) {
             $params = \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments');
             $this->closeEnabled = (int) $params->get('close_enabled', 0) === 1;
