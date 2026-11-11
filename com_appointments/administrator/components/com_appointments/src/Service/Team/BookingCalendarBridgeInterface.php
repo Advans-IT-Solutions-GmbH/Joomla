@@ -87,4 +87,30 @@ interface BookingCalendarBridgeInterface
      * @return bool False when removal could not be verified; no copies is success.
      */
     public function onBookingErased(int $bookingId): bool;
+
+    /**
+     * Ask for the copies of the future bookings of one event type to be written
+     * again, or of every event type with `0`: after its target calendar changed,
+     * or after the copies were removed while the feature was switched off.
+     * Recorded only; {@see self::restoreCopies()} does the work. Needs no key.
+     */
+    public function requestRestore(int $eventTypeId): void;
+
+    /**
+     * Work through the recorded requests, one worker at a time: for every
+     * future, active booking of a requested event type, write the copy anew as
+     * after a booking change (a copy that survived a switched-off period may be
+     * stale) and remove it from other calendars. A copy counts only if its ETag
+     * changed with the write (the refresh was committed) and it lies in the
+     * target alone. A request is closed
+     * once a pass over its bookings ended without a failed write; after a failed write the next run starts a new pass (at most five,
+     * then the request is given up and logged). Without a request nothing is
+     * written, so a copy a device deleted stays deleted. While the feature is
+     * switched off, every clean-up records a request for all event types, so
+     * the copies come back when it is switched on again; nothing is written
+     * while it is off.
+     *
+     * @return  int  Copies written and verified in place.
+     */
+    public function restoreCopies(int $limit): int;
 }

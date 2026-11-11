@@ -58,6 +58,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         'privacy_staff',
         'privacy_cleanup',
         'privacy_outcomes',
+        'copy_restore',
         'eventtype_calendars',
         'auth_failures',
         'teamlog_head',
@@ -251,6 +252,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_privacy_staff')
             . ' (request_id INT UNSIGNED NOT NULL PRIMARY KEY, payload TEXT NOT NULL)'
             . ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+        $this->ensureCopyRestoreTable();
         $this->seedMailTemplates($parent);
         $this->installBundledPlugins($parent);
         $this->initialiseLegacyFeedSetting($type);
@@ -293,6 +295,20 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $app->enqueueMessage($message, 'message');
 
         return true;
+    }
+
+    /**
+     * The table of requests to write calendar copies anew (see install.mysql.utf8.sql), also on
+     * an update from a version without it. Independent of the schema version on purpose.
+     */
+    private function ensureCopyRestoreTable(): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_copy_restore')
+            . ' (`eventtype_id` INT UNSIGNED NOT NULL, `requested_utc` DATETIME NOT NULL,'
+            . ' `token` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, `after_booking_id` INT UNSIGNED NOT NULL DEFAULT 0,'
+            . ' `failed` TINYINT UNSIGNED NOT NULL DEFAULT 0, `passes` TINYINT UNSIGNED NOT NULL DEFAULT 0,'
+            . ' PRIMARY KEY (`eventtype_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
     }
 
     private function prepareUninstall(): bool

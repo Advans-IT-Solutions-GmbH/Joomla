@@ -43,6 +43,7 @@ class StructureTest
         'appointments_teamlog_head',
         'appointments_auth_failures',
         'appointments_eventtype_calendars',
+        'appointments_copy_restore',
     ];
 
     public function __construct()

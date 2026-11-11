@@ -672,6 +672,151 @@ rows and rate-limit windows per invocation. Run additional batches or increase t
 an existing backlog exceeds one daily batch. Monitor Scheduler results: disabling or failing the
 task prevents both personal-data retention and metadata cleanup from being enforced.
 
+### Retention and deletion rules
+
+The same rules are on the administrator page **Components → Appointments → Help & tips**, section
+**Retention and deletion**, in German, English and French. They protect the operator's own
+appointments and make sure that the data of invitees disappears everywhere after the retention
+period.
+
+**The origin decides.** Every entry in an internet calendar is either a *booking copy* or an *entry
+of its own*. The website writes a booking copy itself when somebody books (the object carries the
+booking id). Everything else is an entry of its own, including an appointment that a device such as
+Outlook uploaded. The website's automatic deletions only concern booking copies.
+
+**Bookings disappear after the booking retention.** The task *Appointments: retention* processes
+every booking whose end lies further back than the booking retention; **On erasure** decides
+between anonymising and deleting the booking entirely. All copies of the booking go with it, from
+every internet calendar and, at their next synchronisation, from every device, Outlook included. A
+cancelled booking loses its copy at once, the booking itself only after the period. The period is
+set in the Options, for example 30 days with **Delete the booking entirely**. An erasure record
+without the invitee's data remains for its own retention.
+
+**Booking copies belong to the website.** A change made to a booking copy on a device is
+overwritten at the next change of the booking (reschedule, new conference link, removed guest), and
+the copy is deleted with the booking retention at the latest. Notes about an appointment belong in
+the CRM, not in the copy.
+
+**Deleting in the calendar does not cancel the appointment.** If a device deletes a booking copy,
+the booking stays and the invitee still turns up. The website accepts that and writes the copy
+again only at the next change of the booking. Cancel only in the administrator's booking list. The
+device setup page says the same.
+
+**Entries of their own have no retention, enforced technically.** The calendar retention task
+(`CalendarObjectStore::deleteEndedBefore()`) skips every object without a booking id before it even
+reads its timing, and the deletion checks the booking id again under the row lock. A value above 0
+in a calendar's field therefore never deletes an entry of the calendar's own, whatever kind of
+calendar it is and whatever a device writes into it later. This variant was chosen over refusing
+the field for calendars that hold entries of their own, because a device can add such an entry at
+any time after the field was set, and because the check then sits at the only place that deletes.
+An entry of its own disappears only if somebody deletes it on a device, if the whole calendar is
+deleted, or if a Joomla privacy request covers it (see «Privacy requests and retention»).
+
+**The calendar retention only deletes booking copies.** Each calendar has the field **Delete
+booking copies after (days)**, default `0` (never). Booking retention deletes booking copies anyway;
+a value above 0 only deletes them earlier, on every device that synchronises the calendar. Saving a
+new value above 0 shows a warning with the number of those devices, and the edit form keeps a
+warning while the value is above 0. For team calendars the value stays `0` for now.
+
+**Removing and blocking devices, password reset.** When a device is removed or blocked, a password
+is reset or a person's calendar access is blocked, each device follows its own removal setting (see
+«Removing devices» and «Blocking and clean-up»). With **Clean up** the device receives its calendars
+empty at its next synchronisation and deletes everything it synchronises with them, for example on
+a phone. With **Block only** it is only refused and keeps its data. In both cases the server deletes
+nothing. For Outlook with the main calendar, choose **Block only**; otherwise Outlook deletes the
+host's own appointments there during a clean-up.
+
+**Copies after switching on again and with a new target calendar.** While the internet calendars
+are switched off, every booking copy is removed, and every clean-up run while they are off records a
+request for all event types (table `#__appointments_copy_restore`); changing the target calendar of
+an event type records one for that event type. Once the internet calendars are on, the task
+*Appointments: internet calendar retention* writes the copies of all future bookings anew, up to 200
+per run and one worker at a time, and moves copies out of a calendar that is no longer the target.
+All future bookings are written, also those that still have a copy, because a copy that survived
+the switched-off period may be stale. Only a copy whose ETag changed with the write (so the refresh
+was committed) and that lies in the target alone counts; after a failed write the next run starts another pass, at most five, then
+the request is given up and logged. Copies that a device deleted come back as well. Past bookings
+get no new copy. Without such a request nothing is rewritten, so a copy deleted on a device
+otherwise stays deleted.
+
+**Backups and restoring.** Keep backups of the website for at most 30 days and state that period in
+the privacy policy. A backup contains bookings and copies deleted since. After a restore, catch up
+on the deletions at once:
+
+1. In **System → Scheduled Tasks**, run *Appointments: retention* and *Appointments: internet
+   calendar retention* by hand at once.
+2. Repeat every deletion requested since the date of the backup: deletion links from mails,
+   deletions in the administrator and Joomla privacy requests. The restored database no longer
+   knows them; the operator's own records decide.
+3. Block devices and revoke grants again that were blocked or revoked after the date of the backup
+   (see «Restoring a backup» for the epoch anchor).
+4. Check the devices; at their next synchronisation they receive the state of the website.
+
+#### What is deleted when
+
+| What | When | Where |
+|---|---|---|
+| Booking | After the booking retention from the end of the appointment, for example 30 days. At once through the deletion link or a deletion in the administrator. | Website. Anonymised or deleted entirely, depending on **On erasure**. |
+| Booking copy | With the booking. At once on a cancellation. Earlier if a calendar retention is set. | Every internet calendar and, at their next synchronisation, every device, Outlook included. |
+| Entry of its own | Never because of its age. | Remains until somebody deletes it. |
+| Booking copies while internet calendars are switched off | At the next run of the task or the next change of the booking. | Every internet calendar. Devices synchronise only after switching on again. |
+| Calendars on a device set to **Clean up** | At the next synchronisation after removing the device, a block or a password reset. A device set to **Block only** is only refused and deletes nothing. | Only on the device. The server keeps everything. |
+| Whole internet calendar | At once when somebody deletes it with all its entries in the administrator. | Website. On devices depending on the program. |
+| Erasure record | After the erasure-audit retention in years. | Website. |
+| Internet calendar log | After twelve months. | Website. |
+| Backup of the website | After 30 days at most. | Backup storage. |
+
+#### Main Outlook calendar: choose «Block only» for the device
+
+The target calendar of an event type may be synchronised two-way with the host's main Outlook
+calendar. The host then sees the bookings in Outlook, and the host's own Outlook appointments block
+times on the booking page. Two rules make this safe:
+
+- The host's own appointments lie in the same calendar as the booking copies. Booking retention and
+  calendar retention still only delete booking copies there, never the host's own appointments
+  (enforced technically, see «Entries of their own have no retention» above).
+- For the Outlook device, the removal setting is **Block only** (see «Removing devices»). The
+  website then can never delete appointments in Outlook on a removal, a block or a password reset.
+
+Setup with classic Outlook and CalDav Synchronizer:
+
+1. In **Internet calendars**, create a calendar with the host as owner; leave **Blocks booking
+   times** at Yes.
+2. Choose it as **Target calendar** in the event type.
+3. On the website, add a device for Outlook in **My calendars** and choose **Block only** for it.
+4. In CalDav Synchronizer, assign the calendar to the main Outlook calendar, synchronisation mode
+   «Outlook ↔ Server (Two-Way)».
+5. Use a local Outlook calendar (for example a PST file), not an Exchange or Microsoft 365
+   mailbox; otherwise the booking copies are also stored at Microsoft.
+6. For phones and other devices with a calendar folder of their own, choose **Clean up**, so the
+   calendars disappear there completely on a removal.
+
+**Why «Block only»:** during a clean-up the website delivers an empty calendar to the device. In a
+two-way synchronisation with the main calendar, Outlook aligns the calendar with it and deletes every
+appointment in it, the host's own included. «Block only» refuses the device without delivering an
+empty calendar, so Outlook keeps everything. The booking copies still disappear from Outlook after
+the booking retention, as long as the device synchronises.
+
+#### What is never deleted
+
+- Entries of their own because of their age, neither by the booking retention nor by the calendar
+  retention.
+- Contents on the server during the clean-up of a device; only the device empties its copy.
+- The user's own Outlook appointments by the website, if **Block only** is chosen for the Outlook
+  device.
+- A booking, by deleting its copy on a device.
+- Erasure records before their own retention ends, and the internet calendar log before twelve
+  months.
+
+#### What the website cannot delete
+
+- Copies on a device that no longer synchronises, for example because it was lost.
+- Booking copies somebody moved or copied into an Outlook folder that is not synchronised.
+- Appointments from booking mails that somebody accepted in Outlook. In Outlook they lie outside
+  the website; in a synchronised calendar other than the target calendar they count as entries of
+  their own.
+- Backups, until they expire after their period.
+
 ### Navigation
 
 Each administrator and site branch keeps links back to its list or overview, including empty,
@@ -1058,13 +1203,14 @@ addresses against it.
   recovery key).
 - Searches, exports and removals are logged with counts only, never the address or content.
 
-Each calendar has its own **retention** in days (0–65535). Its default `0` disables only age-based
-object deletion; it does not inherit booking retention or prevent separate removal of cancelled,
-erased or orphan booking copies. With internet calendars enabled, the calendar-retention task
-deletes an entire object or finite series after its last safely determined occurrence ends before
-the UTC cutoff. Future, endless or indeterminate series remain. The same rule covers imported,
-CalDAV-written and booking objects, but not booking rows or erasure audits. A later upload or
-booking change can recreate an object. The log records only the count.
+Each calendar has its own **Delete booking copies after (days)** (0–65535). Its default `0`
+disables age-based deletion; it does not inherit booking retention or prevent separate removal of
+cancelled, erased or orphan booking copies. With internet calendars enabled, the calendar-retention
+task deletes a **booking copy** (an object with a booking id) after its last safely determined
+occurrence ends before the UTC cutoff. Objects without a booking id (entries of the calendar's own,
+whether written by a device or imported) are never deleted by age, whatever the value; see
+«Retention and deletion rules». Booking rows and erasure audits are not touched either. A later
+booking change can recreate a copy. The log records only the count.
 
 The backend fields explain these separate lifecycles, UTC cutoffs, ranges and Scheduler prerequisites.
 An empty event-type booking-retention value inherits the component setting; booking `0` processes

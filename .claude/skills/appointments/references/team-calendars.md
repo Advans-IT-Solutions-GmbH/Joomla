@@ -51,8 +51,12 @@ package; a deviation is a change to this file in the same pull request, agreed w
   decrypt them. One recovery key for the whole site, kept offline by the owner as two printouts in
   separate places. After a password reset a manager grants again, or the recovery key is used.
 - **Retention per calendar:** `0` disables only age-based object deletion, not booking-copy cleanup.
-  Scheduler deletes whole objects after their last safely determined occurrence ends before the UTC
-  cutoff; future, endless or indeterminate series stay. Booking retention and erasure audits are
+  Scheduler deletes whole **booking copies** (objects with a booking id) after their last safely
+  determined occurrence ends before the UTC cutoff; future, endless or indeterminate series stay.
+  Objects without a booking id (entries of the calendar's own) are never deleted by age, enforced in
+  `deleteEndedBefore()` itself (decision of 11.11.2026, see the component README, «Retention and
+  deletion rules»). The field is labelled «Delete booking copies after (days)»; saving a value above 0
+  warns with the number of synchronising devices. Booking retention and erasure audits are
   separate (booking `0` means the next run after the end, not unlimited). Backend field help explains
   these distinctions and the required tasks; the calendar log records the count, never content.
 - **Backend Help & tips:** a native administrator page, linked from the manifest menu, dashboard
@@ -732,7 +736,10 @@ off, they learn of new bookings only through the calendar.
   availability, retention), grants, rotate key, recovery key setup and use. Navigation links on the
   dashboard (C).
 - Retention per calendar (F): Scheduler routine «calendar retention» calls
-  `CalendarObjectStoreInterface::deleteEndedBefore()` for each calendar with `retention_days > 0`.
+  `CalendarObjectStoreInterface::deleteEndedBefore()` for each calendar with `retention_days > 0`
+  (booking copies only) and `BookingCalendarBridgeInterface::restoreCopies()` for the recorded
+  requests to rewrite future booking copies (table `#__appointments_copy_restore`: target calendar
+  changed, or copies removed while switched off).
 - `invitations` (C, `appointments.team.external`: activation links, the revoke page), `devices` (F: all devices, «last synchronised», «When removed or blocked», block by that setting, revoke, change the setting),
   `teamlog` (F: events, verify, checksum).
 - System view (F): libsodium, HTTPS, Authorization header, well-known reachability, plugins enabled,

@@ -21,6 +21,9 @@ defined('_JEXEC') or die;
 
 class EventtypeModel extends AdminModel
 {
+    /** Whether the save at hand changes the target calendar of an existing event type. */
+    private bool $targetChanged = false;
+
     public function getItem($pk = null)
     {
         $item = parent::getItem($pk);
@@ -71,6 +74,8 @@ class EventtypeModel extends AdminModel
      */
     private function calendarLinks(array &$data, int $id, int $oldHost, int $newHost): ?array
     {
+        $this->targetChanged = false;
+
         if (!$this->teamEnabled()) {
             unset($data['calendar_id'], $data['busy_calendars']);
 
@@ -139,6 +144,7 @@ class EventtypeModel extends AdminModel
 
         // 0 is stored as NULL by the table; null itself would not be bound.
         $data['calendar_id'] = $target;
+        $this->targetChanged = $id > 0 && $target !== $storedTarget;
 
         return $busy;
     }
@@ -380,6 +386,17 @@ class EventtypeModel extends AdminModel
             }
 
             $db->transactionCommit();
+
+            // A new target calendar: the copies of the future bookings move there with the
+            // next Scheduler run (the old calendar loses them), not only at their next change.
+            if ($this->targetChanged) {
+                $this->targetChanged = false;
+                try {
+                    TeamServices::fromApplication()->bookings()->requestRestore($id);
+                } catch (\Throwable $e) {
+                    // The event type is saved; the copies then follow at the next booking change.
+                }
+            }
         } catch (\InvalidArgumentException $e) {
             $db->transactionRollback();
             $this->setError(Text::_('COM_APPOINTMENTS_EVENTTYPE_ERROR_REQUIRED'));
