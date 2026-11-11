@@ -24,7 +24,7 @@ $compare = static function (int $eventId, string $day, string $name) use ($fixtu
         array_filter($context['engine']->findSlots($now, $from, $to, $context['busy'], $context['caps']),
             static fn (DateTimeImmutable $slot): bool => $slot->setTimezone($zone)->format('Y-m-d') === $day)));
     $html = $client->request('/index.php?' . http_build_query(['option' => 'com_appointments', 'view' => 'eventtype',
-        'id' => $eventId, 'month' => substr($day, 0, 7), 'day' => $day, 'timezone' => $name]));
+        'id' => $eventId, 'Itemid' => appointments_menu_item('index.php?option=com_appointments&view=eventtype&id=' . $eventId), 'month' => substr($day, 0, 7), 'day' => $day, 'timezone' => $name]));
     $document = new DOMDocument();
     @$document->loadHTML($html);
     $xpath = new DOMXPath($document);
@@ -40,7 +40,7 @@ $compare = static function (int $eventId, string $day, string $name) use ($fixtu
 // the date-and-time part, rendered by the same layout from the same engine result.
 $fragment = static function (int $eventId, string $day, string $name, array $expected) use ($client, $check): void {
     $html = $client->request('/index.php?' . http_build_query(['option' => 'com_appointments', 'view' => 'eventtype',
-        'id' => $eventId, 'month' => substr($day, 0, 7), 'day' => $day, 'timezone' => $name, 'format' => 'raw']));
+        'id' => $eventId, 'Itemid' => appointments_menu_item('index.php?option=com_appointments&view=eventtype&id=' . $eventId), 'month' => substr($day, 0, 7), 'day' => $day, 'timezone' => $name, 'format' => 'raw']));
     $document = new DOMDocument();
     @$document->loadHTML('<?xml encoding="utf-8"?>' . $html);
     $xpath = new DOMXPath($document);
@@ -80,14 +80,14 @@ try {
     $fragment($event, $closed, 'UTC', []);
     foreach ([['month' => '2026-99'], ['timezone' => 'not-a-zone']] as $invalid) {
         $client->request('/index.php?' . http_build_query(array_replace(['option' => 'com_appointments', 'view' => 'eventtype',
-            'id' => $event, 'day' => $day, 'month' => substr($day, 0, 7), 'timezone' => 'UTC'], $invalid)));
+            'id' => $event, 'Itemid' => appointments_menu_item('index.php?option=com_appointments&view=eventtype&id=' . $event), 'day' => $day, 'month' => substr($day, 0, 7), 'timezone' => 'UTC'], $invalid)));
         $check($client->status === 400, 'Invalid public slot input gets an explicit error');
         $client->request('/index.php?' . http_build_query(array_replace(['option' => 'com_appointments', 'view' => 'eventtype',
-            'id' => $event, 'day' => $day, 'month' => substr($day, 0, 7), 'timezone' => 'UTC', 'format' => 'raw'], $invalid)));
+            'id' => $event, 'Itemid' => appointments_menu_item('index.php?option=com_appointments&view=eventtype&id=' . $event), 'day' => $day, 'month' => substr($day, 0, 7), 'timezone' => 'UTC', 'format' => 'raw'], $invalid)));
         $check($client->status === 400, 'Invalid slot endpoint input gets an explicit error');
     }
     $fixture->db->query("UPDATE {$fixture->prefix}appointments_eventtypes SET published=0 WHERE id={$event}");
-    $client->request('/index.php?option=com_appointments&view=eventtype&id=' . $event);
+    $client->request(appointments_page($event));
     $check($client->status === 404, 'Unpublished events never reveal a slot list');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";

@@ -145,8 +145,10 @@ currently available.
   has its own Joomla permission asset and independently generated feed credential. An event type's
   host cannot change while any booking is retained; create a new event type for a different host.
 - **Menu item types.** Publish the list of event types or one event type through Joomla's menu
-  manager, in one content language or in *All*, with SEF addresses. Direct links enforce
-  publication, access and content language too.
+  manager, in one content language or in *All*, with SEF addresses. A page opens only through a
+  menu item of its type: no query parameter switches a menu item to another view or event type,
+  and without such a menu item the page answers 404 (see [Reachable addresses](#reachable-addresses)).
+  Publication, access and content language are enforced too.
 - **Public booking.** A booking page in steps, one at a time, beside an information column of
   the event type: 1. the month calendar, then the times of the chosen day, where the chosen time
   shows its **Next** button; 2. the visitor's details, with the chosen time and a **Back** link in
@@ -228,10 +230,10 @@ components. The guest links in e-mails and the calendar subscriptions stay non-S
   is chosen from the published event types; an item whose event type was unpublished later keeps it,
   marked as unpublished. Links the component builds (the event type list, the month and day
   navigation, redirects inside the booking flow) use the event type's own menu item in the current
-  language or in *All*, otherwise an *Event types* item (`/<list item>/<event type alias>`),
-  otherwise `/component/appointments/eventtype/<event type alias>`. Earlier addresses such as
-  `/component/appointments/?view=eventtype&id=…` and non-SEF
-  `index.php?option=com_appointments&view=eventtype&id=…` keep working.
+  language or in *All*, otherwise an *Event types* item (`/<list item>/<event type alias>`).
+  An event type without either menu item has no booking page. Addresses without a menu item, such
+  as `/component/appointments/eventtype/<alias>`, `/component/appointments/?view=eventtype&id=…`
+  and non-SEF `index.php?option=com_appointments&view=eventtype&id=…`, answer 404.
 - **Links in e-mails** (reschedule, cancel, erase) are built as
   `index.php?option=com_appointments&view=manage&id=…&action=…&signature=…&Itemid=…` from the public
   site URL. They are signed, are also sent by the reminder task from the command line, where no site
@@ -273,8 +275,39 @@ No exception is needed for `tmpl=component` or `format=feed`: the component uses
 feed is served by the task `feed.download`.
 
 The router does not remove these exceptions. The signed mail links and feed URLs have to be
-stable and buildable without a site router, and without a menu item a routed address is still
-`/component/appointments/…`.
+stable and buildable without a site router, and a confirmation or signed page without a menu item
+to frame it is still routed as `/component/appointments/?view=…`.
+
+### Reachable addresses
+
+The site part answers only what a published menu item offers, plus the few endpoints that check a
+signature, a token or the browser session themselves. The component's dispatcher decides this
+before any controller runs; there is no option to relax it. Everything else answers **404**, the
+same answer as an address that does not exist, so it does not reveal that a view exists.
+
+| Request | Reachable through | Checked by the page or task |
+|---|---|---|
+| List of event types (`view=eventtypes`, also without a view) | an *Event types* menu item only | its layout, format HTML |
+| Booking page (`view=eventtype&id=…`) | its *Book an appointment* menu item (same event type), or below an *Event types* item | event type and schedule published, access level, content language; the menu item's layout; `format=raw` only for the date-and-time part that the booking script loads |
+| «My calendars» (`view=mycalendars`, layout `device` for one device) | a *My calendars* menu item only | signed in, internet calendars on, own devices |
+| Confirmation (`view=booking`) | any frame | the last booking of this browser session |
+| Reschedule, cancel, erase (`view=manage`) | any frame | signature bound to booking, action and row version |
+| Account activation (`view=activation`) | any frame | one-time token, exchanged into the session |
+| Tasks `booking.submit`, `booking.ics`, `booking.manage`, `guest.confirm`, `guest.remove`, `feed.download`, `devices.create`, `devices.rename`, `devices.remove`, `activation.complete` | any frame | POST with form token, signature, session or feed token, as described for each |
+
+Refused with 404, for example: `/<booking page>?view=eventtypes`, `/<booking page>?id=<other event
+type>`, another layout (`?layout=…`) or format (`?format=json`) of a menu item, a view without
+a menu item of its type on any menu item, a further path segment below a *Book an appointment*
+item, an unpublished event type below an *Event types* item, every task not in the table
+(including `<controller>.display`, an empty or unknown task, `controller=…` without a task) and
+`/component/appointments/…` or `index.php?option=com_appointments&view=…` without a menu item.
+With Joomla's *Strict Routing* (SEF plugin) a non-SEF address of a reachable page is first
+redirected to its menu item's address; a refused request stays refused.
+
+The confirmation, the signed pages and their receipts carry the `Itemid` of the event type's
+booking page (see *Links in e-mails* above). The mails of the internet calendars link «My
+calendars» with the `Itemid` of its menu item, so create that menu item before inviting users
+(see [Internet calendars](#internet-calendars), «Setting up»).
 
 ### Video conferencing
 Select a provider in **Options → Video conferencing**, then set the event's location to **Video
@@ -399,7 +432,8 @@ Cancel so their checkout is released. Authorisation and deliberate privacy-prese
 responses take precedence over navigation; public links never grant access to another person's
 booking. Component options retain Joomla's native Close action.
 
-The button **Back to appointments** (on a form **Cancel**) leads to the list of all event types. On
+The button **Back to appointments** (on a form **Cancel**) leads to the list of all event types,
+through its *Event types* menu item; without such a menu item it leads to the home page. On
 a *Book an appointment* menu item, which publishes one event type, it is hidden by default, so the
 list does not show that item's visitors the other event types. The menu item's **Navigation** tab
 shows it again and chooses its target (another menu item, otherwise the list). While it is hidden,
@@ -497,6 +531,8 @@ right is locked and can lift the lock in the devices view. Not covered, stated p
    initializes that person's key; their own authenticated key session must create it first.
 6. Add a menu item **My calendars** with the access level «Internet calendars». There each user
    adds one device per client and receives the app password and the instructions for that client.
+   The page opens only through this menu item, and the mails link it with its `Itemid`; without
+   it «My calendars» answers 404.
 
 #### Accounts
 
@@ -879,9 +915,9 @@ headers. Only its keyed hash is stored; no raw address is added to a booking.
 ### Page markup and styling
 
 Each public page sets its own browser title and main heading when the active menu item does not
-point at it, for example on `/component/appointments/` without a menu item: "Book an appointment"
-for the list, the event type's title for its booking page, the confirmation heading and the
-heading of the reschedule, cancel or erase page. When a menu item points at the page (for one
+point at it: the event type's title for a booking page below an *Event types* item, the
+confirmation heading and the heading of the reschedule, cancel or erase page in the frame of a
+booking page. When a menu item points at the page (for one
 event type: at that event type), its browser page title (or else its menu title) applies and its
 page heading replaces the default heading when the menu item shows the page heading. In both
 cases Joomla's **Site Name in Page Titles** setting applies. Summaries name the end date of an

@@ -232,6 +232,11 @@ function setup(): void
     $state = ['admin' => $admin, 'users' => [], 'calendars' => [], 'devices' => []];
     saveState($state);
 
+    // «My calendars» opens only through its menu item, as on a site; kept until teardown.
+    require_once __DIR__ . '/../scripts/appointments-menu.php';
+    $state['mycalendars_item'] = appointments_menu_item('index.php?option=com_appointments&view=mycalendars', true);
+    saveState($state);
+
     if ($team->keys()->recoveryFingerprint() === null) {
         // The secret is shown once on a real site; the job never needs it.
         $team->keys()->createRecoveryKey($admin);
@@ -319,7 +324,8 @@ function setup(): void
 
     saveState($state);
 
-    $public = ['dav_url' => $team->davBaseUrl(), 'users' => [], 'calendars' => $state['calendars']];
+    $public = ['dav_url' => $team->davBaseUrl(), 'users' => [], 'calendars' => $state['calendars'],
+        'mycalendars' => '/index.php?option=com_appointments&view=mycalendars&Itemid=' . (int) $state['mycalendars_item']];
 
     foreach ($state['users'] as $name => $user) {
         $public['users'][$name] = [
@@ -562,6 +568,10 @@ function teardown(): void
 
     if (!empty($state['recovery_created'])) {
         db()->query("DELETE FROM {$prefix}appointments_keyring WHERE purpose='recovery'");
+    }
+
+    if (!empty($state['mycalendars_item'])) {
+        db()->query("DELETE FROM {$prefix}menu WHERE id=" . (int) $state['mycalendars_item']);
     }
 
     if ($errors !== []) {

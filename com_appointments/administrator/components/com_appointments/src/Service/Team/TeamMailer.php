@@ -12,6 +12,7 @@ namespace Advans\Component\Appointments\Administrator\Service\Team;
 use Advans\Component\Appointments\Administrator\Helper\DefaultTemplates;
 use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Helper\MailLanguage;
+use Advans\Component\Appointments\Administrator\Helper\MenuViews;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Table\TemplateTable;
@@ -61,6 +62,9 @@ final class TeamMailer implements TeamMailerInterface
         4 => 'COM_APPOINTMENTS_TEAM_D_ROLE_MANAGE',
     ];
 
+    /** Address of «My calendars» (myCalendarsUrl()), null until first needed. */
+    private ?string $myCalendarsUrl = null;
+
     public function __construct(private readonly TeamServices $services)
     {
     }
@@ -78,9 +82,9 @@ final class TeamMailer implements TeamMailerInterface
                 '{device_name}' => $deviceName,
                 '{client}' => $language->_(DeviceService::CLIENT_LABELS[$client] ?? DeviceService::CLIENT_LABELS['other']),
                 '{created}' => $this->when($createdUtc, $language, $recipient),
-                '{mycalendars_url}' => $this->siteUrl('index.php?option=com_appointments&view=mycalendars'),
+                '{mycalendars_url}' => $this->myCalendarsUrl(),
             ];
-        }, [$this->siteUrl('index.php?option=com_appointments&view=mycalendars') => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
+        }, [$this->myCalendarsUrl() => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
     }
 
     public function invitation(string $email, #[\SensitiveParameter] string $link, \DateTimeImmutable $expiresUtc): void
@@ -183,9 +187,9 @@ final class TeamMailer implements TeamMailerInterface
                 '{grantee_name}' => $grantee !== null ? (string) $grantee->name : '',
                 '{actor_name}' => $actor !== null ? (string) $actor->name : '',
                 '{role}' => $this->role($language, $roleLabelKey),
-                '{mycalendars_url}' => $this->siteUrl('index.php?option=com_appointments&view=mycalendars'),
+                '{mycalendars_url}' => $this->myCalendarsUrl(),
             ];
-        }, [$this->siteUrl('index.php?option=com_appointments&view=mycalendars') => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
+        }, [$this->myCalendarsUrl() => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
     }
 
     public function accessSuspended(int $userId, string $reason): void
@@ -484,6 +488,21 @@ final class TeamMailer implements TeamMailerInterface
         }
 
         return $recipients;
+    }
+
+    /**
+     * Address of «My calendars» through its menu item: the page opens only through a published menu
+     * item of its type (MenuViews), so without one the link has no Itemid and the page answers 404.
+     * Looked up once per mailer, not once per recipient.
+     */
+    private function myCalendarsUrl(): string
+    {
+        if ($this->myCalendarsUrl === null) {
+            $itemId = MenuViews::itemFor($this->services->db(), 'mycalendars');
+            $this->myCalendarsUrl = $this->siteUrl('index.php?option=com_appointments&view=mycalendars' . ($itemId > 0 ? '&Itemid=' . $itemId : ''));
+        }
+
+        return $this->myCalendarsUrl;
     }
 
     private function siteUrl(string $path): string

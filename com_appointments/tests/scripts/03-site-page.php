@@ -10,7 +10,13 @@
  * the response the way the shared backend suite does for the administrator.
  *
  * Temporary event types and their schedule are removed after the requests.
+ *
+ * The pages open only through a menu item of their type (appointments-menu.php), so the
+ * suite opens them like a visitor of a site with such menu items, and checks that the same
+ * addresses without a menu item answer 404.
  */
+
+require_once __DIR__ . '/appointments-menu.php';
 
 class SitePageTest
 {
@@ -73,9 +79,27 @@ class SitePageTest
             return $this->strings !== [];
         });
 
+        // Without a menu item of their own neither address opens a page, and the 404 does not
+        // name the component's view.
+        foreach (['index.php?option=com_appointments', 'index.php?option=com_appointments&view=eventtypes'] as $path) {
+            $response = $this->request($path);
+
+            $this->test("{$path} without a menu item: answers 404 without the list", function () use ($response) {
+                if ($response['code'] !== 404) {
+                    echo "    HTTP {$response['code']} at {$response['url']}\n";
+                }
+
+                return $response['code'] === 404 && !str_contains($response['body'], 'com-appointments-heading')
+                    && !str_contains($response['body'], 'com-appointments-list');
+            });
+        }
+
+        $list = appointments_menu_item('index.php?option=com_appointments&view=eventtypes');
+        $listTitle = 'Appointments list fixture';
+        $this->db->query("UPDATE {$this->dbPrefix}menu SET title='{$listTitle}' WHERE id={$list}");
         $pages = [
-            'entry point without a view' => 'index.php?option=com_appointments',
-            'event type list view'       => 'index.php?option=com_appointments&view=eventtypes',
+            'entry point without a view' => 'index.php?option=com_appointments&Itemid=' . $list,
+            'event type list view'       => 'index.php?option=com_appointments&view=eventtypes&Itemid=' . $list,
         ];
 
         foreach ($pages as $label => $path) {
@@ -127,16 +151,15 @@ class SitePageTest
                 return $this->showsOwnString($response['body']);
             });
 
-            $this->test("{$label}: sets its own page title and heading without a menu item of its own", function () use ($response) {
-                // Without an Itemid the home menu item is active; its title must not leak.
+            $this->test("{$label}: takes the page title of its menu item and keeps its own heading", function () use ($response, $listTitle) {
                 $heading = trim((string) ($this->strings['COM_APPOINTMENTS_EVENTTYPES_HEADING'] ?? ''));
                 $title = preg_match('#<title>(.*?)</title>#s', $response['body'], $m) ? trim(html_entity_decode($m[1])) : '';
 
-                if ($title !== $heading) {
+                if ($title !== $listTitle) {
                     echo "    title: {$title}\n";
                 }
 
-                return $heading !== '' && $title === $heading
+                return $heading !== '' && $title === $listTitle
                     && preg_match('#<h1 class="com-appointments-heading">\s*' . preg_quote($heading, '#') . '\s*</h1>#', $response['body']) === 1;
             });
 
@@ -172,7 +195,8 @@ class SitePageTest
 
         try {
             $this->seed();
-            $response = $this->request('index.php?option=com_appointments&view=eventtypes');
+            $response = $this->request('index.php?option=com_appointments&view=eventtypes&Itemid='
+                . appointments_menu_item('index.php?option=com_appointments&view=eventtypes'));
             $body = $response['body'];
         } finally {
             $this->cleanUp();
@@ -247,7 +271,7 @@ class SitePageTest
 
         try {
             $event = $this->seedBookable($person);
-            $base = 'index.php?option=com_appointments&view=eventtype&id=' . $event . '&timezone=UTC';
+            $base = appointments_page($event, '&timezone=UTC');
 
             // 1a: the calendar alone, no times and no form of details yet.
             $page = $this->request($base . '&month=' . $month);

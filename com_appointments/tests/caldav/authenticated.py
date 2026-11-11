@@ -22,7 +22,8 @@ import niquests
 from caldav.lib.error import AuthorizationError
 
 PRIVATE = c.WORK / "authenticated.json"
-MY = "/index.php?option=com_appointments&view=mycalendars"
+# «My calendars» through its menu item, the only way it opens (fixture.php setup).
+MY = c.STATE["mycalendars"]
 ACCOUNT = c.user("authenticated")
 
 

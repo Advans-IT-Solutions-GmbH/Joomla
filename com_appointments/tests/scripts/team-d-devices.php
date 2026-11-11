@@ -173,6 +173,9 @@ function team_d_totp(string $base32, int $time): string
 return static function (TeamSuite $suite): void {
     $db = $suite->db;
     $p = $suite->prefix;
+    // «My calendars» opens only through its menu item (appointments-menu.php).
+    require_once __DIR__ . '/appointments-menu.php';
+    $myCalendars = '/index.php?option=com_appointments&view=mycalendars&Itemid=' . appointments_menu_item('index.php?option=com_appointments&view=mycalendars');
 
     // ------------------------------------------------------------------
     // Part 1: always
@@ -185,10 +188,10 @@ return static function (TeamSuite $suite): void {
             && !in_array('password', $columns, true) && !in_array('app_password', $columns, true);
     });
 
-    $suite->test('«My calendars» answers 404 while the internet calendars are off', static function () use ($suite) {
+    $suite->test('«My calendars» answers 404 while the internet calendars are off', static function () use ($suite, $myCalendars) {
         // With strict routing Joomla first redirects to the SEF address of the view; follow it.
         $browser = new TeamDBrowser($suite->base);
-        $browser->request('/index.php?option=com_appointments&view=mycalendars');
+        $browser->request($myCalendars);
 
         if ($browser->status !== 404) {
             throw new RuntimeException('HTTP ' . $browser->status);
@@ -567,7 +570,7 @@ return static function (TeamSuite $suite): void {
 
             return true;
         };
-        $page = static fn (TeamDBrowser $browser): string => $browser->request('/index.php?option=com_appointments&view=mycalendars');
+        $page = static fn (TeamDBrowser $browser): string => $browser->request($myCalendars);
         $submit = static function (TeamDBrowser $browser, string $html, array $fields) {
             $form = TeamDBrowser::form($html, 'devices.create');
 
@@ -852,11 +855,11 @@ return static function (TeamSuite $suite): void {
 
             return $browser->status === 423 && $noForm && $noPassword && $unchanged;
         });
-        $suite->test($flow[8], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page) {
+        $suite->test($flow[8], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page, $myCalendars) {
             $browser = new TeamDBrowser($suite->base);
             $signIn($browser, $tag . 'member', $password, $secret);
             $id = (int) $suite->count("SELECT id FROM {$p}appointments_devices WHERE user_id = {$member} AND state = 1 ORDER BY id LIMIT 1");
-            $html = $browser->request('/index.php?option=com_appointments&view=mycalendars&layout=device&id=' . $id);
+            $html = $browser->request($myCalendars . '&layout=device&id=' . $id);
             $form = TeamDBrowser::form($html, 'devices.remove');
 
             if ($form === null) {

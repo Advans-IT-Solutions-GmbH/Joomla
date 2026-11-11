@@ -14,7 +14,9 @@ use Joomla\CMS\MVC\Controller\BaseController;
 defined('_JEXEC') or die;
 
 /**
- * Default site controller. Defaults to the list of bookable event types.
+ * Default site controller. Defaults to the list of bookable event types. Which view, event type,
+ * layout and format a request may display is decided before this controller runs
+ * (Site\Dispatcher\Dispatcher, MenuViews): the list, for example, only through its own menu item.
  *
  * @since  1.0.0
  */

@@ -132,7 +132,10 @@ try {
     }
 
     $public = new AppointmentsHttp('http://localhost', 'events-public');
-    $html = $public->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventId);
+    // The booking page below the list of event types, whose way back leads to that list.
+    $belowList = '/index.php?option=com_appointments&view=eventtype&id=' . $eventId
+        . '&Itemid=' . appointments_menu_item('index.php?option=com_appointments&view=eventtypes');
+    $html = $public->request($belowList);
     $check($public->status === 200 && str_contains($html, $tag . '-edited'), 'Single event menu target renders publicly');
     $document = new DOMDocument();
     @$document->loadHTML($html);
@@ -152,7 +155,7 @@ try {
         echo substr(preg_replace('/\s+/', ' ', strip_tags($html)), 0, 3000) . "\n";
     }
     $db->query("UPDATE {$prefix}appointments_eventtypes SET published=0 WHERE id={$eventId}");
-    $public->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventId);
+    $public->request($belowList);
     $check($public->status === 404, 'Unpublished single event target is inaccessible');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
