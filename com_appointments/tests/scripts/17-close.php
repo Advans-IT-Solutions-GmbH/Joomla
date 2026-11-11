@@ -449,6 +449,32 @@ try {
     $check($link($id)['state'] === 'done' && $sent('POST', '/api/v1/activity/note/') === 3,
         'Read-only reconciliation links the existing note without another create');
 
+    // Two connections: a snapshot taken before another connection's committed change must not be
+    // authenticated next to the new values when the worker saves the record.
+    $queueClass = \Advans\Component\Appointments\Administrator\Service\Close\Queue::class;
+    $joomlaDb->transactionStart();
+    try {
+        $joomlaDb->setQuery('SELECT COUNT(*) FROM ' . $joomlaDb->quoteName('#__appointments_close_delivery'))->loadResult();
+        $other = $db->query("SELECT * FROM {$prefix}appointments_close_delivery WHERE booking_id={$id}")->fetch_assoc();
+        $other['target_sequence'] = (string) ((int) $other['target_sequence'] + 7);
+        $other['mac'] = (new ReflectionMethod($queueClass, 'mac'))->invoke(null, $other);
+        $db->query("UPDATE {$prefix}appointments_close_delivery SET target_sequence=" . (int) $other['target_sequence']
+            . ", mac='" . $db->real_escape_string($other['mac']) . "' WHERE booking_id={$id}");
+        (new ReflectionMethod($queueClass, 'save'))->invoke($queue, $id, ['reason' => 'probe']);
+        $joomlaDb->transactionCommit();
+    } catch (Throwable $error) {
+        $joomlaDb->transactionRollback();
+        throw $error;
+    }
+    $authentic = true;
+    try {
+        $queue->rows();
+    } catch (RuntimeException $error) {
+        $authentic = false;
+    }
+    $check($authentic && (int) $link($id)['target_sequence'] === (int) $other['target_sequence'] && $link($id)['reason'] === 'probe',
+        'A save after a concurrent committed change authenticates the current record, not an older snapshot');
+
     $booking = $book($event);
     $id = (int) $booking['id'];
     $raceId = $id;

@@ -299,10 +299,6 @@ namespace {
     $enrol($booking(2, 4, 'unrouted@example.test', []));
     $check($state(2) === false, 'event type without a profile is never enrolled');
     $db->queries = [];
-    $mutate($booking(1, 1, 'one@example.test', $lifeSciences), ['sequence' => 1, 'anonymised_utc' => '2027-02-01 00:00:00'], true);
-    $check(preg_grep('/test_appointments_close_delivery.*FOR UPDATE|DELETE FROM `test_appointments_close/', $db->queries) === [],
-        'erasing a never-enrolled booking takes no lock on the missing transfer key');
-    $db->queries = [];
     $first = $enrol($booking(3, 1, 'new@example.test', $lifeSciences));
     $check(preg_grep('/FOR UPDATE|^DELETE/', $db->queries) === [],
         'enrolment takes no locking read on a missing key, so concurrent bookings cannot deadlock on a gap lock');

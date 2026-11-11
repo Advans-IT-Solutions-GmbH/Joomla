@@ -77,21 +77,12 @@ final class Queue
     {
         $id = (int) $booking['id'];
         $table = $db->quoteName(self::TABLE);
-        // Never take a locking read or delete on a missing key: InnoDB would keep a gap lock, and concurrent
-        // bookings inserting into that gap could deadlock. The caller's booking row lock already serializes
-        // every change of this record, so a plain existence check is sufficient.
-        $exists = $db->setQuery('SELECT booking_id FROM ' . $table . ' WHERE booking_id = ' . $id)->loadResult() !== null;
-        if ($erased) {
-            // Close is isolated from website retention and privacy handling: only the local link goes.
-            if ($exists) {
-                $db->setQuery('DELETE FROM ' . $table . ' WHERE booking_id = ' . $id)->execute();
-            }
-            return;
-        }
-        $old = $exists ? $db->setQuery('SELECT * FROM ' . $table . ' WHERE booking_id = ' . $id . ' FOR UPDATE')->loadAssoc() : null;
-        if (!$exists) {
+        if ($created) {
+            // A new booking ID has no record yet. No locking read here: on a missing key InnoDB would keep a gap
+            // lock, and concurrent bookings inserting into that gap could deadlock.
             $params = ComponentHelper::getParams('com_appointments');
-            if (!$created || (int) $params->get('close_enabled', 0) !== 1) {
+            if ((int) $params->get('close_enabled', 0) !== 1
+                || $db->setQuery('SELECT booking_id FROM ' . $table . ' WHERE booking_id = ' . $id)->loadResult() !== null) {
                 return;
             }
             try {
@@ -111,6 +102,16 @@ final class Queue
             $row = (object) ($values + ['mac' => self::mac($values)]);
             if (!$db->insertObject(self::TABLE, $row)) {
                 throw new \RuntimeException('Close delivery could not be queued.');
+            }
+            return;
+        }
+        // Changes of an existing booking need the current record, not an older snapshot. The caller commits
+        // right after this call and waits for no further lock, so a gap lock here cannot close a cycle.
+        $old = $db->setQuery('SELECT * FROM ' . $table . ' WHERE booking_id = ' . $id . ' FOR UPDATE')->loadAssoc();
+        if ($erased) {
+            // Close is isolated from website retention and privacy handling: only the local link goes.
+            if ($old) {
+                $db->setQuery('DELETE FROM ' . $table . ' WHERE booking_id = ' . $id)->execute();
             }
             return;
         }
@@ -533,7 +534,13 @@ final class Queue
 
     private function save(int $id, array $fields): void
     {
-        $row = $this->row($id);
+        // A current (locking) read: under REPEATABLE READ a plain read could return an older snapshot and
+        // authenticate stale values next to the newly written ones.
+        $row = $this->db->setQuery('SELECT * FROM ' . $this->table() . ' WHERE booking_id = ' . $id . ' FOR UPDATE')->loadAssoc();
+        if (!$row) {
+            throw new \RuntimeException('Close delivery metadata is missing.');
+        }
+        self::verify($row);
         $fields['mac'] = self::mac(array_replace($row, $fields));
         $object = (object) (['booking_id' => $id] + $fields);
         if (!$this->db->updateObject(self::TABLE, $object, 'booking_id')) {
