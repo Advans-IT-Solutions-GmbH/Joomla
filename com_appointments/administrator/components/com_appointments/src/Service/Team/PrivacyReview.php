@@ -415,7 +415,9 @@ final class PrivacyReview
             $uri = preg_match('~(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*:\S*$~', substr($line, 0, $offset)) === 1;
 
             // An escaped line break (\n, \N) before the address is TEXT, not part of it.
-            if ($lead === '' && $offset > 0 && $line[$offset - 1] === '\\' && preg_match('/^[nN]/', $found) === 1) {
+            // Only an odd number of backslashes is an escape: \\\\n is a backslash and the letter n.
+            $slashes = \strlen($line) - \strlen(rtrim(substr($line, 0, $offset), '\\')) - (\strlen($line) - $offset);
+            if ($lead === '' && $slashes % 2 === 1 && preg_match('/^[nN]/', $found) === 1) {
                 $lead = $found[0];
                 $found = substr($found, 1);
             }
