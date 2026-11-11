@@ -267,6 +267,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_copy_restore')
             . ' (`eventtype_id` INT UNSIGNED NOT NULL, `requested_utc` DATETIME NOT NULL,'
             . ' `generation` INT UNSIGNED NOT NULL DEFAULT 1, `after_booking_id` INT UNSIGNED NOT NULL DEFAULT 0,'
+            . ' `failed` TINYINT UNSIGNED NOT NULL DEFAULT 0, `passes` TINYINT UNSIGNED NOT NULL DEFAULT 0,'
             . ' PRIMARY KEY (`eventtype_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_privacy_review')
             . ' (`id` INT UNSIGNED NOT NULL AUTO_INCREMENT, `request_id` INT UNSIGNED NOT NULL, `calendar_id` INT UNSIGNED NOT NULL,'

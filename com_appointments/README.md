@@ -461,12 +461,15 @@ nothing. For Outlook with the main calendar, choose **Block only**; otherwise Ou
 host's own appointments there during a clean-up.
 
 **Copies after switching on again and with a new target calendar.** While the internet calendars
-are switched off, every booking copy is removed. Switching them on again, or changing the target
-calendar of an event type, records a request (table `#__appointments_copy_restore`); the task
-*Appointments: internet calendar retention* then writes the copies of all future bookings anew, up
-to 200 per run, and moves copies out of a calendar that is no longer the target. Copies that a
-device deleted come back as well. Past bookings get no new copy. Without such a request nothing is
-rewritten, so a copy deleted on a device otherwise stays deleted.
+are switched off, every booking copy is removed, and every clean-up run while they are off records a
+request for all event types (table `#__appointments_copy_restore`); changing the target calendar of
+an event type records one for that event type. Once the internet calendars are on, the task
+*Appointments: internet calendar retention* writes the copies of all future bookings anew, up to 200
+per run, and moves copies out of a calendar that is no longer the target. Only a copy that is then
+really in place counts; after a failed write the next run starts another pass, at most five, then
+the request is given up and logged. Copies that a device deleted come back as well. Past bookings
+get no new copy. Without such a request nothing is rewritten, so a copy deleted on a device
+otherwise stays deleted.
 
 **Backups and restoring.** Keep backups of the website for at most 30 days and state that period in
 the privacy policy. A backup contains bookings and copies deleted since. After a restore, catch up
