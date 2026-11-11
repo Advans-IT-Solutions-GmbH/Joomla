@@ -24,6 +24,7 @@ use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
+use Joomla\CMS\Access\Access;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Language\Language;
@@ -40,8 +41,8 @@ final class NotificationService
 {
     private ?BookingData $data = null;
 
-    /** Menu item of «My calendars» (MenuViews::itemFor()), null until first needed, 0 without one. */
-    private ?int $myCalendarsItem = null;
+    /** Address of «My calendars» per language and set of view levels (myCalendarsLink()). */
+    private array $myCalendarsLinks = [];
 
     /**
      * @param   TeamServices|null  $team  The internet calendars; null reads them from the application when needed.
@@ -349,6 +350,34 @@ final class NotificationService
      * @param   array{user_id: int, email: string, purpose: string, content: bool, host: bool, backend: bool}  $entry
      * @param   array{id: int, title: string}  $calendar
      */
+    /**
+     * Address of «My calendars» for a calendar user: the page opens only through a published menu
+     * item of its type (MenuViews), so the link carries the item the user may open, in the user's
+     * language or in "All", and a language-specific item adds its `lang` code (as TeamMailer).
+     */
+    private function myCalendarsLink(string $base, object $account, string $tag): string
+    {
+        $levels = array_values(array_unique(array_map('intval', Access::getAuthorisedViewLevels((int) ($account->id ?? 0)))));
+        sort($levels);
+        $key = $tag . '|' . implode(',', $levels);
+
+        if (!isset($this->myCalendarsLinks[$key])) {
+            try {
+                $itemId = MenuViews::itemFor($this->db, 'mycalendars', $tag, $levels);
+                $code = MenuViews::languageCode($this->db, $itemId);
+            } catch (\Throwable $e) {
+                // The mail still goes out; its link then lacks the menu item.
+                Log::add('Appointment notification: the «My calendars» menu item could not be read (' . $e::class . ').', Log::WARNING, 'com_appointments');
+                $itemId = 0;
+                $code = '';
+            }
+            $this->myCalendarsLinks[$key] = rtrim($base, '/') . '/index.php?option=com_appointments&view=mycalendars'
+                . ($itemId > 0 ? '&Itemid=' . $itemId : '') . ($code !== '' ? '&lang=' . urlencode($code) : '');
+        }
+
+        return $this->myCalendarsLinks[$key];
+    }
+
     private function sendToCalendarUser(array $entry, object $account, array $booking, array $event, array $calendar, string $siteLanguage,
         \DateTimeImmutable $now, ConferenceService $conferences): void
     {
@@ -405,10 +434,7 @@ final class NotificationService
         }
 
         if ($base !== null) {
-            // «My calendars» opens only through its menu item (MenuViews): without the Itemid the link answers 404.
-            $this->myCalendarsItem ??= MenuViews::itemFor($this->db, 'mycalendars');
-            $links[rtrim($base, '/') . '/index.php?option=com_appointments&view=mycalendars'
-                . ($this->myCalendarsItem > 0 ? '&Itemid=' . $this->myCalendarsItem : '')] = 'COM_APPOINTMENTS_MAIL_CALENDAR_LINK_SETTINGS';
+            $links[$this->myCalendarsLink($base, $account, $tag)] = 'COM_APPOINTMENTS_MAIL_CALENDAR_LINK_SETTINGS';
         }
 
         $known = [];

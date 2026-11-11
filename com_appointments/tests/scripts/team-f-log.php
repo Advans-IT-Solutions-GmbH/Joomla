@@ -1284,13 +1284,8 @@ sleep(3);
                             }
                         }
                         $subjects = $joomlaDb->setQuery("SELECT subject_user_id FROM #__appointments_teamlog WHERE id > $beforeLog AND event = \"privacy.export\"")->loadColumn();
-                        // A stored removal request: the removal check locks it, retains its scope and records
+                        // The stored removal request: the removal check locks it, retains its scope and records
                         // that it has no account, so the removal may change the entries of the address.
-                        $request->request_type = "remove";
-                        $request->requested_at = gmdate("Y-m-d H:i:s");
-                        if (!$request->store()) {
-                            throw new \RuntimeException("The privacy request fixture could not be stored.");
-                        }
                         $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent("onPrivacyCanRemoveData", ["subject" => $request, "user" => null]));
                         $remove = new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => $user]);
                         $plugin->onPrivacyRemoveData($remove);

@@ -515,8 +515,16 @@ final class TeamMailer implements TeamMailerInterface
 
         if (!isset($this->myCalendarsUrls[$key])) {
             $db = $this->services->db();
-            $itemId = MenuViews::itemFor($db, 'mycalendars', $tag, $levels);
-            $code = MenuViews::languageCode($db, $itemId);
+
+            try {
+                $itemId = MenuViews::itemFor($db, 'mycalendars', $tag, $levels);
+                $code = MenuViews::languageCode($db, $itemId);
+            } catch (\Throwable $e) {
+                // The mail still goes out; its link then lacks the menu item, which the log names.
+                $this->logFailure('mycalendars-menu-item', $e, Log::WARNING);
+                $itemId = 0;
+                $code = '';
+            }
             $this->myCalendarsUrls[$key] = $this->siteUrl('index.php?option=com_appointments&view=mycalendars'
                 . ($itemId > 0 ? '&Itemid=' . $itemId : '') . ($code !== '' ? '&lang=' . urlencode($code) : ''));
         }
