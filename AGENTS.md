@@ -31,6 +31,7 @@
   „🟢 Approval recommended“ lauten. „🔵 Needs a closer look“ oder „🟡 Changes recommended“ ist nie
   fertig, auch nicht mit 0 Funden, ohne „Previously missed“ und mit grüner CI: den genannten Grund
   beheben und Copilot erneut anfordern, bis 🟢 dasteht.
+- **Copilot-Befund stoppt die CI** (verbindlich): Findet das Copilot-Review in einem PR einen Fehler, wird die laufende normale CI dieses PR sofort gestoppt (`gh run cancel <id>`). Der Copilot-Lauf selbst wird nie abgebrochen. Erst wird der Fehler korrigiert, dann läuft die CI mit dem Fix-Push wieder. Abgebrochene Läufe nie neu starten, solange auf dem aktuellen Kopf Copilot-Befunde offen sind. Das gilt überall und immer, für Menschen und Agenten.
 - **Kein Release vor dem Test wie von einem Menschen** (seit 21.10.2026). Der Merge auf `main`
   folgt der Definition oben. Der Release-Workflow (`release-*.yml`) bereitet nur den Release-PR
   vor und darf vorher laufen. Der Release-PR `release: <prefix> vX.Y.Z` wird erst gemergt, wenn
