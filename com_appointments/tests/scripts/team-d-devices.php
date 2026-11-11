@@ -491,6 +491,14 @@ return static function (TeamSuite $suite): void {
             'D: A device whose owner was changed in the database stays revoked for its real owner',
             'D: A device row with a broken MAC is refused without an exception',
             'D: A user key row with a broken MAC refuses every device and «Add device»',
+            'D: An eligible member opens «My calendars» at the address without a menu item',
+            'D: A guest gets 404 for «My calendars» and every device task while the feature is on',
+            'D: A signed-in account outside the internet calendar groups gets 403 for the page, the device layout and devices.display',
+            'D: A Super User outside the internet calendar groups gets 403 for «My calendars»',
+            'D: «Add device» refuses a signed-in account outside the groups with 403 and creates nothing',
+            'D: «Rename device» refuses a signed-in account outside the groups with 403 and changes nothing',
+            'D: «Remove device» refuses a signed-in account outside the groups with 403 and changes nothing',
+            'D: A member without the configured access level gets 403 for the page and every device task',
         ];
 
         if ($stubs !== []) {
@@ -895,6 +903,159 @@ return static function (TeamSuite $suite): void {
             }
 
             return $unchanged && $noPassword && $noDetail;
+        });
+
+        // ------------------------------------------------------------------
+        // Access: only accounts that may use internet calendars, on the server,
+        // also at the address without a menu item (the test site has none).
+        // ------------------------------------------------------------------
+
+        $tokenOf = static function (TeamDBrowser $browser): string {
+            // The sign-in page carries the form token of this session (sign-in or sign-out form).
+            $html = $browser->request('/index.php?option=com_users&view=login');
+
+            return preg_match('/name="([a-f0-9]{32})" value="1"/', $html, $m) === 1 ? $m[1] : '';
+        };
+        $tasks = static function (TeamDBrowser $browser, string $token, int $deviceId): array {
+            $statuses = [];
+
+            foreach ([
+                'devices.create' => ['name' => 'Refused phone', 'client' => 'davx5', 'rule' => 1, 'rule_version' => TeamStates::DEVICE_RULE_VERSION, 'form_nonce' => bin2hex(random_bytes(16))],
+                'devices.rename' => ['id' => $deviceId, 'name' => 'Refused rename'],
+                'devices.remove' => ['id' => $deviceId, 'confirm' => 1],
+            ] as $task => $fields) {
+                $browser->request('/index.php?option=com_appointments&task=' . $task, [$token => 1] + $fields, 0);
+                $statuses[$task] = $browser->status;
+            }
+
+            return $statuses;
+        };
+        $deviceRow = static fn (int $id): ?array => $db->query("SELECT name, state, row_mac FROM {$p}appointments_devices WHERE id = {$id}")->fetch_assoc() ?: null;
+        $outsiders = [];
+
+        foreach (['outsider' => [2], 'superuser' => [8]] as $name => $groups) {
+            $outsiderPassword = 'Outsider-' . bin2hex(random_bytes(8)) . '!';
+            $outsiderId = $user($name, $outsiderPassword, $groups);
+            $outsiderMfa = \Joomla\CMS\Factory::getApplication()->bootComponent('com_users')->getMVCFactory()->createTable('Mfa', 'Administrator');
+            $outsiderMfa->save(['user_id' => $outsiderId, 'title' => 'Test', 'method' => 'totp', 'default' => 1, 'options' => ['key' => $secret]]);
+            $outsiders[$name] = ['id' => $outsiderId, 'password' => $outsiderPassword, 'device' => $device($outsiderId, $tag . ' ' . $name . ' phone', TeamStates::DEVICE_ACTIVE)];
+        }
+
+        $outsiderBrowser = new TeamDBrowser($suite->base);
+        $outsiderSignedIn = $signIn($outsiderBrowser, $tag . 'outsider', $outsiders['outsider']['password'], $secret);
+        $outsiderToken = $outsiderSignedIn ? $tokenOf($outsiderBrowser) : '';
+        // Taken before the refused requests, so a change made by any of them is detected.
+        $outsiderBefore = $deviceRow($outsiders['outsider']['device']);
+        $outsiderStatuses = $outsiderToken !== '' ? $tasks($outsiderBrowser, $outsiderToken, $outsiders['outsider']['device']) : [];
+
+        $suite->test($flow[21], static function () use ($suite, $tag, $password, $secret, $signIn) {
+            $browser = new TeamDBrowser($suite->base);
+            $signIn($browser, $tag . 'member', $password, $secret);
+            $html = $browser->request('/index.php?option=com_appointments&view=mycalendars');
+
+            if ($browser->status !== 200) {
+                echo '    eligible member: page answered ' . $browser->status . "\n";
+            }
+
+            return $browser->status === 200 && str_contains($html, 'appointments');
+        });
+
+        $suite->test($flow[22], static function () use ($suite, $tokenOf, $tasks, $outsiders) {
+            $guest = new TeamDBrowser($suite->base);
+            $guest->request('/index.php?option=com_appointments&view=mycalendars');
+            $page = $guest->status;
+            $token = $tokenOf($guest);
+            $statuses = $token !== '' ? $tasks($guest, $token, $outsiders['outsider']['device']) : [];
+
+            if ($page !== 404 || array_values(array_unique($statuses)) !== [404]) {
+                echo '    guest: page ' . $page . ', tasks ' . json_encode($statuses) . "\n";
+            }
+
+            return $page === 404 && \count($statuses) === 3 && array_values(array_unique($statuses)) === [404];
+        });
+
+        $suite->test($flow[23], static function () use ($outsiderBrowser, $outsiderSignedIn, $outsiders) {
+            if (!$outsiderSignedIn) {
+                return false;
+            }
+
+            $statuses = [];
+
+            foreach ([
+                'page' => '/index.php?option=com_appointments&view=mycalendars',
+                'device' => '/index.php?option=com_appointments&view=mycalendars&layout=device&id=' . $outsiders['outsider']['device'],
+                'display' => '/index.php?option=com_appointments&task=devices.display',
+            ] as $key => $path) {
+                $html = $outsiderBrowser->request($path);
+                // Joomla's error page with the «not authorised» message, never an empty page or the form.
+                $content = trim($html) !== '' && !str_contains($html, 'devices.create') && !str_contains($html, 'form_nonce');
+                $statuses[$key] = $outsiderBrowser->status . ($content ? '' : ' (empty or with the form)');
+            }
+
+            if (array_values(array_unique($statuses)) !== ['403']) {
+                echo '    outsider: ' . json_encode($statuses) . "\n";
+            }
+
+            return array_values(array_unique($statuses)) === ['403'];
+        });
+
+        $suite->test($flow[24], static function () use ($suite, $tag, $secret, $signIn, $outsiders) {
+            $browser = new TeamDBrowser($suite->base);
+
+            if (!$signIn($browser, $tag . 'superuser', $outsiders['superuser']['password'], $secret)) {
+                return false;
+            }
+
+            $browser->request('/index.php?option=com_appointments&view=mycalendars');
+
+            return $browser->status === 403;
+        });
+
+        foreach (['devices.create' => 25, 'devices.rename' => 26, 'devices.remove' => 27] as $task => $index) {
+            $suite->test($flow[$index], static function () use ($task, $outsiderStatuses, $outsiderBefore, $deviceRow, $suite, $p, $outsiders) {
+                $id = $outsiders['outsider']['id'];
+                $unchanged = $outsiderBefore !== null && $deviceRow($outsiders['outsider']['device']) === $outsiderBefore
+                    && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$id}") === 1;
+
+                if (($outsiderStatuses[$task] ?? 0) !== 403 || !$unchanged) {
+                    echo '    outsider ' . $task . ': ' . ($outsiderStatuses[$task] ?? 'not sent') . ', unchanged ' . (int) $unchanged . "\n";
+                }
+
+                return ($outsiderStatuses[$task] ?? 0) === 403 && $unchanged;
+            });
+        }
+
+        $suite->test($flow[28], static function () use ($suite, $db, $p, $tag, $password, $secret, $signIn, $tokenOf, $tasks, $decoded, $member, $deviceRow) {
+            // A level that holds no group: the member keeps the team group but lacks the level.
+            $db->query("INSERT INTO {$p}viewlevels (title, ordering, rules) VALUES ('" . $db->real_escape_string($tag . ' level') . "', 0, '[]')");
+            $level = (int) $db->insert_id;
+            $restricted = $decoded;
+            $restricted['team_viewlevel'] = $level;
+            $db->query("UPDATE {$p}extensions SET params='" . $db->real_escape_string(json_encode($restricted)) . "' WHERE type='component' AND element='com_appointments'");
+            $deviceId = (int) $suite->count("SELECT id FROM {$p}appointments_devices WHERE user_id = {$member} ORDER BY id LIMIT 1");
+            $before = $deviceId > 0 ? $deviceRow($deviceId) : null;
+            $count = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}");
+
+            try {
+                $browser = new TeamDBrowser($suite->base);
+                $signIn($browser, $tag . 'member', $password, $secret);
+                $browser->request('/index.php?option=com_appointments&view=mycalendars');
+                $page = $browser->status;
+                $token = $tokenOf($browser);
+                $statuses = $token !== '' && $deviceId > 0 ? $tasks($browser, $token, $deviceId) : [];
+            } finally {
+                $db->query("UPDATE {$p}extensions SET params='" . $db->real_escape_string(json_encode($decoded)) . "' WHERE type='component' AND element='com_appointments'");
+                $db->query("DELETE FROM {$p}viewlevels WHERE id = {$level}");
+            }
+
+            $unchanged = $before !== null && $deviceRow($deviceId) === $before
+                && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $count;
+
+            if ($page !== 403 || array_values(array_unique($statuses)) !== [403] || !$unchanged) {
+                echo '    member without level: page ' . $page . ', tasks ' . json_encode($statuses) . ', unchanged ' . (int) $unchanged . "\n";
+            }
+
+            return $page === 403 && \count($statuses) === 3 && array_values(array_unique($statuses)) === [403] && $unchanged;
         });
 
         // ------------------------------------------------------------------

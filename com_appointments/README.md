@@ -233,10 +233,16 @@ components. The guest links in e-mails and the calendar subscriptions stay non-S
   `/component/appointments/?view=eventtype&id=…` and non-SEF
   `index.php?option=com_appointments&view=eventtype&id=…` keep working.
 - **Links in e-mails** (reschedule, cancel, erase) are built as
-  `index.php?option=com_appointments&view=manage&id=…&action=…&signature=…` from the public site URL.
-  They are signed, are also sent by the reminder task from the command line, where no site router is
-  available, and must stay valid for as long as the booking exists. On a multilingual site Joomla
-  adds the language prefix when such a link is opened.
+  `index.php?option=com_appointments&view=manage&id=…&action=…&signature=…&Itemid=…` from the public
+  site URL. They are signed, are also sent by the reminder task from the command line, where no site
+  router is available, and must stay valid for as long as the booking exists. On a multilingual site
+  Joomla adds the language prefix when such a link is opened. The `Itemid` frames the page: the
+  *Book an appointment* item of the booking's event type, otherwise an *Event types* item, each in the
+  reader's language or in *All*, published and open to guests. Without one the link has no `Itemid`.
+  The signature does not cover the `Itemid`, which only chooses the frame. The confirmation, the
+  receipts after a change and the guest's removal page use the same frame, so they are not shown
+  in the frame of the home page (its modules and content above the result). A link without an
+  `Itemid` from an earlier mail gets it with the redirect after the change.
 - **Calendar subscriptions** use `index.php?option=com_appointments&task=feed.download&…`.
 
 A site that blocks direct component addresses in its `.htaccess` therefore needs two exceptions,
@@ -393,6 +399,14 @@ Cancel so their checkout is released. Authorisation and deliberate privacy-prese
 responses take precedence over navigation; public links never grant access to another person's
 booking. Component options retain Joomla's native Close action.
 
+The button **Back to appointments** (on a form **Cancel**) leads to the list of all event types. On
+a *Book an appointment* menu item, which publishes one event type, it is hidden by default, so the
+list does not show that item's visitors the other event types. The menu item's **Navigation** tab
+shows it again and chooses its target (another menu item, otherwise the list). While it is hidden,
+the confirmation, the signed pages and their receipts in that item's frame lead back to its booking
+page instead, or to the list once that booking page can no longer be opened (event type or schedule
+unpublished, another access level or language).
+
 Adding a device checks existing account and address locks without reserving a password attempt;
 successful device creation neither consumes sign-in attempts nor clears a real sign-in lock.
 
@@ -506,7 +520,7 @@ the real key pair and its calendar wrap exist.
 | Team groups | the group created by the installer | Members may receive grants from a calendar's managers. |
 | Group of external users | the group created by the installer | Accounts of external users belong here. Only users with the permission «Share with external users» grant to them, at most the write role, and only on calendars that allow externals. A member of both groups counts as external. |
 | Create user groups | on | Create missing groups and the access level on installation and update, and enforce MFA for both groups. |
-| Access level of «My calendars» | the level created by the installer | Shows the menu item to calendar users only. |
+| Access level of «My calendars» | the level created by the installer | Shows the menu item to calendar users only. The page and its device actions check it on the server too, together with membership of a team group or the external group, also at an address without a menu item: any other signed-in account gets 403, a guest 404. |
 | Days per clean-up phase | 14 | Longest duration of each clean-up phase of a blocked device (see below). |
 | Subscription feeds with token | off on a new installation, on after an update | The previous token feeds, replaced by the internet calendars. |
 
@@ -545,7 +559,7 @@ for your site's address; the CalDAV address below assumes the default base addre
 
 | Client | Address | Refresh |
 |---|---|---|
-| Classic Outlook (Office LTSC 2024) with the CalDav Synchronizer add-in | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, then «Discover resources and assign to Outlook folders», each calendar to a new, empty folder | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
+| Classic Outlook (Office LTSC 2024) with the CalDav Synchronizer add-in | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, then «Discover resources and assign to Outlook folders», select the calendar and assign a new, empty Outlook calendar folder; after synchronising, the calendar appears under «My Calendars» in the Outlook calendar view and must be ticked there | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
 | iOS calendar | Settings → Calendar → Accounts → Add Account → Other → CalDAV account, server `<site>` | Fetch New Data → every 15 minutes |
 | DAVx⁵ (Android) | «Login with URL and user name», `https://<site>/` | calendar sync interval 15 minutes (the Android minimum) |
 | Thunderbird | New Calendar → On the Network, `https://<site>/dav/` | calendar properties → refresh every 5 minutes |
@@ -558,6 +572,8 @@ tested set.
 
 Clients refresh by polling; the server keeps the CTag and the sync token (RFC 6578) exact, so a
 refresh without changes transfers no events. Menu paths can differ between client versions.
+
+The setup page links the manufacturers' official download pages, opened in a new window: CalDav Synchronizer (`https://caldavsynchronizer.org/download-2/`, own installer, administrator rights, afterwards the «CalDav Synchronizer» tab in Outlook) and DAVx⁵ (`https://www.davx5.com/download/`). The addresses are language strings (`COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_URL`, `COM_APPOINTMENTS_TEAM_D_GUIDE_DAVX5_URL`), so an operator can change them with a language override; only `https://` addresses are rendered. They are plain links the visitor clicks, the server never contacts them. Thunderbird needs no download.
 
 #### Blocking and clean-up
 
@@ -809,6 +825,16 @@ Spaces, brackets, dots, slashes and hyphens are ignored, and a single national t
 dropped ("+41 079 …" is stored as `+4179…`), except for the calling codes whose national numbers
 keep it (Italy, San Marino, Vatican City, Côte d'Ivoire, Benin, Republic of the Congo). Numbers are
 stored in E.164 form, at most 15 digits.
+The number after the calling code must have a plausible length. For the calling codes whose
+national numbers have one fixed length it must have exactly that length: 10 digits for North
+America (+1) and for Russia and Kazakhstan (+7), 9 for France (+33), Spain (+34), Switzerland (+41)
+and Portugal (+351), 8 for Denmark (+45). Swiss voicemail numbers, 860 followed by a nine-digit
+number, have 12 digits after +41. Every other calling code needs at least 3 digits, and at most 15
+digits together with the code. A number that
+does not fit ("+41 123") is refused at its field with a message that the number has too few or too
+many digits for its calling code.
+With the default **Calling code choice** the preselected code is only a preselection: a visitor
+with a foreign number chooses another code or types the number with `+`.
 
 A telephone event type that collected the number through a custom telephone field (before the
 fixed field existed) asks twice after the update. Unpublish that custom field; do not delete it, so
@@ -844,6 +870,9 @@ open, submission returns to the times of the same day with a friendly message an
 choices; an address of step 2 whose time is no longer offered shows the times of its day with the
 same message. A refusal the visitor can fix in a field returns to step 2 of the same time.
 Confirmation pages require the submitting browser's session and are not public booking lookups.
+The confirmation, the signed pages, their receipts and the guest removal page are kept out of
+Joomla's page cache (they exclude themselves from **System - Page Cache**, which ignores the
+browser cache headers), so a cached copy never hands their links or form tokens to another visitor.
 Public requests use the directly connected address for rate limiting, not untrusted forwarding
 headers. Only its keyed hash is stored; no raw address is added to a booking.
 
@@ -1041,6 +1070,7 @@ copies, because the booking script and the server rely on them.
 | Part | Structure and classes |
 |---|---|
 | Page | `.com-appointments` plus the view (`-eventtypes`, `-eventtype`, `-confirmation`, `-manage`), inside it `.com-appointments-container` (centred column, `max-width: var(--appointments-max-width)`, on the other views `--appointments-narrow-width`); on the booking page `[data-appointments-view]` with `data-step="time"` or `"details"`, the part the script replaces |
+| Way back | `a.btn.com-appointments-return`, the button **Back to appointments** (on a form **Cancel**) at the top of the booking page and below the confirmation, manage and guest pages; left out on a *Book an appointment* menu item unless its **Navigation** options show it |
 | Card | `#appointment-booking.com-appointments-layout` with `.com-appointments-layout-time` or `-details`, `.com-appointments-layout-day` while the times of a day are shown and `.com-appointments-info-logo` or `-person`; inside it `header.com-appointments-info.com-appointments-header` and `.com-appointments-main` |
 | Information column | On step 2 first `a.btn.btn-outline-secondary.com-appointments-back[data-appointments-step]`; the logo `.com-appointments-info-media.com-appointments-info-logo > img.com-appointments-logo`, or the person `.com-appointments-info-media.com-appointments-host` with `img.com-appointments-host-photo` and `p.com-appointments-host-text` (`.com-appointments-host-name`, `.com-appointments-host-role`); then `h1.com-appointments-heading`, `ul.com-appointments-meta` (`li.com-appointments-duration`, `li.com-appointments-location-type`, on step 2 `li.com-appointments-selected` with `.com-appointments-selected-date` and `.com-appointments-selected-time`, and `li.com-appointments-selected-zone`, each with an inline `svg.com-appointments-icon`), `.com-appointments-description` and `p.com-appointments-location` |
 | Step title | `h2#appointment-step-title.com-appointments-step-title` (`tabindex="-1"`, receives the focus after a step change) with a visually hidden "Step 1 of 3:" |
@@ -1085,7 +1115,10 @@ so automatic browser-zone detection does not reload the picker and discard its e
 `task=booking.ics&id=<booking>` (a link of an earlier confirmation is refused), with the same UID and sequence as the attachment of the confirmation email, and
 the signed reschedule and cancel links of that email; like the confirmation page itself it is
 only available to the browser session that made the booking. When the links cannot be built (an
-invalid public site address in **Options**), only the `.ics` download is shown.
+invalid public site address in **Options**), only the `.ics` download is shown. The receipt of a
+reschedule likewise shows the new signed reschedule and cancel links, the same as in the reschedule
+email: only to the browser session that made the change and only while the appointment is still the
+version this change produced. The receipts of a cancellation or erasure show no links.
 
 **Booking script and slot endpoint.** `media/com_appointments/js/booking.js` is registered as the
 web asset `com_appointments.booking` (deferred, no dependency) and loaded by the booking page, the confirmation and a completed manage
