@@ -97,6 +97,26 @@ class HtmlView extends BaseHtmlView
     protected string $fixedDialCode = '';
     /** Address of the flag before the fixed calling code, or '' for none. */
     protected string $dialFlag = '';
+    /**
+     * Whether bookings are switched off because no valid public site URL is configured: every
+     * booking sends mails with links, and the component sends none then (fail closed). The page
+     * answers 503 with a neutral notice and is kept out of every cache.
+     */
+    public static function unavailable(): bool
+    {
+        if (\Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl::current() !== null) {
+            return false;
+        }
+
+        $app = Factory::getApplication();
+        $app->setHeader('status', '503', true);
+        $app->setHeader('Retry-After', '3600', true);
+        $app->setHeader('Cache-Control', 'private, no-store', true);
+        \Advans\Component\Appointments\Site\Helper\NoPageCache::apply($app);
+
+        return true;
+    }
+
     /** How the details step asks about the privacy notice: ConsentMode::NOTICE, ACKNOWLEDGE or CONSENT. */
     protected string $consentMode = 'notice';
     /** Version of the checkbox label shown (ConsentMode::version), '' without a checkbox; the controller compares it. */
@@ -104,6 +124,14 @@ class HtmlView extends BaseHtmlView
 
     public function display($tpl = null)
     {
+        if (self::unavailable()) {
+            // No form at all: a booking without its mails is never taken (layout «unavailable»).
+            $this->setLayout('unavailable');
+            $this->getDocument()->setMetaData('robots', 'noindex,nofollow');
+
+            return parent::display($tpl);
+        }
+
         $this->prepare(true);
         $app = Factory::getApplication();
         $this->renderedAt = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->getTimestamp();

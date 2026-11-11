@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Administrator\Model;
 
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
 use Advans\Component\Appointments\Administrator\Service\FeedService;
@@ -330,26 +331,20 @@ class SystemModel extends BaseDatabaseModel
     }
 
     /**
-     * Mails build their absolute links (signed reschedule, cancel and delete links, administrator
-     * links) from the component's public site URL, else Joomla's live_site, else the root of the
-     * request that sends the mail, which follows its Host header. Needs attention while neither
-     * address is configured, or when the configured one is not a plain HTTP(S) root that the mail
-     * links accept. Mirrors their selection and validation exactly (NotificationService::linkBase()):
-     * the first value that is not the empty string, untrimmed, with a lower-case scheme.
+     * Every mail builds its absolute links from the component's public site URL, else Joomla's
+     * live_site (PublicSiteUrl), never from the request. Without a valid one the component sends
+     * no mail and takes no booking (fail closed), so this check is an error, not a warning.
      *
-     * @return  array{label: string, ok: bool, value: string, remedy: string}
+     * @return  array{label: string, ok: bool, value: string, remedy: string, severity: string}
      */
     public static function siteUrlCheck(string $publicSiteUrl, string $liveSite): array
     {
         $configured = $publicSiteUrl !== '' ? $publicSiteUrl : $liveSite;
-        $parts = parse_url($configured);
-        $valid = $configured !== '' && filter_var($configured, FILTER_VALIDATE_URL) !== false && \is_array($parts)
-            && \in_array($parts['scheme'] ?? '', ['http', 'https'], true)
-            && !isset($parts['user']) && !isset($parts['pass']) && !isset($parts['query']) && !isset($parts['fragment']);
 
-        return ['label' => 'COM_APPOINTMENTS_SYSTEM_SITE_URL', 'ok' => $valid,
+        return ['label' => 'COM_APPOINTMENTS_SYSTEM_SITE_URL', 'ok' => PublicSiteUrl::resolve($publicSiteUrl, $liveSite) !== null,
             'value' => $configured === '' ? Text::_('COM_APPOINTMENTS_SYSTEM_SITE_URL_UNSET') : $configured,
-            'remedy' => $configured === '' ? 'COM_APPOINTMENTS_SYSTEM_SITE_URL_FIX' : 'COM_APPOINTMENTS_SYSTEM_SITE_URL_INVALID'];
+            'remedy' => $configured === '' ? 'COM_APPOINTMENTS_SYSTEM_SITE_URL_FIX' : 'COM_APPOINTMENTS_SYSTEM_SITE_URL_INVALID',
+            'severity' => 'error'];
     }
 
     /**

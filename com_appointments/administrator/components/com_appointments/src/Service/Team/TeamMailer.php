@@ -12,19 +12,18 @@ namespace Advans\Component\Appointments\Administrator\Service\Team;
 use Advans\Component\Appointments\Administrator\Helper\DefaultTemplates;
 use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Helper\MailLanguage;
+use Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Table\TemplateTable;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Joomla\CMS\Access\Access;
-use Joomla\CMS\Application\ConsoleApplication;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Language;
 use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Mail\MailerFactoryInterface;
-use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\ParameterType;
 use Joomla\Database\QueryInterface;
@@ -263,6 +262,15 @@ final class TeamMailer implements TeamMailerInterface
             throw $error;
         }
 
+        // Fail closed: without a configured public site URL no mail goes out, so no link is ever
+        // built from the Host header of a request. The system checks show this as an error.
+        if ($this->publicBase() === null) {
+            $error = new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MAIL', 503);
+            $this->logFailure('public-site-url-missing', $error);
+
+            throw $error;
+        }
+
         $failures = 0;
         $siteName = (string) $app->get('sitename');
 
@@ -492,22 +500,12 @@ final class TeamMailer implements TeamMailerInterface
     }
 
     /**
-     * The public site URL: the component's public_site_url, then live_site, then the request root.
+     * The public site URL: the component's public_site_url, then live_site (PublicSiteUrl), never
+     * the address of the request. Null when none is configured; then no mail is sent at all.
      */
     private function publicBase(): ?string
     {
-        $app = Factory::getApplication();
-        $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
-
-        if ($base === '') {
-            $base = (string) $app->get('live_site', '');
-        }
-
-        if ($base === '' && !($app instanceof ConsoleApplication)) {
-            $base = Uri::root();
-        }
-
-        return filter_var($base, FILTER_VALIDATE_URL) && preg_match('#\Ahttps?://#i', $base) === 1 ? $base : null;
+        return PublicSiteUrl::current();
     }
 
     private function query(): QueryInterface

@@ -116,6 +116,10 @@ later versions will appear under **System → Update → Extensions**. You can a
 ZIP over the existing installation. The update-site registration does not mean that a release is
 currently available.
 
+**Before updating to 1.5.0 or later**, set **Public site URL**
+(or Joomla's `live_site`). An installation without one sends no more e-mails and takes no more
+bookings after the update, until the setting is made (see section "Scheduler, reminders and retention").
+
 ## Features
 
 ### What is implemented so far
@@ -364,15 +368,27 @@ invoke its CLI from the server's cron; a quiet website must not rely solely on v
 execution for timely reminders.
 
 In the component options, set **Public site URL** to the canonical HTTP(S) site root, including a
-Joomla subdirectory if applicable. This is strongly recommended for every installation, not only
-for the CLI. Every e-mail builds its absolute links (the signed reschedule, cancel and delete
-links, the guest removal link, the administrator links of the internet calendars) from this
-setting, else from Joomla's `live_site`, else from the root of the request that sends the mail.
-That last fallback follows the request's `Host` header: on a server that answers for any host
-name, a visitor can choose the host the links of a mail point to, also for a reminder sent by the
-lazy Scheduler during that visitor's request. CLI reminders require this setting unless `live_site`
-is configured. The system checks report the setting as needing attention while neither is set.
-Use HTTPS in production.
+Joomla subdirectory if applicable. **This setting is required** (or Joomla's `live_site`). Every
+e-mail builds its absolute links (the signed reschedule, cancel and delete links, the guest
+removal link, the activation and administrator links of the internet calendars) from this
+setting, else from `live_site`, and **never from the address of a request**: that address follows
+the request's `Host` header, which a visitor chooses on a server that answers for any host name.
+
+Without a valid value the component fails closed and never loses a notification silently:
+
+- It sends no e-mail at all (bookings, reminders, internet calendars) and logs each refused mail
+  as an error in the `com_appointments` log.
+- Booking pages answer `503` with a neutral notice («Booking is currently not possible. Please try
+  again later.»), and a submitted booking is not saved.
+- Reschedules and cancellations through the links of earlier e-mails are refused with the same
+  notice. Erasure through its link stays possible; the host notice is then logged as not sent.
+- Invitations to the internet calendars are refused with the reason.
+- The administrator sees the reason: the component dashboard shows an error with a link to the
+  options, and the system checks report the setting as an error.
+
+A valid value is an HTTP(S) root without user name, password, query or fragment and with a
+lower-case scheme, for example `https://www.example.com` or `https://www.example.com/joomla`. Use
+HTTPS in production.
 
 **Reminder offsets** is a comma-separated list of minutes before a confirmed appointment. The
 default `1440,60` sends reminders one day and one hour beforehand; each value must be 1–525600.
@@ -1259,8 +1275,8 @@ erasure requires delete permission. Moderator links are shown only to the host o
 administrator, not to an ordinary event editor.
 
 **System checks** requires component options permission. It reports PHP/Joomla versions, the site
-time zone, configured mail transport, the public site URL for e-mail links (needs attention while
-neither it nor `live_site` is set, or when mail links would refuse it), enabled bundled plugins, each routine's most recent enabled
+time zone, configured mail transport, the public site URL for e-mail links (an error while
+neither it nor `live_site` is valid: no mail is sent and no booking taken), enabled bundled plugins, each routine's most recent enabled
 task and last run, invalid feed-credential counts and the oldest audit record. A configuration
 check is not a delivery test or a remote connectivity probe. Configure and monitor both Scheduler
 routines; a never-run task is explicitly shown as needing attention.

@@ -267,6 +267,65 @@ try {
         && !preg_match('/"(?:error|danger)":\[[^\]]*Your appointment was saved, but/', $html)
         && !preg_match('/(?:type="(?:error|danger)"|alert-(?:error|danger))[^>]*>(?:(?!<\/).)*Your appointment was saved, but/s', $html),
         'The mail failure after a saved booking is shown as a warning, not as an error');
+    if (is_file($rejectDelivery) && !unlink($rejectDelivery)) {
+        throw new RuntimeException('Cannot restore the test mail transport.');
+    }
+
+    // Fail closed on the public site URL: mails take their links only from the configured address,
+    // never from the Host header of the request, and without one no mail is sent and no booking taken.
+    $componentParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];
+    $siteUrl = (string) (json_decode($componentParams, true)['public_site_url'] ?? '');
+    $resend = static function (string $publicSiteUrl) use ($event, $day): array {
+        $script = sys_get_temp_dir() . '/mail-site-url-' . bin2hex(random_bytes(4)) . '.php';
+        file_put_contents($script, '<?php
+            require "/var/www/html/tests/scripts/appointments-joomla.php";
+            \Joomla\CMS\Component\ComponentHelper::getParams("com_appointments")->set("public_site_url", ' . var_export($publicSiteUrl, true) . ');
+            $row = $joomlaDb->setQuery("SELECT * FROM #__appointments_bookings WHERE eventtype_id = ' . (int) $event . ' AND start_utc = \'' . $day . ' 12:00:00\'")->loadAssoc();
+            $service = new \Advans\Component\Appointments\Administrator\Service\NotificationService($joomlaDb);
+            $result = ["sent" => false, "links" => ""];
+            try { $result["links"] = implode(" ", $service->links($row)); } catch (\Throwable $e) { $result["links"] = "refused"; }
+            try { $service->send($row, "confirmation", new DateTimeImmutable("now", new DateTimeZone("UTC"))); $result["sent"] = true; } catch (\Throwable $e) { $result["error"] = get_class($e); }
+            echo "\n@@SITEURL@@" . json_encode($result);');
+        $output = [];
+        exec('cd /var/www/html && HTTP_HOST=attacker.example.test php ' . escapeshellarg($script) . ' 2>&1', $output);
+        unlink($script);
+        $text = implode("\n", $output);
+        $at = strrpos($text, '@@SITEURL@@');
+
+        return $at === false ? ['error' => substr($text, 0, 500)] : (array) json_decode(substr($text, $at + 11), true);
+    };
+    $before = $spool();
+    $result = $resend($siteUrl);
+    $mails = implode("\n", array_map([AppointmentsMail::class, 'decoded'], AppointmentsMail::messagesSince($before)));
+    $check($siteUrl !== '' && ($result['sent'] ?? false) === true && str_starts_with((string) $result['links'], rtrim($siteUrl, '/') . '/index.php?')
+        && str_contains($mails, rtrim($siteUrl, '/') . '/index.php?option=com_appointments') && !str_contains($mails . $result['links'], 'attacker.example.test'),
+        'With a public site URL, mails sent during a request with a foreign Host header link only to the configured address');
+    $before = $spool();
+    $result = $resend('');
+    $check(($result['sent'] ?? true) === false && ($result['links'] ?? '') === 'refused' && $before === $spool(),
+        'Without a public site URL (and without live_site) no mail is sent and no link is built, also not from the Host header');
+
+    // The booking page and its submission while no public site URL is configured.
+    $client = new AppointmentsHttp('http://localhost', 'mail-site-url');
+    [$browser, $path, $form] = $client->bookingForm($event, $day . ' 13:00:00');
+    $unset = json_decode($componentParams, true) ?: [];
+    $unset['public_site_url'] = '';
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($unset)) . "' WHERE element='com_appointments' AND type='component'");
+    try {
+        $page = $browser->request('/index.php?option=com_appointments&view=eventtype&id=' . $event);
+        $check($browser->status === 503 && str_contains($page, 'Booking is currently not possible') && !str_contains($page, 'name="booking[start]"'),
+            'Without a public site URL the booking page answers 503 with a neutral notice and no form');
+        sleep(2);
+        $before = $spool();
+        $html = $browser->request($path, $form);
+        $saved = (int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 13:00:00'")->fetch_row()[0];
+        $check($saved === 0 && $before === $spool() && str_contains($html, 'Booking is currently not possible'),
+            'Without a public site URL a submitted booking is not saved and no mail is sent');
+    } finally {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($componentParams) . "' WHERE element='com_appointments' AND type='component'");
+    }
+    $page = $browser->request('/index.php?option=com_appointments&view=eventtype&id=' . $event);
+    $check($browser->status === 200 && str_contains($page, 'name="booking[start]"'), 'With a public site URL the booking page shows its form again');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;

@@ -18,15 +18,14 @@ use Advans\Component\Appointments\Administrator\Helper\MailLanguage;
 use Advans\Component\Appointments\Administrator\Helper\MailPresentation;
 use Advans\Component\Appointments\Administrator\Helper\ManageMenuItem;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
+use Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Joomla\CMS\Factory;
-use Joomla\CMS\Application\ConsoleApplication;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Language\Language;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Mail\MailerFactoryInterface;
 use Joomla\CMS\Mail\Exception\MailDisabledException;
-use Joomla\CMS\Uri\Uri;
 use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
@@ -80,6 +79,13 @@ final class NotificationService
         if (!$app->get('mailonline', true)) {
             Log::add('Appointment notification disabled: booking ' . (int) $booking['id'] . ', purpose ' . $purpose, Log::ERROR, 'com_appointments');
             throw new NotificationException('Appointment mail delivery is disabled.');
+        }
+        // Fail closed: without a configured public site URL no mail goes out, so no link is ever
+        // built from the Host header of a request. The system checks show this as an error.
+        if (PublicSiteUrl::current() === null) {
+            Log::add('Appointment notification refused: no valid public site URL is configured (booking ' . (int) $booking['id']
+                . ', purpose ' . $purpose . ').', Log::ERROR, 'com_appointments');
+            throw new NotificationException('No valid public site URL is configured (component option or live_site).');
         }
         // Callers pass a stored row or a row opened before: opening is idempotent. A field that
         // cannot be decrypted is left blank (no mail to that address), only its column is logged.
@@ -268,23 +274,12 @@ final class NotificationService
     }
 
     /**
-     * Public site URL for HTML mail layouts: the component's public_site_url, then live_site, then the
-     * request root outside the CLI. Null when none is known (CLI without configuration).
+     * Public site URL for HTML mail layouts: the component's public_site_url, then live_site
+     * (PublicSiteUrl), never the address of the request. Null when none is configured.
      */
     private function publicBase(): ?string
     {
-        $app  = Factory::getApplication();
-        $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
-
-        if ($base === '') {
-            $base = (string) $app->get('live_site', '');
-        }
-
-        if ($base === '' && !($app instanceof ConsoleApplication)) {
-            $base = Uri::root();
-        }
-
-        return filter_var($base, FILTER_VALIDATE_URL) && preg_match('#\Ahttps?://#i', $base) === 1 ? $base : null;
+        return PublicSiteUrl::current();
     }
 
     /**
@@ -352,27 +347,13 @@ final class NotificationService
         return $itemId > 0 ? ['Itemid' => $itemId] : [];
     }
 
-    /** Public site root for signed links, without a trailing slash. */
+    /**
+     * Public site root for signed links, without a trailing slash: the configured address only
+     * (PublicSiteUrl). Never the address of the request, whose Host header a visitor chooses.
+     */
     private function linkBase(): string
     {
-        $app = Factory::getApplication();
-        $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
-        if ($base === '') {
-            $base = (string) $app->get('live_site', '');
-        }
-        if ($base === '') {
-            if ($app instanceof ConsoleApplication) {
-                throw new NotificationException('Configure the public site URL before running reminders from the CLI.');
-            }
-            $base = Uri::root();
-        }
-        $parts = parse_url($base);
-        if (!filter_var($base, FILTER_VALIDATE_URL) || !is_array($parts)
-            || !in_array($parts['scheme'] ?? '', ['http', 'https'], true)
-            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
-            throw new NotificationException('The appointment public site URL is invalid.');
-        }
-
-        return rtrim($base, '/');
+        return PublicSiteUrl::current()
+            ?? throw new NotificationException('No valid public site URL is configured (component option or live_site).');
     }
 }
