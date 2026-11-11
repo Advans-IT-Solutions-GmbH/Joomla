@@ -1040,6 +1040,15 @@ $cleanupVersion = getCleanupVersion($db);
                 }
             }
 
+            // The remove action is offered only when at least one listed row is selectable.
+            $hasRemovable = false;
+            foreach (array_merge($groups['incompatible'], $groups['no-files']) as $ext) {
+                if (isCleanupEligible($ext, ['status' => $ext->_status])) {
+                    $hasRemovable = true;
+                    break;
+                }
+            }
+
             $enabledBadge = static function ($ext): string {
                 return $ext->enabled
                     ? '<span class="badge badge-success">' . Text::_('JENABLED') . '</span>'
@@ -1119,7 +1128,7 @@ $cleanupVersion = getCleanupVersion($db);
             </table>
             <?php endif; ?>
 
-            <?php if ($canRemoveExtensions && (!empty($groups['incompatible']) || !empty($groups['no-files']))): ?>
+            <?php if ($canRemoveExtensions && $hasRemovable): ?>
             <input type="hidden" name="task" value="cleanup">
             <?php echo HTMLHelper::_('form.token'); ?>
             <button type="submit" class="btn" onclick="return confirm(Joomla.Text._('COM_J2STORE_CLEANUP_CONFIRM_REMOVE'))">
