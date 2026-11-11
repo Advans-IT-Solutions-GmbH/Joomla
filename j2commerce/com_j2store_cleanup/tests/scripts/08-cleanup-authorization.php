@@ -21,6 +21,9 @@ namespace Joomla\CMS\Installer {
     {
         public static string $mode = 'success';
         public static array $calls = [];
+        public static string $message = 'synthetic installer failure';
+        // A directory the installer removes before it throws (files gone, record left).
+        public static ?string $removeBeforeThrow = null;
 
         public static function getInstance(): self
         {
@@ -32,7 +35,14 @@ namespace Joomla\CMS\Installer {
             self::$calls[] = [$type, $id];
 
             if (self::$mode === 'throw') {
-                throw new \RuntimeException('synthetic installer failure');
+                if (self::$removeBeforeThrow !== null) {
+                    foreach (glob(self::$removeBeforeThrow . '/*') ?: [] as $file) {
+                        unlink($file);
+                    }
+                    @rmdir(self::$removeBeforeThrow);
+                }
+                // A real extension script on a newer Joomla fails with an Error, not a RuntimeException.
+                throw new \Error(self::$message);
             }
 
             if (self::$mode === 'false') {
@@ -310,19 +320,56 @@ namespace {
             $unlocked = (object) $this->row(14, 'plugin', 'payment_locked', 'j2store');
             $this->check('The database fallback deletes only unlocked rows',
                 !removeCleanupExtensionRecord($lockedDb, $unlocked, getIssuePatterns()) && $lockedDb->has(14));
+
+            // A package child is never removed database-only; Joomla's installer decides.
+            $childRow = array_replace($this->row(15, 'plugin', 'payment_child', 'j2store'), ['package_id' => 7]);
+            $childDb = new FakeDatabase([$childRow]);
+            Installer::$calls = [];
+            $childResult = cleanupExtensions($childDb, [15]);
+            $this->check('A package child with missing files is never removed database-only',
+                $childResult['error'] === 1 && $childDb->has(15) && Installer::$calls === []);
+            $this->check('The database fallback deletes only rows outside a package',
+                !removeCleanupExtensionRecord($childDb, (object) $this->row(15, 'plugin', 'payment_child', 'j2store'), getIssuePatterns())
+                && $childDb->has(15));
+
+            // Element and folder become paths: no traversal, no unusual characters.
+            foreach ([
+                ['plugin', '../../administrator/components/com_users', 'j2store'],
+                ['plugin', 'payment_x', '../j2store'],
+                ['module', 'mod_j2store_/../../x', ''],
+                ['library', 'j2store/../..', ''],
+                ['library', 'j2store/a/b', ''],
+                ['component', 'com_j2store_/../com_j2store', ''],
+                ['plugin', 'payment <b>x</b>', 'j2store'],
+                ['plugin', 'Payment_upper', 'j2store'],
+            ] as [$type, $element, $folder]) {
+                $this->check("Unsafe {$type} element or folder is out of scope: {$folder}/{$element}",
+                    !isCleanupCandidate((object) $this->row(16, $type, $element, $folder)));
+            }
         }
 
         private function testAuthorizationPermissions(): void
         {
             $user = new class {
                 public array $permissions = ['core.manage' => true, 'core.delete' => true];
+                public array $installer = ['core.manage' => true, 'core.delete' => true];
                 public function authorise(string $action, string $asset): bool
                 {
+                    if ($asset === 'com_installer') {
+                        return $this->installer[$action] ?? false;
+                    }
+
                     return $asset === 'com_j2store_cleanup' && ($this->permissions[$action] ?? false);
                 }
             };
 
             $this->check('Manage and delete permissions allow cleanup', canRemoveExtensions($user));
+            $user->installer['core.delete'] = false;
+            $this->check('Without delete permission in Joomla Extensions no cleanup is possible', !canRemoveExtensions($user));
+            $user->installer = ['core.manage' => false, 'core.delete' => true];
+            $this->check('Without manage permission in Joomla Extensions no cleanup is possible', !canRemoveExtensions($user));
+            $this->check('Joomla Extensions permissions are not needed to view the scan', canAccessCleanup($user));
+            $user->installer = ['core.manage' => true, 'core.delete' => true];
             $this->check('Manage permission opens the scan view', canAccessCleanup($user));
             $user->permissions['core.delete'] = false;
             $this->check('Manage without delete permission cannot cleanup', !canRemoveExtensions($user));
@@ -504,17 +551,37 @@ namespace {
             $this->check('Joomla false refusal preserves the extension record', $result['error'] === 1
                 && $db->has(1) && str_starts_with($result['messages'][0] ?? '', 'COM_J2STORE_CLEANUP_MSG_UNINSTALL_REFUSED'));
 
+            // An extension script that fails (an Error, before Joomla removes files and
+            // tables) must not turn into a database-only removal that orphans its code.
             Installer::$mode = 'throw';
+            Installer::$message = '<b>legacy script failed</b>';
             $result = cleanupExtensions($db, [1]);
-            $this->check('Eligible installer exception uses guarded DB-only fallback', $result['warning'] === 1 && !$db->has(1));
+            $this->check('An installer exception with the files still present keeps the record',
+                $result['error'] === 1 && $db->has(1));
+            $this->check('Exception details are escaped before they reach the administrator message',
+                ($result['messages'][0] ?? '') === 'test_incompatible: &lt;b&gt;legacy script failed&lt;/b&gt;');
+            Installer::$message = 'synthetic installer failure';
 
-            $failedDb = new FakeDatabase([$this->row(1, 'plugin', 'test_incompatible', 'j2store')]);
+            // Files removed before the exception: the record may be removed database-only.
+            $throwingPath = JPATH_PLUGINS . '/j2store/test_throwing';
+            mkdir($throwingPath, 0777, true);
+            file_put_contents($throwingPath . '/legacy.php', '<?php JFactory::getApplication();');
+            Installer::$removeBeforeThrow = $throwingPath;
+            $goneDb = new FakeDatabase([$this->row(1, 'plugin', 'test_throwing', 'j2store')]);
+            $result = cleanupExtensions($goneDb, [1]);
+            $this->check('An installer exception after the files are gone uses the guarded DB-only fallback',
+                $result['warning'] === 1 && !$goneDb->has(1));
+
+            mkdir($throwingPath, 0777, true);
+            file_put_contents($throwingPath . '/legacy.php', '<?php JFactory::getApplication();');
+            $failedDb = new FakeDatabase([$this->row(1, 'plugin', 'test_throwing', 'j2store')]);
             $failedDb->failExecute = true;
             $result = cleanupExtensions($failedDb, [1]);
             $this->check('A failed fallback after an installer exception is reported through a language key',
                 $result['error'] === 1 && $failedDb->has(1)
-                && ($result['messages'][0] ?? '') === 'test_incompatible: COM_J2STORE_CLEANUP_MSG_FALLBACK_FAILED:'
+                && ($result['messages'][0] ?? '') === 'test_throwing: COM_J2STORE_CLEANUP_MSG_FALLBACK_FAILED:'
                     . 'synthetic installer failure|synthetic database failure');
+            Installer::$removeBeforeThrow = null;
             Installer::$mode = 'success';
         }
 
@@ -565,6 +632,7 @@ namespace {
                 'client_id' => 0,
                 'protected' => $protected,
                 'locked' => 0,
+                'package_id' => 0,
                 'manifest_cache' => '{}',
             ];
         }

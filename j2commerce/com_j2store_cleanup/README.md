@@ -54,9 +54,9 @@ Uninstall via **System → Manage → Extensions**. The component has no uninsta
 
 There are no extension-specific behaviour options; the manifest enables language loading, and the installed component's `config.xml` supplies Joomla's permission editor. There is no Scheduler routine or notification mail. The component stores no own business tables; it reads extension metadata and local PHP files and uses Joomla's uninstaller for selected removals.
 
-An uninstalled extension's own script can delete its data. The two protected shop core components are not a guarantee that every other removal preserves orders or customer data. Grant both `core.manage` and `core.delete` on this component only to trusted administrators; review each selected extension's uninstall behaviour and verify your recovery backup before confirming.
+An uninstalled extension's own script can delete its data. The two protected shop core components are not a guarantee that every other removal preserves orders or customer data. Removing extensions requires `core.manage` and `core.delete` on this component **and** on Joomla's Extensions manager (`com_installer`), so this component never widens who may uninstall extensions; grant them only to trusted administrators; review each selected extension's uninstall behaviour and verify your recovery backup before confirming.
 
-Configure these rules at **Components → J2Store Extension Cleanup → Options → Permissions**. The Options toolbar action is shown only to users with `core.admin` or `core.options` on this component; Joomla requires `core.admin` to change permission rules. Joomla ACL rules inherit from parent groups unless overridden, and an inherited Denied cannot be overridden by an Allow on this component. The upgrade does not automatically grant `core.admin` or `core.delete`; a role that previously had `core.manage` but does not inherit or receive `core.delete` can continue to inspect the scan, but cannot remove extensions until an authorised administrator grants that permission.
+Configure these rules at **Components → J2Store Extension Cleanup → Options → Permissions**. The Options toolbar action is shown only to users with `core.admin` or `core.options` on this component; Joomla requires `core.admin` to change permission rules. Joomla ACL rules inherit from parent groups unless overridden, and an inherited Denied cannot be overridden by an Allow on this component. By default Joomla denies the Administrator group the Extensions manager, so such users can inspect the scan but cannot remove extensions. The upgrade does not automatically grant `core.admin` or `core.delete`; a role that previously had `core.manage` but does not inherit or receive `core.delete` can continue to inspect the scan, but cannot remove extensions until an authorised administrator grants that permission.
 
 ### Access
 Navigate to: **Components → J2Store Extension Cleanup**
@@ -71,9 +71,9 @@ The component displays:
 3. **No Files Found** - Extensions registered in `#__extensions` whose folder is missing on disk; for components both the administrator and the site folder must be missing (selectable for removal)
 4. **Compatible Extensions** - Extensions without findings, plus the core component (not selectable)
 
-Only J2Store/J2Commerce-related components, plugins, modules, templates and libraries in the supported extension namespaces can be removed. File extensions are out of scope: they have no single install path, so missing files cannot be verified and a database-only removal could leave their files behind. Protected or locked records (Joomla's uninstaller refuses both), the shop core components, this cleanup component, other extension types, compatible extensions and out-of-scope records are rejected even when submitted directly. A mixed valid/invalid selection is rejected without removing any item.
+Only J2Store/J2Commerce-related components, plugins, modules, templates and libraries in the supported extension namespaces can be removed. File extensions are out of scope: they have no single install path, so missing files cannot be verified and a database-only removal could leave their files behind. Protected or locked records (Joomla's uninstaller refuses both), records whose element or folder is not a plain extension name, the shop core components, this cleanup component, other extension types, compatible extensions and out-of-scope records are rejected even when submitted directly. A mixed valid/invalid selection is rejected without removing any item.
 
-The **Remove Selected Extensions** button is only shown to users with both `core.manage` and `core.delete` when at least one eligible extension is *Incompatible* or *No files*. Users with only `core.manage` can still inspect the scan. Users without `core.manage` on this component are denied the page and every task, including direct requests.
+The **Remove Selected Extensions** button is only shown to users with `core.manage` and `core.delete` on this component and on `com_installer` when at least one eligible extension is *Incompatible* or *No files*. Users with only `core.manage` can still inspect the scan. Users without `core.manage` on this component are denied the page and every task, including direct requests.
 
 ### Workflow
 
@@ -107,7 +107,7 @@ When you remove an extension, the component uses **Joomla's Installer API** for 
 
 **Note:** Extension-specific database tables (e.g., `#__j2store_*`) are only removed if the extension's uninstall script handles them.
 
-If an eligible extension has no files, only its `#__extensions` record is deleted and a warning ("DB only — files may remain") is shown. If Joomla's uninstaller throws an exception, the same database-only fallback is attempted only after revalidating the record. A `false` return from Joomla is treated as an uninstall refusal and is never bypassed with a direct database deletion.
+If an eligible extension has no files, only its `#__extensions` record is deleted and a warning ("DB only — files may remain") is shown; a record that belongs to a package is never removed this way. If Joomla's uninstaller throws an exception, the record stays unless the revalidated extension has no files left, so a failing uninstall script never turns into a database-only removal that leaves code or tables behind. A `false` return from Joomla is treated as an uninstall refusal and is never bypassed with a direct database deletion.
 
 ## What Stays
 
@@ -160,9 +160,11 @@ Order as in `tests/test.env`:
    Then it logs a synthetic Manager into `/administrator` and switches the
    component's real Joomla permission rules: without `core.manage` the page and the task are
    refused, with `core.manage` only the scan is read-only and a forged cleanup request removes
-   nothing, and with `core.delete` as well an eligible record is removed, but only with the
-   form token. It also checks that the Options button and Joomla's permission editor (with the
-   manage and delete actions) are available only with `core.admin`
+   nothing, `core.delete` without rights in Joomla's Extensions manager is still read-only, and
+   with those rights as well an eligible record is removed, but only with a POSTed form token. It
+   also checks that the Options button and Joomla's permission editor (with the manage and
+   delete actions) are available only with `core.admin`, and that with the untouched default
+   rules a member of the Administrator group can inspect the scan but remove nothing
 8. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator`
    and really renders the component page. It asserts HTTP 200, no PHP error and no Joomla
    error page, no untranslated language key, and at least one string of the component's own
