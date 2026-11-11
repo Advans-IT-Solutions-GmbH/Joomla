@@ -1,0 +1,19 @@
+# Overlay for the installed browser/mail acceptance suites on a disposable CI runner:
+#   docker compose -f docker-compose.yml -f docker-compose.acceptance.yml up -d --build
+# The site shares the runner's network namespace, so the browser, both PHP
+# processes (Apache and the second `php -S` worker) and the loopback SMTP capture
+# all meet on 127.0.0.1, as the admission buckets and the fixture's mail controls
+# require. MySQL is published on loopback only. Never use this on a shared host.
+services:
+  joomla:
+    network_mode: host
+    environment:
+      JOOMLA_DB_HOST: 127.0.0.1:${PRIVACY_DB_PORT:-3307}
+    volumes:
+      # The suites run fixture.php by its runner path; mount the checkout read-only there.
+      - ${PRIVACY_SOURCE_ROOT:?set PRIVACY_SOURCE_ROOT}:${PRIVACY_SOURCE_ROOT:?set PRIVACY_SOURCE_ROOT}:ro
+      - ${PRIVACY_CAPTURE_ROOT:?set PRIVACY_CAPTURE_ROOT}:/privacy-capture
+
+  mysql:
+    ports:
+      - "127.0.0.1:${PRIVACY_DB_PORT:-3307}:3306"

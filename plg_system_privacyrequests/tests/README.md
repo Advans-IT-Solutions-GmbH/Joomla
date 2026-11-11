@@ -30,6 +30,14 @@ checks the J2Commerce and Appointments privacy domains, with this adapter
 enabled and disabled; this adapter itself handles removal only. CI also arms
 and checks the shared production-like deprecation gate.
 
+The workflow job `acceptance` runs every CJS suite on Joomla 5.4 and 6.x. It
+builds the Appointments and J2Commerce privacy packages and the two synthetic
+probes of the same commit, starts the stack with `docker-compose.acceptance.yml`
+and runs `run-acceptance.sh`. That overlay uses the host network, so the browser,
+Apache, a second independent `php -S` worker and the loopback SMTP capture
+`mail-capture.php` all meet on 127.0.0.1. Use it only on a disposable runner: it
+binds ports 80, 1025, 3307 and 8081 of the host.
+
 The compatibility/release requirements checker remains unchanged and mandatory.
 The approved distribution channel uses this repository's GitHub raw update feed
 and version-specific GitHub Release ZIPs. The real release-preparation workflow
