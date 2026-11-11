@@ -103,7 +103,7 @@ final class SchedulerService
             ->where($db->quoteName('start_utc') . ' > ' . $db->quote($this->time($now)))
             ->where('(' . implode(' OR ', $conditions) . ')')
             ->order($db->quoteName('start_utc') . ' ASC')->order($db->quoteName('id') . ' ASC')->setLimit($batchSize);
-        $candidates = $db->setQuery($query)->loadColumn();
+        $candidates = $db->setQuery($query)->loadAssocList();
         $store = new BookingStore($db);
         $mail = new NotificationService($db);
 
