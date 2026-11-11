@@ -490,6 +490,12 @@ class ConfigFormsTest
     {
         $post = ['option' => 'com_dmarcreports', 'task' => $task];
 
+        // FormController::save() takes the record id from the request (the edit
+        // form posts it in its action URL), not from jform[id].
+        if ((int) ($jform['id'] ?? 0) > 0) {
+            $post['id'] = (string) (int) $jform['id'];
+        }
+
         foreach ($jform as $key => $value) {
             $post["jform[{$key}]"] = $value;
         }
