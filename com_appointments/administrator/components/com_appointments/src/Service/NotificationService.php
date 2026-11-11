@@ -359,16 +359,13 @@ final class NotificationService
             });
             $template['subject'] = strtr($template['subject'], $presentation);
             $template['body'] = strtr($template['body'], $presentation);
-            $recipientBooking = $booking;
+            // The host gets the whole booking with the moderator link; every other calendar user only
+            // what the calendar copy shows (an allowlist), so no edited template reaches the telephone,
+            // the answers or the cancellation reason.
+            $recipientBooking = $entry['host'] ? $booking : CalendarNotice::contentBooking($booking);
 
-            if ($entry['host']) {
-                if (!empty($booking['conference_url'])) {
-                    $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
-                }
-            } else {
-                // What the calendar copy shows, no more: the telephone and the answers stay with the host.
-                $recipientBooking['invitee_phone'] = null;
-                $recipientBooking['custom_fields'] = null;
+            if ($entry['host'] && !empty($booking['conference_url'])) {
+                $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
             }
 
             $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $event, [], $now);

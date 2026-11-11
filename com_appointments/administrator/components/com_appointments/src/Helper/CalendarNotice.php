@@ -55,6 +55,18 @@ final class CalendarNotice
     /** Purposes that go to the host alone, never to the other users of the calendar. */
     public const HOST_ONLY = ['reminder'];
 
+    /**
+     * The booking fields a calendar user other than the host receives: what the calendar copy
+     * shows (BookingCalendarBridge::objectIcs()) and what that copy is built from. Every other
+     * field (telephone, answers, cancellation reason, consent, languages, conference details) stays
+     * empty, also in an edited template.
+     */
+    public const CONTENT_FIELDS = [
+        'id', 'uid', 'sequence', 'eventtype_id', 'host_user_id', 'start_utc', 'end_utc', 'state',
+        'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'guest_emails',
+        'conference_url', 'created_utc', 'modified_utc',
+    ];
+
     /** The placeholders a free/busy mail may contain; any other one is left empty. */
     public const FREEBUSY_PLACEHOLDERS = ['{calendar_title}', '{start}', '{end}', '{timezone}'];
 
@@ -137,6 +149,18 @@ final class CalendarNotice
         ];
     }
 
+    /**
+     * The booking as a calendar user other than the host receives it: the fields of
+     * CONTENT_FIELDS, nothing else. Pure.
+     *
+     * @param   array<string, mixed>  $booking
+     *
+     * @return  array<string, mixed>
+     */
+    public static function contentBooking(array $booking): array
+    {
+        return array_intersect_key($booking, array_flip(self::CONTENT_FIELDS));
+    }
     private static function normalise(string $address): string
     {
         return mb_strtolower(trim($address), 'UTF-8');

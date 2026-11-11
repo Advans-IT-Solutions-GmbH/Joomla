@@ -51,9 +51,11 @@ final class NotificationSwitch
     public static function withSwitch(?string $params, int $calendarId, bool $on): string
     {
         $params = trim((string) $params);
-        $decoded = $params === '' ? [] : json_decode($params, true);
+        // Decoded as objects, so every other parameter keeps its JSON type ({} stays {}, an object
+        // with numeric keys stays an object); only the value of PARAM is replaced.
+        $decoded = $params === '' ? new \stdClass() : json_decode($params);
 
-        if (!\is_array($decoded) || ($decoded !== [] && array_is_list($decoded))) {
+        if (!$decoded instanceof \stdClass) {
             throw new \UnexpectedValueException('The account parameters are not readable.');
         }
 
@@ -65,12 +67,12 @@ final class NotificationSwitch
         }
 
         if ($muted === []) {
-            unset($decoded[self::PARAM]);
+            unset($decoded->{self::PARAM});
         } else {
-            $decoded[self::PARAM] = $muted;
+            $decoded->{self::PARAM} = $muted;
         }
 
-        return $decoded === [] ? '{}' : (string) json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        return (string) json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     }
 
     /**

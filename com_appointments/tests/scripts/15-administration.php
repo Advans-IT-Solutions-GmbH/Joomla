@@ -170,11 +170,11 @@ try {
             $document = new DOMDocument();
             @$document->loadHTML($help);
             $helpXpath = new DOMXPath($document);
-            $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 8
+            $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 9
                 && $helpXpath->query('//a[@id="toolbar-back"]')->length === 1,
                 'Central help has all generic topics and a real overview return, enabled=' . $enabled);
             $topicLinks = $helpXpath->query('//div[@id="appointments-help"]/nav/a[starts-with(@href,"#help-")]');
-            $topicTargetsValid = $topicLinks->length === 8;
+            $topicTargetsValid = $topicLinks->length === 9;
             foreach ($topicLinks as $topicLink) {
                 $target = substr($topicLink->getAttribute('href'), 1);
                 $topicTargetsValid = $topicTargetsValid && preg_match('/^help-[a-z]+$/D', $target) === 1
@@ -182,7 +182,7 @@ try {
             }
             $check($topicTargetsValid
                 && $helpXpath->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
-                'All eight native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
+                'All nine native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
             $overviewButton = $helpXpath->query('//div[@id="appointments-help"]/nav/a[contains(@class,"btn-primary")]')->item(0);
             $check($overviewButton !== null && trim($overviewButton->textContent) === 'Overview',
                 'Help overview button uses the runtime language catalogue, enabled=' . $enabled);

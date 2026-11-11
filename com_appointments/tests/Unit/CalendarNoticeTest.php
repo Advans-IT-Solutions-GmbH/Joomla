@@ -169,6 +169,29 @@ final class CalendarNoticeTest extends TestCase
         self::assertSame('{}', NotificationSwitch::withSwitch('', 5, true));
     }
 
+    public function testOtherCalendarUsersGetOnlyWhatTheCalendarCopyShows(): void
+    {
+        $booking = [
+            'id' => 5, 'uid' => 'u', 'start_utc' => '2027-01-04 10:00:00', 'end_utc' => '2027-01-04 10:30:00', 'state' => 2,
+            'invitee_name' => 'Name', 'invitee_email' => 'a@example.test', 'guest_emails' => 'g@example.test',
+            'invitee_phone' => '+41 44 000 00 00', 'custom_fields' => '{"1":"answer"}', 'cancel_reason' => 'private reason',
+            'consent_utc' => '2027-01-01 00:00:00', 'invitee_language' => 'de-DE', 'conference_room' => 'room',
+        ];
+        $content = CalendarNotice::contentBooking($booking);
+
+        self::assertSame(['id', 'uid', 'start_utc', 'end_utc', 'state', 'invitee_name', 'invitee_email', 'guest_emails'], array_keys($content));
+        self::assertStringNotContainsString('private reason', json_encode($content));
+    }
+
+    public function testTheSwitchKeepsTheJsonTypeOfEveryOtherParameter(): void
+    {
+        $params = '{"other_plugin":{"options":{}},"numbered":{"1":"a","2":"b"},"list":[1,2]}';
+        $off = NotificationSwitch::withSwitch($params, 7, false);
+
+        self::assertSame('{"other_plugin":{"options":{}},"numbered":{"1":"a","2":"b"},"list":[1,2],"' . NotificationSwitch::PARAM . '":[7]}', $off);
+        self::assertSame($params, NotificationSwitch::withSwitch($off, 7, true));
+    }
+
     public function testTheSwitchIgnoresForeignValuesAndRefusesUnreadableParameters(): void
     {
         self::assertSame([2, 4], NotificationSwitch::mutedFrom('{"' . NotificationSwitch::PARAM . '":["4",2,0,-1,"x",{"a":1},2]}'));
