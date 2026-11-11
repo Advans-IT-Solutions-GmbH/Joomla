@@ -70,7 +70,7 @@ The component displays:
 
 1. **Compatibility scan box** ("Compatibility scan for Joomla X") - Explains what is checked on the running Joomla version and the four result types
 2. **Incompatible Extensions** - Extensions whose PHP files use APIs removed in the running Joomla version (selectable for removal)
-3. **No Files Found** - Extensions registered in `#__extensions` whose folder is missing on disk; for components both the administrator and the site folder must be missing (selectable for removal)
+3. **No Files Found** - Extensions registered in `#__extensions` whose folder is missing on disk; for components the administrator, site and API folders must all be missing (selectable for removal)
 4. **Compatible Extensions** - Extensions without findings, plus the core component (not selectable)
 
 Only J2Store/J2Commerce-related components, plugins, modules, templates and libraries in the supported extension namespaces can be removed. File extensions are out of scope: they have no single install path, so missing files cannot be verified and a database-only removal could leave their files behind. Protected or locked records (Joomla's uninstaller refuses both), records whose element or folder is not a plain extension name, the shop core components, this cleanup component, other extension types, compatible extensions and out-of-scope records are rejected even when submitted directly. A mixed valid/invalid selection is rejected without removing any item.
