@@ -341,6 +341,9 @@ class ComponentFunctionsTest
             'returned through a local variable' => "<?php function label() { \$t = 'Hardcoded Label'; return \$t; } echo htmlspecialchars(label()); ?>",
             'returned by a function another one calls' => "<?php function inner() { return 'Hardcoded Label'; } function outer() { return inner(); } echo outer(); ?>",
             'assigned from a function'   => "<?php function label() { return 'Hardcoded Label'; } \$x = label(); echo \$x; ?>",
+            'emitted inside a boolean predicate' => "<?php function eligible(): bool { echo 'Hardcoded Label'; return true; } echo eligible(); ?>",
+            'printed inside a boolean predicate' => "<?php function eligible(): bool { print 'Hardcoded Label'; return true; } echo eligible(); ?>",
+            'returned by a typed string function' => "<?php function label(): string { return 'Hardcoded Label'; } echo label(); ?>",
         ];
 
         foreach ($visible as $label => $snippet) {
@@ -387,6 +390,8 @@ class ComponentFunctionsTest
             'a function that returns a translation' => "<?php function label() { return Text::_('COM_X'); } echo label(); ?>",
             'a function that calls itself' => "<?php function f(\$n) { return \$n ? f(\$n - 1) : Text::_('COM_X'); } echo f(2); ?>",
             'a function whose text is never returned' => "<?php function f() { \$unused = 'Hardcoded Label'; return Text::_('COM_X'); } echo f(); ?>",
+            'a boolean predicate with literal arguments' => "<?php function eligible(): bool { return str_starts_with(\$element, 'com_j2store_'); } echo eligible() ? Text::_('COM_A') : Text::_('COM_B'); ?>",
+            'a boolean predicate assigned before output' => "<?php function eligible(): bool { return in_array(\$type, ['j2store', 'j2commerce'], true); } \$eligible = eligible(); echo \$eligible ? Text::_('COM_A') : Text::_('COM_B'); ?>",
         ];
 
         // The literal HTML between the PHP blocks: attributes a reader sees or hears. Every case
@@ -987,6 +992,15 @@ class ComponentFunctionsTest
             $open = $i;
             while ($open < $end && $tokens[$open]['text'] !== '{') {
                 $open++;
+            }
+
+            // A bool return cannot carry the string arguments its predicate examines.
+            if (($tokens[$open - 2]['text'] ?? '') === ':'
+                && strtolower($tokens[$open - 1]['text'] ?? '') === 'bool') {
+                $returns[strtolower($tokens[$i + 1]['text'])] = [
+                    'text' => [], 'variables' => [], 'functions' => [], 'sources' => [],
+                ];
+                continue;
             }
 
             $body  = array_slice($tokens, $open + 1, max(0, $end - $open - 1));

@@ -21,6 +21,8 @@
     <administration>
         <menu>COM_J2STORE_CLEANUP</menu>
         <files folder="administrator/components/com_j2store_cleanup">
+            <filename>access.xml</filename>
+            <filename>config.xml</filename>
             <filename>j2store_cleanup.php</filename>
             <filename>LICENSE.txt</filename>
         </files>
