@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <config addruleprefix="Advans\Component\DmarcReports\Administrator\Rule">
-    <fieldset name="basic">
+    <fieldset name="basic" label="COM_DMARCREPORTS_CONFIG_BASIC_FIELDSET">
         <field
             name="default_policy_target"
             type="list"
