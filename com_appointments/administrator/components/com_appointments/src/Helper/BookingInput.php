@@ -44,14 +44,22 @@ final class BookingInput
 
     /**
      * Number of digits after the calling code, for the calling codes whose national numbers
-     * all have the same length (geographic, mobile and freephone numbers alike): North America
-     * 10, Russia and Kazakhstan 10, Greece 10, France 9, Spain 9, Switzerland 9, Poland 9,
-     * Portugal 9, Czechia 9, Denmark 8. Every other calling code has national numbers of
-     * different lengths and only gets the general E.164 bounds (see phone()).
+     * have one fixed length (geographic, mobile and freephone numbers alike): North America 10,
+     * Russia and Kazakhstan 10, France 9, Spain 9, Switzerland 9, Portugal 9, Denmark 8. Every
+     * other calling code has national numbers of different lengths and only gets the general
+     * E.164 bounds (see phone()).
      */
     private const NATIONAL_LENGTH = [
-        '1' => 10, '7' => 10, '30' => 10, '33' => 9, '34' => 9, '41' => 9, '45' => 8, '48' => 9,
-        '351' => 9, '420' => 9,
+        '1' => 10, '7' => 10, '33' => 9, '34' => 9, '41' => 9, '45' => 8, '351' => 9,
+    ];
+
+    /**
+     * Longer national numbers a calling code of NATIONAL_LENGTH also has, by their leading
+     * digits: Swiss voicemail numbers are 860 followed by a nine-digit national number
+     * (OFCOM numbering plan), so 12 digits after +41.
+     */
+    private const NATIONAL_LENGTH_BY_PREFIX = [
+        '41' => ['860' => 12],
     ];
 
     /** Shortest national number accepted for a calling code without a fixed length. */
@@ -376,7 +384,7 @@ final class BookingInput
             throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELDS');
         }
 
-        if (!self::plausibleLength($code, strlen($digits))) {
+        if (!self::plausibleLength($code, $digits)) {
             throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_PHONE_LENGTH');
         }
 
@@ -384,14 +392,23 @@ final class BookingInput
     }
 
     /**
-     * Whether a national number of $length digits fits the calling code $code: exactly the
-     * length of NATIONAL_LENGTH where the code has one ("+41 123" is refused, Swiss numbers
-     * have 9 digits), otherwise at least MIN_NATIONAL_LENGTH digits and, with the code, at
-     * most the 15 digits of E.164.
+     * Whether the national number $digits fits the calling code $code: exactly the length of
+     * NATIONAL_LENGTH where the code has one ("+41 123" is refused, Swiss numbers have 9
+     * digits), or the longer length NATIONAL_LENGTH_BY_PREFIX gives its leading digits;
+     * otherwise at least MIN_NATIONAL_LENGTH digits and, with the code, at most the 15 digits
+     * of E.164.
      */
-    private static function plausibleLength(string $code, int $length): bool
+    private static function plausibleLength(string $code, string $digits): bool
     {
+        $length = strlen($digits);
+
         if (isset(self::NATIONAL_LENGTH[$code])) {
+            foreach (self::NATIONAL_LENGTH_BY_PREFIX[$code] ?? [] as $prefix => $longer) {
+                if (str_starts_with($digits, (string) $prefix) && $length === $longer) {
+                    return true;
+                }
+            }
+
             return $length === self::NATIONAL_LENGTH[$code];
         }
 

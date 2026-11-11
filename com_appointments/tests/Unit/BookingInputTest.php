@@ -209,7 +209,9 @@ final class BookingInputTest extends TestCase
         yield 'Switzerland, eight digits' => [['country' => '41', 'number' => '061 000 00 0']];
         yield 'Switzerland, ten digits' => [['country' => '41', 'number' => '61 000 00 000']];
         yield 'Switzerland, ten digits after a trunk zero' => [['country' => '', 'number' => '+41 0 61 000 00 000']];
-        yield 'North America, nine digits' => [['country' => '1', 'number' => '202 555 010']];
+        yield 'Switzerland, voicemail one digit short' => [['country' => '', 'number' => '+41 860 79 123 45 6']];
+        yield 'Switzerland, twelve digits without the voicemail prefix' => [['country' => '41', 'number' => '79 123 45 67 891']];
+        yield 'North America, nine digits' =>[['country' => '1', 'number' => '202 555 010']];
         yield 'North America, eleven digits' => [['country' => '', 'number' => '+1 202 555 01000']];
         yield 'France, eight digits' => [['country' => '33', 'number' => '01 23 45 67 8']];
         yield 'Denmark, nine digits' => [['country' => '45', 'number' => '123 456 789']];
@@ -229,6 +231,8 @@ final class BookingInputTest extends TestCase
     {
         yield 'Switzerland' => [['country' => '41', 'number' => '+41 61 000 00 00'], '+41610000000'];
         yield 'Switzerland, national with trunk zero' => [['country' => '41', 'number' => '061 000 00 00'], '+41610000000'];
+        yield 'Switzerland, voicemail' => [['country' => '', 'number' => '+41 860 79 123 45 67'], '+41860791234567'];
+        yield 'Switzerland, voicemail national with trunk zero' => [['country' => '41', 'number' => '0860 79 123 45 67'], '+41860791234567'];
         yield 'Germany, short Berlin number' => [['country' => '41', 'number' => '+49 30 000000'], '+4930000000'];
         yield 'Germany, chosen code' => [['country' => '49', 'number' => '030 000000'], '+4930000000'];
         yield 'United States' => [['country' => '41', 'number' => '+1 202 555 0100'], '+12025550100'];

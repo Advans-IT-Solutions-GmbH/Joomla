@@ -810,10 +810,11 @@ dropped ("+41 079 …" is stored as `+4179…`), except for the calling codes wh
 keep it (Italy, San Marino, Vatican City, Côte d'Ivoire, Benin, Republic of the Congo). Numbers are
 stored in E.164 form, at most 15 digits.
 The number after the calling code must have a plausible length. For the calling codes whose
-national numbers all have the same length it must have exactly that length: 10 digits for North
-America (+1), Russia and Kazakhstan (+7) and Greece (+30), 9 for France (+33), Spain (+34),
-Switzerland (+41), Poland (+48), Portugal (+351) and Czechia (+420), 8 for Denmark (+45). Every other
-calling code needs at least 3 digits, and at most 15 digits together with the code. A number that
+national numbers have one fixed length it must have exactly that length: 10 digits for North
+America (+1) and for Russia and Kazakhstan (+7), 9 for France (+33), Spain (+34), Switzerland (+41)
+and Portugal (+351), 8 for Denmark (+45). Swiss voicemail numbers, 860 followed by a nine-digit
+number, have 12 digits after +41. Every other calling code needs at least 3 digits, and at most 15
+digits together with the code. A number that
 does not fit ("+41 123") is refused at its field with a message that the number has too few or too
 many digits for its calling code.
 With the default **Calling code choice** the preselected code is only a preselection: a visitor
