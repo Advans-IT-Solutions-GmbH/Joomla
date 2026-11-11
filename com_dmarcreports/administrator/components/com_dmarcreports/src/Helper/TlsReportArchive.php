@@ -373,7 +373,9 @@ final class TlsReportArchive
         $data = ltrim($data, "\xEF\xBB\xBF");
 
         if (ltrim($data) === '' || ltrim($data)[0] !== '{') {
-            $stats['reason'] = 'format';
+            // Inflated but not JSON: thrown away, yet the work still counts.
+            $stats['reason']    = 'format';
+            $stats['discarded'] = \strlen($data);
 
             return null;
         }
