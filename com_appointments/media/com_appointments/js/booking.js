@@ -33,6 +33,16 @@
 (() => {
     'use strict';
 
+    let userInteracted = false;
+    let messageObserver = null;
+    const markUserInteracted = () => {
+        userInteracted = true;
+        messageObserver?.disconnect();
+        messageObserver = null;
+    };
+    document.addEventListener('pointerdown', markUserInteracted, { capture: true, once: true });
+    document.addEventListener('keydown', markUserInteracted, { capture: true, once: true });
+
     const enhance = (root) => {
         if (!root.querySelector('[data-appointments-view]') || !window.fetch || !window.DOMParser || !window.URL
             || !window.AbortController || !window.FormData || !window.history || !window.history.pushState) {
@@ -990,7 +1000,104 @@
         }
     };
 
+    /*
+     * The outcome of a completed form ([data-appointments-result]) takes the focus, so a screen
+     * reader reads it out. The redirect lands at its fragment, which keeps the browser from
+     * running the autofocus of the page; without the fragment autofocus already did it.
+     * Wait for pageshow: fragment navigation can clear focus after DOMContentLoaded.
+     */
+    const focusResult = () => {
+        const result = document.querySelector('[data-appointments-result]');
+
+        if (result && !userInteracted && !hasSystemMessageFocusRequest()
+            && !document.querySelector('[autofocus]:not([data-appointments-result]), [aria-invalid="true"], [aria-modal="true"], dialog[open]')
+            && (!document.activeElement || document.activeElement === document.body)) {
+            // The fragment already scrolled to the container with its heading; keep that view.
+            result.focus({ preventScroll: window.location.hash !== '' });
+        }
+    };
+
+    const visibleSystemMessage = (container) => Array.from(container.querySelectorAll('joomla-alert, .alert'))
+        .find((message) => message.textContent.trim() && message.getClientRects().length > 0);
+
+    const hasSystemMessageFocusRequest = () => window.Joomla
+        && typeof window.Joomla.getOptions === 'function'
+        && window.Joomla.getOptions('com_appointments.focusSystemMessage') === true;
+
+    const focusSystemMessage = () => {
+        const active = document.activeElement;
+        const result = document.querySelector('[data-appointments-result]');
+        const container = document.getElementById('system-message-container');
+        const message = container && visibleSystemMessage(container);
+
+        if (!hasSystemMessageFocusRequest() || userInteracted
+            || (active && active !== document.body && active !== document.documentElement && active !== result)
+            || document.visibilityState !== 'visible'
+            || document.querySelector('[autofocus]:not([data-appointments-result]), [aria-invalid="true"], [aria-modal="true"], dialog[open]')
+            || !message || container.getClientRects().length === 0) {
+            return;
+        }
+
+        if (result) {
+            const descriptions = new Set((result.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean));
+            descriptions.add('system-message-container');
+            result.setAttribute('aria-describedby', Array.from(descriptions).join(' '));
+        }
+
+        container.setAttribute('tabindex', '-1');
+        container.focus();
+    };
+
+    const watchSystemMessages = () => {
+        if (!hasSystemMessageFocusRequest()) {
+            return;
+        }
+
+        const container = document.getElementById('system-message-container');
+
+        if (!container) {
+            return;
+        }
+
+        if (visibleSystemMessage(container)) {
+            focusSystemMessage();
+            return;
+        }
+
+        const observer = new MutationObserver(() => {
+            if (visibleSystemMessage(container)) {
+                observer.disconnect();
+                messageObserver = null;
+                window.requestAnimationFrame(focusSystemMessage);
+            }
+        });
+        messageObserver = observer;
+        observer.observe(container, { childList: true, subtree: true });
+        window.setTimeout(() => {
+            if (messageObserver === observer) {
+                observer.disconnect();
+                messageObserver = null;
+            }
+        }, 5000);
+    };
+
+    let focusHandled = false;
+    const focusOutcome = (event) => {
+        if (focusHandled || event?.persisted) {
+            return;
+        }
+
+        focusHandled = true;
+        focusResult();
+        watchSystemMessages();
+    };
     const start = () => document.querySelectorAll('[data-appointments-booking]').forEach(enhance);
+
+    if (document.readyState === 'complete') {
+        focusOutcome();
+    } else {
+        window.addEventListener('pageshow', focusOutcome, { once: true });
+    }
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', start);

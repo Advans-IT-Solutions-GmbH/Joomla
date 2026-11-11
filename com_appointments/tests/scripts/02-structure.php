@@ -423,6 +423,50 @@ class StructureTest
 
         $this->testCalendarFields();
 
+        // An unwrapped table widens the whole administrator page on a phone; inside
+        // .table-responsive it scrolls on its own.
+        $tables = 0;
+        foreach (glob($this->admin . '/tmpl/*/*.php') as $layout) {
+            $source = (string) file_get_contents($layout);
+            if (!preg_match('/<table\b/', $source)) {
+                continue;
+            }
+            $tables += preg_match_all('/<table\b/', $source);
+            $this->test('Every table in ' . basename(dirname($layout)) . '/' . basename($layout) . ' sits in .table-responsive', function () use ($source) {
+                return preg_match_all('/<table\b/', $source)
+                    === preg_match_all('/<div class="table-responsive">\s*<table\b/', $source);
+            });
+        }
+        $this->test('Administrator tables were checked', function () use ($tables) {
+            return $tables >= 14;
+        });
+
+        // Atum keeps the page title on one line and lets neither the header nor the main column
+        // shrink, so a long title or a wide table widened the whole administrator page.
+        $this->test('Administrator layout stylesheet lets the title wrap and the main column shrink', function () {
+            $css = (string) @file_get_contents('/var/www/html/media/com_appointments/css/admin-layout.css');
+            $assets = json_decode((string) @file_get_contents('/var/www/html/media/com_appointments/joomla.asset.json'), true);
+            $names = array_column($assets['assets'] ?? [], 'uri', 'name');
+            $dispatcher = (string) @file_get_contents($this->admin . '/src/Dispatcher/Dispatcher.php');
+
+            return preg_match('/\.header-title\s*,[^{]*\.header-title\s*>\s*\.d-flex\s*,[^{]*\.container-title\s*\{[^}]*min-inline-size:\s*0/', $css)
+                // Atum sets `.header .page-title` to nowrap with an ellipsis and loads after this file,
+                // so the rule needs a higher specificity, not just the same one.
+                && preg_match('/\.header\s+\.header-title\s+\.page-title\s*\{[^}]*white-space:\s*normal[^}]*text-overflow:\s*clip/', $css)
+                && preg_match('/@media\s*\(width\s*<=\s*575\.98px\)\s*\{[^}]*\.header-title\s*\{[^}]*padding-inline-end/', $css)
+                && preg_match('/\.container-main\s*\{[^}]*min-inline-size:\s*0/', $css)
+                && ($names['com_appointments.admin.layout'] ?? '') === 'com_appointments/admin-layout.css'
+                && str_contains($dispatcher, "useStyle('com_appointments.admin.layout')");
+        });
+
+        $this->test('Booking details wrap unbroken calendar identifiers and submitted values', function () {
+            $layout = (string) file_get_contents($this->admin . '/tmpl/booking/default.php');
+            $css = (string) file_get_contents('/var/www/html/media/com_appointments/css/admin-layout.css');
+
+            return str_contains($layout, '<dl class="row com-appointments-booking-details">')
+                && preg_match('/\.com-appointments-booking-details\s*>\s*dd\s*\{[^}]*overflow-wrap:\s*anywhere/', $css);
+        });
+
         echo "\n=== Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;

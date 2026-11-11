@@ -11,6 +11,7 @@ namespace Advans\Component\Appointments\Site\View\Manage;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
+use Advans\Component\Appointments\Site\View\ResultNoticesTrait;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
@@ -21,6 +22,7 @@ class HtmlView extends BaseHtmlView
 {
     use PageTitleTrait;
     use AssetsTrait;
+    use ResultNoticesTrait;
 
     protected $item;
     protected $action;
@@ -39,12 +41,24 @@ class HtmlView extends BaseHtmlView
         $app->setHeader('Referrer-Policy', 'no-referrer', true);
         $app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
         $app->setHeader('Cache-Control', 'private, no-store', true);
-        $this->useAppointmentsAssets(false);
         $model = $this->getModel();
         $this->action = $model->action();
         $this->applyPageTitle('manage', Text::_(['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL', 'erase' => 'COM_APPOINTMENTS_MANAGE_ERASE'][$this->action]));
         $this->signature = $model->signature();
         $this->completed = $model->completed();
+        $focusKey = 'com_appointments.manage_focus_message.' . $app->getInput()->getInt('id') . '.' . $this->action;
+        $focusMessage = !$this->completed && (bool) $app->getUserState($focusKey, false);
+        $app->setUserState($focusKey, null);
+        // Ordinary forms keep native field autofocus; only outcomes and page-level refusals need the script.
+        $this->useAppointmentsAssets($this->completed || $focusMessage);
+
+        if ($focusMessage) {
+            $this->getDocument()->addScriptOptions('com_appointments.focusSystemMessage', true);
+        }
+
+        if ($this->completed) {
+            $this->takeResultNotices();
+        }
         $this->item = $model->getItem();
         $this->deleteMode = $model->deleteMode();
         $this->reason = (string) $app->getUserState('com_appointments.cancel_reason', '');
