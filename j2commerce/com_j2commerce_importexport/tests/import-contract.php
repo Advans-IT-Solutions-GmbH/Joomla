@@ -144,7 +144,11 @@ namespace {
         }
         public function loadResult(): int { return $this->results ? array_shift($this->results) : $this->result; }
         public function insertObject(string $table, object $row): void { $this->inserted[$table] = clone $row; }
-        public function updateObject(string $table, object $row, string $key): void { $this->updated[$table] = clone $row; }
+        public array $updateNulls = [];
+        public function updateObject(string $table, object $row, string $key, bool $nulls = false): void {
+            $this->updated[$table] = clone $row;
+            $this->updateNulls[$table] = $nulls;
+        }
         public function insertid(): int { return 42; }
         public function execute(): bool { return true; }
         public function resetAuthorizationScenario(array $results, array $objects = []): void {
@@ -497,7 +501,7 @@ namespace {
         $user = new AuthorizationUser();
         $authModel = new AuthorizationModel();
         $authModel->identity = $user;
-        $existingArticle = (object) ['id' => 80, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1];
+        $existingArticle = (object) ['id' => 80, 'asset_id' => 1, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1];
         $authDb = new AuthorizationDatabase();
         $authDb->article = clone $existingArticle;
         $authModel->database = $authDb;
@@ -505,7 +509,7 @@ namespace {
         $authorized = $authModel->authorize($existingArticle, 2, []);
         check($authorized === ['state' => 1, 'access' => 1], 'Article owners may use core.edit.own without changing protected fields');
         check((function () use ($authModel, $existingArticle): bool {
-            try { $authModel->authorize((object) ['id' => 80, 'created_by' => 8, 'catid' => 2, 'state' => 1, 'access' => 1], 2, []); }
+            try { $authModel->authorize((object) ['id' => 80, 'asset_id' => 1, 'created_by' => 8, 'catid' => 2, 'state' => 1, 'access' => 1], 2, []); }
             catch (\RuntimeException $e) { return $e->getCode() === 403; }
             return false;
         })(), 'Foreign article updates are denied without core.edit');
@@ -708,10 +712,10 @@ namespace {
         };
 
         $nonProductArticle = (object) [
-            'id' => 80, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1,
+            'id' => 80, 'asset_id' => 1, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1,
         ];
         $productArticle = (object) [
-            'id' => 81, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1,
+            'id' => 81, 'asset_id' => 1, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1,
         ];
         $collisionPermissions = ['core.create:com_content.category.2' => true];
         $allMatchKeys = [
@@ -854,7 +858,7 @@ namespace {
             === ['featured' => 1, 'publish_up' => '2030-01-01 00:00:00', 'publish_down' => '2031-01-01 00:00:00'],
             'core.edit.state permits featured and publishing-window values on new articles');
         $scheduledArticle = (object) [
-            'id' => 81, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1, 'featured' => 1,
+            'id' => 81, 'asset_id' => 1, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1, 'featured' => 1,
             'publish_up' => '2030-01-01 00:00:00', 'publish_down' => null,
         ];
         $user->permissions = ['core.edit.own:com_content.article.81' => true];
@@ -883,6 +887,45 @@ namespace {
             catch (\InvalidArgumentException $e) { return true; }
             return false;
         })(), 'A malformed featured value is rejected');
+
+        // Clearing an end date must reach the database as NULL.
+        $endingArticle = clone $scheduledArticle;
+        $endingArticle->publish_down = '2031-01-01 00:00:00';
+        $authDb->resetAuthorizationScenario([1], [$endingArticle]);
+        $authModel->importArticleData(
+            ['title' => 'Clear end date', 'alias' => 'clear-end-date', 'article_id' => 81, 'publish_down' => ''],
+            2,
+            ['update_existing' => true]
+        );
+        check(isset($authDb->updated['#__content'])
+            && $authDb->updated['#__content']->publish_down === null
+            && ($authDb->updateNulls['#__content'] ?? false) === true,
+            'Clearing an existing end date writes NULL through a null-updating article update');
+
+        // Articles without a Joomla asset are checked against their category, never the component alone.
+        $assetless = (object) ['id' => 82, 'asset_id' => 0, 'created_by' => 8, 'catid' => 3, 'state' => 1, 'access' => 1];
+        $user->permissions = ['core.edit:com_content' => true, 'core.edit:com_content.article.82' => true];
+        check(denied(fn () => $authModel->authorize($assetless, 3, [])),
+            'An article without an asset is not editable through component or article rules alone');
+        $user->permissions = ['core.edit:com_content.category.3' => true];
+        check($authModel->authorize($assetless, 3, []) === ['state' => 1, 'access' => 1],
+            'An article without an asset is editable with core.edit on its category');
+        check(denied(fn () => $authModel->schedule($assetless, 3, ['featured' => 1])),
+            'Schedule changes on an article without an asset require core.edit.state on its category');
+        $user->permissions['core.edit.state:com_content.category.3'] = true;
+        check($authModel->schedule($assetless, 3, ['featured' => 1])['featured'] === 1,
+            'core.edit.state on the category permits schedule changes on an article without an asset');
+
+        // A malformed alias fails the row and rolls the transaction back.
+        $authDb->resetAuthorizationScenario([1]);
+        $user->permissions = ['core.create:com_content.category.2' => true];
+        check((function () use ($authModel, $authDb): bool {
+            try { $authModel->importProductFull(['title' => 'Array alias', 'alias' => [], 'catid' => 2], ['update_existing' => true]); }
+            catch (\InvalidArgumentException $e) {
+                return $authDb->transactionsRolledBack === 1 && $authDb->inserted === [] && $authDb->updated === [];
+            }
+            return false;
+        })(), 'A non-string alias is rejected and rolled back without writes');
 
         // Menu items follow the Menus permissions of the target site menu.
         $authDb->resetAuthorizationScenario([]);

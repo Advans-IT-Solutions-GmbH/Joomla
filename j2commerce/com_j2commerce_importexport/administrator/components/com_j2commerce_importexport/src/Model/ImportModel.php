@@ -116,7 +116,8 @@ class ImportModel extends BaseDatabaseModel
             $db->transactionCommit();
             return ['success' => true, 'article_id' => $articleId, 'product_id' => $productId];
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // Roll back on PHP errors too, so no transaction is left open.
             $db->transactionRollback();
             throw $e;
         }
@@ -233,6 +234,9 @@ class ImportModel extends BaseDatabaseModel
 
         $title = (string) $data['title'];
         $alias = $data['alias'] ?? ApplicationHelper::stringURLSafe($title);
+        if (!is_string($alias)) {
+            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+        }
         $existing = !empty($options['update_existing']) ? $this->findExistingArticle($data, $alias) : null;
         $permissions = $this->authorizeArticleImport($existing, $catId, $data);
         $schedule = $this->authorizeArticleSchedule($existing, $catId, $data, $now);
@@ -261,7 +265,8 @@ class ImportModel extends BaseDatabaseModel
 
         if ($existing) {
             $article->id = (int) $existing->id;
-            $db->updateObject('#__content', $article, 'id');
+            // Null updates are required so a cleared publishing end date is written.
+            $db->updateObject('#__content', $article, 'id', true);
             return (int) $existing->id;
         }
 
@@ -345,10 +350,25 @@ class ImportModel extends BaseDatabaseModel
         return (bool) $db->loadResult();
     }
 
+    /**
+     * The permission asset of an existing article. Articles written without a
+     * Joomla asset (for example by earlier imports) would otherwise fall back to
+     * the component rules and skip their category's rules, so they are checked
+     * against their current category, which is what they would inherit from.
+     */
+    protected function articlePermissionAsset(object $article): string
+    {
+        if ((int) ($article->asset_id ?? 0) > 0) {
+            return 'com_content.article.' . (int) $article->id;
+        }
+
+        return 'com_content.category.' . (int) ($article->catid ?? 0);
+    }
+
     protected function authorizeArticleImport(?object $existing, int $categoryId, array $data): array
     {
         $user = $this->getImportIdentity();
-        $articleAsset = $existing ? 'com_content.article.' . (int) $existing->id : '';
+        $articleAsset = $existing ? $this->articlePermissionAsset($existing) : '';
         $categoryAsset = 'com_content.category.' . $categoryId;
         $canEditState = $user->authorise('core.edit.state', $existing ? $articleAsset : $categoryAsset);
 
@@ -416,7 +436,7 @@ class ImportModel extends BaseDatabaseModel
     protected function authorizeArticleSchedule(?object $existing, int $categoryId, array $data, string $now): array
     {
         $asset = $existing
-            ? 'com_content.article.' . (int) $existing->id
+            ? $this->articlePermissionAsset($existing)
             : 'com_content.category.' . $categoryId;
         $canEditState = $this->getImportIdentity()->authorise('core.edit.state', $asset);
 
