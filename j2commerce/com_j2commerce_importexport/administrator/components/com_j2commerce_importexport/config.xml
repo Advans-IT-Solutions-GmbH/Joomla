@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<config>
+    <fieldset name="basic" label="COM_J2COMMERCE_IMPORTEXPORT_CONFIG_BASIC_LABEL">
+        <field
+            name="csv_delimiter"
+            type="list"
+            label="COM_J2COMMERCE_IMPORTEXPORT_CSV_DELIMITER_LABEL"
+            description="COM_J2COMMERCE_IMPORTEXPORT_CSV_DELIMITER_DESC"
+            default=","
+            validate="options"
+        >
+            <option value=",">,</option>
+            <option value=";">;</option>
+            <option value="\t">Tab</option>
+        </field>
+
+        <field
+            name="csv_enclosure"
+            type="list"
+            label="COM_J2COMMERCE_IMPORTEXPORT_CSV_ENCLOSURE_LABEL"
+            description="COM_J2COMMERCE_IMPORTEXPORT_CSV_ENCLOSURE_DESC"
+            default='"'
+            validate="options"
+        >
+            <option value='"'>"</option>
+            <option value="'">'</option>
+        </field>
+    </fieldset>
+
+    <fieldset
+        name="permissions"
+        label="JCONFIG_PERMISSIONS_LABEL"
+        description="JCONFIG_PERMISSIONS_DESC"
+    >
+        <field
+            name="rules"
+            type="rules"
+            label="JCONFIG_PERMISSIONS_LABEL"
+            class="inputbox"
+            validate="rules"
+            filter="rules"
+            component="com_j2commerce_importexport"
+            section="component"
+        />
+    </fieldset>
+</config>

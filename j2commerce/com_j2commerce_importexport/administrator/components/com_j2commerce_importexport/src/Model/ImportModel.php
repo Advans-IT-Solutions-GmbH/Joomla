@@ -15,7 +15,10 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Table\Category as CategoryTable;
 use Joomla\CMS\Table\Menu as MenuTable;
+use Joomla\CMS\Access\Access;
 use Joomla\CMS\Application\ApplicationHelper;
+use Joomla\CMS\Component\ComponentHelper;
+use Joomla\CMS\Filter\InputFilter;
 
 class ImportModel extends BaseDatabaseModel
 {
@@ -241,22 +244,31 @@ class ImportModel extends BaseDatabaseModel
         $permissions = $this->authorizeArticleImport($existing, $catId, $data);
         $schedule = $this->authorizeArticleSchedule($existing, $catId, $data, $now);
 
+        // The same filters the article form applies in the backend, so an import cannot
+        // store markup that the importing user's group would not be allowed to save.
+        $introtext = $this->filterArticleText($data['introtext'] ?? '');
+        $fulltext = $this->filterArticleText($data['fulltext'] ?? '');
+        $images = $this->sanitizeArticleJson($data['article_images'] ?? '{}', ['image_intro', 'image_fulltext']);
+        $urls = $this->sanitizeArticleJson($data['urls'] ?? '{}', ['urla', 'urlb', 'urlc']);
+        $attribs = $this->sanitizeArticleJson($data['attribs'] ?? '{}');
+        $metadata = $this->sanitizeArticleJson($data['metadata'] ?? '{}');
+
         $article = (object) [
             'title' => $title,
             'alias' => $alias,
-            'introtext' => $data['introtext'] ?? '',
-            'fulltext' => $data['fulltext'] ?? '',
+            'introtext' => $introtext,
+            'fulltext' => $fulltext,
             'state' => $permissions['state'],
             'catid' => $catId,
             'access' => $permissions['access'],
             'language' => $data['language'] ?? '*',
             'featured' => $schedule['featured'],
-            'images' => $data['article_images'] ?? '{}',
-            'urls' => $data['urls'] ?? '{}',
-            'attribs' => $data['attribs'] ?? '{}',
+            'images' => $images,
+            'urls' => $urls,
+            'attribs' => $attribs,
             'metakey' => $data['metakey'] ?? '',
             'metadesc' => $data['metadesc'] ?? '',
-            'metadata' => $data['metadata'] ?? '{}',
+            'metadata' => $metadata,
             'publish_up' => $schedule['publish_up'],
             'publish_down' => $schedule['publish_down'],
             'modified' => $now,
@@ -274,6 +286,160 @@ class ImportModel extends BaseDatabaseModel
         $article->created_by = $userId;
         $db->insertObject('#__content', $article);
         return $db->insertid();
+    }
+
+    /**
+     * Applies Joomla's text filters (Global Configuration, Text Filters) of the
+     * importing user's groups, exactly as the article form does when saving.
+     */
+    protected function filterArticleText($value): string
+    {
+        if (!is_string($value)) {
+            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+        }
+
+        return $value === '' ? '' : $this->applyTextFilter($value);
+    }
+
+    /**
+     * Joomla's text filter (Global Configuration, Text Filters) for the importing identity.
+     *
+     * ComponentHelper::filterText() reads the user from the session, which an import run
+     * outside a web session (CLI, tests) does not have, and it would filter for the wrong
+     * user whenever the identity differs. This applies the same rules to the groups of
+     * getImportIdentity(): the filter types NH, NONE, BL, CBL and WL, cumulative per group.
+     */
+    protected function applyTextFilter(string $text): string
+    {
+        $filters = ComponentHelper::getParams('com_config')->get('filters');
+        $groups  = Access::getGroupsByUser((int) ($this->getImportIdentity()->id ?? 0));
+
+        $forbiddenTags = $forbiddenAttributes = $customTags = $customAttributes = $allowedTags = $allowedAttributes = [];
+        $allowed = $forbidden = $custom = $unfiltered = false;
+
+        foreach ($groups as $groupId) {
+            if (!isset($filters->$groupId)) {
+                continue;
+            }
+
+            $type = strtoupper((string) $filters->$groupId->filter_type);
+
+            if ($type === 'NONE') {
+                $unfiltered = true;
+            } elseif ($type !== 'NH') {
+                $tags       = array_filter(array_map('trim', explode(',', (string) ($filters->$groupId->filter_tags ?? ''))));
+                $attributes = array_filter(array_map('trim', explode(',', (string) ($filters->$groupId->filter_attributes ?? ''))));
+
+                if ($type === 'BL') {
+                    $forbidden           = true;
+                    $forbiddenTags       = array_merge($forbiddenTags, $tags);
+                    $forbiddenAttributes = array_merge($forbiddenAttributes, $attributes);
+                } elseif ($type === 'CBL') {
+                    if ($tags || $attributes) {
+                        $custom           = true;
+                        $customTags       = array_merge($customTags, $tags);
+                        $customAttributes = array_merge($customAttributes, $attributes);
+                    }
+                } elseif ($type === 'WL') {
+                    $allowed           = true;
+                    $allowedTags       = array_merge($allowedTags, $tags);
+                    $allowedAttributes = array_merge($allowedAttributes, $attributes);
+                }
+            }
+        }
+
+        if ($unfiltered) {
+            return $text;
+        }
+
+        $forbiddenTags       = array_unique($forbiddenTags);
+        $forbiddenAttributes = array_unique($forbiddenAttributes);
+        $customTags          = array_unique($customTags);
+        $customAttributes    = array_unique($customAttributes);
+        $allowedTags         = array_unique($allowedTags);
+        $allowedAttributes   = array_unique($allowedAttributes);
+
+        if ($custom) {
+            $filter = InputFilter::getInstance([], [], 1, 1);
+
+            if ($customTags) {
+                $filter->blockedTags = $customTags;
+            }
+
+            if ($customAttributes) {
+                $filter->blockedAttributes = $customAttributes;
+            }
+        } elseif ($forbidden) {
+            $forbiddenTags       = array_diff($forbiddenTags, $allowedTags);
+            $forbiddenAttributes = array_diff($forbiddenAttributes, $allowedAttributes);
+            $filter = InputFilter::getInstance($forbiddenTags, $forbiddenAttributes, 1, 1);
+
+            if ($allowedTags) {
+                $filter->blockedTags = array_diff($filter->blockedTags, $allowedTags);
+            }
+
+            if ($allowedAttributes) {
+                $filter->blockedAttributes = array_diff($filter->blockedAttributes, $allowedAttributes);
+            }
+        } elseif ($allowed) {
+            $filter = InputFilter::getInstance($allowedTags, $allowedAttributes, 0, 0, 0);
+        } else {
+            $filter = InputFilter::getInstance();
+        }
+
+        return (string) $filter->clean($text, 'html');
+    }
+    /**
+     * Validates a JSON column of #__content (images, urls, attribs, metadata).
+     *
+     * The value must be a JSON object (or an empty value). Every string is stripped of
+     * markup; the keys named in $linkKeys hold links and may only use safe schemes.
+     *
+     * @param   mixed     $value     JSON string or already decoded array
+     * @param   string[]  $linkKeys  Keys whose values are links
+     *
+     * @return  string  Re-encoded JSON object
+     */
+    protected function sanitizeArticleJson($value, array $linkKeys = []): string
+    {
+        if (is_string($value)) {
+            $value = trim($value) === '' ? [] : json_decode($value, true, 16);
+        }
+
+        if (!is_array($value) || ($value !== [] && array_is_list($value))) {
+            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
+        }
+
+        $clean = $this->sanitizeJsonValues($value, $linkKeys);
+
+        return $clean === [] ? '{}' : json_encode($clean, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    }
+
+    private function sanitizeJsonValues(array $values, array $linkKeys): array
+    {
+        $clean = [];
+        foreach ($values as $key => $item) {
+            if (is_array($item)) {
+                $clean[$key] = $this->sanitizeJsonValues($item, $linkKeys);
+            } elseif (is_string($item)) {
+                $item = (string) InputFilter::getInstance()->clean($item, 'string');
+                if (in_array($key, $linkKeys, true)) {
+                    // Browsers ignore control characters inside a scheme ("java\tscript:"), so
+                    // the scheme is read from a copy without them. The stored value keeps its spaces.
+                    $item = trim($item);
+                    $probe = preg_replace('/[\x00-\x20\x7F]+/', '', $item);
+                    if (preg_match('/^([a-z][a-z0-9+.\-]*):/i', $probe, $scheme)
+                        && !in_array(strtolower($scheme[1]), ['http', 'https', 'mailto', 'tel', 'ftp', 'ftps', 'sftp'], true)) {
+                        $item = '';
+                    }
+                }
+                $clean[$key] = $item;
+            } elseif (is_scalar($item) || $item === null) {
+                $clean[$key] = $item;
+            }
+        }
+
+        return $clean;
     }
 
     protected function findExistingArticle(array $data, string $alias): ?object
@@ -1389,7 +1555,8 @@ class ImportModel extends BaseDatabaseModel
                     throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
                 }
 
-                $item = array_combine($headers, $line);
+                // The export prefixes cells that a spreadsheet could read as a formula with an apostrophe.
+                $item = array_map([self::class, 'restoreFormulaCell'], array_combine($headers, $line));
                 foreach (['variants', 'product_images', 'options', 'filters', 'files', 'tags', 'custom_fields', 'metafields', 'menu_item'] as $key) {
                     if (isset($item[$key])) {
                         try {
@@ -1407,6 +1574,23 @@ class ImportModel extends BaseDatabaseModel
         } finally {
             fclose($handle);
         }
+    }
+
+    /**
+     * Reverses ExportController::neutralizeFormula() for one CSV cell.
+     *
+     * @param   mixed  $value  A parsed cell
+     *
+     * @return  mixed
+     */
+    public static function restoreFormulaCell($value)
+    {
+        if (is_string($value)
+            && preg_match("/^'+[=+\\-@\\t\\r]/", $value)) {
+            return substr($value, 1);
+        }
+
+        return $value;
     }
 
     private function isValidCSVRecord(string $record, string $escape): bool

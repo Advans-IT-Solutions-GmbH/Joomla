@@ -25,7 +25,8 @@ class ExportController extends BaseController
     private function checkAccess(): void
     {
         $user = Factory::getApplication()->getIdentity();
-        if (!$user->authorise('core.manage', 'com_j2commerce_importexport')) {
+        if (!$user->authorise('core.manage', 'com_j2commerce_importexport')
+            || !$user->authorise('importexport.export', 'com_j2commerce_importexport')) {
             throw new \Exception(Text::_('JERROR_ALERTNOAUTHOR'), 403);
         }
     }
@@ -169,11 +170,36 @@ class ExportController extends BaseController
             
             // Data
             foreach ($data as $row) {
-                fputcsv($output, $row, $delimiter, $enclosure, '');
+                fputcsv($output, array_map([self::class, 'neutralizeFormula'], (array) $row), $delimiter, $enclosure, '');
             }
         }
 
         fclose($output);
+    }
+
+    /**
+     * Neutralizes a spreadsheet formula in a CSV cell (OWASP "CSV Injection").
+     *
+     * A text cell starting with =, +, -, @, tab or carriage return is evaluated as a formula
+     * by Excel, LibreOffice and Google Sheets. Such a cell gets a leading apostrophe, which
+     * spreadsheets treat as a text marker and do not display. Plain numbers (including negative
+     * ones) and non-strings are left alone. A text that already starts with apostrophes followed by such a character gets one more, so the import can remove exactly one apostrophe and restore every value.
+     *
+     * @param   mixed  $value  A cell value
+     *
+     * @return  mixed  The cell value, with a leading apostrophe when it could be a formula
+     */
+    public static function neutralizeFormula($value)
+    {
+        if (!\is_string($value) || !preg_match("/^'*[=+\\-@\\t\\r]/", $value)) {
+            return $value;
+        }
+
+        if (preg_match('/^-?\d+(?:\.\d+)?$/', $value)) {
+            return $value;
+        }
+
+        return "'" . $value;
     }
 
     /**

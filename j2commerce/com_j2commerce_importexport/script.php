@@ -12,6 +12,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     ? __DIR__ . '/advansinstaller/load.php'
     : dirname(__DIR__, 2) . '/shared/installer/load.php';
 
+use Joomla\CMS\Access\Access;
 use Joomla\CMS\Factory;
 use Advans\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
@@ -27,6 +28,7 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
     {
         if ($type === 'install' || $type === 'update') {
             $this->ensureUpdateSite();
+            $this->seedActionRules();
 
             $app = Factory::getApplication();
             $lang = $app->getLanguage();
@@ -58,6 +60,71 @@ class Com_j2commerce_importexportInstallerScript extends InstallerScript
 
             $app->enqueueMessage($message, 'message');
         }
+    }
+
+    /**
+     * Gives the new import and export actions to every group that may manage the component
+     * today, so an update does not lock out existing administrators.
+     *
+     * An action without a rule is denied for everyone except Super Users. The groups are read
+     * from the effective core.manage permission on the component asset (own rules, inherited
+     * grants from the root asset and parent groups, and denials), not from the stored rules
+     * alone. A rule that already exists is never changed.
+     */
+    private function seedActionRules(): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $name = 'com_j2commerce_importexport';
+
+        $query = $this->createDbQuery($db)
+            ->select([$db->quoteName('id'), $db->quoteName('rules')])
+            ->from($db->quoteName('#__assets'))
+            ->where($db->quoteName('name') . ' = :name')
+            ->bind(':name', $name);
+        $asset = $db->setQuery($query)->loadObject();
+
+        if (!$asset) {
+            return;
+        }
+
+        $rules = json_decode((string) $asset->rules, true);
+        $rules = is_array($rules) ? $rules : [];
+        $actions = array_values(array_filter(
+            ['importexport.import', 'importexport.export'],
+            static fn (string $action): bool => !array_key_exists($action, $rules)
+        ));
+
+        if ($actions === []) {
+            return;
+        }
+
+        $groupIds = $db->setQuery(
+            $this->createDbQuery($db)->select($db->quoteName('id'))->from($db->quoteName('#__usergroups'))
+        )->loadColumn();
+
+        Access::clearStatics();
+        $grants = [];
+
+        foreach ($groupIds as $groupId) {
+            if (Access::checkGroup((int) $groupId, 'core.manage', $name)) {
+                $grants[(string) (int) $groupId] = 1;
+            }
+        }
+
+        foreach ($actions as $action) {
+            $rules[$action] = (object) $grants;
+        }
+
+        $json = json_encode((object) $rules);
+        $assetId = (int) $asset->id;
+        $query = $this->createDbQuery($db)
+            ->update($db->quoteName('#__assets'))
+            ->set($db->quoteName('rules') . ' = :rules')
+            ->where($db->quoteName('id') . ' = :id')
+            ->bind(':rules', $json)
+            ->bind(':id', $assetId, ParameterType::INTEGER);
+        $db->setQuery($query)->execute();
+        Access::clearStatics();
     }
 
     private function ensureUpdateSite(): void
