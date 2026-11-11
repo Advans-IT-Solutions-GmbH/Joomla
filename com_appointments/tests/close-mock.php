@@ -91,8 +91,10 @@ namespace {
         public function getPrefix(): string { return 'test_'; }
         public function quoteName(string $name): string { return '`' . str_replace('#__', 'test_', $name) . '`'; }
         public function quote(string $value): string { return $this->pdo->quote($value); }
+        public array $queries = [];
         public function setQuery(string $query): self
         {
+            $this->queries[] = $query;
             $this->sql = str_replace([' FOR UPDATE', 'ON DUPLICATE KEY UPDATE complete = VALUES(complete)'],
                 ['', 'ON CONFLICT(request_id) DO UPDATE SET complete = excluded.complete'], $query);
             return $this;
@@ -296,7 +298,14 @@ namespace {
     // Routing per event type.
     $enrol($booking(2, 4, 'unrouted@example.test', []));
     $check($state(2) === false, 'event type without a profile is never enrolled');
+    $db->queries = [];
+    $mutate($booking(1, 1, 'one@example.test', $lifeSciences), ['sequence' => 1, 'anonymised_utc' => '2027-02-01 00:00:00'], true);
+    $check(preg_grep('/test_appointments_close_delivery.*FOR UPDATE|DELETE FROM `test_appointments_close/', $db->queries) === [],
+        'erasing a never-enrolled booking takes no lock on the missing transfer key');
+    $db->queries = [];
     $first = $enrol($booking(3, 1, 'new@example.test', $lifeSciences));
+    $check(preg_grep('/FOR UPDATE|^DELETE/', $db->queries) === [],
+        'enrolment takes no locking read on a missing key, so concurrent bookings cannot deadlock on a gap lock');
     $check($state(3)['profile'] === 'main', 'event type is routed to its profile at enrolment');
     $qr = $enrol($booking(4, 3, 'known@example.test', ['31' => 'Synthetic Club', '32' => 'Template', '33' => 'Excel for Windows']));
     $remote['qr']->contacts['cont_known'] = ['id' => 'cont_known', 'lead_id' => 'lead_known',

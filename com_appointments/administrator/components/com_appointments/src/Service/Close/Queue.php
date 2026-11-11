@@ -77,13 +77,19 @@ final class Queue
     {
         $id = (int) $booking['id'];
         $table = $db->quoteName(self::TABLE);
+        // Never take a locking read or delete on a missing key: InnoDB would keep a gap lock, and concurrent
+        // bookings inserting into that gap could deadlock. The caller's booking row lock already serializes
+        // every change of this record, so a plain existence check is sufficient.
+        $exists = $db->setQuery('SELECT booking_id FROM ' . $table . ' WHERE booking_id = ' . $id)->loadResult() !== null;
         if ($erased) {
             // Close is isolated from website retention and privacy handling: only the local link goes.
-            $db->setQuery('DELETE FROM ' . $table . ' WHERE booking_id = ' . $id)->execute();
+            if ($exists) {
+                $db->setQuery('DELETE FROM ' . $table . ' WHERE booking_id = ' . $id)->execute();
+            }
             return;
         }
-        $old = $db->setQuery('SELECT * FROM ' . $table . ' WHERE booking_id = ' . $id . ' FOR UPDATE')->loadAssoc();
-        if (!$old) {
+        $old = $exists ? $db->setQuery('SELECT * FROM ' . $table . ' WHERE booking_id = ' . $id . ' FOR UPDATE')->loadAssoc() : null;
+        if (!$exists) {
             $params = ComponentHelper::getParams('com_appointments');
             if (!$created || (int) $params->get('close_enabled', 0) !== 1) {
                 return;
@@ -106,6 +112,9 @@ final class Queue
             if (!$db->insertObject(self::TABLE, $row)) {
                 throw new \RuntimeException('Close delivery could not be queued.');
             }
+            return;
+        }
+        if (!$old) {
             return;
         }
         self::verify($old);
@@ -491,12 +500,19 @@ final class Queue
 
     private function booking(int $id): ?array
     {
-        return $this->db->setQuery('SELECT * FROM ' . $this->db->quoteName('#__appointments_bookings')
-            . ' WHERE id = ' . $id . ' FOR UPDATE')->loadAssoc() ?: null;
+        $table = $this->db->quoteName('#__appointments_bookings');
+        // A locking read on a missing key would hold a gap lock against new bookings; check plainly first.
+        if ($this->db->setQuery('SELECT id FROM ' . $table . ' WHERE id = ' . $id)->loadResult() === null) {
+            return null;
+        }
+        return $this->db->setQuery('SELECT * FROM ' . $table . ' WHERE id = ' . $id . ' FOR UPDATE')->loadAssoc() ?: null;
     }
 
     private function find(int $id, bool $lock = false): ?array
     {
+        if ($lock && $this->db->setQuery('SELECT booking_id FROM ' . $this->table() . ' WHERE booking_id = ' . $id)->loadResult() === null) {
+            return null;
+        }
         $row = $this->db->setQuery('SELECT * FROM ' . $this->table() . ' WHERE booking_id = ' . $id
             . ($lock ? ' FOR UPDATE' : ''))->loadAssoc();
         if (!$row) {
