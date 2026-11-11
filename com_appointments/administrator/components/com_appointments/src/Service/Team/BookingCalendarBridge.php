@@ -77,6 +77,9 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
     /** Requests to write the copies of future bookings anew, one row per event type (0: all). */
     public const RESTORE_TABLE = '#__appointments_copy_restore';
 
+    /** Passes over a request that end with failed writes before the request is given up (one per run). */
+    private const RESTORE_PASSES = 5;
+
     /** Requests longer than this are computed, never cached. */
     private const MAX_WINDOW_DAYS = 800;
 
@@ -296,7 +299,10 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                 }
             }
 
-            if (!$enabled && $removed > 0) {
+            // Switched off: every run records that the copies must be written again once the
+            // feature is back, also when nothing was left to remove (a copy a device deleted
+            // before). The request does nothing while the feature stays off.
+            if (!$enabled) {
                 $this->requestRestore(0);
             }
         } catch (\Throwable $e) {
@@ -313,11 +319,11 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
             $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
             // A new request starts the walk through the bookings from the beginning again.
             $db->setQuery('INSERT INTO ' . $db->quoteName(self::RESTORE_TABLE)
-                . ' (' . implode(', ', $db->quoteName(['eventtype_id', 'requested_utc', 'generation', 'after_booking_id'])) . ')'
-                . ' VALUES (' . max(0, $eventTypeId) . ', ' . $db->quote($now) . ', 1, 0)'
+                . ' (' . implode(', ', $db->quoteName(['eventtype_id', 'requested_utc', 'generation', 'after_booking_id', 'failed', 'passes'])) . ')'
+                . ' VALUES (' . max(0, $eventTypeId) . ', ' . $db->quote($now) . ', 1, 0, 0, 0)'
                 . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('requested_utc') . ' = VALUES(' . $db->quoteName('requested_utc') . '), '
                 . $db->quoteName('generation') . ' = ' . $db->quoteName('generation') . ' + 1, '
-                . $db->quoteName('after_booking_id') . ' = 0')->execute();
+                . $db->quoteName('after_booking_id') . ' = 0, ' . $db->quoteName('failed') . ' = 0, ' . $db->quoteName('passes') . ' = 0')->execute();
         } catch (\Throwable $e) {
             // A booking or a saved event type never fails because of this.
             $this->failure('restore-request', $eventTypeId, $e);
@@ -331,11 +337,12 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
         }
 
         $handled = 0;
+        $restored = 0;
 
         try {
             $db = $this->services->db();
             $requests = $db->setQuery($this->query()
-                ->select($db->quoteName(['eventtype_id', 'generation', 'after_booking_id']))
+                ->select($db->quoteName(['eventtype_id', 'generation', 'after_booking_id', 'failed', 'passes']))
                 ->from($db->quoteName(self::RESTORE_TABLE))
                 ->order($db->quoteName('eventtype_id') . ' ASC'))->loadAssocList() ?: [];
             $now = $this->services->now()->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
@@ -350,26 +357,74 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                 $type = (int) $request['eventtype_id'];
                 $generation = (int) $request['generation'];
                 $after = (int) $request['after_booking_id'];
+                $failed = (int) $request['failed'] === 1;
+                $passes = (int) $request['passes'];
                 $ids = array_map('intval', $db->setQuery($this->restoreCandidates($type, $after, $now)->setLimit($budget))->loadColumn() ?: []);
 
                 foreach ($ids as $bookingId) {
                     $this->onBookingSaved(['id' => $bookingId]);
                     $handled++;
                     $after = $bookingId;
+
+                    // Only a copy that is really in place counts; a failed write is retried.
+                    if ($this->restored($bookingId)) {
+                        $restored++;
+                    } else {
+                        $failed = true;
+                    }
                 }
 
                 // Changed only while it is still the request that was read: a new request
                 // in the meantime starts again from the first booking.
-                $where = $db->quoteName('eventtype_id') . ' = ' . $type . ' AND ' . $db->quoteName('generation') . ' = ' . $generation;
-                $db->setQuery(\count($ids) < $budget
-                    ? 'DELETE FROM ' . $db->quoteName(self::RESTORE_TABLE) . ' WHERE ' . $where
-                    : 'UPDATE ' . $db->quoteName(self::RESTORE_TABLE) . ' SET ' . $db->quoteName('after_booking_id') . ' = ' . $after . ' WHERE ' . $where)->execute();
+                $table = $db->quoteName(self::RESTORE_TABLE);
+                $where = ' WHERE ' . $db->quoteName('eventtype_id') . ' = ' . $type . ' AND ' . $db->quoteName('generation') . ' = ' . $generation;
+
+                if (\count($ids) === $budget) {
+                    // The walk goes on at the next run.
+                    $db->setQuery('UPDATE ' . $table . ' SET ' . $db->quoteName('after_booking_id') . ' = ' . $after . ', '
+                        . $db->quoteName('failed') . ' = ' . (int) $failed . $where)->execute();
+                } elseif ($failed && $passes + 1 < self::RESTORE_PASSES) {
+                    // A pass with failed writes: the next run starts again from the first booking,
+                    // where only the bookings still without their copy are candidates.
+                    $db->setQuery('UPDATE ' . $table . ' SET ' . $db->quoteName('after_booking_id') . ' = 0, ' . $db->quoteName('failed') . ' = 0, '
+                        . $db->quoteName('passes') . ' = ' . ($passes + 1) . $where)->execute();
+                } else {
+                    if ($failed) {
+                        $this->failure('restore-gave-up', $type, new \RuntimeException('Calendar copies could not be written.'));
+                    }
+
+                    $db->setQuery('DELETE FROM ' . $table . $where)->execute();
+                }
             }
         } catch (\Throwable $e) {
             $this->failure('restore', 0, $e);
         }
 
-        return $handled;
+        return $restored;
+    }
+
+    /**
+     * Whether a booking's copies are as they should be after a write: only in the event
+     * type's target calendar, or none without a target. A booking that is no longer active
+     * needs no copy and counts as done.
+     */
+    private function restored(int $bookingId): bool
+    {
+        $db = $this->services->db();
+        $row = $db->setQuery($this->query()
+            ->select($db->quoteName(['b.state', 'b.anonymised_utc', 'e.calendar_id']))
+            ->from($db->quoteName('#__appointments_bookings', 'b'))
+            ->join('LEFT', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
+            ->where($db->quoteName('b.id') . ' = ' . $bookingId))->loadAssoc();
+
+        if (!$row || (int) $row['state'] === 2 || $row['anonymised_utc'] !== null) {
+            return true;
+        }
+
+        $target = (int) ($row['calendar_id'] ?? 0);
+        $holding = $this->calendarsHolding($bookingId);
+
+        return $target > 0 ? $holding === [$target] : $holding === [];
     }
 
     /**
