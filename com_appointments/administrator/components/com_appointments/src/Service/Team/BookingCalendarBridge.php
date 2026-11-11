@@ -374,6 +374,16 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
                 $ids = array_map('intval', $db->setQuery($this->restoreCandidates($type, $after, $now)->setLimit($budget))->loadColumn() ?: []);
 
                 foreach ($ids as $bookingId) {
+                    // An entry of the target's own with the booking's UID (an imported mail
+                    // attachment, perhaps with notes) is never adopted by a restore: it stays.
+                    if ($this->ownEntryInTarget($bookingId)) {
+                        $handled++;
+                        $restored++;
+                        $after = $bookingId;
+
+                        continue;
+                    }
+
                     $before = $this->copyEtags($bookingId);
                     $this->onBookingSaved(['id' => $bookingId]);
                     $handled++;
@@ -420,6 +430,33 @@ final class BookingCalendarBridge implements BookingCalendarBridgeInterface
         }
 
         return $restored;
+    }
+
+    /**
+     * Whether the event type's target calendar holds an entry without a booking id that has
+     * the booking's UID. A restore leaves such an entry alone instead of adopting it.
+     */
+    private function ownEntryInTarget(int $bookingId): bool
+    {
+        $db = $this->services->db();
+        $row = $db->setQuery($this->query()
+            ->select($db->quoteName(['b.uid', 'e.calendar_id']))
+            ->from($db->quoteName('#__appointments_bookings', 'b'))
+            ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
+            ->where($db->quoteName('b.id') . ' = ' . $bookingId))->loadAssoc();
+        $target = (int) ($row['calendar_id'] ?? 0);
+
+        if ($target < 1 || (string) ($row['uid'] ?? '') === '') {
+            return false;
+        }
+
+        $hash = $this->services->keys()->uidHash($target, (string) $row['uid']);
+
+        return (int) $db->setQuery($this->query()->select('COUNT(*)')
+            ->from($db->quoteName('#__appointments_calendar_objects'))
+            ->where($db->quoteName('calendar_id') . ' = ' . $target)
+            ->where($db->quoteName('uid_hash') . ' = ' . $db->quoteBinary($hash))
+            ->where($db->quoteName('booking_id') . ' IS NULL'))->loadResult() > 0;
     }
 
     /**
