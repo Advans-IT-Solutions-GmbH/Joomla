@@ -309,8 +309,10 @@ try {
     // Cache» on: a page rendered while the address was valid must not be served from the cache afterwards.
     $pageCache = (int) $db->query("SELECT enabled FROM {$prefix}extensions WHERE type='plugin' AND folder='system' AND element='cache'")->fetch_row()[0];
     $db->query("UPDATE {$prefix}extensions SET enabled=1 WHERE type='plugin' AND folder='system' AND element='cache'");
+    // Fresh request limits for the page and booking requests below (16:00 is a time no earlier step booked).
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
     $client = new AppointmentsHttp('http://localhost', 'mail-site-url');
-    [$browser, $path, $form] = $client->bookingForm($event, $day . ' 13:00:00');
+    [$browser, $path, $form] = $client->bookingForm($event, $day . ' 16:00:00');
     // The booking page through its menu item, the only way it opens (appointments-menu.php).
     $guestPage = appointments_page($event);
     $earlier = new AppointmentsHttp('http://localhost', 'mail-site-url-earlier');
@@ -329,14 +331,15 @@ try {
         sleep(2);
         $before = $spool();
         $html = $browser->request($path, $form);
-        $saved = (int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 13:00:00'")->fetch_row()[0];
+        $saved = (int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 16:00:00'")->fetch_row()[0];
         $check($saved === 0 && $before === $spool() && str_contains($html, 'Booking is currently not possible'),
             'Without a public site URL a submitted booking is not saved and no mail is sent');
     } finally {
         $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($componentParams) . "' WHERE element='com_appointments' AND type='component'");
         $db->query("UPDATE {$prefix}extensions SET enabled={$pageCache} WHERE type='plugin' AND folder='system' AND element='cache'");
     }
-    $page = $browser->request($guestPage);
+    // The details step of a free time: its form names the time field.
+    $page = $browser->request($guestPage . '&timezone=UTC&start=' . urlencode($day . ' 16:00:00'));
     $check($browser->status === 200 && str_contains($page, 'name="booking[start]"'), 'With a public site URL the booking page shows its form again');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
