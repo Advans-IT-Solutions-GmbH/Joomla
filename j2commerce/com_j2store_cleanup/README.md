@@ -156,7 +156,10 @@ Order as in `tests/test.env`:
    the expected core component is installed
 6. **Cleanup Authorization** - Isolated PHP regression test for extension-scope filtering,
    delegated delete permission, fail-closed selections, and safe uninstall fallbacks
-7. **Backend Access** - logs a synthetic Manager into `/administrator` and switches the
+7. **Backend Access** - first upgrades the installed component from a state without
+   `access.xml`/`config.xml` and an existing `core.manage` delegation, and checks that both
+   files arrive and the rules stay unchanged (no automatic `core.delete` or `core.admin`).
+   Then it logs a synthetic Manager into `/administrator` and switches the
    component's real Joomla permission rules: without `core.manage` the page and the task are
    refused, with `core.manage` only the scan is read-only and a forged cleanup request removes
    nothing, and with `core.delete` as well an eligible record is removed, but only with the
