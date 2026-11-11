@@ -509,7 +509,14 @@ final class TeamMailer implements TeamMailerInterface
      */
     private function myCalendarsUrl(object $recipient, string $tag): string
     {
-        $levels = array_values(array_unique(array_map('intval', Access::getAuthorisedViewLevels((int) ($recipient->id ?? 0)))));
+        try {
+            $levels = array_values(array_unique(array_map('intval', Access::getAuthorisedViewLevels((int) ($recipient->id ?? 0)))));
+        } catch (\Throwable $e) {
+            // The mail still goes out; its link then lacks the menu item, which the log names.
+            $this->logFailure('mycalendars-view-levels', $e, Log::WARNING);
+            $levels = [];
+        }
+
         sort($levels);
         $key = $tag . '|' . implode(',', $levels);
 

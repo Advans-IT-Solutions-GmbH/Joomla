@@ -357,7 +357,14 @@ final class NotificationService
      */
     private function myCalendarsLink(string $base, object $account, string $tag): string
     {
-        $levels = array_values(array_unique(array_map('intval', Access::getAuthorisedViewLevels((int) ($account->id ?? 0)))));
+        try {
+            $levels = array_values(array_unique(array_map('intval', Access::getAuthorisedViewLevels((int) ($account->id ?? 0)))));
+        } catch (\Throwable $e) {
+            // The mail still goes out; its link then lacks the menu item.
+            Log::add('Appointment notification: the view levels of a calendar user could not be read (' . $e::class . ').', Log::WARNING, 'com_appointments');
+            $levels = [];
+        }
+
         sort($levels);
         $key = $tag . '|' . implode(',', $levels);
 
