@@ -265,6 +265,7 @@ namespace {
             $this->testMixedSelectionFailsClosed();
             $this->testEligibleRemovalPaths();
             $this->testInstallerRefusalIsNotBypassed();
+            $this->testComponentWithOneSurvivingDirectory();
 
             $this->removeTree($incompatiblePath);
             $this->removeTree($compatiblePath);
@@ -503,6 +504,32 @@ namespace {
                 && ($result['messages'][0] ?? '') === 'test_incompatible: COM_J2STORE_CLEANUP_MSG_FALLBACK_FAILED:'
                     . 'synthetic installer failure|synthetic database failure');
             Installer::$mode = 'success';
+        }
+
+        private function testComponentWithOneSurvivingDirectory(): void
+        {
+            // Administrator directory gone, site directory still holds compatible code.
+            $sitePath = JPATH_SITE . '/components/com_j2commerce_partial';
+            mkdir($sitePath, 0777, true);
+            file_put_contents($sitePath . '/site.php', '<?php echo "ok";');
+            // Site directory gone, administrator directory still holds incompatible code.
+            $adminPath = JPATH_ADMINISTRATOR . '/components/com_j2commerce_legacyadmin';
+            mkdir($adminPath, 0777, true);
+            file_put_contents($adminPath . '/admin.php', '<?php JFactory::getApplication();');
+
+            $partial = (object) array_replace($this->row(1, 'component', 'com_j2commerce_partial'), ['client_id' => 1]);
+            $this->check('A component with surviving site code is not classified as missing files',
+                classifyExtension(null, $partial, getIssuePatterns())['status'] === 'compatible');
+            $legacy = (object) array_replace($this->row(2, 'component', 'com_j2commerce_legacyadmin'), ['client_id' => 0]);
+            $this->check('Surviving administrator code of a component is still scanned',
+                classifyExtension(null, $legacy, getIssuePatterns())['status'] === 'incompatible');
+
+            $db = new FakeDatabase([array_replace($this->row(1, 'component', 'com_j2commerce_partial'), ['client_id' => 1])]);
+            Installer::$mode = 'success';
+            Installer::$calls = [];
+            $result = cleanupExtensions($db, [1]);
+            $this->check('A component with surviving code is never removed database-only',
+                $result['error'] === 1 && $db->has(1) && Installer::$calls === []);
         }
 
         private function row(int $id, string $type, string $element, string $folder = '', int $protected = 0): array

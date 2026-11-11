@@ -450,6 +450,26 @@ function getExtensionPath($ext) {
 }
 
 /**
+ * All directories that can hold an extension's code.
+ *
+ * @param object $ext  Extension record from #__extensions
+ * @return string[]
+ */
+function getExtensionCodePaths($ext): array
+{
+    if (($ext->type ?? '') === 'component') {
+        return [
+            JPATH_ADMINISTRATOR . '/components/' . $ext->element,
+            JPATH_SITE . '/components/' . $ext->element,
+        ];
+    }
+
+    $path = getExtensionPath($ext);
+
+    return $path === null ? [] : [$path];
+}
+
+/**
  * Get deprecated API patterns grouped by the Joomla version that removes them.
  *
  * Each entry: pattern => ['api' => name of the API, 'removedIn' => Joomla
@@ -599,13 +619,19 @@ function classifyExtension($manifest, $ext, $patterns) {
     $author  = is_object($manifest) ? ($manifest->author ?? '?') : '?';
     $info    = Text::sprintf('COM_J2STORE_CLEANUP_REASON_INFO', $author, $version);
 
-    $path = getExtensionPath($ext);
+    // A component has code in both the administrator and the site directory.
+    // Files count as missing only when every directory is gone, so a
+    // database-only removal can never orphan surviving code.
+    $paths = array_values(array_filter(getExtensionCodePaths($ext), static fn (string $path): bool => is_dir($path)));
 
-    if ($path === null || !is_dir($path)) {
+    if ($paths === []) {
         return ['status' => 'no-files', 'reason' => Text::sprintf('COM_J2STORE_CLEANUP_REASON_NO_FILES', $info), 'issues' => []];
     }
 
-    $issues = scanForIssues($path, $patterns);
+    $issues = [];
+    foreach ($paths as $path) {
+        $issues = array_merge($issues, scanForIssues($path, $patterns));
+    }
 
     if (empty($issues)) {
         return ['status' => 'compatible', 'reason' => Text::sprintf('COM_J2STORE_CLEANUP_REASON_COMPATIBLE', $info), 'issues' => []];
