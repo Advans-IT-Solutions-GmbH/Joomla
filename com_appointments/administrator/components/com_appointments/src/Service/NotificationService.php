@@ -16,6 +16,7 @@ use Advans\Component\Appointments\Administrator\Helper\MailComposer;
 use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Helper\MailLanguage;
 use Advans\Component\Appointments\Administrator\Helper\MailPresentation;
+use Advans\Component\Appointments\Administrator\Helper\ManageMenuItem;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
 use Joomla\CMS\Factory;
@@ -146,7 +147,7 @@ final class NotificationService
                     $presentation['{state_label}'] = $language->_($stateKey);
                     $template['subject'] = strtr($template['subject'], $presentation);
                     $template['body'] = strtr($template['body'], $presentation);
-                    $links = $canManage ? $this->links($booking) : ($isGuest ? $this->guestLinks($booking, $address) : []);
+                    $links = $canManage ? $this->links($booking, $tag) : ($isGuest ? $this->guestLinks($booking, $address, $tag) : []);
                     $recipientBooking = $booking;
                     if ($isHost && !empty($booking['conference_url'])) {
                         $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
@@ -286,18 +287,24 @@ final class NotificationService
         return filter_var($base, FILTER_VALIDATE_URL) && preg_match('#\Ahttps?://#i', $base) === 1 ? $base : null;
     }
 
-    public function links(array $booking): array
+    /**
+     * The signed reschedule, cancel and erase addresses of $booking (id, modified_utc and, when
+     * known, eventtype_id). $language is the language of the reader (a tag such as de-DE), which
+     * chooses the menu item that frames the pages (ManageMenuItem); '' uses the site default.
+     */
+    public function links(array $booking, string $language = ''): array
     {
         $base = $this->linkBase();
         $signed = new SignedLink(new KeyProvider((string) Factory::getApplication()->get('secret')));
         $result = [];
         $names = ['reschedule' => 'reschedule_url', 'cancel' => 'cancel_url', 'erase' => 'erase_url'];
+        $frame = $this->frame($booking, $language);
 
         foreach ($names as $action => $key) {
             $result[$key] = $base . '/index.php?' . http_build_query([
                 'option' => 'com_appointments', 'view' => 'manage', 'id' => (int) $booking['id'], 'action' => $action,
                 'signature' => $signed->sign((int) $booking['id'], $action, $booking['modified_utc']),
-            ]);
+            ] + $frame);
         }
 
         return $result;
@@ -307,7 +314,7 @@ final class NotificationService
      * The guest's own address and the signed link that removes only that address from the
      * booking. The address is bound into the signature, never written into the URL.
      */
-    public function guestLinks(array $booking, string $guest): array
+    public function guestLinks(array $booking, string $guest, string $language = ''): array
     {
         $signed = new SignedLink(new KeyProvider((string) Factory::getApplication()->get('secret')));
 
@@ -316,8 +323,33 @@ final class NotificationService
             'guest_remove_url' => $this->linkBase() . '/index.php?' . http_build_query([
                 'option' => 'com_appointments', 'task' => 'guest.confirm', 'id' => (int) $booking['id'],
                 'signature' => $signed->signGuest((int) $booking['id'], $guest, $booking['modified_utc']),
-            ]),
+            ] + $this->frame($booking, $language)),
         ];
+    }
+
+    /**
+     * ['Itemid' => …] of the menu item that frames the signed pages of $booking, or [] for none.
+     * The parameter only picks the page frame; the signature does not cover it and needs not to.
+     *
+     * @return array<string, int>
+     */
+    private function frame(array $booking, string $language): array
+    {
+        $eventtypeId = (int) ($booking['eventtype_id'] ?? 0);
+
+        if ($eventtypeId < 1 && (int) ($booking['id'] ?? 0) > 0) {
+            $eventtypeId = (int) $this->db->setQuery('SELECT ' . $this->db->quoteName('eventtype_id') . ' FROM '
+                . $this->db->quoteName('#__appointments_bookings') . ' WHERE ' . $this->db->quoteName('id') . ' = '
+                . (int) $booking['id'])->loadResult();
+        }
+
+        if ($language === '') {
+            $language = (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB');
+        }
+
+        $itemId = ManageMenuItem::find($this->db, $eventtypeId, $language);
+
+        return $itemId > 0 ? ['Itemid' => $itemId] : [];
     }
 
     /** Public site root for signed links, without a trailing slash. */
