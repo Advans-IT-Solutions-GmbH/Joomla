@@ -428,13 +428,21 @@ try {
         if (!$removal->load($requestId + 2)) {
             throw new RuntimeException('Cannot load the second formal privacy request.');
         }
-        $application->getMessageQueue(true);
-        $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $removal, 'user' => null]);
-        $privacyPlugin->onPrivacyCanRemoveData($canRemove);
-        $privacyPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
-            ['subject' => $removal, 'user' => null]));
-        $warnings = array_column(array_filter($application->getMessageQueue(true),
-            static fn (array $message): bool => $message['type'] === 'warning'), 'message');
+        // Test output has already been sent, so the native PHP session cannot start. Joomla's
+        // message queue uses an in-memory session for this check only.
+        $nativeSession = $application->getSession();
+        $application->setSession(new \Joomla\CMS\Session\Session(new \Joomla\Session\Storage\RuntimeStorage()));
+        try {
+            $application->getMessageQueue(true);
+            $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $removal, 'user' => null]);
+            $privacyPlugin->onPrivacyCanRemoveData($canRemove);
+            $privacyPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
+                ['subject' => $removal, 'user' => null]));
+            $warnings = array_column(array_filter($application->getMessageQueue(true),
+                static fn (array $message): bool => $message['type'] === 'warning'), 'message');
+        } finally {
+            $application->setSession($nativeSession);
+        }
         $check($canRemove->getArgument('result')[0]->canRemove
             && in_array(\Joomla\CMS\Language\Text::_('PLG_PRIVACY_APPOINTMENTS_CRM_PENDING'), $warnings, true)
             && !in_array(\Joomla\CMS\Language\Text::_('PLG_PRIVACY_APPOINTMENTS_CLEANUP_FAILED'), $warnings, true)
