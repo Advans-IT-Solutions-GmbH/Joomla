@@ -81,7 +81,7 @@ final class TeamMailer implements TeamMailerInterface
                 '{device_name}' => $deviceName,
                 '{client}' => $language->_(DeviceService::CLIENT_LABELS[$client] ?? DeviceService::CLIENT_LABELS['other']),
                 '{created}' => $this->when($createdUtc, $language, $recipient),
-                '{mycalendars_url}' => $this->myCalendarsUrl($recipient, $language->getTag()),
+                '{mycalendars_url}' => $this->myCalendarsUrl($recipient, $this->languageOf($recipient)),
             ];
         }, fn (object $recipient, string $tag): array => [$this->myCalendarsUrl($recipient, $tag) => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
     }
@@ -186,7 +186,7 @@ final class TeamMailer implements TeamMailerInterface
                 '{grantee_name}' => $grantee !== null ? (string) $grantee->name : '',
                 '{actor_name}' => $actor !== null ? (string) $actor->name : '',
                 '{role}' => $this->role($language, $roleLabelKey),
-                '{mycalendars_url}' => $this->myCalendarsUrl($recipient, $language->getTag()),
+                '{mycalendars_url}' => $this->myCalendarsUrl($recipient, $this->languageOf($recipient)),
             ];
         }, fn (object $recipient, string $tag): array => [$this->myCalendarsUrl($recipient, $tag) => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
     }
