@@ -5,23 +5,19 @@
  * A site may keep the administrator menu item of an earlier installation whose component id no
  * longer points to the installed component. Joomla then fails to rebuild the menu item with
  * «JLIB_DATABASE_ERROR_MENU_UNIQUE_ALIAS». The installer script removes such stale items first:
- * the update must report no error and leave exactly the component's own menu item.
+ * the update through Joomla's CLI (as on a real site) must report no error and leave exactly the
+ * component's own menu item.
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
 require_once JPATH_BASE . '/includes/defines.php';
-$_SERVER['HTTP_HOST']      = $_SERVER['HTTP_HOST'] ?? 'localhost';
-$_SERVER['SCRIPT_NAME']    = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
-$_SERVER['REQUEST_METHOD'] = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-$_SERVER['REQUEST_URI']    = $_SERVER['REQUEST_URI'] ?? '/';
+$_SERVER['HTTP_HOST']   = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$_SERVER['SCRIPT_NAME'] = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 
 use Joomla\CMS\Factory;
-use Joomla\CMS\Installer\Installer;
-use Joomla\CMS\Installer\InstallerHelper;
 use Joomla\Database\DatabaseInterface;
 
-$app = Factory::getApplication('administrator');
 $db = Factory::getContainer()->get(DatabaseInterface::class);
 $passed = 0;
 $failed = 0;
@@ -49,22 +45,21 @@ try {
     $db->setQuery('UPDATE ' . $db->quoteName('#__menu') . ' SET ' . $db->quoteName('component_id') . ' = ' . $stale
         . ' WHERE ' . $db->quoteName('id') . ' = ' . (int) $before[0]->id)->execute();
 
-    $package = InstallerHelper::unpack('/tmp/extension.zip');
-
-    if (!$package || !is_array($package)) {
-        throw new RuntimeException('The package could not be unpacked.');
-    }
-
-    $app->getMessageQueue(true);
-    $result = Installer::getInstance()->install($package['dir']);
-    InstallerHelper::cleanupInstall('/tmp/extension.zip', $package['extractdir'] ?? $package['dir']);
-    $messages = implode("\n", array_map(static fn (array $message): string => (string) $message['message'], $app->getMessageQueue(true)));
-    $check($result === true, 'The update over the installation with a stale menu item succeeds');
-    $check(!str_contains($messages, 'JLIB_DATABASE_ERROR_MENU_UNIQUE_ALIAS') && stripos($messages, 'alias') === false,
-        'The update reports no menu alias conflict');
+    $output = [];
+    exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip --no-interaction 2>&1',
+        $output, $exitCode);
+    $text = implode("\n", $output);
+    $check($exitCode === 0 && stripos($text, 'installed successfully') !== false,
+        'The update over the installation with a stale menu item succeeds');
+    $check(!str_contains($text, 'JLIB_DATABASE_ERROR_MENU_UNIQUE_ALIAS') && !str_contains($text, '[ERROR]'),
+        'The update reports no error, in particular no menu alias conflict');
     $after = $menus();
     $check(count($after) === 1 && (int) $after[0]->component_id === $extensionId,
         'Exactly the component\'s own administrator menu item remains, the stale one is gone');
+
+    if ($failed > 0) {
+        echo substr($text, 0, 2000) . "\n";
+    }
 } catch (Throwable $e) {
     $check(false, 'Update over a stale menu item - Error: ' . $e->getMessage());
 }
