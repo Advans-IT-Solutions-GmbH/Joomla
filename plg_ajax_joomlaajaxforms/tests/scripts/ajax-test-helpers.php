@@ -255,6 +255,16 @@ function ajaxforms_bootstrap_site_application(): SiteApplication
     $container = Factory::getContainer();
     $input     = null;
 
+    // Components resolve their router through the container, and that builds
+    // the site application again, which needs a session service. A CLI
+    // process has none, so an in-memory session stands in for it.
+    if (!$container->has(\Joomla\Session\SessionInterface::class)) {
+        $container->share(
+            \Joomla\Session\SessionInterface::class,
+            static fn () => new \Joomla\CMS\Session\Session(new \Joomla\Session\Storage\RuntimeStorage())
+        );
+    }
+
     foreach (['Joomla\\CMS\\Input\\Input', 'Joomla\\Input\\Input'] as $inputClass) {
         try {
             if ($container->has($inputClass)) {
