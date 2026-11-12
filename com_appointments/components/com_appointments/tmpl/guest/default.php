@@ -23,7 +23,11 @@ $page = $this->page;
 <div class="com-appointments com-appointments-manage com-appointments-guest">
     <div class="com-appointments-container">
         <h1 class="com-appointments-heading"><?php echo $this->escape($page['heading']); ?></h1>
-        <?php if ($page['completed']) : ?>
+        <?php if ($page['completed'] && !empty($page['calendar_pending'])) : ?>
+            <div class="com-appointments-notice" role="alert">
+                <p><?php echo Text::_('COM_APPOINTMENTS_GUEST_CALENDAR_PENDING'); ?></p>
+            </div>
+        <?php elseif ($page['completed']) : ?>
             <p class="com-appointments-status"><?php echo Text::_('COM_APPOINTMENTS_GUEST_REMOVED'); ?></p>
         <?php else : ?>
             <?php

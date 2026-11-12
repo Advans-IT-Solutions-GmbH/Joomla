@@ -21,6 +21,7 @@ use Advans\Component\Appointments\Administrator\Helper\ConsentMode;
 use Advans\Component\Appointments\Administrator\Helper\FormGuard;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Site\Helper\NoPageCache;
 use Advans\Component\Appointments\Site\Helper\PrivacyLink;
 use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
@@ -97,6 +98,26 @@ class HtmlView extends BaseHtmlView
     protected string $fixedDialCode = '';
     /** Address of the flag before the fixed calling code, or '' for none. */
     protected string $dialFlag = '';
+    /**
+     * Whether bookings are switched off because no valid public site URL is configured: every
+     * booking sends mails with links, and the component sends none then (fail closed). The page
+     * answers 503 with a neutral notice and is kept out of every cache.
+     */
+    public static function unavailable(): bool
+    {
+        if (\Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl::current() !== null) {
+            return false;
+        }
+
+        $app = Factory::getApplication();
+        $app->setHeader('status', '503', true);
+        $app->setHeader('Retry-After', '3600', true);
+        $app->setHeader('Cache-Control', 'private, no-store', true);
+        \Advans\Component\Appointments\Site\Helper\NoPageCache::apply($app);
+
+        return true;
+    }
+
     /** How the details step asks about the privacy notice: ConsentMode::NOTICE, ACKNOWLEDGE or CONSENT. */
     protected string $consentMode = 'notice';
     /** Version of the checkbox label shown (ConsentMode::version), '' without a checkbox; the controller compares it. */
@@ -104,6 +125,18 @@ class HtmlView extends BaseHtmlView
 
     public function display($tpl = null)
     {
+        // Never a cached copy, in either state: a form cached while the public site URL was valid
+        // would otherwise still be served (200) after the setting is cleared, and the reverse.
+        \Advans\Component\Appointments\Site\Helper\NoPageCache::apply(Factory::getApplication());
+
+        if (self::unavailable()) {
+            // No form at all: a booking without its mails is never taken (layout «unavailable»).
+            $this->setLayout('unavailable');
+            $this->getDocument()->setMetaData('robots', 'noindex,nofollow');
+
+            return parent::display($tpl);
+        }
+
         $this->prepare(true);
         $app = Factory::getApplication();
         $this->renderedAt = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->getTimestamp();
@@ -130,6 +163,9 @@ class HtmlView extends BaseHtmlView
         $this->fields = $this->getModel()->getFields((int) $this->item->id);
         $app = Factory::getApplication();
         $app->setHeader('Cache-Control', 'private, no-store', true);
+        // A refused submission is shown again with the visitor's own entries (name, e-mail, phone,
+        // answers, guests), and the form carries this session's token: never a shared cached page.
+        NoPageCache::apply($app);
         $this->params = ComponentHelper::getParams('com_appointments');
         $this->inputData = (array) $app->getUserState('com_appointments.booking.' . (int) $this->item->id, []);
 
@@ -256,7 +292,7 @@ class HtmlView extends BaseHtmlView
      */
     public function bookingLink(array $query = [], string $fragment = ''): string
     {
-        $url = 'index.php?option=com_appointments&view=eventtype&id=' . (int) $this->item->id
+        $url = 'index.php?option=com_appointments&view=eventtype&id=' . (int) $this->item->id . $this->menuLayout()
             . '&timezone=' . urlencode($this->zone->getName())
             . ($this->clock !== $this->defaultClock ? '&clock=' . $this->clock : '');
 
@@ -276,7 +312,7 @@ class HtmlView extends BaseHtmlView
      */
     public function formTarget(): array
     {
-        $action = Route::_('index.php?option=com_appointments&view=eventtype&id=' . (int) $this->item->id, false);
+        $action = Route::_('index.php?option=com_appointments&view=eventtype&id=' . (int) $this->item->id . $this->menuLayout(), false);
         $fields = [];
         $position = strpos($action, '?');
 
@@ -292,6 +328,25 @@ class HtmlView extends BaseHtmlView
         }
 
         return [$action, $fields];
+    }
+
+    /**
+     * '&layout=…' of the active "Book an appointment" menu item of this event type when it uses an
+     * alternative layout, else ''. The links of the page keep that layout, so they lead to the same
+     * menu item with the same layout, the only layout the page opens with there (MenuViews).
+     */
+    private function menuLayout(): string
+    {
+        $active = Factory::getApplication()->getMenu()->getActive();
+        $query = $active !== null && is_array($active->query ?? null) ? $active->query : [];
+
+        if (($query['option'] ?? '') !== 'com_appointments' || ($query['view'] ?? '') !== 'eventtype'
+            || (int) ($query['id'] ?? 0) !== (int) $this->item->id || (string) ($query['layout'] ?? '') === ''
+        ) {
+            return '';
+        }
+
+        return '&layout=' . urlencode((string) $query['layout']);
     }
 
     /**

@@ -25,7 +25,8 @@ defined('_JEXEC') or die;
     <tbody>
         <?php foreach ($this->checks as $check) : ?>
             <tr><th scope="row"><?php echo Text::_($check['label']); ?></th>
-                <td class="<?php echo $check['ok'] ? 'text-success' : 'text-warning'; ?>"><?php echo Text::_($check['ok'] ? 'COM_APPOINTMENTS_SYSTEM_OK' : 'COM_APPOINTMENTS_SYSTEM_ATTENTION'); ?></td>
+                <?php $error = !$check['ok'] && ($check['severity'] ?? '') === 'error'; ?>
+                <td class="<?php echo $check['ok'] ? 'text-success' : ($error ? 'text-danger fw-bold' : 'text-warning'); ?>"><?php echo Text::_($check['ok'] ? 'COM_APPOINTMENTS_SYSTEM_OK' : ($error ? 'COM_APPOINTMENTS_SYSTEM_ERROR' : 'COM_APPOINTMENTS_SYSTEM_ATTENTION')); ?></td>
                 <td><?php echo $this->escape((string) $check['value']); ?>
                     <?php if (!$check['ok'] && !empty($check['remedy'])) : ?>
                         <br><small><?php echo Text::_($check['remedy']); ?></small>

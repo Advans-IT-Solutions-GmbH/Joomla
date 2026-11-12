@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Administrator\Table;
 
+use Advans\Component\Appointments\Administrator\Helper\FeedToken;
 use Advans\Component\Appointments\Administrator\Helper\SlotRules;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Joomla\CMS\Language\Text;
@@ -130,7 +131,8 @@ class EventtypeTable extends Table
         $this->calendar_id = (int) ($this->calendar_id ?? 0) > 0 ? (int) $this->calendar_id : null;
 
         if (!$this->id) {
-            $this->feed_token = bin2hex(random_bytes(32));
+            // A stored value that no token matches: a rotation issues the first address.
+            $this->feed_token = FeedToken::unissued();
         }
 
         return true;

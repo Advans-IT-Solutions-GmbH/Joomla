@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="plugin" group="privacy" method="upgrade">
+    <name>Synthetic privacy acceptance probe (tests only)</name>
+    <version>1.0.0</version>
+    <namespace path="src">Advans\Test\PrivacyRequestsProbe</namespace>
+    <files>
+        <folder plugin="privacyrequestsprobe">services</folder>
+        <folder>src</folder>
+        <folder>sql</folder>
+    </files>
+    <install><sql><file driver="mysql" charset="utf8">sql/install.sql</file></sql></install>
+    <update><sql><file driver="mysql" charset="utf8">sql/install.sql</file></sql></update>
+</extension>

@@ -19,6 +19,7 @@
     <plugins>
         <plugin group="task" element="appointments" folder="plugins/task/appointments" />
         <plugin group="privacy" element="appointments" folder="plugins/privacy/appointments" />
+        <plugin group="content" element="appointmentsprivacy" folder="plugins/content/appointmentsprivacy" />
         <plugin group="system" element="appointmentsdav" folder="plugins/system/appointmentsdav" />
         <plugin group="user" element="appointments" folder="plugins/user/appointments" />
     </plugins>

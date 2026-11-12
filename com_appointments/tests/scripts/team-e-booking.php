@@ -479,6 +479,52 @@ return static function (TeamSuite $suite): void {
             $written = $objects((int) $second['id']) === 1;
             $store->erase((int) $second['id'], $now, 'admin', false, $admin);
             $suite->test($endToEnd[3], static fn () => $written && $objects((int) $second['id']) === 0);
+
+            // Retention rule: the calendar retention deletes booking copies only, never an entry
+            // of the calendar's own (the team event above), whatever the cutoff.
+            $own = static fn (): int => $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_calendar_objects"
+                . " WHERE calendar_id={$calendar} AND booking_id IS NULL");
+            $third = $store->create($eventRow, $invitee, $at('10:00:00'), $now, $levels, 'en-GB');
+            $ownBefore = $own();
+            $copyBefore = $objects((int) $third['id']);
+            $deleted = $team->objects()->deleteEndedBefore($calendar, $now->modify('+30 days'));
+            $suite->test('The calendar retention deletes a booking copy but never an entry of the calendar\'s own',
+                static fn () => $ownBefore === 1 && $copyBefore === 1 && $deleted === 1 && $objects((int) $third['id']) === 0 && $own() === 1);
+
+            // A copy deleted on a device stays deleted (no automatic rewrite) until a restore is
+            // requested, as after a new target calendar; then the Scheduler writes it again.
+            $suite->db->query("DELETE FROM {$suite->prefix}appointments_copy_restore");
+            $fourth = $store->create($eventRow, $invitee, $at('12:00:00'), $now, $levels, 'en-GB');
+            $copyUri = (string) ($suite->db->query("SELECT uri FROM {$suite->prefix}appointments_calendar_objects"
+                . " WHERE calendar_id={$calendar} AND booking_id=" . (int) $fourth['id'])->fetch_row()[0] ?? '');
+            $team->objects()->delete($calendar, $copyUri, null, null);
+            $withoutRequest = $team->bookings()->restoreCopies(50);
+            $stillGone = $withoutRequest === 0 && $objects((int) $fourth['id']) === 0;
+            $team->bookings()->requestRestore($event);
+            $handled = $team->bookings()->restoreCopies(50);
+            $suite->test('A copy deleted on a device stays deleted until a restore is requested, then the Scheduler writes it again',
+                static fn () => $stillGone && $handled >= 1 && $objects((int) $fourth['id']) === 1
+                    && $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_copy_restore") === 0);
+            $suite->test('The restore never touches the entry of the calendar\'s own', static fn () => $own() === 1);
+
+            // An entry of the calendar's own with a booking's UID (an imported mail attachment) is
+            // never adopted by a restore: it keeps its content and stays an entry of its own.
+            $collisionUri = (string) ($suite->db->query("SELECT uri FROM {$suite->prefix}appointments_calendar_objects"
+                . " WHERE calendar_id={$calendar} AND booking_id=" . (int) $fourth['id'])->fetch_row()[0] ?? '');
+            $team->objects()->delete($calendar, $collisionUri, null, null);
+            $imported = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nBEGIN:VEVENT\r\nUID:" . $fourth['uid'] . "\r\nDTSTAMP:20270101T000000Z\r\n"
+                . "DTSTART:{$day}T120000Z\r\nDTEND:{$day}T123000Z\r\nSUMMARY:Imported with my notes\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+            $team->objects()->put($ring, $tag . '-imported.ics', $imported, null, true, null);
+            $importedEtag = (string) $suite->db->query("SELECT etag FROM {$suite->prefix}appointments_calendar_objects"
+                . " WHERE calendar_id={$calendar} AND uri='" . $suite->db->real_escape_string($tag . '-imported.ics') . "'")->fetch_row()[0];
+            $suite->db->query("DELETE FROM {$suite->prefix}appointments_copy_restore");
+            $team->bookings()->requestRestore($event);
+            $team->bookings()->restoreCopies(50);
+            $suite->test('A restore never adopts an entry of the calendar\'s own that has the booking\'s UID',
+                static fn () => $own() === 2 && $objects((int) $fourth['id']) === 0
+                    && (string) $suite->db->query("SELECT etag FROM {$suite->prefix}appointments_calendar_objects"
+                        . " WHERE calendar_id={$calendar} AND uri='" . $suite->db->real_escape_string($tag . '-imported.ics') . "'")->fetch_row()[0] === $importedEtag
+                    && $suite->count("SELECT COUNT(*) FROM {$suite->prefix}appointments_copy_restore") === 0);
         } finally {
             if ($calendar > 0) {
                 try {

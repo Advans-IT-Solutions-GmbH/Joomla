@@ -304,13 +304,37 @@ function upgrade_seed(): void
         . " BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Upgrade fixture holds automatic migration'; END") === true,
         'automatic migration hold is installed for the upgrade fixture');
 
+    // A page the previous version let «System - Page Cache» store (file cache handler of the image).
+    $pageCacheEntry = JOOMLA_ROOT . '/cache/page/upgrade-v130-' . bin2hex(random_bytes(6)) . '.php';
+    upgrade_require((is_dir(dirname($pageCacheEntry)) || mkdir(dirname($pageCacheEntry), 0755, true))
+        && file_put_contents($pageCacheEntry, "<?php die(\"Direct Access Not Permitted\"); ?>\n#x#cached page") !== false,
+        'a page cached by the previous version is present before the update');
+
+    // Joomla's page cache serves a stored page before any component runs. Warm it with an address
+    // the previous release answered, the list of event types on the menu item of one booking page,
+    // which the updated site refuses: the update must not leave it in the cache.
+    require_once __DIR__ . '/appointments-http.php';
+    $cacheProbeItem = appointments_menu_item('index.php?option=com_appointments&view=eventtype&id=' . $eventtypeId, true, false);
+    $cachePlugin = $db->query("SELECT extension_id, enabled FROM `$extensions` WHERE type = 'plugin' AND folder = 'system' AND element = 'cache'")->fetch_assoc();
+    upgrade_require($cachePlugin !== null, 'the page cache plugin is installed');
+    $db->query("UPDATE `$extensions` SET enabled = 1 WHERE extension_id = " . (int) $cachePlugin['extension_id']);
+    $cacheProbe = '/index.php?option=com_appointments&view=eventtypes&Itemid=' . $cacheProbeItem;
+    $warm = new AppointmentsHttp('http://localhost', 'upgrade-v130-cache-warm');
+    $warm->request($cacheProbe);
+    upgrade_check('the previous release answers the list on the menu item of one booking page (page cache warmed)', $warm->status === 200,
+        'HTTP ' . $warm->status);
+
     $fixture = [
         'extension_id' => $extensionId,
         'schedule_id' => $scheduleId,
         'eventtype_id' => $eventtypeId,
         'feed_token' => $feedToken,
         'migration_trigger' => $migrationTrigger,
+        'page_cache_entry' => $pageCacheEntry,
         'bookings' => $bookings,
+        'cache_probe' => $cacheProbe,
+        'cache_probe_item' => $cacheProbeItem,
+        'cache_plugin' => ['id' => (int) $cachePlugin['extension_id'], 'enabled' => (int) $cachePlugin['enabled']],
     ];
     $fixturePath = sys_get_temp_dir() . '/appointments-upgrade-v1.3.0.json';
     $written = file_put_contents($fixturePath, json_encode($fixture, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT), LOCK_EX);
@@ -360,6 +384,10 @@ function upgrade_verify(): void
         'upgrade fixture has a valid migration hold trigger');
     upgrade_require($db->query("DROP TRIGGER IF EXISTS `$migrationTrigger`") === true,
         'automatic migration hold is removed before post-upgrade behavior checks');
+    $pageCacheEntry = (string) ($fixture['page_cache_entry'] ?? '');
+    clearstatcache(true);
+    upgrade_check('the update empties the page cache, so no page stored by the previous version is served',
+        str_starts_with($pageCacheEntry, JOOMLA_ROOT . '/cache/page/') && !is_file($pageCacheEntry));
     $candidateHash = hash_file('sha256', $candidatePackage);
     upgrade_check('candidate package digest remains unchanged',
         $candidateHash !== false && hash_equals($expectedCandidateHash, $candidateHash));
@@ -404,16 +432,21 @@ function upgrade_verify(): void
         $result = $db->query("SELECT version_id FROM `$schemasTable` WHERE extension_id = " . (int) $fixture['extension_id']);
         $schemaVersions = $result ? array_map('strval', array_column($result->fetch_all(MYSQLI_ASSOC), 'version_id')) : [];
     }
-    upgrade_check('Joomla records the 1.4.0 database schema update',
-        in_array('1.4.0', $schemaVersions, true), implode(', ', $schemaVersions));
+    upgrade_check('Joomla records the newest (1.5.0) database schema update',
+        in_array('1.5.0', $schemaVersions, true), implode(', ', $schemaVersions));
 
     $eventId = (int) $fixture['eventtype_id'];
     $event = $db->query("SELECT schedule_id, host_user_id, feed_token, calendar_id FROM `$eventtypesTable` WHERE id = $eventId")->fetch_assoc();
-    upgrade_check('event type, schedule, host, and legacy feed token are preserved',
+    require_once __DIR__ . '/appointments-bookingdata.php';
+    // "h1:" plus HMAC-SHA256 over scope, id and token under the feed-token server key, derived here
+    // independently of the component.
+    $feedKey = hash_hmac('sha256', 'com_appointments:feed-token', (string) (new JConfig())->secret, true);
+    upgrade_check('event type, schedule and host are preserved, the legacy feed credential is stored only as its keyed digest',
         $event !== null
         && (int) $event['schedule_id'] === (int) $fixture['schedule_id']
         && (int) $event['host_user_id'] === (int) ($fixture['bookings']['confirmed']['core']['host_user_id'])
-        && hash_equals((string) $fixture['feed_token'], (string) $event['feed_token'])
+        && hash_equals('h1:' . hash_hmac('sha256', 'event:' . $eventId . ':' . (string) $fixture['feed_token'], $feedKey), (string) $event['feed_token'])
+        && !str_contains((string) $event['feed_token'], (string) $fixture['feed_token'])
         && $event['calendar_id'] === null);
     $rulesTable = $prefix . 'appointments_schedule_rules';
     $ruleCount = (int) $db->query("SELECT COUNT(*) FROM `$rulesTable` WHERE schedule_id = " . (int) $fixture['schedule_id'])->fetch_row()[0];
@@ -506,6 +539,15 @@ function upgrade_verify(): void
     }
 
     require_once __DIR__ . '/appointments-http.php';
+    // An existing subscription keeps working: its address still carries the pre-upgrade token.
+    $subscriber = new AppointmentsHttp('http://localhost', 'upgrade-v130-feed');
+    $feedQuery = ['option' => 'com_appointments', 'task' => 'feed.download', 'scope' => 'event', 'id' => $eventId];
+    $feed = $subscriber->request('/index.php?' . http_build_query($feedQuery + ['token' => (string) $fixture['feed_token']]));
+    upgrade_check('the pre-upgrade feed address keeps working after the credential is hashed',
+        $subscriber->status === 200 && str_starts_with($feed, "BEGIN:VCALENDAR\r\n"), 'HTTP ' . $subscriber->status);
+    $subscriber->request('/index.php?' . http_build_query($feedQuery + ['token' => substr((string) $event['feed_token'], 3)]));
+    upgrade_check('the stored digest itself does not open the feed', $subscriber->status === 404, 'HTTP ' . $subscriber->status);
+
     $admin = new AppointmentsHttp('http://localhost', 'upgrade-v130-admin');
     $admin->login();
     $list = $admin->request('/administrator/index.php?option=com_appointments&view=bookings&filter_eventtype_id=' . (int) $fixture['eventtype_id']);
@@ -572,11 +614,43 @@ function upgrade_verify(): void
             . '; all_booking_audit_rows=' . implode(',', $auditSummary));
     }
 
+    // The update empties the page cache: the address the previous release answered is refused now.
+    if (isset($fixture['cache_probe'])) {
+        require_once __DIR__ . '/appointments-http.php';
+        $probe = new AppointmentsHttp('http://localhost', 'upgrade-v130-cache-probe');
+        $html = $probe->request((string) $fixture['cache_probe']);
+        upgrade_check('after the update the page cache no longer serves the list on the menu item of one booking page',
+            $probe->status === 404 && !str_contains($html, 'com-appointments-'), 'HTTP ' . $probe->status);
+        $db->query("UPDATE `$extensionsTable` SET enabled = " . (int) $fixture['cache_plugin']['enabled'] . ' WHERE extension_id = ' . (int) $fixture['cache_plugin']['id']);
+        $db->query('DELETE FROM `' . sh_table('menu') . '` WHERE id = ' . (int) $fixture['cache_probe_item']);
+    }
+
     $finalParams = $db->query("SELECT params FROM `$extensionsTable` WHERE extension_id = " . (int) $fixture['extension_id'])->fetch_assoc();
     $finalOptions = $finalParams ? json_decode((string) $finalParams['params'], true) : null;
     $finalToken = is_array($finalOptions) ? (string) ($finalOptions[\Advans\Component\Appointments\Administrator\Helper\BookingData::MIGRATION_OPTION] ?? '') : '';
     upgrade_check('administrator encryption leaves the keyed migration completion marker',
         \Advans\Component\Appointments\Administrator\Helper\BookingData::migrationDone($finalToken, $keys));
+
+    // The conversion of the clear-text feed credentials is marked done; a conversion that did not
+    // finish stays pending and the next installation of the package repeats it.
+    $conversion = static function () use ($db, $extensionsTable, $fixture): string {
+        $row = $db->query("SELECT params FROM `$extensionsTable` WHERE extension_id = " . (int) $fixture['extension_id'])->fetch_assoc();
+
+        return (string) ((json_decode((string) ($row['params'] ?? ''), true) ?: [])['feed_token_conversion'] ?? '');
+    };
+    upgrade_check('the update marks the feed credential conversion as done', $conversion() === 'done', $conversion());
+    $pendingToken = bin2hex(random_bytes(32));
+    $paramsRow = $db->query("SELECT params FROM `$extensionsTable` WHERE extension_id = " . (int) $fixture['extension_id'])->fetch_assoc();
+    $pendingParams = json_decode((string) $paramsRow['params'], true) ?: [];
+    $pendingParams['feed_token_conversion'] = 'pending';
+    $db->query("UPDATE `$extensionsTable` SET params = '" . $db->real_escape_string(json_encode($pendingParams, JSON_THROW_ON_ERROR))
+        . "' WHERE extension_id = " . (int) $fixture['extension_id']);
+    $db->query("UPDATE `$eventtypesTable` SET feed_token = '$pendingToken' WHERE id = $eventId");
+    [$code] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, getenv('CANDIDATE_PACKAGE') ?: '/tmp/extension-candidate-reference.zip');
+    $retried = $db->query("SELECT feed_token FROM `$eventtypesTable` WHERE id = $eventId")->fetch_assoc();
+    upgrade_check('a pending conversion is repeated by the next installation and then marked done',
+        $code === 0 && $conversion() === 'done'
+        && hash_equals('h1:' . hash_hmac('sha256', 'event:' . $eventId . ':' . $pendingToken, $feedKey), (string) ($retried['feed_token'] ?? '')));
 
     echo "\n=== v1.3.0 Upgrade Verification Summary ===\n";
     echo $upgradeFailures === 0 ? "All upgrade checks passed\n" : "$upgradeFailures check(s) failed\n";

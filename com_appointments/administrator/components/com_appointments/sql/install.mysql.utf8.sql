@@ -19,6 +19,27 @@
 -- A named weekly pattern, reusable across event types. `timezone` is the IANA
 -- name that decides what a time such as Tuesday 14:00 means.
 --
+CREATE TABLE IF NOT EXISTS `#__appointments_privacy_outcomes` (
+    `request_id` INT UNSIGNED NOT NULL PRIMARY KEY,
+    `complete` TINYINT NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `#__appointments_privacy_cleanup` (
+    `request_id` INT UNSIGNED NOT NULL,
+    `booking_id` INT UNSIGNED NOT NULL,
+    `cleanup_key` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `guest` TINYINT NOT NULL,
+    `payload` TEXT NOT NULL,
+    `retry_order` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (`request_id`, `booking_id`, `cleanup_key`),
+    KEY `idx_privacy_retry` (`request_id`, `retry_order`, `booking_id`, `cleanup_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `#__appointments_privacy_staff` (
+    `request_id` INT UNSIGNED NOT NULL PRIMARY KEY,
+    `payload` TEXT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS `#__appointments_schedules` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
     `title` VARCHAR(255) NOT NULL DEFAULT '',
@@ -72,7 +93,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_schedule_rules` (
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_hosts` (
     `user_id` INT UNSIGNED NOT NULL,
-    `feed_token` CHAR(64) NOT NULL,
+    `feed_token` CHAR(67) NOT NULL,
     `created_utc` DATETIME NOT NULL,
     `modified_utc` DATETIME NOT NULL,
     PRIMARY KEY (`user_id`),
@@ -85,10 +106,13 @@ CREATE TABLE IF NOT EXISTS `#__appointments_hosts` (
 -- `max_per_day` and `max_per_week` = 0 mean unlimited. `retention_days` NULL
 -- means the component default applies.
 --
--- `feed_token` has no default on purpose. It is a bearer credential of 32
--- random bytes, and a default of '' would hand an empty one to the first row
--- inserted by a code path that forgot to generate it; the unique index would
--- only catch the second such row. Without a default, that insert fails instead.
+-- `feed_token` has no default on purpose. It holds a keyed digest ("h1:" plus
+-- HMAC-SHA256 in hex over scope, id and token, key derived from the site secret) of a bearer credential
+-- of 32 random bytes, never the credential itself (FeedToken), and a
+-- default of '' would hand an empty one to the first row inserted by a code
+-- path that forgot to generate it; the unique index would only catch the
+-- second such row. Without a default, that insert fails instead. The same
+-- applies to `feed_token` of `#__appointments_hosts`.
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_eventtypes` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -126,7 +150,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_eventtypes` (
     `language` CHAR(7) NOT NULL DEFAULT '*',
     `published` TINYINT(1) NOT NULL DEFAULT 1,
     `ordering` INT NOT NULL DEFAULT 0,
-    `feed_token` CHAR(64) NOT NULL,
+    `feed_token` CHAR(67) NOT NULL,
     `created_utc` DATETIME NOT NULL,
     `modified_utc` DATETIME NOT NULL,
     `checked_out` INT UNSIGNED DEFAULT NULL,
@@ -534,13 +558,17 @@ CREATE TABLE IF NOT EXISTS `#__appointments_calendar_busy` (
 -- One row per device. The app password itself is never stored: `secret_hash` is
 -- an HMAC with a server key, `usk_wrapped` is the user's secret key wrapped with
 -- a key derived from the app password. `state`: 1 active, 2 clean-up (calendars
--- served empty), 3 clean-up (calendars hidden), 0 revoked.
+-- served empty), 3 clean-up (calendars hidden), 0 revoked. `removal_mode`, «When
+-- removed or blocked»: `cleanup` (the clean-up above) or `block` (revoked at once,
+-- never an empty calendar). script.php adds the column on an update as well, with
+-- `cleanup` for every existing device.
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_devices` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
     `user_id` INT UNSIGNED NOT NULL,
     `name` VARCHAR(100) NOT NULL,
     `client` VARCHAR(32) NOT NULL,
+    `removal_mode` VARCHAR(16) NOT NULL DEFAULT 'cleanup',
     `secret_hash` BINARY(32) NOT NULL,
     `kek_salt` VARBINARY(16) NOT NULL,
     `usk_wrapped` VARBINARY(255) DEFAULT NULL,
@@ -662,5 +690,55 @@ CREATE TABLE IF NOT EXISTS `#__appointments_eventtype_calendars` (
     PRIMARY KEY (`eventtype_id`, `calendar_id`),
     KEY `idx_eventtype_calendar_calendar` (`calendar_id`),
     FOREIGN KEY (`eventtype_id`) REFERENCES `#__appointments_eventtypes` (`id`) ON DELETE CASCADE,
+    FOREIGN KEY (`calendar_id`) REFERENCES `#__appointments_calendars` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Requests to write the calendar copies of future bookings anew: after the
+-- target calendar of an event type changed (`eventtype_id`), or after the
+-- copies were removed while the internet calendars were switched off (`0`, all
+-- event types). The Scheduler works through them in batches; `token` is new
+-- for every request and never reused, `after_booking_id` is where the walk stands,
+-- `failed` says a write of the current pass failed, `passes` counts the passes
+-- that ended with failed writes. Created by script.php on an update as well.
+--
+CREATE TABLE IF NOT EXISTS `#__appointments_copy_restore` (
+    `eventtype_id` INT UNSIGNED NOT NULL,
+    `requested_utc` DATETIME NOT NULL,
+    `token` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `after_booking_id` INT UNSIGNED NOT NULL DEFAULT 0,
+    `failed` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    `passes` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (`eventtype_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- The account a Joomla privacy request concerns, captured by the removal check while Joomla still
+-- finds the account (StaffPrivacy::capture()). The removal and every retry of the request use it,
+-- also after Joomla's user plugin has pseudonymised the account. One row per request, never replaced.
+--
+CREATE TABLE IF NOT EXISTS `#__appointments_privacy_scope` (
+    `request_id` INT UNSIGNED NOT NULL,
+    `user_id` INT UNSIGNED NOT NULL,
+    `team_member` TINYINT(1) NOT NULL DEFAULT 0,
+    `created_utc` DATETIME NOT NULL,
+    PRIMARY KEY (`request_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Entries of a calendar's own that a Joomla privacy request found, waiting for
+-- the decision of the person handling it (remove only the address, delete the
+-- entry or leave it). Only where the entry is: no address, no hash of it, no
+-- content. Created by script.php on an update as well.
+--
+CREATE TABLE IF NOT EXISTS `#__appointments_privacy_review` (
+    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `request_id` INT UNSIGNED NOT NULL,
+    `calendar_id` INT UNSIGNED NOT NULL,
+    `uri` VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `created_utc` DATETIME NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `idx_privacy_review_entry` (`request_id`, `calendar_id`, `uri`),
+    KEY `idx_privacy_review_calendar` (`calendar_id`),
     FOREIGN KEY (`calendar_id`) REFERENCES `#__appointments_calendars` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

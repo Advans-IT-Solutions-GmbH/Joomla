@@ -230,6 +230,15 @@ fetched it, or after the configured days. Note the time of each phase in the bac
 | IC-31 | NEG | Add a separate device for `WRITER` in the client and let it sync once. Take the client offline, «Remove device» for it, create an event in the client, bring it back online. | The backend devices view shows the device in phase empty when the client syncs; the write is refused by the server (403), not by a revoked sign-in; the observer shows nothing; the client reports the error or discards the item. |
 | IC-32 | POS | After `IC-29`, add a new device for `WRITER` and set up the client again. | Works with the new app password; the old app password stays refused. |
 
+`IC-27` to `IC-31` need devices set to «Clean up» («When removed or blocked»). Choose it explicitly
+in «Add device» for clients whose recommendation is «Block only».
+
+| ID | Type | Procedure | Expected result |
+|---|---|---|---|
+| IC-33 | POS | Add a device for `WRITER` with «When removed or blocked» left at «Recommended», for each client of the set. | Outlook, Thunderbird, eM Client: «Block only». iOS and DAVx⁵: «Clean up». The setting is shown on the result page and in «My calendars». |
+| IC-34 | POS | With a «Block only» device synchronised, «Remove device». Wait for the client to sync. | Every request is refused at once (backend devices view: blocked). The client reports an authentication error and **keeps every local event**. The observer shows every event. Another device of `WRITER` keeps working. |
+| IC-35 | POS | One device «Clean up» and one «Block only» for `WRITER`, both synchronised. Reset the password of `WRITER` by mail. | The «Clean up» device goes through `IC-27` to `IC-29`. The «Block only» device is refused at once and deletes nothing. |
+
 ## 5. Outlook with CalDav Synchronizer
 
 Additional cases for the client with the highest priority. Run them after section 4 for `OL`.
@@ -247,6 +256,7 @@ Additional cases for the client with the highest priority. Run them after sectio
 | OL-09 | POS | Clean-up (`IC-27`) with the two-way profile: watch the Outlook folder and the add-in log. | The Outlook items are **deleted**, not uploaded again; the log shows no PUT after the clean-up started; the observer still shows every event. |
 | OL-10 | NEG | A second profile in mode «Outlook → Server (Replicate)» on a test folder with one event, then start the clean-up of its device. | The upload attempts are refused (403); the server is unchanged; record what the add-in reports. |
 | OL-11 | POS | After phase hidden, read the profile's status. | The profile reports the missing calendar; the Outlook folder stays empty. Delete the profile and the folder by hand; record the steps. |
+| OL-12 | POS | A two-way profile assigned to the **main Outlook calendar** of a test mailbox, device «Block only». «Remove device», then reset the password. | After each step the add-in reports an authentication error. No item of the main calendar is deleted or changed. The add-in log shows no DELETE and no PUT. |
 
 ## 6. Server checks with the client set-up
 

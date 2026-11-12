@@ -1,0 +1,240 @@
+name: Build & Test - Privacy Requests
+
+run-name: "${{ github.event_name == 'pull_request' && format('PR #{0} base={1} base-sha={2} head-sha={3} merge-sha={4}', github.event.pull_request.number, github.event.pull_request.base.ref, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha) || (github.event_name == 'push' && github.event.head_commit.message) || github.workflow }}"
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'plg_system_privacyrequests/**'
+      - 'shared/build/**'
+      - 'shared/installer/**'
+      - 'shared/tests/run-tests.sh'
+      - 'shared/tests/lang-lint.php'
+      - 'shared/tests/requirements-check.php'
+      - 'shared/tests/deprecated-api-scan.php'
+      - 'shared/tests/scripts/shared-test-helpers.php'
+      - 'shared/tests/scripts/shared-deprecations.php'
+      - 'shared/tests/scripts/shared-deprecation-tracer.php'
+      - 'shared/tests/scripts/shared-installer-module-url.php'
+      - 'shared/tests/browser/package.json'
+      - 'shared/tests/browser/package-lock.json'
+      - 'com_appointments/**'
+      - 'j2commerce/plg_privacy_j2commerce/**'
+      - '.github/workflows/system-privacyrequests.yml'
+      - '.github/workflows/release-system-privacyrequests.yml'
+      - '.github/workflows/publish-system-privacyrequests.yml'
+  pull_request:
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
+    paths:
+      - 'plg_system_privacyrequests/**'
+      - 'shared/build/**'
+      - 'shared/installer/**'
+      - 'shared/tests/run-tests.sh'
+      - 'shared/tests/lang-lint.php'
+      - 'shared/tests/requirements-check.php'
+      - 'shared/tests/deprecated-api-scan.php'
+      - 'shared/tests/scripts/shared-test-helpers.php'
+      - 'shared/tests/scripts/shared-deprecations.php'
+      - 'shared/tests/scripts/shared-deprecation-tracer.php'
+      - 'shared/tests/scripts/shared-installer-module-url.php'
+      - 'shared/tests/browser/package.json'
+      - 'shared/tests/browser/package-lock.json'
+      - 'com_appointments/**'
+      - 'j2commerce/plg_privacy_j2commerce/**'
+      - '.github/workflows/system-privacyrequests.yml'
+      - '.github/workflows/release-system-privacyrequests.yml'
+      - '.github/workflows/publish-system-privacyrequests.yml'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && github.run_id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build and verify installable package
+        run: |
+          cd plg_system_privacyrequests
+          bash build.sh
+          cp ./*.zip tests/extension.zip
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: extension-package
+          path: plg_system_privacyrequests/tests/extension.zip
+          retention-days: 1
+
+  static:
+    name: Syntax, languages and requirements
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
+        with:
+          php-version: '8.1'
+      - name: PHP syntax
+        run: find plg_system_privacyrequests -name '*.php' -not -path '*/vendor/*' -print0 | xargs -0 -n1 php -l
+      - name: Language parity and usage
+        run: php shared/tests/lang-lint.php plg_system_privacyrequests
+      - name: Deprecated APIs
+        run: php shared/tests/deprecated-api-scan.php plg_system_privacyrequests
+      - name: Compatibility and release requirements
+        run: php shared/tests/requirements-check.php plg_system_privacyrequests
+
+  native:
+    name: Native installation and Core model (${{ matrix.family }})
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - family: '5.4'
+            image: joomla:5.4-php8.3-apache
+          - family: '6.x'
+            image: joomla:6-php8.4-apache
+    env:
+      CONTAINER_NAME: plg_system_privacyrequests_test
+      JOOMLA_TEST_IMAGE: ${{ matrix.image }}
+      TEST_STRICT_SKIP: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: extension-package
+          path: plg_system_privacyrequests/tests/
+      - name: Start isolated native installation
+        working-directory: plg_system_privacyrequests/tests
+        run: |
+          docker compose -p "$CONTAINER_NAME" up -d --build
+          timeout 300 bash -c 'until docker exec "$CONTAINER_NAME" test -f /var/www/html/health.txt 2>/dev/null; do sleep 3; done'
+      - name: Arm production-like deprecation tracing
+        run: |
+          docker exec "$CONTAINER_NAME" mkdir -p /var/www/html/tests/scripts
+          docker cp shared/tests/scripts/. "$CONTAINER_NAME:/var/www/html/tests/scripts/"
+          docker exec -e TEST_STRICT_SKIP=1 "$CONTAINER_NAME" php /var/www/html/tests/scripts/shared-deprecations.php --arm
+      - name: Run installed native suites
+        working-directory: plg_system_privacyrequests/tests
+        run: bash run-tests.sh all
+      - name: Check runtime deprecations
+        if: always()
+        run: docker exec -e TEST_STRICT_SKIP=1 "$CONTAINER_NAME" php /var/www/html/tests/scripts/shared-deprecations.php
+      - name: Container logs
+        if: always()
+        working-directory: plg_system_privacyrequests/tests
+        run: |
+          mkdir -p test-results
+          docker compose -p "$CONTAINER_NAME" logs --no-color > test-results/container.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: native-${{ matrix.family }}-logs
+          path: plg_system_privacyrequests/tests/test-results/
+          retention-days: 3
+      - name: Cleanup isolated containers and volumes
+        if: always()
+        working-directory: plg_system_privacyrequests/tests
+        run: docker compose -p "$CONTAINER_NAME" down -v
+
+  # The installed browser/mail acceptance suites (tests/*.cjs): delivered tokens from
+  # captured SMTP, two independent PHP processes, overlapping Remove/Complete under a
+  # held lock, failure recovery and the attacker-side confirmation checks, together
+  # with the coupled Appointments and J2Commerce privacy packages of this commit.
+  acceptance:
+    name: Installed acceptance suites (${{ matrix.family }})
+    # Pinned: on the ubuntu-26.04 image behind ubuntu-latest the Ubuntu archives did
+    # not resolve (November 2026), so Playwright could not install browser packages.
+    runs-on: ubuntu-24.04
+    needs: build
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - family: '5.4'
+            image: joomla:5.4-php8.3-apache
+          - family: '6.x'
+            image: joomla:6-php8.4-apache
+    env:
+      CONTAINER_NAME: plg_system_privacyrequests_acceptance
+      JOOMLA_TEST_IMAGE: ${{ matrix.image }}
+      PRIVACY_SOURCE_ROOT: ${{ github.workspace }}
+      PLAYWRIGHT_MODULE: ${{ github.workspace }}/shared/tests/browser/node_modules/playwright
+    steps:
+      - name: Disposable runner directories
+        run: |
+          {
+            echo "PRIVACY_CAPTURE_ROOT=$RUNNER_TEMP/privacy-capture"
+            echo "PRIVACY_PACKAGES=$RUNNER_TEMP/privacy-packages"
+            echo "PRIVACY_RESULTS=$RUNNER_TEMP/privacy-results"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: extension-package
+          path: plg_system_privacyrequests/tests/
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Install pinned browser test dependencies
+        working-directory: shared/tests/browser
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps msedge firefox
+      - name: Build coupled packages and synthetic probes of this commit
+        run: |
+          mkdir -p "$PRIVACY_PACKAGES" "$PRIVACY_CAPTURE_ROOT" "$PRIVACY_RESULTS"
+          (cd com_appointments && bash build.sh)
+          (cd j2commerce/plg_privacy_j2commerce && bash build.sh)
+          cp com_appointments/com_appointments_*.zip "$PRIVACY_PACKAGES/appointments.zip"
+          cp j2commerce/plg_privacy_j2commerce/plg_privacy_j2commerce_*.zip "$PRIVACY_PACKAGES/j2commerce-privacy.zip"
+          (cd plg_system_privacyrequests/tests/fixtures/probe && zip -qr "$PRIVACY_PACKAGES/probe.zip" .)
+          (cd plg_system_privacyrequests/tests/fixtures/mailprobe && zip -qr "$PRIVACY_PACKAGES/mailprobe.zip" .)
+      - name: Start isolated synthetic site
+        working-directory: plg_system_privacyrequests/tests
+        run: |
+          docker compose -p "$CONTAINER_NAME" -f docker-compose.yml -f docker-compose.acceptance.yml up -d --build
+          timeout 300 bash -c 'until docker exec "$CONTAINER_NAME" test -f /var/www/html/health.txt 2>/dev/null; do sleep 3; done'
+      - name: Run installed acceptance suites
+        working-directory: plg_system_privacyrequests/tests
+        run: bash run-acceptance.sh
+      - name: Container logs
+        if: always()
+        working-directory: plg_system_privacyrequests/tests
+        run: |
+          mkdir -p "$PRIVACY_RESULTS"
+          docker compose -p "$CONTAINER_NAME" -f docker-compose.yml -f docker-compose.acceptance.yml logs --no-color > "$PRIVACY_RESULTS/container.txt"
+          docker exec "$CONTAINER_NAME" cat /tmp/php-errors.log > "$PRIVACY_RESULTS/php-errors.log" || true
+          docker cp "$CONTAINER_NAME:/var/www/html/administrator/logs" "$PRIVACY_RESULTS/joomla-logs" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: acceptance-${{ matrix.family }}-results
+          path: ${{ runner.temp }}/privacy-results/
+          retention-days: 3
+      - name: Cleanup isolated containers and volumes
+        if: always()
+        working-directory: plg_system_privacyrequests/tests
+        run: docker compose -p "$CONTAINER_NAME" -f docker-compose.yml -f docker-compose.acceptance.yml down -v

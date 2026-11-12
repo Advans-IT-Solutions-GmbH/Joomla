@@ -9,6 +9,7 @@
 
 defined('_JEXEC') or die;
 
+use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\Team\DeviceService;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
@@ -19,6 +20,12 @@ use Joomla\CMS\Router\Route;
 $device = $this->device;
 $errors = $this->form['device'] === (int) $device->id ? $this->form['errors'] : [];
 $firstError = current(array_intersect(['name', 'confirm'], array_keys($errors))) ?: null;
+// «When removed or blocked» of this device: an unknown stored value acts as «Clean up».
+$removal = $device->removal_mode === TeamStates::REMOVAL_BLOCK ? TeamStates::REMOVAL_BLOCK : TeamStates::REMOVAL_CLEANUP;
+$removalChoices = [
+    TeamStates::REMOVAL_CLEANUP => ['COM_APPOINTMENTS_TEAM_D_REMOVAL_CLEANUP', 'COM_APPOINTMENTS_TEAM_D_REMOVAL_CLEANUP_DESC'],
+    TeamStates::REMOVAL_BLOCK => ['COM_APPOINTMENTS_TEAM_D_REMOVAL_BLOCK', 'COM_APPOINTMENTS_TEAM_D_REMOVAL_BLOCK_DESC'],
+];
 $invalid = static fn (string $key): string => isset($errors[$key]) ? ' is-invalid' : '';
 $aria = static function (string $key) use ($errors, $firstError): string {
     return isset($errors[$key])
@@ -53,10 +60,34 @@ $name = isset($errors['name']) && $this->form['name'] !== '' ? $this->form['name
             </form>
         </section>
 
+        <section class="com-appointments-mycal-section" aria-labelledby="device-removal">
+            <h2 id="device-removal" class="com-appointments-title"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_TITLE'); ?></h2>
+            <p id="device-removal-hint"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_INTRO'); ?></p>
+            <form method="post" action="<?php echo Route::_('index.php?option=com_appointments&task=devices.removalMode'); ?>" class="com-appointments-form">
+                <fieldset class="com-appointments-field" aria-describedby="device-removal-hint<?php echo isset($errors['removal']) ? ' device-removal-error' : ''; ?>">
+                    <legend class="visually-hidden"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_TITLE'); ?></legend>
+                    <?php foreach ($removalChoices as $value => [$label, $description]) : ?>
+                        <div class="form-check">
+                            <input class="form-check-input<?php echo $invalid('removal'); ?>" type="radio" name="removal_mode" id="device-removal-<?php echo $value; ?>" value="<?php echo $value; ?>" aria-describedby="device-removal-<?php echo $value; ?>-desc"<?php echo $removal === $value ? ' checked' : ''; ?>>
+                            <label class="form-check-label" for="device-removal-<?php echo $value; ?>"><?php echo Text::_($label); ?></label>
+                            <p id="device-removal-<?php echo $value; ?>-desc" class="form-text"><?php echo Text::_($description); ?></p>
+                        </div>
+                    <?php endforeach; ?>
+                    <p class="form-text"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_OUTLOOK'); ?></p>
+                    <?php echo $error('removal'); ?>
+                </fieldset>
+                <input type="hidden" name="id" value="<?php echo (int) $device->id; ?>">
+                <?php echo HTMLHelper::_('form.token'); ?>
+                <div class="com-appointments-actions">
+                    <button type="submit" class="btn btn-primary"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_SUBMIT'); ?></button>
+                </div>
+            </form>
+        </section>
+
         <section class="com-appointments-mycal-section" aria-labelledby="device-remove">
             <h2 id="device-remove" class="com-appointments-title"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVE'); ?></h2>
             <div class="com-appointments-notice">
-                <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVE_EXPLAIN'); ?></p>
+                <p><?php echo Text::_($removal === TeamStates::REMOVAL_BLOCK ? 'COM_APPOINTMENTS_TEAM_D_REMOVE_EXPLAIN_BLOCK' : 'COM_APPOINTMENTS_TEAM_D_REMOVE_EXPLAIN'); ?></p>
                 <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVE_LOST'); ?></p>
             </div>
             <form method="post" action="<?php echo Route::_('index.php?option=com_appointments&task=devices.remove'); ?>" class="com-appointments-form">

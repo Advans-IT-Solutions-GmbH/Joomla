@@ -86,6 +86,9 @@ $this->getDocument()->getWebAssetManager()->useScript('form.validate')->useScrip
         <div class="col-lg-4">
             <?php if ($this->form) : ?>
                 <?php echo $this->form->renderFieldset('settings'); ?>
+                <?php if ($id > 0 && (int) ($this->item->retention_days ?? 0) > 0) : ?>
+                    <div class="alert alert-warning" id="calendar-retention-warning" role="note"><?php echo Text::sprintf('COM_APPOINTMENTS_TEAM_C_RETENTION_ACTIVE', (int) $this->item->retention_days); ?></div>
+                <?php endif; ?>
             <?php endif; ?>
         </div>
     </div>

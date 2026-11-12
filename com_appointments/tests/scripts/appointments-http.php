@@ -1,10 +1,13 @@
 <?php
 
+require_once __DIR__ . '/appointments-menu.php';
+
 final class AppointmentsHttp
 {
     public int $status = 0;
     /** The Location headers of the redirects the last request followed, in order. */
     public array $locations = [];
+    public string $contentType = '';
     private string $cookie;
 
     public function __construct(private string $base = 'http://localhost', string $name = 'appointments')
@@ -25,6 +28,7 @@ final class AppointmentsHttp
         $body = curl_exec($curl);
         $error = curl_error($curl);
         $this->status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        $this->contentType = (string) curl_getinfo($curl, CURLINFO_CONTENT_TYPE);
         curl_close($curl);
 
         if ($body === false) {
@@ -94,6 +98,7 @@ final class AppointmentsHttp
                 }
 
                 $client->status = (int) curl_getinfo($handle, CURLINFO_HTTP_CODE);
+                $client->contentType = (string) curl_getinfo($handle, CURLINFO_CONTENT_TYPE);
                 $bodies[] = curl_multi_getcontent($handle);
             }
         } finally {
@@ -158,8 +163,8 @@ final class AppointmentsHttp
 
     public function bookingForm(int $event, string $start, array $details = []): array
     {
-        $html = $this->request('/index.php?option=com_appointments&view=eventtype&id=' . $event
-            . '&timezone=UTC&start=' . urlencode($start));
+        // The booking page through its menu item, the only way it opens (appointments-menu.php).
+        $html = $this->request(appointments_page($event, '&timezone=UTC&start=' . urlencode($start)));
 
         if ($this->status !== 200 || !str_contains($html, 'name="booking[start]"')) {
             throw new RuntimeException('The public booking form did not render: HTTP ' . $this->status . '.');
