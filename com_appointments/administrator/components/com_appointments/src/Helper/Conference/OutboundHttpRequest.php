@@ -21,7 +21,7 @@ final class OutboundHttpRequest
     {
         $this->url = ConferenceUrl::validate($url);
 
-        if (!in_array($method, ['GET', 'POST', 'DELETE'], true)) {
+        if (!in_array($method, ['GET', 'POST', 'PUT', 'DELETE'], true)) {
             throw new ConferenceException('configuration');
         }
 

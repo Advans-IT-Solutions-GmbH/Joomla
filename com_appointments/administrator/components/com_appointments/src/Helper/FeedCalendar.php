@@ -12,14 +12,6 @@ defined('_JEXEC') or die;
 
 final class FeedCalendar
 {
-    public static function verify(string $stored, string $supplied): bool
-    {
-        $wellFormed = preg_match('/\A[a-f0-9]{64}\z/D', $supplied) === 1;
-        $matches = FeedToken::verify($stored, $wellFormed ? $supplied : str_repeat('0', 64));
-
-        return $wellFormed && $matches;
-    }
-
     public static function horizon(array $event, string $timezone, \DateTimeImmutable $now): \DateTimeImmutable
     {
         $rules = SlotRules::fromEventType($event);

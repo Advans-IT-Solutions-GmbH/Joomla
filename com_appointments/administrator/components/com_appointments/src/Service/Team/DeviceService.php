@@ -60,6 +60,38 @@ final class DeviceService implements DeviceServiceInterface
         'other' => 'COM_APPOINTMENTS_TEAM_D_CLIENT_OTHER',
     ];
 
+    /** The values of «When removed or blocked», in the order of the form. */
+    public const REMOVAL_MODES = [TeamStates::REMOVAL_CLEANUP, TeamStates::REMOVAL_BLOCK];
+
+    /**
+     * «When removed or blocked» when the person keeps the recommendation for the client.
+     *
+     * - Phones and tablets (iOS, Android with DAVx⁵) keep the internet calendars as calendars of
+     *   their own account. The clean-up deletes only those copies, and it is the safeguard for a
+     *   private phone (team-calendars.md, section 1), so they get «Clean up».
+     * - Desktop programs get «Block only». Outlook with CalDav Synchronizer synchronises two ways
+     *   into an Outlook folder, which may be the person's main calendar: an empty calendar there
+     *   would delete the person's own appointments. Thunderbird and eM Client are desktop clients
+     *   too and follow the same rule, so a calendar shared with other accounts of the program is
+     *   never emptied by the website.
+     * - «Other client» gets «Block only»: the website does not know how such a program applies an
+     *   empty calendar, and a refused sign-in can be undone, deleted appointments cannot.
+     */
+    public const REMOVAL_DEFAULTS = [
+        'outlook-caldavsynchronizer' => TeamStates::REMOVAL_BLOCK,
+        'apple' => TeamStates::REMOVAL_CLEANUP,
+        'davx5' => TeamStates::REMOVAL_CLEANUP,
+        'thunderbird' => TeamStates::REMOVAL_BLOCK,
+        'emclient' => TeamStates::REMOVAL_BLOCK,
+        'other' => TeamStates::REMOVAL_BLOCK,
+    ];
+
+    /** Name of each value of «When removed or blocked» in the interface. */
+    public const REMOVAL_LABELS = [
+        TeamStates::REMOVAL_CLEANUP => 'COM_APPOINTMENTS_TEAM_D_REMOVAL_CLEANUP',
+        TeamStates::REMOVAL_BLOCK => 'COM_APPOINTMENTS_TEAM_D_REMOVAL_BLOCK',
+    ];
+
     /** Longest device name, as the column allows. */
     public const NAME_MAX = 100;
 
@@ -103,7 +135,20 @@ final class DeviceService implements DeviceServiceInterface
         return \in_array($client, self::CLIENTS, true);
     }
 
-    public function create(KeyContext $keys, string $name, string $client, bool $ruleAccepted): array
+    public static function isRemovalMode(string $mode): bool
+    {
+        return \in_array($mode, self::REMOVAL_MODES, true);
+    }
+
+    /**
+     * The recommended «When removed or blocked» of a client; «Block only» for anything unknown.
+     */
+    public static function defaultRemovalMode(string $client): string
+    {
+        return self::REMOVAL_DEFAULTS[$client] ?? TeamStates::REMOVAL_BLOCK;
+    }
+
+    public function create(KeyContext $keys, string $name, string $client, bool $ruleAccepted, ?string $removalMode = null): array
     {
         $this->requireEnabled();
         $userId = $keys->userId();
@@ -120,6 +165,12 @@ final class DeviceService implements DeviceServiceInterface
 
         if (!self::isClient($client)) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_CLIENT', 400);
+        }
+
+        $removalMode ??= self::defaultRemovalMode($client);
+
+        if (!self::isRemovalMode($removalMode)) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_REMOVAL', 400);
         }
 
         $this->requireEligible($userId);
@@ -172,13 +223,14 @@ final class DeviceService implements DeviceServiceInterface
                 $query = $this->query()
                     ->insert($db->quoteName('#__' . self::TABLE))
                     ->columns($db->quoteName([
-                        'user_id', 'name', 'client', 'secret_hash', 'kek_salt', 'usk_wrapped', 'user_key_version',
+                        'user_id', 'name', 'client', 'removal_mode', 'secret_hash', 'kek_salt', 'usk_wrapped', 'user_key_version',
                         'state', 'rule_version', 'rule_accepted_utc', 'created_utc', 'row_mac',
                     ]))
-                    ->values(':user, :name, :client, :hash, :salt, :wrapped, :version, :state, :rule, :accepted, :created, :mac')
+                    ->values(':user, :name, :client, :removal, :hash, :salt, :wrapped, :version, :state, :rule, :accepted, :created, :mac')
                     ->bind(':user', $userId, ParameterType::INTEGER)
                     ->bind(':name', $name)
                     ->bind(':client', $client)
+                    ->bind(':removal', $removalMode)
                     ->bind(':hash', $secretHash, ParameterType::LARGE_OBJECT)
                     ->bind(':salt', $salt, ParameterType::LARGE_OBJECT)
                     ->bind(':wrapped', $wrapped, ParameterType::LARGE_OBJECT)
@@ -208,7 +260,8 @@ final class DeviceService implements DeviceServiceInterface
                 $this->services->audit()->log(AuditEvent::DEVICE_CREATED, [
                     'actor_user_id' => $userId,
                     'subject_user_id' => $userId,
-                    'details' => ['device_id' => $deviceId, 'client' => $client, 'rule_version' => $rule, 'rule_accepted_utc' => $nowSql],
+                    'details' => ['device_id' => $deviceId, 'client' => $client, 'removal_mode' => $removalMode,
+                        'rule_version' => $rule, 'rule_accepted_utc' => $nowSql],
                     'ip' => $this->ip(),
                 ]);
 
@@ -296,7 +349,8 @@ final class DeviceService implements DeviceServiceInterface
         $db = $this->services->db();
         $hash = AppPassword::hash($raw, $this->services->keyProvider());
         $query = $this->query()
-            ->select($db->quoteName(['d.id', 'd.user_id', 'd.secret_hash', 'd.kek_salt', 'd.usk_wrapped', 'd.user_key_version', 'd.state', 'd.row_mac']))
+            ->select($db->quoteName(['d.id', 'd.user_id', 'd.secret_hash', 'd.kek_salt', 'd.usk_wrapped', 'd.user_key_version', 'd.state', 'd.row_mac',
+                'd.removal_mode']))
             ->select($db->quoteName(['u.username', 'u.block']))
             ->from($db->quoteName('#__' . self::TABLE, 'd'))
             ->join('INNER', $db->quoteName('#__users', 'u'), $db->quoteName('u.id') . ' = ' . $db->quoteName('d.user_id'))
@@ -336,6 +390,12 @@ final class DeviceService implements DeviceServiceInterface
         }
 
         if ($state === TeamStates::DEVICE_CLEANUP_EMPTY || $state === TeamStates::DEVICE_CLEANUP_HIDDEN) {
+            // A device set to «Block only» never receives an empty calendar, not even when it
+            // reached the clean-up in a race with a change of the setting: 401 like a revoked one.
+            if ((string) ($row->removal_mode ?? '') === TeamStates::REMOVAL_BLOCK) {
+                return null;
+            }
+
             // The clean-up needs no key and also reaches a blocked account.
             return new DeviceSession((int) $row->id, (int) $row->user_id, (string) $row->username, $state, null);
         }
@@ -427,7 +487,7 @@ final class DeviceService implements DeviceServiceInterface
         $db = $this->services->db();
         $revoked = TeamStates::DEVICE_REVOKED;
         $query = $this->query()
-            ->select($db->quoteName(['id', 'name', 'client', 'state', 'created_utc', 'last_sync_utc']))
+            ->select($db->quoteName(['id', 'name', 'client', 'removal_mode', 'state', 'created_utc', 'last_sync_utc']))
             ->from($db->quoteName('#__' . self::TABLE))
             ->where($db->quoteName('user_id') . ' = :user')
             ->where($db->quoteName('state') . ' <> :revoked')
@@ -442,7 +502,7 @@ final class DeviceService implements DeviceServiceInterface
     {
         $db = $this->services->db();
         $query = $this->query()
-            ->select($db->quoteName(['d.id', 'd.user_id', 'd.name', 'd.client', 'd.state', 'd.created_utc', 'd.last_sync_utc']))
+            ->select($db->quoteName(['d.id', 'd.user_id', 'd.name', 'd.client', 'd.removal_mode', 'd.state', 'd.created_utc', 'd.last_sync_utc']))
             ->select($db->quoteName('u.username', 'username'))
             ->select($db->quoteName('u.name', 'user_name'))
             ->from($db->quoteName('#__' . self::TABLE, 'd'))
@@ -542,6 +602,58 @@ final class DeviceService implements DeviceServiceInterface
             'details' => ['device_id' => $deviceId],
             'ip' => $this->ip(),
         ]);
+    }
+
+    public function setRemovalMode(int $actorUserId, int $deviceId, string $mode): void
+    {
+        $this->requireEnabled();
+
+        if (!self::isRemovalMode($mode)) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_REMOVAL', 400);
+        }
+
+        $device = $this->device($deviceId);
+
+        // The owner or an administrator of the component; anything else is «not found», as for rename.
+        if ($device === null || (int) $device->state === TeamStates::DEVICE_REVOKED
+            || !$this->mayAdminister($actorUserId, (int) $device->user_id)) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_DEVICE', 404);
+        }
+
+        if ((string) ($device->removal_mode ?? '') !== $mode) {
+            $db = $this->services->db();
+            $revoked = TeamStates::DEVICE_REVOKED;
+            $query = $this->query()
+                ->update($db->quoteName('#__' . self::TABLE))
+                ->set($db->quoteName('removal_mode') . ' = :mode')
+                ->where($db->quoteName('id') . ' = :id')
+                ->where($db->quoteName('state') . ' <> :revoked')
+                ->bind(':mode', $mode)
+                ->bind(':id', $deviceId, ParameterType::INTEGER)
+                ->bind(':revoked', $revoked, ParameterType::INTEGER);
+            $db->setQuery($query)->execute();
+
+            if ((int) $db->getAffectedRows() === 0) {
+                // Revoked in the meantime: nothing left to set.
+                return;
+            }
+
+            $this->services->audit()->log(AuditEvent::DEVICE_REMOVAL_MODE, [
+                'actor_user_id' => $actorUserId,
+                'subject_user_id' => (int) $device->user_id,
+                'details' => ['device_id' => $deviceId, 'removal_mode' => $mode],
+                'ip' => $this->ip(),
+            ]);
+        }
+
+        // A device already in the clean-up that is switched to «Block only» gets no further
+        // empty calendar: it is revoked now. Read again, the clean-up may have started meanwhile.
+        $current = $this->device($deviceId);
+
+        if ($mode === TeamStates::REMOVAL_BLOCK && $current !== null
+            && \in_array((int) $current->state, [TeamStates::DEVICE_CLEANUP_EMPTY, TeamStates::DEVICE_CLEANUP_HIDDEN], true)) {
+            $this->revoke($actorUserId, $deviceId, 'removal_block');
+        }
     }
 
     public function revoke(?int $actorUserId, int $deviceId, string $reason): void
@@ -983,6 +1095,8 @@ final class DeviceService implements DeviceServiceInterface
             'id' => (int) $row->id,
             'name' => (string) $row->name,
             'client' => (string) $row->client,
+            // An unknown stored value is shown as what it does: only `block` skips the clean-up.
+            'removal_mode' => (string) ($row->removal_mode ?? '') === TeamStates::REMOVAL_BLOCK ? TeamStates::REMOVAL_BLOCK : TeamStates::REMOVAL_CLEANUP,
             'state' => (int) $row->state,
             'created_utc' => (string) $row->created_utc,
             'last_sync_utc' => $row->last_sync_utc === null ? null : (string) $row->last_sync_utc,
@@ -997,7 +1111,7 @@ final class DeviceService implements DeviceServiceInterface
 
         $db = $this->services->db();
         $query = $this->query()
-            ->select($db->quoteName(['id', 'user_id', 'name', 'state']))
+            ->select($db->quoteName(['id', 'user_id', 'name', 'removal_mode', 'state']))
             ->from($db->quoteName('#__' . self::TABLE))
             ->where($db->quoteName('id') . ' = :id')
             ->bind(':id', $deviceId, ParameterType::INTEGER);

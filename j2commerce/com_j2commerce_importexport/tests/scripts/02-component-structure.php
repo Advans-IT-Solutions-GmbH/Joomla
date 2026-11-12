@@ -120,6 +120,30 @@ class ComponentStructureTest
             $this->test("$name exists and lints", file_exists($path) && $this->lint($path), $path);
         }
 
+        // --- 5. Options and permissions screens ---
+        // Without access.xml and config.xml the Options button leads nowhere and the
+        // component's own actions cannot be granted.
+        echo "\n--- Options and permissions ---\n";
+        $access = @simplexml_load_file($this->basePath . '/access.xml');
+        $this->test('access.xml is installed and valid', $access instanceof SimpleXMLElement);
+        $actions = [];
+        if ($access instanceof SimpleXMLElement) {
+            foreach ($access->xpath('//section[@name="component"]/action') ?: [] as $action) {
+                $actions[] = (string) $action['name'];
+            }
+        }
+        foreach (['core.admin', 'core.options', 'core.manage', 'importexport.import', 'importexport.export'] as $name) {
+            $this->test("access.xml defines $name", in_array($name, $actions, true));
+        }
+        $config = @simplexml_load_file($this->basePath . '/config.xml');
+        $this->test('config.xml is installed and valid', $config instanceof SimpleXMLElement);
+        $this->test('config.xml has the permissions rules field',
+            $config instanceof SimpleXMLElement
+            && count($config->xpath('//field[@name="rules" and @type="rules" and @component="com_j2commerce_importexport"]') ?: []) === 1);
+        $this->test('config.xml has the CSV options the export reads',
+            $config instanceof SimpleXMLElement
+            && count($config->xpath('//field[@name="csv_delimiter" or @name="csv_enclosure"]') ?: []) === 2);
+
         echo "\n=== Component Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
         return $this->failed === 0;

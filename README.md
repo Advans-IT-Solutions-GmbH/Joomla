@@ -22,6 +22,7 @@ Joomla/
 ├── plg_system_dmarcmtasts/   # DMARC Reports MTA-STS Policy System Plugin
 ├── pkg_dmarcreports/         # DMARC Reports Package (bundles the four extensions above)
 ├── com_appointments/         # Appointments Component
+├── plg_system_privacyrequests/ # Account-free native Core privacy request adapter
 ├── j2commerce/               # J2Commerce Extensions
 │   ├── com_j2commerce_importexport/
 │   ├── com_j2store_cleanup/
@@ -45,6 +46,7 @@ Joomla/
 | [DMARC Reports MTA-STS Policy](plg_system_dmarcmtasts/) | System plugin that serves the generated MTA-STS policy (RFC 8461) at `/.well-known/mta-sts.txt` for each configured domain, so the policy stays in sync with the component options without a hand-maintained static file | 5.4 – 6.x |
 | [DMARC Reports Package](pkg_dmarcreports/) | Joomla package that bundles the DMARC Reports component, dashboard module, scheduler task plugin and MTA-STS system plugin into one install, update and uninstall for the administrator | 5.4 – 6.x |
 | [Appointments](com_appointments/) | **Pre-release.** Self-hosted scheduling, no-JavaScript booking, approval, signed management links, invitations, reminders/retention and opt-in conferencing; encrypted internet calendars with CalDAV, device credentials and grants; Joomla privacy integration. See the component README for setup and limitations | 5.4 – 6.x |
+| [Core privacy requests](plg_system_privacyrequests/) | **Pre-release.** Standalone, opt-in no-account removal request and email confirmation through the native Core privacy lifecycle; administrators and active privacy plugins retain authorization, legal blocking and separate completion responsibility | 5.4 – 6.x |
 
 ### J2Commerce Extensions
 
@@ -58,11 +60,12 @@ Joomla/
 
 ### Bundled Plugin Inventory
 
-The tables above list the **12 independently built extensions** on this branch. Their production manifests also declare these **six bundled plugins**. Each child has its own manifest/languages and is installed, updated and removed through its parent; do not treat it as a separate release download. A package's four DMARC children are already listed above, not four additional extensions. Product Compare's Joomla 5 `j2store` mirror is a deployment variant of that plugin, not another source extension.
+The tables above list the **13 independently built extensions** on this branch. Their production manifests also declare these **seven bundled plugins**. Each child has its own manifest/languages and is installed, updated and removed through its parent; do not treat it as a separate release download. A package's four DMARC children are already listed above, not four additional extensions. Product Compare's Joomla 5 `j2store` mirror is a deployment variant of that plugin, not another source extension.
 
 | Bundled plugin | Parent and role | Initial state |
 |---|---|---|
 | [Privacy - Appointments](com_appointments/plugins/privacy/appointments/README.md) | Appointments: native privacy export, removal and legal-blocker callbacks | Enabled |
+| [Content - Appointments privacy completion guard](com_appointments/plugins/content/appointmentsprivacy/README.md) | Appointments: independent veto of native removal completion while Appointments reports incomplete | Enabled |
 | [Task - Appointments](com_appointments/plugins/task/appointments/README.md) | Appointments: reminders, retention and internet-calendar maintenance routines | Enabled; task states and triggers are separate |
 | [System - Appointments CalDAV](com_appointments/plugins/system/appointmentsdav/README.md) | Appointments: DAV endpoint and sign-in guard | Disabled until operator setup |
 | [User - Appointments internet calendars](com_appointments/plugins/user/appointments/README.md) | Appointments: key sessions, account events and cleanup | Disabled until operator setup |
@@ -159,6 +162,7 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 | `moddmarcreports.yml` | DMARC Reports Dashboard Module | `mod_dmarcreports/**`, the shared files below, own workflow file |
 | `task-dmarcreports.yml` | DMARC Reports Scheduler Task | `plg_task_dmarcreports/**`, the shared files below, own workflow file |
 | `system-dmarcmtasts.yml` | DMARC Reports MTA-STS Policy | `plg_system_dmarcmtasts/**`, the shared files below, own workflow file |
+| `system-privacyrequests.yml` | Core Privacy Requests | `plg_system_privacyrequests/**`, consumed shared files, own build/release/publish workflows |
 | `pkg-dmarcreports.yml` | DMARC Reports Package | `pkg_dmarcreports/**`, the shared files below, own workflow file |
 | `appointments.yml` | Appointments | `com_appointments/**`, the shared files below, own workflow file |
 | `j2commerce-import-export.yml` | Import/Export | `j2commerce/com_j2commerce_importexport/**`, the shared files below, own workflow file |
@@ -219,6 +223,7 @@ Operator-customised templates remain operator content and are not overwritten on
 | Appointments | 18 booking/invitee/guest/host purposes and 7 internet-calendar/device/activation/security purposes; subject and text in each locale, with HTML rendered through the configured Joomla mail layout |
 | AJAX Forms | Password reset, username reminder, self/admin activation and new-registration notice; Joomla `com_mails` templates with translated plugin fallbacks |
 | J2Commerce Privacy | Customer retention/removal notice (8 account/guest, address and newsletter variants) and 3 administrator action notices, including translated order details; plain-text mail |
+| Core privacy requests | Confirmation uses Joomla-owned `com_privacy.notification.remove` in the recipient's supported account language or site default. Native administrator messages include the plugin's translated delivery-failure notice; delivery false/exception retains a real pending receipt and an operator-visible failure |
 | Other extensions and bundled plugins | No outgoing message bodies of their own. DMARC ingestion receives reports, it does not send notifications. The Privacy system plugin changes confirmation URLs in Joomla-owned `com_privacy` mail without replacing its text or language selection |
 
 To add a language:
@@ -277,6 +282,7 @@ Only `fix`, `feat` and `!`/`BREAKING CHANGE` trigger a bump; all other types (`d
 | `release-moddmarcreports.yml` | `moddmarcreports-v*` |
 | `release-task-dmarcreports.yml` | `task-dmarcreports-v*` |
 | `release-system-dmarcmtasts.yml` | `system-dmarcmtasts-v*` |
+| `release-system-privacyrequests.yml` | `system-privacyrequests-v*` |
 | `release-pkg-dmarcreports.yml` | `pkgdmarcreports-v*` |
 | `release-appointments.yml` | `appointments-v*` |
 | `release-importexport.yml` | `importexport-v*` |

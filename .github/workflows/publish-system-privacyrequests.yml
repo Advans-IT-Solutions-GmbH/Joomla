@@ -1,0 +1,161 @@
+name: Publish - Privacy Requests
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Released version to recover (x.y.z), as in the merged release PR'
+        required: true
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - 'plg_system_privacyrequests/**'
+
+permissions: {}
+
+concurrency:
+  group: publish-system-privacyrequests-v
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    if: "github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release: system-privacyrequests v'))"
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check out exactly the released source
+        id: source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          cp .github/scripts/release-source.py "$RUNNER_TEMP/release-source.py"
+          python3 "$RUNNER_TEMP/release-source.py" --prefix "system-privacyrequests" \
+            --path plg_system_privacyrequests \
+            --path shared/build \
+            --path shared/installer \
+            --path .github/scripts \
+            --provenance-out "$RUNNER_TEMP/provenance.json"
+
+      - name: Read version from manifest
+        id: version
+        run: |
+          XML_FILE="plg_system_privacyrequests/privacyrequests.xml"
+          VERSION=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
+          echo "new=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check publication version and built commit
+        id: preflight
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/publish-release.py preflight \
+            --prefix "system-privacyrequests-v" --version "${{ steps.version.outputs.new }}"
+
+      - name: Confirm that the build source is the verified release commit
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          BUILT_SHA: ${{ steps.preflight.outputs.sha }}
+        run: |
+          if [ -z "$SOURCE_SHA" ] || [ "$SOURCE_SHA" != "$BUILT_SHA" ] || [ "$(git rev-parse HEAD)" != "$SOURCE_SHA" ]; then
+            echo "::error::The build source is not the verified release commit."
+            exit 1
+          fi
+
+      - name: Build extension
+        run: |
+          cd plg_system_privacyrequests
+          bash build.sh
+
+      - name: Find package file
+        id: package
+        run: |
+          cd plg_system_privacyrequests
+          PACKAGE=$(ls -1 plg_system_privacyrequests_*.zip | head -1)
+          echo "file=$PACKAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        id: changelog
+        env:
+          PREV_TAG: ${{ steps.preflight.outputs.previous_tag }}
+        run: |
+          if [ -z "$PREV_TAG" ]; then
+            echo "changelog=Initial release" >> "$GITHUB_OUTPUT"
+          else
+            CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges -- plg_system_privacyrequests/ | awk '!/\[skip ci\]/ && !/^- release:/ { if (count++ < 20) print }')
+            if [ -z "$CHANGELOG" ]; then
+              CHANGELOG="- Bug fixes and improvements"
+            fi
+            echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$CHANGELOG" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILT_SHA: ${{ steps.preflight.outputs.sha }}
+          TAG: system-privacyrequests-v${{ steps.version.outputs.new }}
+          NOTES: |
+            ## Core Privacy Requests v${{ steps.version.outputs.new }}
+
+            Account-free removal requests and email confirmation through the native
+            Joomla Core privacy lifecycle, without a shop or fabricated guest account.
+            Email possession is not blanket identity verification or erasure authority.
+            Administrators and active privacy plugins retain their legal blockers,
+            removal permissions and separate completion responsibility.
+
+            ### Changes
+            ${{ steps.changelog.outputs.changelog }}
+
+            ### Source
+            Built from the release commit ${{ steps.source.outputs.sha }}.
+
+            ### Installation
+            1. Download `${{ steps.package.outputs.file }}`.
+            2. Install through Joomla Extension Manager.
+            3. Configure an existing public local operator contact route and test
+               the site's privacy plugins, permissions, mail and retention policy.
+            4. Deliberately enable System - Privacy requests.
+
+            Installation does not enable mail, this plugin or Scheduler tasks.
+            Native Unicode-local-part mail limitations still apply.
+
+            ### Requirements
+            - Joomla 5.4 or later (5.4.x, 6.x)
+            - PHP 8.1 or higher
+
+            ### License
+            GNU General Public License version 3 or later (GPL-3.0-or-later)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          python3 .github/scripts/publish-release.py publish \
+            --prefix "system-privacyrequests-v" --version "${{ steps.version.outputs.new }}" \
+            --package "plg_system_privacyrequests/${{ steps.package.outputs.file }}" \
+            --title "Core Privacy Requests v${{ steps.version.outputs.new }}"
+
+      - name: Attest build provenance
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: plg_system_privacyrequests/${{ steps.package.outputs.file }}
+
+      - name: Attest the provenance of the recovered release commit
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: plg_system_privacyrequests/${{ steps.package.outputs.file }}
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: ${{ runner.temp }}/provenance.json

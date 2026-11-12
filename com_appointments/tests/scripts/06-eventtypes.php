@@ -61,7 +61,7 @@ try {
     $row = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE alias='{$tag}'")->fetch_assoc();
     $eventId = (int) ($row['id'] ?? 0);
     $check($eventId > 0 && (int) $row['duration_minutes'] === 20 && (int) $row['slot_step_minutes'] === 30, 'Event type retains acceptance settings');
-    $check($row && preg_match('/^[a-f0-9]{64}$/D', $row['feed_token']) === 1, 'Feed credential generated');
+    $check($row && preg_match('/^h1:[a-f0-9]{64}$/D', $row['feed_token']) === 1, 'Feed credential generated as a keyed digest, never in clear text');
     $check($row && (int) $row['asset_id'] > 0, 'Joomla per-event asset created');
     $check($row && $row['info_layout'] === 'person' && $row['info_photo'] === 'images/joomla_black.png'
         && $row['info_name'] === 'Fixture & "host"' && $row['info_role'] === 'Fixture role' && $row['info_logo'] === '',
@@ -132,7 +132,10 @@ try {
     }
 
     $public = new AppointmentsHttp('http://localhost', 'events-public');
-    $html = $public->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventId);
+    // The booking page below the list of event types, whose way back leads to that list.
+    $belowList = '/index.php?option=com_appointments&view=eventtype&id=' . $eventId
+        . '&Itemid=' . appointments_menu_item('index.php?option=com_appointments&view=eventtypes');
+    $html = $public->request($belowList);
     $check($public->status === 200 && str_contains($html, $tag . '-edited'), 'Single event menu target renders publicly');
     $document = new DOMDocument();
     @$document->loadHTML($html);
@@ -152,7 +155,7 @@ try {
         echo substr(preg_replace('/\s+/', ' ', strip_tags($html)), 0, 3000) . "\n";
     }
     $db->query("UPDATE {$prefix}appointments_eventtypes SET published=0 WHERE id={$eventId}");
-    $public->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventId);
+    $public->request($belowList);
     $check($public->status === 404, 'Unpublished single event target is inaccessible');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";

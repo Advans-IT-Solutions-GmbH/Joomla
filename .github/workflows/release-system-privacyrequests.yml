@@ -1,0 +1,173 @@
+name: Release - Privacy Requests
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Force version bump (leave empty for auto-detect from commits)'
+        required: false
+        type: choice
+        options:
+          - ''
+          - patch
+          - minor
+          - major
+
+permissions: {}
+
+jobs:
+  release:
+    name: Prepare Release PR
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Determine version bump
+        id: version
+        env:
+          VERSION_BUMP: ${{ inputs.bump }}
+        run: |
+          TAG_PREFIX="system-privacyrequests-v"
+          XML_FILE="plg_system_privacyrequests/privacyrequests.xml"
+          EXT_PATH="plg_system_privacyrequests/"
+          CURRENT=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          BUMP="$VERSION_BUMP"
+          if [ -z "$BUMP" ]; then
+            LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -1)
+            if [ -n "$LAST_TAG" ]; then
+              SUBJECTS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s" --no-merges -- "$EXT_PATH")
+              BODIES=$(git log "$LAST_TAG"..HEAD --pretty=format:"%b" --no-merges -- "$EXT_PATH")
+            else
+              SUBJECTS=$(git log --pretty=format:"%s" --no-merges -20 -- "$EXT_PATH")
+              BODIES=$(git log --pretty=format:"%b" --no-merges -20 -- "$EXT_PATH")
+            fi
+            if [ -z "$SUBJECTS" ]; then
+              echo "bump=none" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if echo "$SUBJECTS" | grep -qiE '^[a-z]+(\(.+\))?!:' || echo "$BODIES" | grep -qiE '^BREAKING[ -]CHANGE:'; then
+              BUMP="major"
+            elif echo "$SUBJECTS" | grep -qiE '^feat(\(.+\))?:'; then
+              BUMP="minor"
+            elif echo "$SUBJECTS" | grep -qiE '^fix(\(.+\))?:'; then
+              BUMP="patch"
+            else
+              echo "bump=none" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+            *) echo "::error::Unsupported version bump"; exit 1 ;;
+          esac
+          NEW="$MAJOR.$MINOR.$PATCH"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "Version: $CURRENT -> $NEW ($BUMP)"
+
+      - name: Update version in files
+        if: steps.version.outputs.bump != 'none'
+        env:
+          VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          DATE=$(date +%Y-%m)
+          cd plg_system_privacyrequests
+          echo "$VERSION" > VERSION
+          sed -i "s/VERSION=\".*\"/VERSION=\"$VERSION\"/" build.env
+          sed -i \
+            -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
+            -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
+            privacyrequests.xml
+
+      - name: Build extension
+        if: steps.version.outputs.bump != 'none'
+        run: |
+          cd plg_system_privacyrequests
+          bash build.sh
+
+      - name: Find package file
+        if: steps.version.outputs.bump != 'none'
+        id: package
+        run: |
+          cd plg_system_privacyrequests
+          PACKAGE=$(ls -1 plg_system_privacyrequests_*.zip | head -1)
+          echo "file=$PACKAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Generate the release update feed
+        if: steps.version.outputs.bump != 'none'
+        env:
+          VERSION: ${{ steps.version.outputs.new }}
+          PACKAGE: ${{ steps.package.outputs.file }}
+        run: |
+          mkdir -p plg_system_privacyrequests/updates
+          cat > plg_system_privacyrequests/updates/update.xml << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <updates>
+              <update>
+                  <name>Core Privacy Requests</name>
+                  <description>Account-free removal requests through the native Joomla privacy lifecycle</description>
+                  <element>privacyrequests</element>
+                  <type>plugin</type>
+                  <folder>system</folder>
+                  <client>site</client>
+                  <version>$VERSION</version>
+                  <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/plg_system_privacyrequests</infourl>
+                  <downloads>
+                      <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/system-privacyrequests-v$VERSION/$PACKAGE</downloadurl>
+                  </downloads>
+                  <tags>
+                      <tag>stable</tag>
+                  </tags>
+                  <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+                  <php_minimum>8.1</php_minimum>
+              </update>
+          </updates>
+          EOF
+          php shared/tests/requirements-check.php plg_system_privacyrequests
+
+      - name: Create release PR
+        if: steps.version.outputs.bump != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          BRANCH="release/system-privacyrequests-v${VERSION}"
+          TITLE="release: system-privacyrequests v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git switch -C "$BRANCH" origin/main
+          git add plg_system_privacyrequests/
+          if git diff --staged --quiet; then
+            echo "::notice::No version changes; no release PR was opened."
+            exit 0
+          fi
+          git commit -m "$TITLE"
+          git push --force-with-lease origin "$BRANCH"
+          PR_BODY=$'Automated release preparation for `system-privacyrequests`.\n\nVersions and the real update feed are generated by this workflow. A human must verify the CI package on an isolated test installation, document positive/negative UI acceptance, review and merge this PR. Only the matching publish workflow on the merged release commit creates the tag and release.\n\nGITHUB_TOKEN-created PR workflows require a writer to approve their execution before review and merge.'
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING_PR" ]; then
+            gh pr edit "$EXISTING_PR" --title "$TITLE" --body "$PR_BODY"
+          else
+            if ! gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$PR_BODY"; then
+              echo "::error::Release branch preserved, but opening its PR failed. Check Actions pull-request permissions; see README.md#release-permissions-and-ci-approval."
+              exit 1
+            fi
+          fi
+
+      - name: No release needed
+        if: steps.version.outputs.bump == 'none'
+        run: echo "::notice::No version bump warranted; no release PR was opened."

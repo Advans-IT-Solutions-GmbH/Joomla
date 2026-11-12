@@ -9,8 +9,11 @@
  *    target after the event type was unpublished.
  * 2. On a multilingual site (language filter, two content languages, SEF URLs) the booking
  *    pages resolve through menu items in "All" and in a specific language, the component builds
- *    routed links to them, routed and non-SEF addresses without a menu item keep working, and
- *    the signed links of the confirmation mail still open and act on the booking.
+ *    routed links to them, and the signed links of the confirmation mail still open and act on
+ *    the booking.
+ * 3. Only what a menu item opens: on a menu item no query parameter switches to another view,
+ *    event type, layout, format or task, and without a menu item of their type (component
+ *    address, non-SEF address) the pages answer 404 without naming the view.
  *
  * Every change to the site (content language, language filter, menu items, fixture language)
  * is undone in the finally block, so the suite can run in the same container as the others.
@@ -123,7 +126,7 @@ $links = static function (string $html, string $class): array {
 $admin = new AppointmentsHttp('http://localhost', 'menu-admin');
 $state = [
     'filter' => null, 'contentLanguage' => false, 'siteLanguage' => false, 'languageFolder' => false,
-    'menuItems' => [], 'configuration' => null, 'pageCache' => null,
+    'menuItems' => [], 'configuration' => null, 'pageCache' => null, 'sefPlugin' => null,
 ];
 $tag = 'menu' . bin2hex(random_bytes(4));
 $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+3 days')->format('Y-m-d');
@@ -392,18 +395,122 @@ try {
     $page('/index.php/en/' . $tag . '-list/no-such-event-type');
     $check($site->status === 404, 'An unknown event type alias below the list item is a 404');
 
-    // Without any menu item: the routed component address, the legacy query form and non-SEF.
-    foreach ([
-        '/index.php/en/component/appointments/eventtype/' . $events['list']['alias'] => 'routed component address',
-        '/index.php/en/component/appointments/?view=eventtype&id=' . $events['list']['id'] => 'component address with query',
-        '/index.php?option=com_appointments&view=eventtype&id=' . $events['list']['id'] => 'non-SEF address',
-    ] as $path => $label) {
+    // ------------------------------------------- 3. only what a menu item opens
+    // Joomla's strict routing (SEF plugin, on by default in new Joomla 6 sites) first redirects a
+    // request to the canonical address of the same parameters when that address has no query left.
+    // The matrix runs with strict routing off (every address is answered as it was requested: 404)
+    // and on (404, or a redirect to another address that its menu item offers; never the refused
+    // page at the requested address). The plugin's settings are restored afterwards.
+    $sef = $db->query("SELECT extension_id, params FROM {$prefix}extensions WHERE type='plugin' AND folder='system' AND element='sef'")->fetch_assoc();
+    $strict = static function (bool $on) use ($db, $prefix, $escape, $sef, &$state): void {
+        if (!$sef) {
+            return;
+        }
+        $state['sefPlugin'] ??= [(int) $sef['extension_id'], (string) $sef['params']];
+        $params = array_replace(json_decode((string) $sef['params'], true) ?: [], ['strictrouting' => $on ? '1' : '0']);
+        $db->query("UPDATE {$prefix}extensions SET params='" . $escape(json_encode($params)) . "' WHERE extension_id=" . (int) $sef['extension_id']);
+    };
+
+    /**
+     * 404 without any page of the component (no booking page, list or «My calendars», no event type
+     * title); with strict routing also a redirect away from the requested address.
+     */
+    $refused = static function (string $path, string $label, bool $strictOn) use ($page, $site, $check, $dump, $events): void {
         $html = $page($path);
-        $check($site->status === 200 && $shows($html, $events['list']), 'Booking page without a menu item resolves: ' . $label);
-        if ($site->status !== 200 || !$shows($html, $events['list'])) {
+        $leaks = array_filter($events, static fn (array $event): bool => str_contains($html, htmlspecialchars($event['title'], ENT_QUOTES)));
+        $ok = $site->status === 404 && $leaks === [] && !str_contains($html, 'com-appointments-');
+        $final = $site->locations !== [] ? (string) preg_replace('#^https?://[^/]+#', '', (string) end($site->locations)) : $path;
+        $moved = $final !== $path;
+        // Strict routing only redirects to an address without a query: the canonical address of a
+        // menu item, which the dispatcher answers by the same rules. Never the refused page itself,
+        // and a 404 never with a page of the component (checked above).
+        if ($strictOn && !$ok && $moved) {
+            $ok = $site->status === 200 && !str_contains($final, '?') && !str_contains($final, 'component/');
+        }
+        $check($ok, ($strictOn ? '[strict routing] ' : '') . 'Refused: ' . $label . ' (' . $path . ')'
+            . ($moved ? ' -> ' . $final : ''));
+        if (!$ok) {
             $dump($path, $site, $html);
         }
+    };
+    $all = '/index.php/en/' . $tag . '-all';
+    $list = '/index.php/en/' . $tag . '-list';
+    $refusedCases = [
+        // The reported case: the list of all event types on the menu item of one event type.
+        $all . '?view=eventtypes' => 'the list on the menu item of one event type',
+        $all . '?view=eventtype&id=' . $events['en']['id'] => 'another event type on the menu item of one event type',
+        $all . '?id=' . $events['list']['id'] => 'another event type by id alone',
+        $all . '?id=' . $events['hidden']['id'] => 'an unpublished event type by id',
+        $all . '?layout=default_details' => 'a sub-layout as the layout',
+        $all . '?layout=othertemplate:default' => 'the layout of another template',
+        $all . '?format=json' => 'another format',
+        $all . '?view=eventtypes&format=raw' => 'the list in the raw format',
+        $all . '?view=mycalendars' => '«My calendars» on a booking page',
+        $all . '?view=booking&layout=edit' => 'the confirmation with another layout',
+        $all . '?view=guest' => 'a layout folder without a view',
+        $all . '?view=nosuchview' => 'an unknown view',
+        $all . '?task=booking.display&view=eventtypes' => 'the display task of another controller',
+        $all . '?task=feed.nosuchtask&view=eventtypes' => 'an unknown task, which Joomla runs as display',
+        $all . '?task=booking.&view=eventtypes' => 'an empty task, which Joomla runs as display',
+        $all . '?controller=guest&view=eventtypes' => 'a controller without a task',
+        $all . '?task=devices.display&view=mycalendars' => '«My calendars» through the device controller',
+        $all . '/' . $events['list']['alias'] => 'a further segment below the menu item of one event type',
+        $list . '?view=eventtypes&layout=othertemplate:default' => 'the list with the layout of another template',
+        $list . '/' . $events['hidden']['alias'] => 'an unpublished event type below the list',
+        $list . '?view=eventtype&id=' . $events['hidden']['id'] => 'an unpublished event type on the list item',
+        $list . '?view=mycalendars' => '«My calendars» on the list item',
+        // Without a menu item of their type the pages do not exist: no component address, no
+        // non-SEF address, not on the home page.
+        '/index.php/en/component/appointments/eventtype/' . $events['list']['alias'] => 'the routed component address of a booking page',
+        '/index.php/en/component/appointments/?view=eventtype&id=' . $events['list']['id'] => 'the component address of a booking page with query',
+        '/index.php/en/component/appointments/?view=eventtypes' => 'the component address of the list',
+        '/index.php/en/component/appointments/' => 'the component address without a view',
+        '/index.php?option=com_appointments&view=eventtype&id=' . $events['list']['id'] => 'the non-SEF address of a booking page',
+        '/index.php?option=com_appointments&view=eventtypes' => 'the non-SEF address of the list',
+        '/index.php?option=com_appointments' => 'the non-SEF address without a view',
+        '/index.php?option=com_appointments&view=mycalendars' => 'the non-SEF address of «My calendars»',
+        '/index.php/en/?option=com_appointments&view=eventtypes' => 'the list on the home page',
+    ];
+    // The ways a menu item does offer keep working.
+    $allowedCases = [
+        $all => [$events['star'], 'the booking page through its menu item'],
+        $all . '?view=eventtype&id=' . $events['star']['id'] => [$events['star'], 'the booking page with its own parameters'],
+        $list => [$events['list'], 'the list through its menu item'],
+        $list . '/' . $events['list']['alias'] => [$events['list'], 'a listed event type below the list item'],
+    ];
+
+    foreach ([false, true] as $strictOn) {
+        $strict($strictOn);
+        foreach ($refusedCases as $path => $label) {
+            $refused($path, $label, $strictOn);
+        }
+        foreach ($allowedCases as $path => [$event, $label]) {
+            $html = $page($path);
+            $check($site->status === 200 && $shows($html, $event), ($strictOn ? '[strict routing] ' : '') . 'Opens: ' . $label . ' (' . $path . ')');
+        }
+        $html = $page($all . '?timezone=UTC&month=' . substr($day, 0, 7) . '&day=' . $day . '&format=raw');
+        $check($site->status === 200 && str_contains($html, 'appointment-picker') && stripos($html, '<html') === false,
+            ($strictOn ? '[strict routing] ' : '') . 'Opens: the date-and-time part of the booking page (format=raw) for the booking script');
     }
+    if ($state['sefPlugin'] !== null) {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $escape($state['sefPlugin'][1]) . "' WHERE extension_id=" . $state['sefPlugin'][0]);
+        $state['sefPlugin'] = null;
+    }
+
+    // A menu item whose link names its layout: the month navigation and the background update keep
+    // that layout, so they open on the same menu item instead of a refused layout.
+    $layoutItem = appointments_menu_item('index.php?option=com_appointments&view=eventtype&layout=_:default&id=' . $events['list']['id'], false, false);
+    $html = $page('/index.php?option=com_appointments&view=eventtype&layout=_:default&id=' . $events['list']['id'] . '&Itemid=' . $layoutItem);
+    $nav = $links($html, 'com-appointments-calendar-next');
+    $next = (string) strtok((string) (reset($nav) ?: ''), '#');
+    $check($site->status === 200 && $next !== '', 'A menu item with a layout in its link opens its booking page: ' . $next);
+    if ($next !== '') {
+        $html = $page($next);
+        $check($site->status === 200 && $shows($html, $events['list']), 'The month navigation of a menu item with a layout in its link opens: ' . $next);
+        $page($next . (str_contains($next, '?') ? '&' : '?') . 'format=raw');
+        $check($site->status === 200, 'The background update of a menu item with a layout in its link opens');
+    }
+    $db->query("DELETE FROM {$prefix}menu WHERE id=" . (int) $layoutItem);
 
     // A booking through the "All" menu item, then the signed links of its confirmation mail.
     $client = new AppointmentsHttp('http://localhost', 'menu-booking');
@@ -606,6 +713,9 @@ try {
     $db->query("DELETE FROM {$prefix}menu WHERE client_id=0 AND alias LIKE '" . $escape($tag) . "-%'");
     if ($state['pageCache'] !== null) {
         $db->query("UPDATE {$prefix}extensions SET enabled=" . (int) $state['pageCache'] . " WHERE type='plugin' AND folder='system' AND element='cache'");
+    }
+    if ($state['sefPlugin'] !== null) {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $escape($state['sefPlugin'][1]) . "' WHERE extension_id=" . $state['sefPlugin'][0]);
     }
     if ($state['filter'] !== null) {
         $db->query("UPDATE {$prefix}extensions SET enabled=" . (int) $state['filter'] . " WHERE type='plugin' AND folder='system' AND element='languagefilter'");

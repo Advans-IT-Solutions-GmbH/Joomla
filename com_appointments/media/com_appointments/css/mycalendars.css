@@ -182,6 +182,36 @@
     outline-offset: 2px;
 }
 
+/* The user's own switch for the booking mails of one calendar, on a line of its own below the calendar. */
+.com-appointments-mycal-notify {
+    display: flex;
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.625rem;
+    margin: 0;
+}
+
+.com-appointments-mycal-notify-state {
+    color: var(--appointments-muted);
+    font-size: var(--appointments-small-size);
+}
+
+.com-appointments-mycal-notify .btn {
+    min-height: var(--appointments-target);
+}
+
+.com-appointments-mycalendars .com-appointments-mycal-notify .com-appointments-notice {
+    flex: 1 0 100%;
+    margin-block: 0.25rem 0;
+}
+
+.com-appointments-mycal-notify-hint {
+    margin-block: 0.75rem 0;
+    color: var(--appointments-muted);
+    font-size: var(--appointments-small-size);
+}
+
 @container appointments (min-width: 36rem) {
     .com-appointments-mycal-device .com-appointments-summary {
         grid-template-columns: max-content 1fr;

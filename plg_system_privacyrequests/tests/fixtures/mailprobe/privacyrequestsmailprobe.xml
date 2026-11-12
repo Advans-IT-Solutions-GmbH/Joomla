@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="plugin" group="system" method="upgrade">
+    <name>Synthetic privacy mail failure probe</name>
+    <version>1.0.0</version>
+    <namespace path="src">Advans\Test\PrivacyRequestsMailProbe</namespace>
+    <files><folder plugin="privacyrequestsmailprobe">services</folder><folder>src</folder></files>
+</extension>

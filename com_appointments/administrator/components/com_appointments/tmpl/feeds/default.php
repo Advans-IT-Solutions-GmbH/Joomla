@@ -39,13 +39,19 @@ if (!$this->legacy) : ?>
     </thead>
     <tbody>
     <?php foreach ($this->items as $item) : ?>
-        <tr>
+        <?php $key = $item['scope'] . '-' . (int) $item['id']; ?>
+        <tr id="feed-row-<?php echo $key; ?>">
             <td><?php echo $item['scope'] === 'event' ? Text::_('COM_APPOINTMENTS_FEEDS_EVENT') : Text::_('COM_APPOINTMENTS_FEEDS_HOST'); ?></td>
             <th scope="row"><?php echo $this->escape($item['title']); ?></th>
             <td>
-                <label class="visually-hidden" for="feed-<?php echo $item['scope'] . '-' . $item['id']; ?>"><?php echo Text::_('COM_APPOINTMENTS_FEEDS_URL'); ?></label>
+                <?php if (isset($this->issued[$key])) : ?>
+                <label class="visually-hidden" for="feed-<?php echo $key; ?>"><?php echo Text::_('COM_APPOINTMENTS_FEEDS_URL'); ?></label>
                 <input type="text" class="form-control" readonly autocomplete="off" spellcheck="false"
-                    id="feed-<?php echo $item['scope'] . '-' . $item['id']; ?>" value="<?php echo $this->escape($item['url']); ?>">
+                    id="feed-<?php echo $key; ?>" aria-describedby="feed-<?php echo $key; ?>-once" value="<?php echo $this->escape($this->issued[$key]); ?>">
+                <p class="form-text mb-0" id="feed-<?php echo $key; ?>-once"><?php echo Text::_('COM_APPOINTMENTS_FEEDS_URL_ONCE'); ?></p>
+                <?php else : ?>
+                <p class="mb-0"><?php echo Text::_('COM_APPOINTMENTS_FEEDS_URL_HIDDEN'); ?></p>
+                <?php endif; ?>
             </td>
             <td>
                 <form action="<?php echo Route::_('index.php?option=com_appointments'); ?>" method="post">

@@ -25,6 +25,12 @@ class RawView extends HtmlView
 {
     public function display($tpl = null)
     {
+        if (self::unavailable()) {
+            echo '<p class="com-appointments-unavailable">' . $this->escape(\Joomla\CMS\Language\Text::_('COM_APPOINTMENTS_BOOKING_UNAVAILABLE')) . '</p>';
+
+            return null;
+        }
+
         $this->prepare(false);
         Factory::getApplication()->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
 

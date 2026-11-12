@@ -65,7 +65,7 @@ namespace {
 
     try {
         $catalog = require $root . '/shared/installer/catalog.php';
-        $count = 0;
+        $checked = ['standalone' => [], 'bundled' => []];
 
         foreach (array_keys($catalog) as $id) {
             $path = is_dir($root . '/' . $id) ? $root . '/' . $id : $root . '/j2commerce/' . $id;
@@ -144,13 +144,48 @@ namespace {
                 $paths = $config->xpath('.//fieldset[@name="advans_systemcheck"]/@addfieldpath');
                 $fieldFile = JPATH_ROOT . '/' . ltrim((string) $paths[0], '/') . '/advanssystemcheck.php';
                 $assert(isset($files[str_replace('\\', '/', $fieldFile)]), 'Custom field path is not installed.');
-                $count++;
+                $checked[dirname($manifestFile) === $stage ? 'standalone' : 'bundled'][] = strtolower((string) $manifest->name);
             }
 
             echo 'PASS ' . $id . ": staged support, repeatable configuration field and file destinations\n";
         }
 
-        $assert($count === 17, 'Expected 11 standalone non-package extensions plus 6 bundled plugins; found ' . $count);
+        $expected = [
+            'standalone' => [
+                'com_appointments',
+                'com_dmarcreports',
+                'com_j2commerce_importexport',
+                'com_j2store_cleanup',
+                'mod_dmarcreports',
+                'plg_ajax_joomlaajaxforms',
+                'plg_j2commerce_productcompare',
+                'plg_osmap_j2commerce',
+                'plg_privacy_j2commerce',
+                'plg_system_dmarcmtasts',
+                'plg_system_privacyrequests',
+                'plg_task_dmarcreports',
+            ],
+            'bundled' => [
+                'plg_content_appointmentsprivacy',
+                'plg_privacy_appointments',
+                'plg_system_appointmentsdav',
+                'plg_system_j2commerceprivacy',
+                'plg_task_appointments',
+                'plg_task_j2commerceprivacy',
+                'plg_user_appointments',
+            ],
+        ];
+
+        foreach ($expected as $kind => $names) {
+            sort($checked[$kind]);
+            $assert(
+                $checked[$kind] === $names,
+                'Checked ' . $kind . ' non-package extensions differ. Missing: '
+                . (implode(', ', array_diff($names, $checked[$kind])) ?: 'none') . '; unexpected: '
+                . (implode(', ', array_diff($checked[$kind], $names)) ?: 'none')
+                . '. Update the expected list only together with the extension catalog.'
+            );
+        }
         $keys = null;
 
         foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {

@@ -118,6 +118,7 @@ Generische Extensions in diesem Repository:
 - `mod_dmarcreports`
 - `plg_task_dmarcreports`
 - `plg_system_dmarcmtasts`
+- `plg_system_privacyrequests`
 - `pkg_dmarcreports`
 - `com_appointments`
 - J2Commerce-Extensions

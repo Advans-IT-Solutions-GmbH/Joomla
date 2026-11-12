@@ -61,7 +61,7 @@ For list views the plugin combines two mechanisms:
 Results are de-duplicated by article id.
 
 Only publicly visible products are included (article published, within its
-publish window, guest-accessible; product `enabled = 1` and `visibility = 1`).
+publish window, guest-accessible, in a category that is published and guest-accessible together with all its parent categories; product `enabled = 1` and `visibility = 1`).
 New or re-enabled products are picked up on the next sitemap request.
 
 ## Features
@@ -199,7 +199,7 @@ Only publicly visible products are listed: the underlying `com_content` article
 must be published (`state = 1`), currently within its publication window
 (`publish_up` has started and `publish_down` has not passed, treating both
 `NULL` and the J4/J5 null-date sentinel `0000-00-00 00:00:00` as no limit) and
-readable by the guest view levels (`access`), and the product row
+readable by the guest view levels (`access`); its category and every parent category must be published and readable by the guest view levels as well (hidden menu children also need a guest-readable menu item), and the product row
 must be enabled and visible (`enabled = 1`, `visibility = 1`). On a multilingual
 site every URL carries a language SEF prefix (e.g. `/de/shop/product-alias`) so
 it resolves directly without a 301 redirect. For hidden children the child menu
@@ -403,7 +403,7 @@ the *System - Debug* plugin).
 **Only some products appear**
 
 Only publicly visible products are included (article published, within its
-publish window, guest-accessible; product `enabled = 1` and `visibility = 1`).
+publish window, guest-accessible, in a category that is published and guest-accessible together with all its parent categories; product `enabled = 1` and `visibility = 1`).
 Check the product in **Components → J2Commerce → Products** and its article.
 
 Hidden menu items are optional; products without one are still listed via the

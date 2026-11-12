@@ -9,6 +9,7 @@
 
 defined('_JEXEC') or die;
 
+use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\Team\DeviceService;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
@@ -124,10 +125,19 @@ $guide = static fn (array $steps, string $client): string => $download($client) 
             </dl>
         </section>
 
+        <section class="com-appointments-mycal-section" aria-labelledby="created-removal">
+            <h2 id="created-removal" class="com-appointments-title"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_TITLE'); ?></h2>
+            <p><strong><?php echo Text::_(DeviceService::REMOVAL_LABELS[$created['removal_mode']]); ?></strong></p>
+            <p><?php echo Text::_($created['removal_mode'] === TeamStates::REMOVAL_BLOCK ? 'COM_APPOINTMENTS_TEAM_D_REMOVAL_BLOCK_DESC' : 'COM_APPOINTMENTS_TEAM_D_REMOVAL_CLEANUP_DESC'); ?></p>
+            <p class="form-text"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_OUTLOOK'); ?></p>
+            <p class="form-text"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_CHANGE'); ?></p>
+        </section>
+
         <section class="com-appointments-mycal-section" aria-labelledby="created-guide">
             <h2 id="created-guide" class="com-appointments-title"><?php echo Text::sprintf('COM_APPOINTMENTS_TEAM_D_GUIDE_FOR', Text::_(DeviceService::CLIENT_LABELS[$chosen])); ?></h2>
             <?php echo $guide($guides[$chosen], $chosen); ?>
             <p class="form-text"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_AUTOMATIC'); ?></p>
+        <p class="form-text" id="created-not-cancel"><strong><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_GUIDE_NOT_CANCEL'); ?></strong></p>
         </section>
 
         <section class="com-appointments-mycal-section" aria-labelledby="created-others">

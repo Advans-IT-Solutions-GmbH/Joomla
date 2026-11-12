@@ -41,3 +41,6 @@ composer.lock
 .env
 .env.local
 .env.*.local
+
+# Python bytecode of the test clients
+__pycache__/

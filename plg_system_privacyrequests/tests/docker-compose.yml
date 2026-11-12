@@ -1,0 +1,42 @@
+services:
+  joomla:
+    build:
+      context: .
+      args:
+        JOOMLA_TEST_IMAGE: ${JOOMLA_TEST_IMAGE:-joomla:5.4-php8.3-apache}
+    container_name: ${CONTAINER_NAME:-plg_system_privacyrequests_test}
+    environment:
+      JOOMLA_DB_HOST: mysql
+      JOOMLA_DB_USER: joomla
+      JOOMLA_DB_PASSWORD: synthetic_fixture_database
+      JOOMLA_DB_NAME: privacy_fixture
+      JOOMLA_SITE_NAME: Privacy Test Fixture
+      JOOMLA_ADMIN_USER: Synthetic Administrator
+      JOOMLA_ADMIN_USERNAME: fixtureadmin
+      JOOMLA_ADMIN_PASSWORD: Synthetic-Fixture-Only-632!
+      JOOMLA_ADMIN_EMAIL: admin@example.test
+      PRIVACY_TEST_ROOT: /var/www/html
+    volumes:
+      - joomla_data:/var/www/html
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: synthetic_fixture_root
+      MYSQL_DATABASE: privacy_fixture
+      MYSQL_USER: joomla
+      MYSQL_PASSWORD: synthetic_fixture_database
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  joomla_data:
+  mysql_data:
