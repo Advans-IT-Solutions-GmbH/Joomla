@@ -337,6 +337,7 @@ class InstallationTest
             && substr_count($source, 'JoomlaAjaxForms.rememberSubmitter(form, e)') === 4
             && str_contains($source, 'carried.name = submitter.name')
             && str_contains($source, "body.append('profile_rendered_fields[]', name)")
+            && str_contains($source, "!el.disabled && !(el.matches && el.matches(':disabled'))")
             && str_contains($source, 'HTMLFormElement.prototype.submit.call(form)')) {
             echo "PASS\n";
         } else {

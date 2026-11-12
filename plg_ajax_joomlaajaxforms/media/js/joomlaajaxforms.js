@@ -1126,12 +1126,14 @@ const JoomlaAjaxForms = {
 
         // The custom fields this form rendered: only these may be saved as
         // cleared when they are missing from the request (all checkboxes
-        // unticked). A partial form keeps the values it does not show.
+        // unticked). A partial form keeps the values it does not show. A disabled
+        // control is not submitted by the browser and cannot be edited, so it is
+        // not counted as rendered either.
         var rendered = [];
         Array.prototype.forEach.call(form.elements, function(el) {
             var match = /^jform\[com_fields\]\[([^\]]+)\]/.exec(el.name || '');
 
-            if (match && rendered.indexOf(match[1]) === -1) {
+            if (match && !el.disabled && !(el.matches && el.matches(':disabled')) && rendered.indexOf(match[1]) === -1) {
                 rendered.push(match[1]);
             }
         });
