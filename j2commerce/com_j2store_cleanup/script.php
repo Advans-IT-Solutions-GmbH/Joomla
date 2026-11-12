@@ -15,6 +15,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
 use Joomla\CMS\Factory;
 use Advans\Installer\InstallerScript;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Log\Log;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 
@@ -30,6 +31,7 @@ class Com_j2store_cleanupInstallerScript extends InstallerScript
         }
 
         if ($type === 'install' || $type === 'update') {
+            $this->loadSourceLanguage($parent);
             $this->removeStaleAdminMenus();
         }
 
@@ -39,52 +41,181 @@ class Com_j2store_cleanupInstallerScript extends InstallerScript
     /** The option of this component and the one an earlier build of it used. */
     private const MENU_LINKS = ['index.php?option=com_j2store_cleanup', 'index.php?option=com_j2commerce_cleanup'];
 
+    /** The aliases Joomla builds for the component's menu item, with and without Unicode aliases. */
+    private const MENU_ALIASES = ['com_j2store_cleanup', 'com-j2store-cleanup'];
+
+    /** Messages of preflight come from the package: the installed language may be older or missing. */
+    private function loadSourceLanguage($parent): void
+    {
+        try {
+            $language = Factory::getApplication()->getLanguage();
+            $source = (string) $parent->getParent()->getPath('source');
+
+            if (!$language->load('com_j2store_cleanup', $source . '/administrator', null, true, true)) {
+                $language->load('com_j2store_cleanup', JPATH_ADMINISTRATOR, null, false, true);
+            }
+        } catch (\Throwable $e) {
+            // The messages then show their keys and details.
+        }
+    }
+
     /**
      * Joomla rebuilds the administrator menu item of the component on every installation and
-     * update, but removes only items that belong to the installed component. An item left by an
+     * update, but removes only items attributed to the installed component. An item left by an
      * earlier installation keeps the alias, and the new item then fails with
      * «JLIB_DATABASE_ERROR_MENU_UNIQUE_ALIAS», which leaves the component without its menu item.
-     * Removed are only orphaned items of the «main» administrator menu: their component id belongs
-     * to no installed extension, and their alias or path is this component's, or their link opens
-     * this component or its earlier option. Valid items are never touched; a failure leaves
-     * Joomla's message and the check in postflight.
+     * Such an item may point to no extension or be attributed to another installed component.
+     * Removed are only top-level items of the «main» administrator menu that are not attributed to
+     * this component, whose link opens this component or its earlier option or whose alias or path
+     * is this component's, and whose link does not open the component they are attributed to: the
+     * items of every other component stay untouched. Each failure is reported, never hidden.
      */
     private function removeStaleAdminMenus(): void
     {
         try {
             $db = Factory::getContainer()->get(DatabaseInterface::class);
-            $query = $this->createDbQuery($db)
-                ->select($db->quoteName(['m.id']))
-                ->from($db->quoteName('#__menu', 'm'))
-                ->join('LEFT', $db->quoteName('#__extensions', 'e'), $db->quoteName('e.extension_id') . ' = ' . $db->quoteName('m.component_id'))
-                ->where($db->quoteName('m.client_id') . ' = 1')
-                ->where($db->quoteName('m.menutype') . ' = ' . $db->quote('main'))
-                ->where($db->quoteName('e.extension_id') . ' IS NULL');
-            $own = [
-                $db->quoteName('m.alias') . ' = ' . $db->quote('com_j2store_cleanup'),
-                $db->quoteName('m.alias') . ' = ' . $db->quote('com-j2store-cleanup'),
-                $db->quoteName('m.path') . ' = ' . $db->quote('com_j2store_cleanup'),
-                $db->quoteName('m.path') . ' = ' . $db->quote('com-j2store-cleanup'),
-            ];
+            $own = [];
+
+            foreach (self::MENU_ALIASES as $alias) {
+                $own[] = $db->quoteName('m.alias') . ' = ' . $db->quote($alias);
+                $own[] = $db->quoteName('m.path') . ' = ' . $db->quote($alias);
+            }
 
             foreach (self::MENU_LINKS as $link) {
                 $own[] = $db->quoteName('m.link') . ' = ' . $db->quote($link);
                 $own[] = $db->quoteName('m.link') . ' LIKE ' . $db->quote($link . '&%');
             }
 
-            $query->where('(' . implode(' OR ', $own) . ')')->order($db->quoteName('m.lft') . ' DESC');
+            $query = $this->createDbQuery($db)
+                ->select($db->quoteName(['m.id', 'm.link', 'e.element']))
+                ->from($db->quoteName('#__menu', 'm'))
+                ->join('LEFT', $db->quoteName('#__extensions', 'e'), $db->quoteName('e.extension_id') . ' = ' . $db->quoteName('m.component_id'))
+                ->where($db->quoteName('m.client_id') . ' = 1')
+                ->where($db->quoteName('m.menutype') . ' = ' . $db->quote('main'))
+                ->where($db->quoteName('m.parent_id') . ' = 1')
+                ->where('(' . $db->quoteName('e.element') . ' IS NULL OR ' . $db->quoteName('e.element') . ' <> ' . $db->quote('com_j2store_cleanup') . ')')
+                ->where('(' . implode(' OR ', $own) . ')')
+                ->order($db->quoteName('m.lft') . ' DESC');
+            $rows = $db->setQuery($query)->loadObjectList() ?: [];
+        } catch (\Throwable $e) {
+            $this->menuError('COM_J2STORE_CLEANUP_MENU_ORPHAN_QUERY_FAILED', $e->getMessage());
 
-            foreach ($db->setQuery($query)->loadColumn() ?: [] as $id) {
-                $table = Factory::getApplication()->bootComponent('com_menus')->getMVCFactory()->createTable('Menu', 'Administrator');
+            return;
+        }
 
-                // An item already gone with its parent is fine.
-                if ($table && $table->load((int) $id) && !$table->delete((int) $id)) {
-                    throw new \RuntimeException('An orphaned administrator menu item could not be removed.');
+        foreach ($rows as $row) {
+            // An item that opens the component it is attributed to is that component's own item.
+            if ($row->element !== null && $this->linkOption((string) $row->link) === strtolower((string) $row->element)) {
+                continue;
+            }
+
+            $this->removeMenuLeaf($db, (int) $row->id);
+        }
+
+        $this->reportAliasConflicts($db);
+    }
+
+    private function linkOption(string $link): string
+    {
+        parse_str((string) parse_url($link, PHP_URL_QUERY), $query);
+
+        return strtolower((string) ($query['option'] ?? ''));
+    }
+
+    /**
+     * Removes exactly one menu item without children and closes its gap in the nested set, as
+     * Joomla's own delete does for a leaf, without table locks or events. An item with children
+     * is kept and reported.
+     */
+    private function removeMenuLeaf(DatabaseInterface $db, int $id): void
+    {
+        try {
+            $node = $db->setQuery($this->createDbQuery($db)
+                ->select($db->quoteName(['id', 'lft', 'rgt']))
+                ->from($db->quoteName('#__menu'))
+                ->where($db->quoteName('id') . ' = ' . $id))->loadObject();
+
+            if (!$node) {
+                return;
+            }
+
+            $children = (int) $db->setQuery($this->createDbQuery($db)
+                ->select('COUNT(*)')
+                ->from($db->quoteName('#__menu'))
+                ->where($db->quoteName('parent_id') . ' = ' . $id))->loadResult();
+
+            if ($children > 0 || (int) $node->rgt !== (int) $node->lft + 1) {
+                $this->menuError('COM_J2STORE_CLEANUP_MENU_ORPHAN_KEPT', $id);
+
+                return;
+            }
+
+            $db->transactionStart();
+
+            try {
+                $db->setQuery($this->createDbQuery($db)
+                    ->delete($db->quoteName('#__menu'))
+                    ->where($db->quoteName('id') . ' = ' . $id))->execute();
+
+                if ($db->getAffectedRows() !== 1) {
+                    throw new \RuntimeException('No row was removed.');
                 }
+
+                $db->setQuery($this->createDbQuery($db)
+                    ->update($db->quoteName('#__menu'))
+                    ->set($db->quoteName('lft') . ' = ' . $db->quoteName('lft') . ' - 2')
+                    ->where($db->quoteName('lft') . ' > ' . (int) $node->rgt))->execute();
+                $db->setQuery($this->createDbQuery($db)
+                    ->update($db->quoteName('#__menu'))
+                    ->set($db->quoteName('rgt') . ' = ' . $db->quoteName('rgt') . ' - 2')
+                    ->where($db->quoteName('rgt') . ' > ' . (int) $node->rgt))->execute();
+                $db->transactionCommit();
+            } catch (\Throwable $e) {
+                $db->transactionRollback();
+
+                throw $e;
             }
         } catch (\Throwable $e) {
-            // Joomla still reports a remaining conflict; postflight creates a missing item.
+            $this->menuError('COM_J2STORE_CLEANUP_MENU_ORPHAN_FAILED', $id, $e->getMessage());
         }
+    }
+
+    /** An item that still holds the component's alias stops Joomla from creating the menu item: name it. */
+    private function reportAliasConflicts(DatabaseInterface $db): void
+    {
+        try {
+            $query = $this->createDbQuery($db)
+                ->select($db->quoteName(['m.id', 'm.menutype', 'm.link', 'm.component_id']))
+                ->from($db->quoteName('#__menu', 'm'))
+                ->join('LEFT', $db->quoteName('#__extensions', 'e'), $db->quoteName('e.extension_id') . ' = ' . $db->quoteName('m.component_id'))
+                ->where($db->quoteName('m.client_id') . ' = 1')
+                ->where($db->quoteName('m.parent_id') . ' = 1')
+                ->where($db->quoteName('m.alias') . ' IN (' . implode(', ', array_map([$db, 'quote'], self::MENU_ALIASES)) . ')')
+                ->where('(' . $db->quoteName('e.element') . ' IS NULL OR ' . $db->quoteName('e.element') . ' <> ' . $db->quote('com_j2store_cleanup') . ')');
+
+            foreach ($db->setQuery($query)->loadObjectList() ?: [] as $row) {
+                $this->menuError('COM_J2STORE_CLEANUP_MENU_ALIAS_BLOCKED', (int) $row->id, (string) $row->menutype, (string) $row->link, (int) $row->component_id);
+            }
+        } catch (\Throwable $e) {
+            $this->menuError('COM_J2STORE_CLEANUP_MENU_ORPHAN_QUERY_FAILED', $e->getMessage());
+        }
+    }
+
+    private function menuError(string $key, ...$arguments): void
+    {
+        $text = Text::sprintf($key, ...$arguments);
+
+        if ($text === $key) {
+            $text = $key . ' ' . json_encode($arguments, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+
+        try {
+            Log::add($text, Log::ERROR, 'com_j2store_cleanup');
+        } catch (\Throwable $e) {
+            // The message below still reaches the person installing.
+        }
+
+        Factory::getApplication()->enqueueMessage($text, 'error');
     }
 
     /**
@@ -94,6 +225,8 @@ class Com_j2store_cleanupInstallerScript extends InstallerScript
      */
     private function ensureAdminMenu($parent): void
     {
+        $reason = '';
+
         try {
             $db = Factory::getContainer()->get(DatabaseInterface::class);
             $query = $this->createDbQuery($db)
@@ -123,7 +256,8 @@ class Com_j2store_cleanupInstallerScript extends InstallerScript
             $manifest = method_exists($parent, 'getManifest') ? $parent->getManifest() : null;
             $title = $manifest instanceof \SimpleXMLElement && isset($manifest->administration->menu)
                 ? trim((string) $manifest->administration->menu) : 'COM_J2STORE_CLEANUP';
-            $table = Factory::getApplication()->bootComponent('com_menus')->getMVCFactory()->createTable('Menu', 'Administrator');
+            // The core table, as Joomla's installer uses it: the menu manager's table cannot be booted in the CLI.
+            $table = new \Joomla\CMS\Table\Menu($db);
             $table->setLocation(1, 'last-child');
             $data = [
                 'menutype' => 'main',
@@ -142,14 +276,25 @@ class Com_j2store_cleanupInstallerScript extends InstallerScript
             ];
 
             if (!$table->bind($data) || !$table->check() || !$table->store()) {
-                throw new \RuntimeException('The administrator menu item could not be created.');
+                $reason = (string) $table->getError();
+
+                throw new \RuntimeException($reason !== '' ? $reason : 'The menu item could not be stored.');
             }
 
             $table->rebuildPath($table->id);
         } catch (\Throwable $e) {
-            Factory::getApplication()->enqueueMessage(Text::_('COM_J2STORE_CLEANUP_MENU_FAILED'), 'warning');
+            $reason = $reason !== '' ? $reason : $e->getMessage();
+            $text = Text::_('COM_J2STORE_CLEANUP_MENU_FAILED') . ' (' . $reason . ')';
+
+            try {
+                Log::add($text, Log::ERROR, 'com_j2store_cleanup');
+            } catch (\Throwable $ignored) {
+            }
+
+            Factory::getApplication()->enqueueMessage($text, 'error');
         }
     }
+
     protected function extensionPostflight($type, $parent)
     {
         if ($type === 'install' || $type === 'update') {
