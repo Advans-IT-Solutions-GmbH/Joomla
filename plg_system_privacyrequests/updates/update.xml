@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<updates>
+    <update>
+        <name>Core Privacy Requests</name>
+        <description>Account-free removal requests through the native Joomla privacy lifecycle</description>
+        <element>privacyrequests</element>
+        <type>plugin</type>
+        <folder>system</folder>
+        <client>site</client>
+        <version>0.2.0</version>
+        <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/plg_system_privacyrequests</infourl>
+        <downloads>
+            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/system-privacyrequests-v0.2.0/plg_system_privacyrequests_0.2.0.zip</downloadurl>
+        </downloads>
+        <tags>
+            <tag>stable</tag>
+        </tags>
+        <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+        <php_minimum>8.1</php_minimum>
+    </update>
+</updates>
