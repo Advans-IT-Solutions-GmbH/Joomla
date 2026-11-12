@@ -115,31 +115,28 @@ class ProfileTest
         $this->test('A legacy request clears no custom field', !array_key_exists('com_fields', $legacy) && $legacy['name'] === 'B');
     }
 
-    /** Omitted custom fields get their stored value before validation; submitted values and clears stay. */
-    private function testOmittedFieldsAreFilledFromStoredValues(): void
+    /** A custom field the request neither carries nor clears is omitted from the validation. */
+    private function testOmittedFieldsAreLeftOutOfTheValidation(): void
     {
-        echo "\n--- Stored values of omitted custom fields ---\n";
+        echo "\n--- Omitted custom fields ---\n";
 
         $class = \Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms::class;
 
-        $filled = $class::fillOmittedFields(
+        $omitted = $class::omittedFieldNames(
             ['name' => 'A', 'com_fields' => ['shown' => 'new', 'cleared' => false]],
-            ['shown' => 'old', 'cleared' => 'old', 'hidden' => 'kept', 'empty' => '']
+            ['shown', 'cleared', 'hidden', 'date']
         );
         $this->test(
-            'An omitted field gets its stored value, a submitted value and a clear stay',
-            ($filled['com_fields']['hidden'] ?? null) === 'kept'
-            && ($filled['com_fields']['shown'] ?? null) === 'new'
-            && ($filled['com_fields']['cleared'] ?? null) === false
-            && !array_key_exists('empty', $filled['com_fields'])
+            'Only the fields the request neither carries nor clears are omitted',
+            $omitted === ['hidden', 'date'],
+            json_encode($omitted)
         );
 
-        $bare = $class::fillOmittedFields(['name' => 'B'], ['hidden' => 'kept']);
-        $this->test('A request without custom fields receives them', ($bare['com_fields']['hidden'] ?? null) === 'kept');
-        $none = $class::fillOmittedFields(['name' => 'C'], []);
-        $this->test('Nothing stored adds nothing', !array_key_exists('com_fields', $none));
+        $bare = $class::omittedFieldNames(['name' => 'B'], ['hidden']);
+        $this->test('A request without custom fields omits them all', $bare === ['hidden']);
+        $none = $class::omittedFieldNames(['name' => 'C'], []);
+        $this->test('No custom fields omit nothing', $none === []);
     }
-
     private function testUnauthenticatedRejected(): void
     {
         echo "\n--- HTTP: unauthenticated profile save → rejected ---\n";
@@ -303,7 +300,8 @@ class ProfileTest
 
             // A required custom field with a stored value that a name/email-only
             // override does not render must not block the save.
-            $fieldId = 0;
+            $fieldId    = 0;
+            $calendarId = 0;
             try {
                 $now   = Factory::getDate()->toSql();
                 $field = (object) [
@@ -323,6 +321,31 @@ class ProfileTest
                 }
                 $this->test('A required custom field for users exists', $fieldId > 0, (string) $this->lastAnswer);
 
+                // A stored calendar value is a UTC timestamp. It is not user
+                // input of this save and must pass through unchanged.
+                if ($fieldId > 0) {
+                    $calendar               = clone $field;
+                    $calendar->name         = 'ajaxforms-date';
+                    $calendar->title        = 'Ajaxforms date';
+                    $calendar->label        = 'Ajaxforms date';
+                    $calendar->type         = 'calendar';
+                    $calendar->required     = 0;
+                    $calendar->ordering     = 2;
+                    unset($calendar->id);
+                    try {
+                        $db->insertObject('#__fields', $calendar, 'id');
+                        $calendarId = (int) $calendar->id;
+                    } catch (\Throwable $e) {
+                        $this->lastAnswer = $e->getMessage();
+                    }
+                    $this->test('A calendar custom field for users exists', $calendarId > 0, (string) $this->lastAnswer);
+
+                    if ($calendarId > 0) {
+                        $dateRow = (object) ['field_id' => $calendarId, 'item_id' => (string) $user->id, 'value' => '2026-01-15 09:30:00'];
+                        $db->insertObject('#__fields_values', $dateRow);
+                    }
+                }
+
                 if ($fieldId > 0) {
                     $valueRow = (object) ['field_id' => $fieldId, 'item_id' => (string) $user->id, 'value' => 'stored value'];
                     $db->insertObject('#__fields_values', $valueRow);
@@ -331,11 +354,18 @@ class ProfileTest
                     $this->test('That save stores the name', $nameOf() === 'Required User', 'stored: ' . $nameOf());
                     $db->setQuery('SELECT value FROM #__fields_values WHERE field_id = ' . $fieldId . ' AND item_id = ' . $db->quote((string) $user->id));
                     $this->test('The stored value of the required field is kept', (string) $db->loadResult() === 'stored value');
+
+                    if ($calendarId > 0) {
+                        $db->setQuery('SELECT value FROM #__fields_values WHERE field_id = ' . $calendarId . ' AND item_id = ' . $db->quote((string) $user->id));
+                        $this->test('An omitted calendar field is not revalidated and keeps its stored value', (string) $db->loadResult() === '2026-01-15 09:30:00');
+                    }
                 }
             } finally {
-                if ($fieldId > 0) {
-                    $db->setQuery('DELETE FROM #__fields_values WHERE field_id = ' . $fieldId)->execute();
-                    $db->setQuery('DELETE FROM #__fields WHERE id = ' . $fieldId)->execute();
+                foreach ([$fieldId, $calendarId] as $createdId) {
+                    if ($createdId > 0) {
+                        $db->setQuery('DELETE FROM #__fields_values WHERE field_id = ' . $createdId)->execute();
+                        $db->setQuery('DELETE FROM #__fields WHERE id = ' . $createdId)->execute();
+                    }
                 }
             }        } finally {
             $db->setQuery('DELETE FROM #__privacy_consents WHERE user_id = ' . (int) $user->id)->execute();
@@ -368,7 +398,7 @@ class ProfileTest
 
         $this->testMethodsViaReflection();
         $this->testOnlyRenderedCustomFieldsAreCleared();
-        $this->testOmittedFieldsAreFilledFromStoredValues();
+        $this->testOmittedFieldsAreLeftOutOfTheValidation();
         $this->testUnauthenticatedRejected();
         $this->testNoTokenRejected();
         $this->testSignedInSaveUsesTheCoreProfileForm();

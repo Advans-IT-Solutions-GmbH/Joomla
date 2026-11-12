@@ -881,61 +881,57 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Supply the stored value of every custom field the request does not carry.
+     * Names of the custom fields the request neither carries nor clears.
      *
      * After keepRenderedClears() a field the form never displayed is missing from
-     * the data, and Joomla validates it as empty, so a required field with a
-     * stored value would block a name/email-only save. Submitted values and
-     * deliberate clears (false) stay untouched.
+     * the data. Joomla would validate it as empty, so a required field would
+     * block a name/email-only save. Such a field is taken out of the form for
+     * the validation instead of being fed its stored value again: the stored
+     * value is not user input, and the fields plugin saves only the fields that
+     * are part of the submitted data, so the stored value stays as it is.
      *
-     * @param   array  $data    Request data after keepRenderedClears()
-     * @param   array  $stored  Stored values by field name
+     * @param   array     $data        Request data after keepRenderedClears()
+     * @param   string[]  $fieldNames  Names of the editable custom fields of the user
      *
-     * @return  array
+     * @return  string[]
      */
-    public static function fillOmittedFields(array $data, array $stored): array
+    public static function omittedFieldNames(array $data, array $fieldNames): array
     {
-        foreach ($stored as $name => $value) {
-            if ($value === null || $value === '' || $value === []) {
-                continue;
-            }
+        $submitted = isset($data['com_fields']) && \is_array($data['com_fields']) ? $data['com_fields'] : [];
+        $omitted   = [];
 
-            if (!isset($data['com_fields']) || !\is_array($data['com_fields'])) {
-                $data['com_fields'] = [];
-            }
-
-            if (!\array_key_exists((string) $name, $data['com_fields'])) {
-                $data['com_fields'][(string) $name] = $value;
+        foreach ($fieldNames as $name) {
+            if (!\array_key_exists((string) $name, $submitted)) {
+                $omitted[] = (string) $name;
             }
         }
 
-        return $data;
+        return $omitted;
     }
 
     /**
-     * The stored custom field values of the user, by field name.
+     * The names of the custom fields of the user.
      *
      * @param   object  $user  The signed-in user
      *
-     * @return  array
+     * @return  string[]
      */
-    private function storedFieldValues($user): array
+    private function userFieldNames($user): array
     {
-        $values = [];
+        $names = [];
 
         try {
             foreach ((array) FieldsHelper::getFields('com_users.user', $user, false) as $field) {
-                if (isset($field->name, $field->rawvalue)) {
-                    $values[(string) $field->name] = $field->rawvalue;
+                if (isset($field->name)) {
+                    $names[] = (string) $field->name;
                 }
             }
         } catch (\Throwable $e) {
-            Log::add('Stored profile field values not readable: ' . $e->getMessage(), Log::WARNING, 'plg_ajax_joomlaajaxforms');
+            Log::add('Profile field names not readable: ' . $e->getMessage(), Log::WARNING, 'plg_ajax_joomlaajaxforms');
         }
 
-        return $values;
+        return $names;
     }
-
     /**
      * A request value as a string, or an empty string for an array or other
      * non-scalar input.
@@ -1580,9 +1576,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
                 ])
             );
             $data       = self::keepRenderedClears((array) $objData, $rendered);
-            // A field the form never showed keeps its stored value, also for the
-            // validation: a required one would otherwise fail as missing.
-            $data       = self::fillOmittedFields($data, $this->storedFieldValues($user));
+            // A field the form never showed is neither validated nor saved, so a
+            // required one cannot block the save and its stored value stays.
+            foreach (self::omittedFieldNames($data, $this->userFieldNames($user)) as $omittedName) {
+                $form->removeField($omittedName, 'com_fields');
+            }
+
             $data['id'] = $userId;
 
             $validated = $model->validate($form, $data);
