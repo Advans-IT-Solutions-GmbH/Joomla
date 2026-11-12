@@ -324,7 +324,8 @@ class ProfileTest
                 $this->test('A required custom field for users exists', $fieldId > 0, (string) $this->lastAnswer);
 
                 if ($fieldId > 0) {
-                    $db->insertObject('#__fields_values', (object) ['field_id' => $fieldId, 'item_id' => (string) $user->id, 'value' => 'stored value']);
+                    $valueRow = (object) ['field_id' => $fieldId, 'item_id' => (string) $user->id, 'value' => 'stored value'];
+                    $db->insertObject('#__fields_values', $valueRow);
                     $required = $this->ajax('saveProfile', ['jform' => ['name' => 'Required User', 'username' => $user->username, 'email' => $user->email], $token => '1'], $jar);
                     $this->test('A name/email-only save is accepted although a required custom field is not rendered', ($required['success'] ?? null) === true, $this->lastAnswer);
                     $this->test('That save stores the name', $nameOf() === 'Required User', 'stored: ' . $nameOf());
