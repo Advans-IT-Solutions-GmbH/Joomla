@@ -305,15 +305,23 @@ class ProfileTest
             // override does not render must not block the save.
             $fieldId = 0;
             try {
-                $fieldTable = ajaxforms_bootstrap_site_application()->bootComponent('com_fields')->getMVCFactory()->createTable('Field', 'Administrator');
-                $bound = $fieldTable->bind([
-                    'context' => 'com_users.user', 'title' => 'Ajaxforms required', 'name' => 'ajaxforms-required',
-                    'label' => 'Ajaxforms required', 'type' => 'text', 'required' => 1, 'state' => 1,
-                    'access' => 1, 'language' => '*', 'params' => [], 'fieldparams' => [],
-                ]);
-                $stored = $bound && $fieldTable->check() && $fieldTable->store();
-                $fieldId = $stored ? (int) $fieldTable->id : 0;
-                $this->test('A required custom field for users exists', $fieldId > 0);
+                $now   = Factory::getDate()->toSql();
+                $field = (object) [
+                    'asset_id' => 0, 'context' => 'com_users.user', 'group_id' => 0,
+                    'title' => 'Ajaxforms required', 'name' => 'ajaxforms-required', 'label' => 'Ajaxforms required',
+                    'default_value' => '', 'type' => 'text', 'note' => '', 'description' => '',
+                    'state' => 1, 'required' => 1, 'only_use_in_subform' => 0, 'ordering' => 1,
+                    'params' => '{}', 'fieldparams' => '{}', 'language' => '*',
+                    'created_time' => $now, 'created_user_id' => 0, 'modified_time' => $now, 'modified_by' => 0,
+                    'access' => 1,
+                ];
+                try {
+                    $db->insertObject('#__fields', $field, 'id');
+                    $fieldId = (int) $field->id;
+                } catch (\Throwable $e) {
+                    $this->lastAnswer = $e->getMessage();
+                }
+                $this->test('A required custom field for users exists', $fieldId > 0, (string) $this->lastAnswer);
 
                 if ($fieldId > 0) {
                     $db->insertObject('#__fields_values', (object) ['field_id' => $fieldId, 'item_id' => (string) $user->id, 'value' => 'stored value']);
