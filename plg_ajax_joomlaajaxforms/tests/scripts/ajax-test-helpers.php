@@ -278,8 +278,9 @@ function ajaxforms_bootstrap_site_application(): SiteApplication
 
     $app = new SiteApplication($input, $container->get('config'), null, $container);
     $app->setDispatcher($container->get(DispatcherInterface::class));
+    $app->setSession($container->get(\Joomla\Session\SessionInterface::class));
 
-    $template           = new \stdClass();
+    $template          = new \stdClass();
     $template->id       = 0;
     $template->template = 'cassiopeia';
     $template->parent   = '';
