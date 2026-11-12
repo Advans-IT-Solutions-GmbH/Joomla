@@ -45,8 +45,15 @@ try {
     $db->setQuery('UPDATE ' . $db->quoteName('#__menu') . ' SET ' . $db->quoteName('component_id') . ' = ' . $stale
         . ' WHERE ' . $db->quoteName('id') . ' = ' . (int) $before[0]->id)->execute();
 
+    // The installer removes the package it installed: update from a copy of the built package.
+    $package = JPATH_BASE . '/tmp/update-stale-menu.zip';
+
+    if (!copy('/tmp/extension.zip', $package)) {
+        throw new RuntimeException('The package could not be copied.');
+    }
+
     $output = [];
-    exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip --no-interaction 2>&1',
+    exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=' . escapeshellarg($package) . ' --no-interaction 2>&1',
         $output, $exitCode);
     $text = implode("\n", $output);
     $check($exitCode === 0 && stripos($text, 'installed successfully') !== false,
