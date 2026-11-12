@@ -172,6 +172,8 @@ jobs:
             script: 'backend-views'
           - name: 'Installer Messages'
             script: 'install-messages'
+          - name: 'Update over a stale menu item'
+            script: 'update-menu'
           - name: '06 - Uninstall'
             script: 'uninstall'
     steps:
@@ -297,6 +299,8 @@ jobs:
             script: 'backend-views'
           - name: 'Installer Messages'
             script: 'install-messages'
+          - name: 'Update over a stale menu item'
+            script: 'update-menu'
           - name: '06 - Uninstall'
             script: 'uninstall'
     steps:

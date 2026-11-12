@@ -23,6 +23,60 @@ class Com_j2store_cleanupInstallerScript extends InstallerScript
     protected $minimumJoomla = '5.4';
     protected $minimumPhp = '8.1';
 
+    public function preflight($type, $parent)
+    {
+        if (!parent::preflight($type, $parent)) {
+            return false;
+        }
+
+        if ($type === 'install' || $type === 'update') {
+            $this->removeStaleAdminMenus();
+        }
+
+        return true;
+    }
+
+    /**
+     * Joomla rebuilds the administrator menu item of the component on every installation and
+     * update, but removes only items that belong to the installed component. An item left by an
+     * earlier installation (its component id points to no installed com_j2store_cleanup) keeps the
+     * alias, and the new item then fails with «JLIB_DATABASE_ERROR_MENU_UNIQUE_ALIAS». Only such
+     * stale items of this component's own link are removed; a failure leaves Joomla's message.
+     */
+    private function removeStaleAdminMenus(): void
+    {
+        try {
+            $db = Factory::getContainer()->get(DatabaseInterface::class);
+            $query = $this->createDbQuery($db)
+                ->select($db->quoteName('extension_id'))
+                ->from($db->quoteName('#__extensions'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('com_j2store_cleanup'));
+            $current = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
+            $query = $this->createDbQuery($db)
+                ->select($db->quoteName(['id', 'component_id']))
+                ->from($db->quoteName('#__menu'))
+                ->where($db->quoteName('client_id') . ' = 1')
+                ->where('(' . $db->quoteName('link') . ' = ' . $db->quote('index.php?option=com_j2store_cleanup')
+                    . ' OR ' . $db->quoteName('link') . ' LIKE ' . $db->quote('index.php?option=com_j2store_cleanup&%') . ')')
+                ->order($db->quoteName('lft') . ' DESC');
+
+            foreach ($db->setQuery($query)->loadObjectList() ?: [] as $row) {
+                if (\in_array((int) $row->component_id, $current, true)) {
+                    continue;
+                }
+
+                $table = Factory::getApplication()->bootComponent('com_menus')->getMVCFactory()->createTable('Menu', 'Administrator');
+
+                if (!$table || !$table->delete((int) $row->id)) {
+                    throw new \RuntimeException('A stale administrator menu item could not be removed.');
+                }
+            }
+        } catch (\Throwable $e) {
+            // Joomla still reports a remaining conflict when it builds the menu item.
+        }
+    }
+
     protected function extensionPostflight($type, $parent)
     {
         if ($type === 'install' || $type === 'update') {
