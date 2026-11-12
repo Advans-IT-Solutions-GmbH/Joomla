@@ -279,10 +279,10 @@ try {
         $script = sys_get_temp_dir() . '/mail-site-url-' . bin2hex(random_bytes(4)) . '.php';
         file_put_contents($script, '<?php
             require "/var/www/html/tests/scripts/appointments-joomla.php";
-            // The bootstrap sets the test host; the request now claims a foreign one, and Joomla
-            // forgets the addresses it derived, so a link taken from the request would show it.
+            // The bootstrap sets the test host; the request now claims a foreign one (the Host header,
+            // not the mail server name of the Message-ID), and Joomla forgets the addresses it derived,
+            // so a link taken from the request would show it.
             $_SERVER["HTTP_HOST"] = "attacker.example.test";
-            $_SERVER["SERVER_NAME"] = "attacker.example.test";
             \Joomla\CMS\Uri\Uri::reset();
             \Joomla\CMS\Component\ComponentHelper::getParams("com_appointments")->set("public_site_url", ' . var_export($publicSiteUrl, true) . ');
             $row = $joomlaDb->setQuery("SELECT * FROM #__appointments_bookings WHERE eventtype_id = ' . (int) $event . ' AND start_utc = \'' . $day . ' 12:00:00\'")->loadAssoc();
