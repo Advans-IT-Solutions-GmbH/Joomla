@@ -90,6 +90,22 @@ Shared installer support and the repeatable administrator check are staged at bu
 See the root `README.md`, section "Installation safety and repeatable system checks", for
 the file-backup/explicit-approval flow and administrator menu paths.
 
+**Site backups on hosted sites: Akeeba only.** When you install a package on a hosted test
+installation (or a production change is prepared), a site backup is made only with Akeeba Backup.
+Disposable local and CI containers (`references/testing.md`) carry no Akeeba and need no backup,
+they are rebuilt instead. A new backup before the change on a hosted site is allowed and expected
+(`php cli/joomla.php akeeba:backup:take --profile=1 --description="…"` in the site root). Existing
+Akeeba backups (`.jpa` archives, their logs and records) are managed by the maintainer: never
+delete, move, rename or prune them, not even through Akeeba itself, only report count, size and
+age. The Akeeba configuration (profiles, output directory, quotas, post-processing) is the
+maintainer's too and stays unchanged, so what a new backup does with older archives is his
+setting, not the agent's. No self-made backups on the server: no `backup-*` folders, no `mysqldump`/`.sql` dumps, no
+`files.tar.gz`, no copies of `configuration.php`, no `state.json` snapshots, neither in the home
+directory nor in the webroot. Temporary work files go into one folder of your own, removed at the
+end of the task. The review backups the shared installer writes itself (root `README.md`, section
+"Installation safety and repeatable system checks") are part of the product and not affected.
+Binding is the internally maintained handbook (section "Web Host Backups: Akeeba Only").
+
 See `references/release-workflow.md` for the full release process.
 See `references/testing.md` for running tests locally.
 
