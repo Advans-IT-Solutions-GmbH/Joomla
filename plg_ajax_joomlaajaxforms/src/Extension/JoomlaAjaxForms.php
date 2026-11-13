@@ -103,6 +103,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         // user: the MFA captive page and the forced password reset. A user who
         // has not passed them yet goes the regular com_ajax way instead, so the
         // shortcut never lets a password alone reach the profile or cart tasks.
+        // Joomla then redirects the request (forced reset: to the profile edit
+        // page), and the script submits the profile form to com_users the
+        // normal way (task profile.save, see saveProfile() in
+        // media/js/joomlaajaxforms.js and tests/scripts/10-profile.php).
         $identity = $app->getIdentity();
 
         if ($identity && !$identity->guest

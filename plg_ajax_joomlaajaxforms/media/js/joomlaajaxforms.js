@@ -144,6 +144,17 @@ const JoomlaAjaxForms = {
             return false;
         }
 
+        JoomlaAjaxForms.submitNatively(form);
+
+        return true;
+    },
+
+    /**
+     * Submit a form to com_users the normal way and remember that for the page.
+     *
+     * @param {HTMLFormElement} form - The form that was sent
+     */
+    submitNatively: function(form) {
         form.dataset.joomlaajaxformsNative = '1';
 
         // submit() sends no submit button. The core forms carry their task on
@@ -161,8 +172,6 @@ const JoomlaAjaxForms = {
 
         // The prototype method, because a field named "submit" shadows form.submit.
         HTMLFormElement.prototype.submit.call(form);
-
-        return true;
     },
 
     /**
@@ -1150,9 +1159,43 @@ const JoomlaAjaxForms = {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: body.toString()
         })
-        .then(function(response) { return response.json(); })
+        .then(function(response) {
+            // Joomla redirects a request it does not let through to the
+            // endpoint, above all every request of a signed-in user who must
+            // reset the password first (forced password reset): only the
+            // profile save of com_users is allowed then. fetch() follows the
+            // redirect and receives the HTML of the profile page, so nothing
+            // was saved. The form then goes to com_users the normal way
+            // (task profile.save), which applies the same rules.
+            if (response.redirected) {
+                return null;
+            }
+
+            return response.json();
+        })
         .then(function(rawData) {
             JoomlaAjaxForms.enableSubmit(submitBtn);
+            if (rawData === null) {
+                // The core form carries its task on the submit button. Without
+                // that button (saveProfile() called through the API) the task
+                // is added, so com_users saves instead of showing the form.
+                var submitter = form.joomlaajaxformsSubmitter;
+                var carriesTask = (submitter && submitter.name === 'task')
+                    || Array.prototype.some.call(form.elements, function(el) {
+                        return el.name === 'task' && !el.disabled && el.type !== 'submit' && el.type !== 'button';
+                    });
+
+                if (!carriesTask) {
+                    var task = document.createElement('input');
+                    task.type = 'hidden';
+                    task.name = 'task';
+                    task.value = 'profile.save';
+                    form.appendChild(task);
+                }
+
+                JoomlaAjaxForms.submitNatively(form);
+                return;
+            }
                 var serverErrorMsg = JoomlaAjaxForms.extractAndClearMessages(rawData);
                 JoomlaAjaxForms.clearSystemMessages();
             var data = JoomlaAjaxForms.unwrapResponse(rawData);

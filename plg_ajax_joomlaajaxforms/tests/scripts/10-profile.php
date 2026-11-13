@@ -7,6 +7,8 @@
  * - Real HTTP: unauthenticated save → rejected, no-token → rejected
  * - Real HTTP: a signed-in save goes through the profile form of com_users
  *   (password rules, name filter, password taken unchanged)
+ * - Real HTTP: under a forced password reset the AJAX save is redirected and
+ *   stores nothing, the com_users profile save the script falls back to works
  * - Language key presence via Joomla language API
  */
 
@@ -202,6 +204,8 @@ class ProfileTest
         $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
+        $this->lastCode = $code;
+
         // Kept for the failure message: a body that is not JSON (a PHP notice,
         // an error page or a redirect) is otherwise only reported as NULL.
         $this->lastAnswer = "HTTP $code, body: " . substr(trim(strip_tags($body)), 0, 600);
@@ -211,6 +215,115 @@ class ProfileTest
 
     /** Raw status and start of the body of the last endpoint answer. */
     private string $lastAnswer = '';
+
+    /** HTTP status of the last endpoint answer. */
+    private int $lastCode = 0;
+
+    /**
+     * A signed-in account with a forced password reset (requireReset = 1):
+     * Joomla lets only the profile save of com_users through, so the AJAX
+     * save is redirected and stores nothing (the security gate holds). The
+     * script hands such a redirected save to com_users (task profile.save),
+     * and that save stores the new password and clears the reset flag.
+     */
+    private function testForcedResetProfileGoesToComUsers(): void
+    {
+        echo "\n--- HTTP: forced password reset → profile form goes to com_users ---\n";
+
+        // The script side: a redirected answer is handed to com_users.
+        $source = (string) @file_get_contents(ajaxforms_script_path());
+        $body   = preg_match('/\n    saveProfile:\s*function\s*\(form\)\s*\{(.*?)\n    \}\n/s', $source, $m) ? $m[1] : '';
+        $this->test(
+            'saveProfile() hands a redirected answer to com_users',
+            str_contains($body, 'response.redirected')
+                && str_contains($body, 'JoomlaAjaxForms.submitNatively(form)')
+                && str_contains($body, "'profile.save'")
+        );
+
+        $user    = ajaxforms_create_test_user('forcedreset');
+        $oldPass = 'Old-Passw0rd-2026!';
+        $newPass = 'New-Passw0rd-2026!';
+        $db      = Factory::getContainer()->get(DatabaseInterface::class);
+        $jar     = (string) tempnam(sys_get_temp_dir(), 'reset-cookies-');
+
+        $row = function () use ($db, $user): object {
+            $db->setQuery('SELECT password, requireReset FROM #__users WHERE id = ' . (int) $user->id);
+
+            return $db->loadObject() ?: (object) ['password' => '', 'requireReset' => null];
+        };
+
+        try {
+            $db->setQuery(
+                'UPDATE #__users SET requireReset = 1, password = '
+                . $db->quote(\Joomla\CMS\User\UserHelper::hashPassword($oldPass))
+                . ' WHERE id = ' . (int) $user->id
+            )->execute();
+
+            $consent = (object) [
+                'user_id' => (int) $user->id,
+                'state'   => 1,
+                'created' => Factory::getDate()->toSql(),
+                'subject' => 'PLG_SYSTEM_PRIVACYCONSENT_SUBJECT',
+                'body'    => 'Test consent',
+            ];
+            $db->insertObject('#__privacy_consents', $consent);
+
+            $token = $this->tokenFrom('/index.php?option=com_users&view=login', $jar);
+            $login = $this->ajax('login', ['username' => $user->username, 'password' => $oldPass, $token => '1'], $jar);
+            $this->test('Account with a forced reset signs in', ($login['success'] ?? null) === true, var_export($login, true));
+
+            $token = $this->tokenFrom('/index.php?option=com_users&view=profile&layout=edit', $jar);
+            $this->test('Profile edit form delivers a token under the forced reset', $token !== '');
+
+            $form = [
+                'name'      => $user->name,
+                'username'  => $user->username,
+                'email1'    => $user->email,
+                'email2'    => $user->email,
+                'password1' => $newPass,
+                'password2' => $newPass,
+            ];
+
+            $ajax = $this->ajax('saveProfile', ['jform' => $form, $token => '1'], $jar);
+            $this->test(
+                'The AJAX save under the forced reset is redirected by Joomla, not answered',
+                $ajax === null && $this->lastCode >= 300 && $this->lastCode < 400,
+                $this->lastAnswer
+            );
+            $this->test(
+                'That AJAX save stores nothing',
+                \Joomla\CMS\User\UserHelper::verifyPassword($oldPass, $row()->password) && (int) $row()->requireReset === 1
+            );
+
+            // The form as the script submits it after the redirect: to com_users,
+            // task profile.save from the submit button (or the added field).
+            $token = $this->tokenFrom('/index.php?option=com_users&view=profile&layout=edit', $jar);
+            $ch    = curl_init($this->baseUrl . '/index.php?option=com_users&task=profile.save');
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+                'option' => 'com_users', 'task' => 'profile.save', 'jform' => $form, $token => '1',
+            ]));
+            curl_setopt($ch, CURLOPT_COOKIEFILE, $jar);
+            curl_setopt($ch, CURLOPT_COOKIEJAR, $jar);
+            curl_exec($ch);
+            $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            $after = $row();
+            $this->test(
+                'The com_users profile save stores the new password',
+                \Joomla\CMS\User\UserHelper::verifyPassword($newPass, $after->password),
+                "HTTP $code"
+            );
+            $this->test('That save clears the forced reset', (int) $after->requireReset === 0, "HTTP $code");
+        } finally {
+            $db->setQuery('DELETE FROM #__privacy_consents WHERE user_id = ' . (int) $user->id)->execute();
+            ajaxforms_delete_test_user('forcedreset');
+            @unlink($jar);
+        }
+    }
 
     /**
      * A signed-in profile save applies the profile form of com_users: the
@@ -402,6 +515,7 @@ class ProfileTest
         $this->testUnauthenticatedRejected();
         $this->testNoTokenRejected();
         $this->testSignedInSaveUsesTheCoreProfileForm();
+        $this->testForcedResetProfileGoesToComUsers();
         $this->testLanguageKeys();
 
         echo "\n=== Profile Test Summary ===\n";
