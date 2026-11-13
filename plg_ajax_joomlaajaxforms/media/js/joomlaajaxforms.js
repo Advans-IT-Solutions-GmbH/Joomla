@@ -520,8 +520,23 @@ const JoomlaAjaxForms = {
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: body.toString()
             })
-            .then(response => response.json())
+            .then(function(response) {
+                // Joomla answered with a redirect instead of the plugin's JSON.
+                // After the login of an account that must reset its password
+                // first, SiteApplication::login() redirects to the profile
+                // edit page: the user is signed in and has to go there. The
+                // browser opens the redirect target as a normal page.
+                if (response.redirected) {
+                    window.location.href = response.url;
+                    return null;
+                }
+
+                return response.json();
+            })
             .then(function(rawData) {
+                if (rawData === null) {
+                    return;
+                }
                 JoomlaAjaxForms.enableSubmit(submitBtn);
                 var serverErrorMsg = JoomlaAjaxForms.extractAndClearMessages(rawData);
                 JoomlaAjaxForms.clearSystemMessages();
@@ -1001,8 +1016,38 @@ const JoomlaAjaxForms = {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: body.toString()
         })
-        .then(response => response.json())
+        .then(function(response) {
+            // Joomla redirected the request instead of letting the endpoint
+            // answer, above all for an account with a forced password reset,
+            // which may only use com_users. Nothing was done, so the logout
+            // goes to com_users the normal way (task user.logout with the token).
+            if (response.redirected && tokenName) {
+                var root = '';
+                try {
+                    root = (Joomla.getOptions('system.paths') || {}).root || '';
+                } catch (e) {
+                    root = '';
+                }
+
+                var params = new URLSearchParams();
+                params.append('option', 'com_users');
+                params.append('task', 'user.logout');
+                params.append(tokenName, '1');
+                if (returnUrl) {
+                    params.append('return', returnUrl);
+                }
+
+                window.location.href = root + '/index.php?' + params.toString();
+
+                return { success: true, handedOver: true };
+            }
+
+            return response.json();
+        })
         .then(function(rawData) {
+            if (rawData && rawData.handedOver === true) {
+                return rawData;
+            }
             const data = JoomlaAjaxForms.unwrapResponse(rawData);
             if (data.success && data.data && data.data.redirect) {
                 window.location.href = data.data.redirect;

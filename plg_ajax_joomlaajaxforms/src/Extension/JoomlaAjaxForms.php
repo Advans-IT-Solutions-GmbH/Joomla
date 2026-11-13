@@ -104,8 +104,9 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
         // has not passed them yet goes the regular com_ajax way instead, so the
         // shortcut never lets a password alone reach the profile or cart tasks.
         // Joomla then redirects the request (forced reset: to the profile edit
-        // page), and the script submits the profile form to com_users the
-        // normal way (task profile.save, see saveProfile() in
+        // page, as SiteApplication::login() already does after the login), and
+        // the script hands a redirected request to com_users: the profile form
+        // with task profile.save, the logout with task user.logout (see
         // media/js/joomlaajaxforms.js and tests/scripts/10-profile.php).
         $identity = $app->getIdentity();
 

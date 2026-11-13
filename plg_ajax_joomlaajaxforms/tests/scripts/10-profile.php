@@ -7,8 +7,9 @@
  * - Real HTTP: unauthenticated save → rejected, no-token → rejected
  * - Real HTTP: a signed-in save goes through the profile form of com_users
  *   (password rules, name filter, password taken unchanged)
- * - Real HTTP: under a forced password reset the AJAX save is redirected and
- *   stores nothing, the com_users profile save the script falls back to works
+ * - Real HTTP: under a forced password reset the AJAX login and the AJAX save
+ *   are redirected (the save stores nothing), the com_users profile save the
+ *   script falls back to works
  * - Language key presence via Joomla language API
  */
 
@@ -174,6 +175,22 @@ class ProfileTest
         $this->test('No-token profileSave POST rejected', $rejected, "HTTP $code, body: " . substr($body, 0, 200));
     }
 
+    /** GET a page in the given cookie jar (following redirects) and return its HTML. */
+    private function pageFrom(string $path, string $jar): string
+    {
+        $ch = curl_init($this->baseUrl . $path);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+        curl_setopt($ch, CURLOPT_COOKIEFILE, $jar);
+        curl_setopt($ch, CURLOPT_COOKIEJAR, $jar);
+        $html = (string) curl_exec($ch);
+        curl_close($ch);
+
+        return $html;
+    }
+
     /** GET a page in the given cookie jar and return its CSRF token ('' if none). */
     private function tokenFrom(string $path, string $jar): string
     {
@@ -202,13 +219,15 @@ class ProfileTest
         curl_setopt($ch, CURLOPT_COOKIEJAR, $jar);
         $body = (string) curl_exec($ch);
         $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $next = (string) curl_getinfo($ch, CURLINFO_REDIRECT_URL);
         curl_close($ch);
 
         $this->lastCode = $code;
 
         // Kept for the failure message: a body that is not JSON (a PHP notice,
         // an error page or a redirect) is otherwise only reported as NULL.
-        $this->lastAnswer = "HTTP $code, body: " . substr(trim(strip_tags($body)), 0, 600);
+        $this->lastAnswer = "HTTP $code" . ($next !== '' ? ", Location: $next" : '')
+            . ', body: ' . substr(trim(strip_tags($body)), 0, 600);
 
         return ajaxforms_decode_response($body);
     }
@@ -220,11 +239,13 @@ class ProfileTest
     private int $lastCode = 0;
 
     /**
-     * A signed-in account with a forced password reset (requireReset = 1):
-     * Joomla lets only the profile save of com_users through, so the AJAX
-     * save is redirected and stores nothing (the security gate holds). The
-     * script hands such a redirected save to com_users (task profile.save),
-     * and that save stores the new password and clears the reset flag.
+     * An account with a forced password reset (requireReset = 1): Joomla
+     * redirects the AJAX login to the profile edit page and lets only the
+     * profile save of com_users through, so the AJAX save is redirected and
+     * stores nothing (the security gate holds). The script opens the redirect
+     * target of the login and hands a redirected save to com_users (task
+     * profile.save), and that save stores the new password and clears the
+     * reset flag.
      */
     private function testForcedResetProfileGoesToComUsers(): void
     {
@@ -268,11 +289,35 @@ class ProfileTest
             ];
             $db->insertObject('#__privacy_consents', $consent);
 
+            // SiteApplication::login() redirects an account with a forced
+            // reset to the profile edit page right after the login, so the
+            // AJAX login answers with that redirect instead of JSON. The
+            // script opens the redirect target (convertLoginForm()).
             $token = $this->tokenFrom('/index.php?option=com_users&view=login', $jar);
             $login = $this->ajax('login', ['username' => $user->username, 'password' => $oldPass, $token => '1'], $jar);
-            $this->test('Account with a forced reset signs in', ($login['success'] ?? null) === true, var_export($login, true));
+            $this->test(
+                'The AJAX login of an account with a forced reset is redirected by Joomla',
+                $login === null && $this->lastCode >= 300 && $this->lastCode < 400,
+                $this->lastAnswer
+            );
 
-            $token = $this->tokenFrom('/index.php?option=com_users&view=profile&layout=edit', $jar);
+            $login = preg_match('/\n    convertLoginForm:\s*function\s*\(form\)\s*\{(.*?)\n    \},\n/s', $source, $m) ? $m[1] : '';
+            $this->test(
+                'convertLoginForm() opens the redirect target of a redirected login',
+                str_contains($login, 'response.redirected') && str_contains($login, 'window.location.href = response.url')
+            );
+
+            $logout = preg_match('/\n    logout:\s*function\s*\(returnUrl\)\s*\{(.*?)\n    \},\n/s', $source, $m) ? $m[1] : '';
+            $this->test(
+                'logout() hands a redirected logout to com_users',
+                str_contains($logout, 'response.redirected') && str_contains($logout, "'user.logout'")
+            );
+
+            // Signed in: the profile edit form opens instead of the login form.
+            $page = $this->pageFrom('/index.php?option=com_users&view=profile&layout=edit', $jar);
+            $this->test('The account is signed in and gets the profile edit form', str_contains($page, 'id="member-profile"'));
+
+            $token = preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $page, $m) ? $m[1] : '';
             $this->test('Profile edit form delivers a token under the forced reset', $token !== '');
 
             $form = [
