@@ -314,6 +314,37 @@ class InstallationTest
             $passed = false;
         }
 
+        // Texts from a template without the map of enabled forms must not stop
+        // the request: the map tells the script which forms to leave alone.
+        echo "Test: The map of enabled forms is fetched when the options lack it... ";
+        $body = $this->jsFunctionBody($source, 'loadTexts: function');
+        if ($body !== null
+            && str_contains($body, "getFormsLang('ERROR_GENERIC') !== '' && opts.enabled")
+            && str_contains($body, 'JoomlaAjaxForms.enabled = data.enabled')) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL\n";
+            $passed = false;
+        }
+
+        // A "disabled" answer hands the form to com_users in every form handler
+        // (login, registration, reset/remind, profile), also while the map of
+        // enabled forms is still loading or could not be loaded.
+        echo "Test: A disabled answer hands the form over to com_users... ";
+        // The button that started the submission goes along, because the core
+        // forms carry their task on it (task=profile.save on the profile form).
+        if (substr_count($source, 'JoomlaAjaxForms.handOverIfDisabled(data, form)') === 4
+            && substr_count($source, 'JoomlaAjaxForms.rememberSubmitter(form, e)') === 4
+            && str_contains($source, 'carried.name = submitter.name')
+            && str_contains($source, "body.append('profile_rendered_fields[]', name)")
+            && str_contains($source, "!el.disabled && !(el.matches && el.matches(':disabled'))")
+            && str_contains($source, 'HTMLFormElement.prototype.submit.call(form)')) {
+            echo "PASS\n";
+        } else {
+            echo "FAIL\n";
+            $passed = false;
+        }
+
         return $passed;
     }
 

@@ -195,6 +195,93 @@ class RemindRequestTest
         $this->test('Unknown e-mail → neutral success response', $data !== null && ($data['success'] ?? null) === true, 'body: ' . substr($body, 0, 200));
     }
 
+    /**
+     * Reset and reminder requests apply the captcha of the Users options, as
+     * the forms of com_users do. Without it the endpoint would send mails to
+     * any address without the check the site requires. The answer comes
+     * before the account lookup, so an unknown address is used throughout.
+     */
+    private function testCaptchaOfTheUsersOptions(): void
+    {
+        echo "\n--- HTTP: captcha of the Users options (remind and reset) ---\n";
+
+        ajaxforms_install_test_captcha();
+        $original = ajaxforms_set_component_params('com_users', ['captcha' => 'ajaxformstest']);
+
+        try {
+            foreach (['remind', 'reset'] as $task) {
+                foreach (['no answer' => null, 'a wrong answer' => 'wrong', 'the right answer' => 'ajaxforms-ok'] as $what => $answer) {
+                    [$cookies, $token] = $this->sessionAndToken();
+
+                    $fields = ['task' => $task, 'email' => 'nobody_' . $task . '_' . time() . '@example.com'];
+                    if ($answer !== null) {
+                        $fields['jform'] = ['captcha' => $answer];
+                    }
+                    if ($token !== '') {
+                        $fields[$token] = '1';
+                    }
+
+                    [$code, $body] = $this->http($this->baseUrl . $this->ajaxPath . '&task=' . $task, $fields, $cookies);
+                    $data     = ajaxforms_decode_response($body);
+                    $accepted = $answer === 'ajaxforms-ok';
+
+                    $this->test(
+                        ucfirst($task) . " with $what to the captcha is " . ($accepted ? 'accepted' : 'refused'),
+                        $code < 500 && $data !== null && ($data['success'] ?? null) === $accepted,
+                        "HTTP $code, body: " . substr($body, 0, 200)
+                    );
+                }
+            }
+
+            // A captcha chosen in the Users options whose field cannot be set up
+            // must not let the request through without a check.
+            ajaxforms_set_component_params('com_users', ['captcha' => 'ajaxformsbroken']);
+
+            foreach (['remind', 'reset'] as $task) {
+                [$cookies, $token] = $this->sessionAndToken();
+                $fields = ['task' => $task, 'email' => 'nobody_' . $task . '_' . time() . '@example.com', 'jform' => ['captcha' => 'ajaxforms-ok']];
+                if ($token !== '') {
+                    $fields[$token] = '1';
+                }
+
+                [$code, $body] = $this->http($this->baseUrl . $this->ajaxPath . '&task=' . $task, $fields, $cookies);
+                $data = ajaxforms_decode_response($body);
+
+                $this->test(
+                    ucfirst($task) . ' is refused while the configured captcha cannot be set up',
+                    $code < 500 && $data !== null && ($data['success'] ?? null) === false,
+                    "HTTP $code, body: " . substr($body, 0, 200)
+                );
+            }
+        } finally {
+            ajaxforms_restore_component_params('com_users', $original);
+            ajaxforms_remove_test_captcha();
+        }
+    }
+
+    /**
+     * A task whose option is off answers with the flag "disabled", so the
+     * script can hand the form to com_users even when it did not know the
+     * state of the option yet.
+     */
+    private function testDisabledAnswerCarriesTheFlag(): void
+    {
+        echo "\n--- Disabled task answer ---\n";
+
+        $plugin = ajaxforms_plugin_instance();
+        $plugin->params->set('enable_remind', 0);
+
+        $method = new ReflectionMethod($plugin, 'handleRemind');
+        $method->setAccessible(true);
+        $answer = json_decode((string) $method->invoke($plugin), true);
+
+        $this->test(
+            'Remind switched off answers success:false with disabled:true',
+            is_array($answer) && ($answer['success'] ?? null) === false && ($answer['disabled'] ?? null) === true,
+            'answer: ' . var_export($answer, true)
+        );
+    }
+
     private function testLanguageKeys(): void
     {
         echo "\n--- Language keys ---\n";
@@ -350,6 +437,8 @@ class RemindRequestTest
         $this->testNoTokenRejected();
         $this->testInvalidEmail();
         $this->testUnknownEmail();
+        $this->testCaptchaOfTheUsersOptions();
+        $this->testDisabledAnswerCarriesTheFlag();
         $this->testLanguageKeys();
         $this->testFormDetection();
         $this->testRemindMailCarriesTheSiteDesign();

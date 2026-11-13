@@ -324,6 +324,33 @@ class LoginTest
         }
     }
 
+    /**
+     * The password is read unchanged, as com_users reads it (RAW). A string
+     * filter would strip the tags and decode the entity, so this account could
+     * not sign in.
+     */
+    private function testPasswordIsReadUnchanged(): void
+    {
+        echo "\n--- HTTP: password with markup characters ---\n";
+
+        $password = 'Raw<b>Pass</b>&amp;1';
+        $user     = ajaxforms_create_test_user('loginraw');
+        $db       = Factory::getContainer()->get(DatabaseInterface::class);
+
+        try {
+            $db->setQuery(
+                'UPDATE ' . $db->quoteName('#__users') . ' SET ' . $db->quoteName('password') . ' = '
+                . $db->quote(\Joomla\CMS\User\UserHelper::hashPassword($password))
+                . ' WHERE ' . $db->quoteName('id') . ' = ' . (int) $user->id
+            )->execute();
+
+            $answer = $this->loginAnswer($user->username, $password);
+            $this->test('A password with <, > and & signs in', ($answer['success'] ?? null) === true, 'Got: ' . json_encode($answer));
+        } finally {
+            ajaxforms_delete_test_user('loginraw');
+        }
+    }
+
     private function testLanguageKeys(): void
     {
         echo "\n--- Language keys ---\n";
@@ -353,6 +380,7 @@ class LoginTest
         $this->testNoTokenRejected();
         $this->testWrongCredentialsRejected();
         $this->testNotActivatedAccount();
+        $this->testPasswordIsReadUnchanged();
         $this->testLanguageKeys();
 
         echo "\n=== Login Test Summary ===\n";
