@@ -1173,7 +1173,8 @@ const JoomlaAjaxForms = {
         // Collect all form fields
         var formData = new FormData(form);
         formData.forEach(function(value, key) {
-            if (key !== 'option' && key !== 'plugin' && key !== 'format' && key !== 'task' && key !== 'profile_rendered_fields[]') {
+            if (key !== 'option' && key !== 'plugin' && key !== 'format' && key !== 'task'
+                && key !== 'profile_rendered_fields[]' && key !== 'profile_rendered_plugin_fields[]') {
                 body.append(key, value);
             }
         });
@@ -1193,6 +1194,38 @@ const JoomlaAjaxForms = {
         });
         rendered.forEach(function(name) {
             body.append('profile_rendered_fields[]', name);
+        });
+
+        // The same for the fields profile plugins add in a group of their own
+        // (for example jform[profile][address1] of the User - Profile plugin),
+        // as "group.name". The server validates a rendered field and leaves an
+        // unrendered one out, so its stored value stays.
+        var renderedPlugin = [];
+        Array.prototype.forEach.call(form.elements, function(el) {
+            var match = /^jform((?:\[[^\]]*\])+)$/.exec(el.name || '');
+
+            if (!match || el.disabled || (el.matches && el.matches(':disabled'))) {
+                return;
+            }
+
+            var keys = match[1].slice(1, -1).split('][');
+
+            if (keys[keys.length - 1] === '') {
+                keys.pop();
+            }
+
+            if (keys.length < 2 || keys[0] === 'com_fields') {
+                return;
+            }
+
+            var key = keys.join('.');
+
+            if (renderedPlugin.indexOf(key) === -1) {
+                renderedPlugin.push(key);
+            }
+        });
+        renderedPlugin.forEach(function(key) {
+            body.append('profile_rendered_plugin_fields[]', key);
         });
 
         var messageContainer = form.querySelector('.ajax-message') || JoomlaAjaxForms.createMessageContainer(form);

@@ -55,6 +55,14 @@ options, the name filter, unique e-mail address, the fields of profile plugins a
 parameters apply unchanged, and a new password ends the other sessions of the account. Passwords
 are read unchanged (`RAW`) in login, registration and profile, as com_users reads them.
 
+A template override may show only part of the profile form (for example name and e-mail). The
+script lists the fields the form rendered (`profile_rendered_fields[]` for custom fields,
+`profile_rendered_plugin_fields[]` as `group.name` for fields of profile plugins such as
+`profile.address1` of the User - Profile plugin). A field the request does not carry and the form
+did not render is left out of the validation and keeps its stored value, so a required field the
+override does not show cannot block the save. A rendered field is always validated, so an emptied
+required field is refused. Consent fields (`privacyconsent`, `terms`) are always validated.
+
 ## Requirements
 
 - Joomla 5.4 or later (5.4.x, 6.x)
@@ -291,7 +299,7 @@ That misleading step has been removed; see issue #98.)
 6. **Password Reset** — reset email request
 7. **Username Reminder** — reminder email request
 8. **Security** — CSRF rejection only: a no-token `GET` and a fake-token `POST` to the AJAX endpoint (`getCartCount`) must both be rejected. On the standard matrix this is the **only** part of the Security suite that runs — the IDOR/cart portion of `08-security.php` auto-skips because no J2Commerce cart tables exist (`SKIP: J2Commerce not installed — cart tables absent`). Real IDOR/cart coverage (seeding a victim cart row and verifying it is not deleted) runs **only** in the J2Commerce 4 and 6 full-install suites described below.
-9. **Profile** — AJAX profile save (name, email, password); an account with `requireReset = 1`: the AJAX login is redirected to the profile edit form and signs the account in, the AJAX save is redirected and stores nothing, the com_users `profile.save` the script falls back to stores the new password and clears the reset flag
+9. **Profile** — AJAX profile save (name, email, password); a required User - Profile field with a stored value: a name/email-only save is accepted and keeps the value, a rendered and emptied or missing field is refused; an account with `requireReset = 1`: the AJAX login is redirected to the profile edit form and signs the account in, the AJAX save is redirected and stores nothing, the com_users `profile.save` the script falls back to stores the new password and clears the reset flag
 10. **htaccess Check** — behaviour test: places `.htaccess` fixtures in the Joomla root, installs the real package through the Joomla CLI and checks the installer warnings (README rules and Joomla's `htaccess.txt` → no warning; missing exception → warning)
 11. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 12. **Uninstall** — clean removal from database and filesystem

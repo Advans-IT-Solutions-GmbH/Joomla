@@ -915,6 +915,91 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     }
 
     /**
+     * Field groups of the profile form whose fields are always validated, even
+     * when the submitted form did not render them: custom fields have their own
+     * handling (keepRenderedClears(), omittedFieldNames()), and a consent the
+     * core form asks for must be answered, as with the save of com_users.
+     */
+    private const PROFILE_GROUPS_ALWAYS_VALIDATED = ['com_fields', 'privacyconsent', 'terms'];
+
+    /**
+     * Fields that profile plugins add to the profile form (for example the
+     * group "profile" of the User - Profile plugin) which the request does not
+     * carry and the submitted form did not render.
+     *
+     * Joomla would validate such a field as empty, so a required one would block
+     * a name/email-only save although a value is stored. It is taken out of the
+     * form for the validation instead of being fed its stored value again. The
+     * profile plugins store only the keys of the submitted data (the User -
+     * Profile plugin replaces exactly the posted keys), so the stored value
+     * stays as it is. A field the form rendered is always validated, so an
+     * emptied required field is still refused.
+     *
+     * @param   array     $data      Request data
+     * @param   array     $fields    Fields of the profile form, each ['group' => ..., 'name' => ...]
+     * @param   string[]  $rendered  "group.name" of the plugin fields the submitted form rendered
+     *
+     * @return  array  The omitted fields, each ['group' => ..., 'name' => ...]
+     */
+    public static function omittedPluginFields(array $data, array $fields, array $rendered): array
+    {
+        $omitted = [];
+        $seen    = [];
+
+        foreach ($fields as $field) {
+            $group = (string) ($field['group'] ?? '');
+            $name  = (string) ($field['name'] ?? '');
+            $key   = $group . '.' . $name;
+
+            if ($group === '' || $name === '' || isset($seen[$key])
+                || \in_array(explode('.', $group)[0], self::PROFILE_GROUPS_ALWAYS_VALIDATED, true)
+                || \in_array($key, $rendered, true)
+            ) {
+                continue;
+            }
+
+            $seen[$key] = true;
+            $value      = $data;
+            $present    = true;
+
+            foreach (array_merge(explode('.', $group), [$name]) as $part) {
+                if (!\is_array($value) || !\array_key_exists($part, $value)) {
+                    $present = false;
+                    break;
+                }
+
+                $value = $value[$part];
+            }
+
+            if (!$present) {
+                $omitted[] = ['group' => $group, 'name' => $name];
+            }
+        }
+
+        return $omitted;
+    }
+
+    /**
+     * Group and name of every field of a form.
+     *
+     * @param   Form  $form  The profile form
+     *
+     * @return  array  Each ['group' => ..., 'name' => ...]
+     */
+    private function formFieldList(Form $form): array
+    {
+        $fields = [];
+
+        foreach (array_keys($form->getFieldsets()) as $set) {
+            foreach ($form->getFieldset((string) $set) as $field) {
+                $fields[] = ['group' => (string) $field->group, 'name' => (string) $field->fieldname];
+            }
+        }
+
+        return $fields;
+    }
+
+    /**
      * The names of the custom fields of the user.
      *
      * @param   object  $user  The signed-in user
@@ -1523,6 +1608,11 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $rendered = $input->post->get('profile_rendered_fields', [], 'array');
             $rendered = \is_array($rendered) ? array_values(array_filter($rendered, 'is_string')) : [];
 
+            // The same for the fields of profile plugins ("group.name"): a field
+            // the form rendered is validated, one it never showed is left out.
+            $renderedPlugin = $input->post->get('profile_rendered_plugin_fields', [], 'array');
+            $renderedPlugin = \is_array($renderedPlugin) ? array_values(array_filter($renderedPlugin, 'is_string')) : [];
+
             // Template overrides that post jform[email] or plain field names
             // keep working, as with the former handler.
             if (!isset($data['email1']) && isset($data['email'])) {
@@ -1585,6 +1675,12 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             // required one cannot block the save and its stored value stays.
             foreach (self::omittedFieldNames($data, $this->userFieldNames($user)) as $omittedName) {
                 $form->removeField($omittedName, 'com_fields');
+            }
+
+            // Likewise for the fields of profile plugins (User - Profile and
+            // others): an omitted one keeps its stored value.
+            foreach (self::omittedPluginFields($data, $this->formFieldList($form), $renderedPlugin) as $omittedField) {
+                $form->removeField($omittedField['name'], $omittedField['group']);
             }
 
             $data['id'] = $userId;

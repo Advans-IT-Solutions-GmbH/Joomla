@@ -7,6 +7,8 @@
  * - Real HTTP: unauthenticated save → rejected, no-token → rejected
  * - Real HTTP: a signed-in save goes through the profile form of com_users
  *   (password rules, name filter, password taken unchanged)
+ * - Real HTTP: a required User - Profile field with a stored value does not
+ *   block a name/email-only save, a rendered and emptied one is refused
  * - Real HTTP: under a forced password reset the AJAX login and the AJAX save
  *   are redirected (the save stores nothing), the com_users profile save the
  *   script falls back to works
@@ -139,6 +141,124 @@ class ProfileTest
         $this->test('A request without custom fields omits them all', $bare === ['hidden']);
         $none = $class::omittedFieldNames(['name' => 'C'], []);
         $this->test('No custom fields omit nothing', $none === []);
+
+        // Fields of profile plugins (group "profile" of User - Profile and others).
+        $fields = [
+            ['group' => '', 'name' => 'name'],
+            ['group' => 'profile', 'name' => 'address1'],
+            ['group' => 'profile', 'name' => 'city'],
+            ['group' => 'profile', 'name' => 'phone'],
+            ['group' => 'params', 'name' => 'editor'],
+            ['group' => 'com_fields', 'name' => 'custom'],
+            ['group' => 'privacyconsent', 'name' => 'privacy'],
+            ['group' => 'terms', 'name' => 'terms'],
+        ];
+        $plugin = $class::omittedPluginFields(['name' => 'D', 'profile' => ['city' => 'Basel']], $fields, ['profile.phone']);
+        $this->test(
+            'Only plugin fields the request does not carry and the form did not render are omitted',
+            $plugin === [['group' => 'profile', 'name' => 'address1'], ['group' => 'params', 'name' => 'editor']],
+            json_encode($plugin)
+        );
+        $empty = $class::omittedPluginFields(['profile' => ['address1' => '']], [['group' => 'profile', 'name' => 'address1']], []);
+        $this->test('A plugin field the request carries empty is validated, not omitted', $empty === []);
+    }
+
+    /**
+     * A required field of the User - Profile plugin with a stored value does not
+     * block a name/email-only save and keeps its value, while a rendered and
+     * emptied one is still refused.
+     */
+    private function testRequiredUserProfileFieldOfAPartialSave(): void
+    {
+        echo "\n--- HTTP: required User - Profile field and a partial profile form ---\n";
+
+        $db   = Factory::getContainer()->get(DatabaseInterface::class);
+        $user = ajaxforms_create_test_user('userprofile');
+        $pass = 'Profile-Passw0rd-2026!';
+        $jar  = (string) tempnam(sys_get_temp_dir(), 'userprofile-cookies-');
+
+        $db->setQuery("SELECT extension_id, enabled, params FROM #__extensions WHERE type = 'plugin' AND folder = 'user' AND element = 'profile'");
+        $plugin = $db->loadObject();
+        $this->test('The core User - Profile plugin is installed', $plugin !== null);
+
+        if ($plugin === null) {
+            ajaxforms_delete_test_user('userprofile');
+
+            return;
+        }
+
+        $stored = function () use ($db, $user): ?string {
+            $db->setQuery(
+                "SELECT profile_value FROM #__user_profiles WHERE profile_key = 'profile.address1' AND user_id = " . (int) $user->id
+            );
+            $value = $db->loadResult();
+
+            return $value === null ? null : (string) json_decode((string) $value);
+        };
+
+        try {
+            $params = json_decode((string) $plugin->params, true) ?: [];
+            $params['profile-require_address1'] = '2';
+            $db->setQuery(
+                'UPDATE #__extensions SET enabled = 1, params = ' . $db->quote(json_encode($params))
+                . ' WHERE extension_id = ' . (int) $plugin->extension_id
+            )->execute();
+
+            $db->setQuery(
+                'UPDATE #__users SET password = ' . $db->quote(\Joomla\CMS\User\UserHelper::hashPassword($pass))
+                . ' WHERE id = ' . (int) $user->id
+            )->execute();
+
+            $consent = (object) [
+                'user_id' => (int) $user->id,
+                'state'   => 1,
+                'created' => Factory::getDate()->toSql(),
+                'subject' => 'PLG_SYSTEM_PRIVACYCONSENT_SUBJECT',
+                'body'    => 'Test consent',
+            ];
+            $db->insertObject('#__privacy_consents', $consent);
+
+            $row = (object) [
+                'user_id'       => (int) $user->id,
+                'profile_key'   => 'profile.address1',
+                'profile_value' => json_encode('Main Street 1'),
+                'ordering'      => 1,
+            ];
+            $db->insertObject('#__user_profiles', $row);
+
+            $token = $this->tokenFrom('/index.php?option=com_users&view=login', $jar);
+            $login = $this->ajax('login', ['username' => $user->username, 'password' => $pass, $token => '1'], $jar);
+            $this->test('Test account signs in', ($login['success'] ?? null) === true, $this->lastAnswer);
+
+            $page  = $this->pageFrom('/index.php?option=com_users&view=profile&layout=edit', $jar);
+            $this->test('The profile edit form carries the required User - Profile field', str_contains($page, 'jform[profile][address1]'));
+            $token = preg_match('/<input[^>]+name="([a-f0-9]{32})"[^>]+value="1"/i', $page, $m) ? $m[1] : '';
+
+            $base = ['name' => 'Partial User', 'username' => $user->username, 'email' => $user->email];
+
+            $partial = $this->ajax('saveProfile', ['jform' => $base, $token => '1'], $jar);
+            $this->test('A name/email-only save is accepted although a required User - Profile field is not rendered', ($partial['success'] ?? null) === true, $this->lastAnswer);
+            $this->test('The stored value of that field is kept', $stored() === 'Main Street 1', var_export($stored(), true));
+
+            $emptied = $this->ajax('saveProfile', ['jform' => $base + ['profile' => ['address1' => '']], $token => '1'], $jar);
+            $this->test('A rendered and emptied required User - Profile field is refused', ($emptied['success'] ?? null) === false, $this->lastAnswer);
+
+            $missing = $this->ajax('saveProfile', ['jform' => $base, 'profile_rendered_plugin_fields' => ['profile.address1'], $token => '1'], $jar);
+            $this->test('A rendered required User - Profile field missing from the request is refused', ($missing['success'] ?? null) === false, $this->lastAnswer);
+            $this->test('The stored value is still kept after the refused saves', $stored() === 'Main Street 1', var_export($stored(), true));
+
+            $changed = $this->ajax('saveProfile', ['jform' => $base + ['profile' => ['address1' => 'New Street 2']], 'profile_rendered_plugin_fields' => ['profile.address1'], $token => '1'], $jar);
+            $this->test('A rendered User - Profile field with a new value is saved', ($changed['success'] ?? null) === true && $stored() === 'New Street 2', $this->lastAnswer);
+        } finally {
+            $db->setQuery(
+                'UPDATE #__extensions SET enabled = ' . (int) $plugin->enabled . ', params = ' . $db->quote((string) $plugin->params)
+                . ' WHERE extension_id = ' . (int) $plugin->extension_id
+            )->execute();
+            $db->setQuery('DELETE FROM #__user_profiles WHERE user_id = ' . (int) $user->id)->execute();
+            $db->setQuery('DELETE FROM #__privacy_consents WHERE user_id = ' . (int) $user->id)->execute();
+            ajaxforms_delete_test_user('userprofile');
+            @unlink($jar);
+        }
     }
     private function testUnauthenticatedRejected(): void
     {
@@ -561,6 +681,7 @@ class ProfileTest
         $this->testNoTokenRejected();
         $this->testSignedInSaveUsesTheCoreProfileForm();
         $this->testForcedResetProfileGoesToComUsers();
+        $this->testRequiredUserProfileFieldOfAPartialSave();
         $this->testLanguageKeys();
 
         echo "\n=== Profile Test Summary ===\n";
