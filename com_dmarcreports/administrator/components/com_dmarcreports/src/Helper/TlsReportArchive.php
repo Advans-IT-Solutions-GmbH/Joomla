@@ -235,7 +235,10 @@ final class TlsReportArchive
      * @param   string      $payload   The raw bytes of the attachment.
      * @param   string      $filename  The attachment file name (used as a hint).
      * @param   array|null  $stats     Optional out-parameter filled with 'reason'
-     *          ('' | 'empty' | 'format' | 'bomb') and 'dropped'.
+     *          ('' | 'empty' | 'format' | 'bomb'), 'dropped' and 'oversized' (zip
+     *          entries skipped for exceeding a size ceiling) and 'discarded' (gzip
+     *          bytes inflated and then thrown away) and 'unpacked' (every byte
+     *          decompressed or read for a document, before any trimming).
      *
      * @return  string[]  A list of JSON document strings (possibly empty).
      *
@@ -247,7 +250,7 @@ final class TlsReportArchive
      */
     public static function extract(string $payload, string $filename = '', ?array &$stats = null): array
     {
-        $stats = ['reason' => '', 'dropped' => 0];
+        $stats = ['reason' => '', 'dropped' => 0, 'oversized' => 0, 'discarded' => 0, 'unpacked' => 0];
 
         if ($payload === '') {
             $stats['reason'] = 'empty';
@@ -288,6 +291,8 @@ final class TlsReportArchive
                 return [];
             }
 
+            $stats['unpacked'] += \strlen($payload);
+
             return [$trimmed];
         }
 
@@ -297,71 +302,34 @@ final class TlsReportArchive
     }
 
     /**
-     * Decompress a gzip member through a bounded read, returning the decoded
-     * JSON or null with a reason recorded in $stats. Mirrors the hardened read
-     * path used for DMARC gzip so a TLS-RPT bomb is stopped at the ceiling.
+     * Decompress a gzip member through a bounded, incremental read, returning
+     * the decoded JSON or null with a reason recorded in $stats. Uses the same
+     * path as DMARC gzip ({@see ReportArchive::inflateGzip()}) so a TLS-RPT
+     * bomb is stopped at the ceiling and every inflated byte is counted.
      *
      * @param   array  $stats  Diagnostics out-parameter shared with extract().
      */
     private static function gunzip(string $payload, array &$stats): ?string
     {
-        if (!\function_exists('gzdecode')) {
+        if (!\function_exists('inflate_init')) {
             throw new DecoderUnavailableException(
                 'The PHP zlib extension is required to read gzip-compressed TLS-RPT reports.'
             );
         }
 
-        $stream = fopen('php://temp', 'r+b');
+        [$data, $produced, $state] = ReportArchive::inflateGzip($payload, self::MAX_BYTES);
+        $stats['unpacked'] += max($produced, \strlen($payload));
 
-        if ($stream === false) {
-            throw new ArchiveExtractionException(
-                'Unable to open a temporary stream to read a gzip-compressed TLS-RPT report.'
-            );
-        }
-
-        $written = fwrite($stream, $payload);
-
-        if ($written === false || $written < \strlen($payload)) {
-            fclose($stream);
-
-            throw new ArchiveExtractionException(
-                'Unable to buffer a gzip-compressed TLS-RPT report for decompression.'
-            );
-        }
-
-        rewind($stream);
-
-        if (@stream_filter_append($stream, 'zlib.inflate', STREAM_FILTER_READ, ['window' => 31]) === false) {
-            fclose($stream);
-            $stats['reason'] = 'format';
+        if ($state === 'corrupt') {
+            $stats['reason']    = 'format';
+            $stats['discarded'] = \strlen($data);
 
             return null;
         }
 
-        $corrupt = false;
-        set_error_handler(
-            static function () use (&$corrupt): bool {
-                $corrupt = true;
-
-                return true;
-            }
-        );
-
-        try {
-            $data = stream_get_contents($stream, self::MAX_BYTES + 1);
-        } finally {
-            restore_error_handler();
-            fclose($stream);
-        }
-
-        if ($data === false || $corrupt || $data === '') {
-            $stats['reason'] = 'format';
-
-            return null;
-        }
-
-        if (\strlen($data) > self::MAX_BYTES) {
-            $stats['reason'] = 'bomb';
+        if ($state === 'bomb') {
+            $stats['reason']    = 'bomb';
+            $stats['discarded'] = \strlen($data);
 
             return null;
         }
@@ -369,7 +337,9 @@ final class TlsReportArchive
         $data = ltrim($data, "\xEF\xBB\xBF");
 
         if (ltrim($data) === '' || ltrim($data)[0] !== '{') {
-            $stats['reason'] = 'format';
+            // Inflated but not JSON: thrown away, yet the work still counts.
+            $stats['reason']    = 'format';
+            $stats['discarded'] = \strlen($data);
 
             return null;
         }
@@ -428,7 +398,7 @@ final class TlsReportArchive
 
             for ($i = 0; $i < $zip->numFiles; $i++) {
                 if (\count($documents) >= self::MAX_DOCUMENTS) {
-                    $stats['dropped'] += self::countRemainingJson($zip, $i);
+                    $stats['dropped'] += self::countRemainingJson($zip, $i, $stats);
 
                     break;
                 }
@@ -445,18 +415,21 @@ final class TlsReportArchive
 
                 if ((int) $entry['size'] > self::MAX_BYTES) {
                     $sizeLimited = true;
+                    $stats['oversized']++;
 
                     continue;
                 }
 
                 if ($total + (int) $entry['size'] > self::MAX_TOTAL_BYTES) {
                     $sizeLimited = true;
+                    $stats['oversized']++;
 
                     continue;
                 }
 
                 $total  += (int) $entry['size'];
                 $content = $zip->getFromIndex($i);
+                $stats['unpacked'] += \is_string($content) ? \strlen($content) : 0;
 
                 if (\is_string($content) && ltrim($content) !== '') {
                     $documents[] = ltrim($content, "\xEF\xBB\xBF");
@@ -478,8 +451,11 @@ final class TlsReportArchive
     /**
      * Count the JSON entries from index $from onward that would be extractable,
      * used to report how many reports were dropped once the document cap hits.
+     * Oversized entries are added to $stats['oversized'] instead.
+     *
+     * @param   array  $stats  Diagnostics out-parameter shared with extract().
      */
-    private static function countRemainingJson(\ZipArchive $zip, int $from): int
+    private static function countRemainingJson(\ZipArchive $zip, int $from, array &$stats): int
     {
         $dropped = 0;
 
@@ -496,7 +472,16 @@ final class TlsReportArchive
 
             $size = (int) $entry['size'];
 
-            if ($size <= 0 || $size > self::MAX_BYTES) {
+            if ($size > self::MAX_BYTES) {
+                // An oversized entry behind the cap is still counted, so the
+                // mailbox path holds the message instead of importing only
+                // the reports in front of it.
+                $stats['oversized']++;
+
+                continue;
+            }
+
+            if ($size <= 0) {
                 continue;
             }
 

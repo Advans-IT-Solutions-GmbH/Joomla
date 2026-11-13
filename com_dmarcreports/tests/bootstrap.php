@@ -21,6 +21,7 @@ require_once $helperDir . '/TlsReportArchive.php';
 require_once $helperDir . '/MimeMessage.php';
 require_once $helperDir . '/ImapException.php';
 require_once $helperDir . '/ImapClient.php';
+require_once $helperDir . '/IngestLimits.php';
 require_once $helperDir . '/DnsResolverInterface.php';
 require_once $helperDir . '/DnsDiagnostics.php';
 require_once $helperDir . '/ActionCenter.php';
@@ -34,6 +35,7 @@ require_once $helperDir . '/MtaStsPolicy.php';
 require_once $helperDir . '/MtaStsDiagnostics.php';
 require_once $helperDir . '/TlsRptParser.php';
 require_once $helperDir . '/DecimalTotal.php';
+require_once $helperDir . '/ActionStatus.php';
 
 // SourcePoller lives in the Service namespace. It is a final class with no
 // parent, so requiring the file only defines the class; its Joomla-dependent

@@ -106,7 +106,7 @@ $canEdit   = Factory::getApplication()->getIdentity()->authorise('core.edit', 'c
         <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" enctype="multipart/form-data" class="row g-2 align-items-center">
             <div class="col-auto">
                 <label for="dmarc-report-file" class="visually-hidden"><?php echo Text::_('COM_DMARCREPORTS_UPLOAD_FILE_LABEL'); ?></label>
-                <input type="file" id="dmarc-report-file" name="report_file" class="form-control" accept=".xml,.gz,.zip" required>
+                <input type="file" id="dmarc-report-file" name="report_file" class="form-control" accept=".xml,.gz,.zip,.json" required>
             </div>
             <div class="col-auto">
                 <button type="submit" class="btn btn-success">

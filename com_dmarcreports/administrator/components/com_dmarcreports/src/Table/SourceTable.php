@@ -10,6 +10,7 @@
 namespace Advans\Component\DmarcReports\Administrator\Table;
 
 use Advans\Component\DmarcReports\Administrator\Helper\DomainLock;
+use Advans\Component\DmarcReports\Administrator\Helper\SourceIdentity;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Table\Table;
 use Joomla\Database\DatabaseDriver;
@@ -24,6 +25,15 @@ defined('_JEXEC') or die;
  */
 class SourceTable extends Table
 {
+    /**
+     * Credential snapshot the next store() must still find, or null. Private
+     * and with a leading underscore, so neither the database driver nor
+     * getProperties() treats it as a column.
+     *
+     * @var  array<string, mixed>|null
+     */
+    private ?array $_credentialSnapshot = null;
+
     public function __construct(DatabaseDriver $db)
     {
         parent::__construct('#__dmarc_sources', 'id', $db);
@@ -89,6 +99,10 @@ class SourceTable extends Table
      */
     public function store($updateNulls = false)
     {
+        // Taken once: a later store() of the same instance is not guarded.
+        $guard                    = $this->_credentialSnapshot;
+        $this->_credentialSnapshot = null;
+
         $newDomainId = (int) $this->domain_id;
         $oldDomainId = $this->currentDomainId();
 
@@ -105,7 +119,7 @@ class SourceTable extends Table
             $parentIds[$oldDomainId] = true;
         }
 
-        if ($parentIds === []) {
+        if ($parentIds === [] && $guard === null) {
             return parent::store($updateNulls);
         }
 
@@ -137,6 +151,18 @@ class SourceTable extends Table
             // still return true and silently drop the change.
             if ((int) $this->id > 0 && !$this->rowExists((int) $this->id)) {
                 $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_DELETED'));
+                $db->transactionRollback();
+
+                return false;
+            }
+
+            // A save that keeps the stored password: lock the row (after the
+            // parent domains, the order the delete cascade uses) and re-read
+            // target and ciphertext with that locking read. If a concurrent
+            // save changed either since the snapshot, refuse, so one server's
+            // password is never written next to another server's target.
+            if ($guard !== null && !$this->credentialStillMatches($guard)) {
+                $this->setError(Text::_('COM_DMARCREPORTS_SOURCE_ERROR_PASSWORD_REENTER'));
                 $db->transactionRollback();
 
                 return false;
@@ -182,6 +208,49 @@ class SourceTable extends Table
         $value = $db->setQuery($query)->loadResult();
 
         return $value === null ? 0 : (int) $value;
+    }
+
+    /**
+     * Require that target and stored ciphertext are still those of the given
+     * snapshot when this row is written. Used by a save that keeps the stored
+     * password (blank password field).
+     *
+     * @param   array<string, mixed>  $snapshot  Credential target fields and password_enc.
+     */
+    public function requireUnchangedCredential(array $snapshot): void
+    {
+        $this->_credentialSnapshot = $snapshot;
+    }
+
+    /**
+     * Lock this source row and compare its current credential with the
+     * snapshot. The locking read returns the latest committed row version, not
+     * an older read view of the transaction. A missing row does not match.
+     *
+     * @param   array<string, mixed>  $snapshot
+     */
+    private function credentialStillMatches(array $snapshot): bool
+    {
+        $id = (int) $this->id;
+
+        if ($id <= 0) {
+            return false;
+        }
+
+        $db      = $this->getDatabase();
+        $columns = array_map(
+            static fn (string $column): string => $db->quoteName($column),
+            array_merge(SourceIdentity::CREDENTIAL_TARGET_FIELDS, ['password_enc'])
+        );
+
+        $sql = 'SELECT ' . implode(', ', $columns)
+            . ' FROM ' . $db->quoteName('#__dmarc_sources')
+            . ' WHERE ' . $db->quoteName('id') . ' = ' . $id
+            . ' FOR UPDATE';
+
+        $row = $db->setQuery($sql)->loadAssoc();
+
+        return \is_array($row) && SourceIdentity::sameCredential($snapshot, $row);
     }
 
     /**

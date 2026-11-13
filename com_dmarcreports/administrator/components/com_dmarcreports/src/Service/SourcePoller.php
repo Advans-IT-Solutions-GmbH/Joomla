@@ -13,6 +13,7 @@ use Advans\Component\DmarcReports\Administrator\Helper\CryptoHelper;
 use Advans\Component\DmarcReports\Administrator\Helper\DomainRegistry;
 use Advans\Component\DmarcReports\Administrator\Helper\ImapClient;
 use Advans\Component\DmarcReports\Administrator\Helper\ImapException;
+use Advans\Component\DmarcReports\Administrator\Helper\IngestLimits;
 use Advans\Component\DmarcReports\Administrator\Helper\Ingestor;
 use Advans\Component\DmarcReports\Administrator\Helper\ReportArchive;
 use Advans\Component\DmarcReports\Administrator\Helper\SourceIdentity;
@@ -66,6 +67,20 @@ final class SourcePoller
      * import and the scheduler task avoid double-processing the same messages.
      */
     public const STATUS_SKIPPED = 'skipped';
+
+    /**
+     * Outcome of a poll: at least one message exceeded a per-message ingestion
+     * limit. Nothing from it was stored; it was left unread and flagged in the
+     * mailbox for manual review and is named in the run message and the log.
+     *
+     * @since  1.2.0
+     */
+    public const STATUS_HELD = 'held';
+
+    /**
+     * Largest length of the stored run message (`last_message` column).
+     */
+    private const MAX_MESSAGE_LENGTH = 1024;
 
     private DatabaseInterface $db;
 
@@ -172,6 +187,11 @@ final class SourcePoller
             $ingestor = new Ingestor($this->db, $allowAutoCreate);
             $summary  = $ingestor->newSummary();
 
+            // Per-message and per-run ceilings against a flood of injected
+            // reports on the public reporting address. One limits object per
+            // poll carries this run's budget.
+            $ingestor->setLimits(IngestLimits::fromOptions(fn (string $key): mixed => $this->getConfig($key, null)));
+
             // Capture the mailbox identity this poll reads from, so the cursor
             // write below can detect a source edit that re-pointed the source at
             // a different mailbox mid-poll and refuse to persist a stale cursor.
@@ -205,6 +225,18 @@ final class SourcePoller
             if ($blocked > 0) {
                 $status   = self::STATUS_BLOCKED;
                 $message .= ' ' . Text::sprintf('COM_DMARCREPORTS_INGEST_BLOCKED', $blocked);
+            }
+
+            $held = (int) ($summary['held'] ?? 0);
+
+            if ($held > 0) {
+                $status   = $status === self::STATUS_OK ? self::STATUS_HELD : $status;
+                $uids     = array_map('intval', (array) ($summary['held_uids'] ?? []));
+                $message .= ' ' . Text::sprintf('COM_DMARCREPORTS_INGEST_HELD', $held, implode(', ', $uids));
+            }
+
+            if ((int) ($summary['postponed'] ?? 0) > 0) {
+                $message .= ' ' . Text::_('COM_DMARCREPORTS_INGEST_POSTPONED');
             }
 
             $this->recordRun(
@@ -329,7 +361,11 @@ final class SourcePoller
             'id'           => $sourceId,
             'last_run'     => Factory::getDate()->toSql(),
             'last_status'  => $status,
-            'last_message' => $message,
+            // Several notes can be appended to one run message; keep it within
+            // the column so a long message can never fail the cursor write.
+            'last_message' => \function_exists('mb_substr')
+                ? mb_substr($message, 0, self::MAX_MESSAGE_LENGTH)
+                : substr($message, 0, self::MAX_MESSAGE_LENGTH),
         ];
 
         // The error path passes a null cursor so a failed run keeps the previous
@@ -499,15 +535,14 @@ final class SourcePoller
     }
 
     /**
-     * Serialise a UID retry list to an ascending, de-duplicated CSV for storage.
+     * Serialise a UID retry list to a de-duplicated CSV for storage. The order
+     * is kept: the IMAP client stores the retry set in round-robin order, so
+     * the next run continues where this one stopped.
      *
      * @param   int[]  $ids
      */
     private function formatUidList(array $ids): string
     {
-        $ids = array_values(array_unique(array_map('intval', $ids)));
-        sort($ids);
-
-        return implode(',', $ids);
+        return implode(',', array_values(array_unique(array_map('intval', $ids))));
     }
 }

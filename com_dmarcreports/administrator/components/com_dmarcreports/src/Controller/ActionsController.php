@@ -9,6 +9,7 @@
 
 namespace Advans\Component\DmarcReports\Administrator\Controller;
 
+use Advans\Component\DmarcReports\Administrator\Helper\ActionStatus;
 use Advans\Component\DmarcReports\Administrator\Helper\DomainLock;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
@@ -46,7 +47,7 @@ class ActionsController extends BaseController
 
     public function snooze()
     {
-        $days = max(1, (int) Factory::getApplication()->getInput()->getInt('days', 7));
+        $days = ActionStatus::snoozeDays((int) Factory::getApplication()->getInput()->getInt('days', 7));
 
         return $this->setStatus('snoozed', $days);
     }

@@ -97,6 +97,11 @@ class ConfigFormsTest
             'reject_pass_threshold'     => '99',
             'imap_timeout'              => '20',
             'max_messages_per_run'      => '200',
+            'max_reports_per_run'         => '1000',
+            'max_run_unpacked_mb'         => '256',
+            'max_attachments_per_message' => '10',
+            'max_reports_per_message'     => '20',
+            'max_message_unpacked_mb'     => '32',
             'csv_delimiter'             => 'semicolon',
             'dns_diagnostics'           => '0',
         ];
@@ -108,6 +113,10 @@ class ConfigFormsTest
             'quarantine_pass_threshold with decimals ("50.5")'  => ['quarantine_pass_threshold' => '50.5'],
             'quarantine_pass_threshold in exponent form ("1e2")' => ['quarantine_pass_threshold' => '1e2'],
             'default_policy_target with an invalid option'      => ['default_policy_target' => 'bogus'],
+            'max_reports_per_message below the minimum (0)'     => ['max_reports_per_message' => '0'],
+            'max_reports_per_message above the maximum (257)'   => ['max_reports_per_message' => '257'],
+            'max_message_unpacked_mb below the minimum (7)'     => ['max_message_unpacked_mb' => '7'],
+            'max_run_unpacked_mb non-numeric ("abc")'          => ['max_run_unpacked_mb' => 'abc'],
         ] as $label => $override) {
             $res = $this->saveConfig($configTask, $extensionId, array_merge($validConfig, $override));
             $this->test("Options save rejects {$label} and preserves the stored params", function () use ($res, $paramsSnapshot) {
@@ -221,6 +230,51 @@ class ConfigFormsTest
         $this->test('Save writes a new source row', function () use ($validSource) {
             return $this->sourceCount($validSource) === 1;
         });
+
+        // The stored password must not follow the source to another server: a
+        // user who may edit sources but does not know the password could
+        // otherwise receive it at the next LOGIN. A folder change keeps it.
+        $before = $this->sourceRow($validSource);
+
+        if ($before !== null) {
+            $edit        = $this->request($this->baseUrl . '/administrator/index.php?option=com_dmarcreports&task=source.edit&id=' . $before['id'], [], true);
+            $this->token = $this->extractToken($edit['body']) ?: $this->token;
+            $moved       = $this->saveSource([
+                'id'       => (string) $before['id'],
+                'name'     => $validSource,
+                'host'     => 'imap.other.example',
+                'password' => '',
+            ]);
+            $afterMove = $this->sourceRow($validSource);
+
+            $this->test('Moving a source to another server without its password is refused', function () use ($moved, $before, $afterMove) {
+                return $this->containsString($moved['body'], 'COM_DMARCREPORTS_SOURCE_ERROR_PASSWORD_REENTER')
+                    && $afterMove !== null
+                    && $afterMove['host'] === $before['host']
+                    && $afterMove['secret'] === $before['secret'];
+            });
+
+            $edit        = $this->request($this->baseUrl . '/administrator/index.php?option=com_dmarcreports&task=source.edit&id=' . $before['id'], [], true);
+            $this->token = $this->extractToken($edit['body']) ?: $this->token;
+            $this->saveSource([
+                'id'       => (string) $before['id'],
+                'name'     => $validSource,
+                'folder'   => 'Archive',
+                'password' => '',
+            ]);
+            $afterFolder = $this->sourceRow($validSource);
+
+            $this->test('A folder change with a blank password keeps the stored password', function () use ($before, $afterFolder) {
+                return $afterFolder !== null
+                    && $afterFolder['folder'] === 'Archive'
+                    && $afterFolder['secret'] === $before['secret']
+                    && $before['secret'] !== '';
+            });
+
+            $this->testOverlappingSourceSaves($before['id'], $validSource);
+        } else {
+            $this->test('Saved source row can be read back', static fn () => false);
+        }
 
         // Server-side port bounds: 0, 70000 and "abc" must all be rejected with
         // the localized message and must never create a row (K-E5c). The decimal
@@ -447,6 +501,12 @@ class ConfigFormsTest
     {
         $post = ['option' => 'com_dmarcreports', 'task' => $task];
 
+        // FormController::save() takes the record id from the request (the edit
+        // form posts it in its action URL), not from jform[id].
+        if ((int) ($jform['id'] ?? 0) > 0) {
+            $post['id'] = (string) (int) $jform['id'];
+        }
+
         foreach ($jform as $key => $value) {
             $post["jform[{$key}]"] = $value;
         }
@@ -474,6 +534,108 @@ class ConfigFormsTest
         $row     = $result ? $result->fetch_assoc() : null;
 
         return $row ? (int) $row['c'] : 0;
+    }
+
+    /**
+     * A blank-password save that overlaps a save of another target and password
+     * must not pair the other password with its own target. The test holds the
+     * source row locked from a second connection while the HTTP save runs, then
+     * commits the other save and releases the lock. The HTTP save must then be
+     * refused and the committed pair must stay intact.
+     */
+    private function testOverlappingSourceSaves(int $id, string $name): void
+    {
+        $config = new JConfig();
+        $other  = new mysqli($config->host, $config->user, $config->password, $config->db);
+        $table  = "{$this->dbPrefix}dmarc_sources";
+
+        $edit        = $this->request($this->baseUrl . '/administrator/index.php?option=com_dmarcreports&task=source.edit&id=' . $id, [], true);
+        $this->token = $this->extractToken($edit['body']) ?: $this->token;
+
+        $post = ['option' => 'com_dmarcreports', 'task' => 'source.save', 'id' => (string) $id];
+        foreach ([
+            'id' => (string) $id, 'name' => $name, 'domain_id' => '0', 'delete_after_import' => '0',
+            'protocol' => 'imap', 'host' => 'imap.example.org', 'port' => '993', 'security' => 'ssl',
+            'username' => 'ci@example.org', 'password' => '', 'folder' => 'Archive', 'published' => '1',
+        ] as $key => $value) {
+            $post["jform[{$key}]"] = $value;
+        }
+        if ($this->token !== null) {
+            $post[$this->token] = '1';
+        }
+
+        $other->begin_transaction();
+        $other->query("SELECT id FROM {$table} WHERE id = {$id} FOR UPDATE");
+
+        $ch = curl_init($this->baseUrl . '/administrator/index.php');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT        => 90,
+            CURLOPT_COOKIEJAR      => $this->cookieJar,
+            CURLOPT_COOKIEFILE     => $this->cookieJar,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => http_build_query($post),
+        ]);
+        $multi = curl_multi_init();
+        curl_multi_add_handle($multi, $ch);
+
+        $running  = 0;
+        $deadline = microtime(true) + 4;
+        do {
+            curl_multi_exec($multi, $running);
+            curl_multi_select($multi, 0.2);
+        } while ($running > 0 && microtime(true) < $deadline);
+
+        $waited = $running > 0;
+
+        // The other save commits another target with another password.
+        $other->query("UPDATE {$table} SET host = 'imap.other.example', password_enc = 'concurrent-other' WHERE id = {$id}");
+        $other->commit();
+        $other->close();
+
+        do {
+            curl_multi_exec($multi, $running);
+            curl_multi_select($multi, 0.2);
+        } while ($running > 0);
+
+        $body = (string) curl_multi_getcontent($ch);
+        curl_multi_remove_handle($multi, $ch);
+        curl_multi_close($multi);
+        curl_close($ch);
+
+        $after = $this->sourceRow($name);
+
+        $this->test('A blank-password save waits while the source row is locked', static fn () => $waited);
+        $this->test('An overlapping save of another target and password is not paired with the old target', function () use ($body, $after) {
+            return $this->containsString($body, 'COM_DMARCREPORTS_SOURCE_ERROR_PASSWORD_REENTER')
+                && $after !== null
+                && $after['host'] === 'imap.other.example'
+                && $after['secret'] === hash('sha256', 'concurrent-other');
+        });
+    }
+
+    /**
+     * The id, host, folder and a digest of the stored credential of a source.
+     * Only the digest is read, so the test never handles the ciphertext itself.
+     *
+     * @return array{id:int, host:string, folder:string, secret:string}|null
+     */
+    private function sourceRow(string $name): ?array
+    {
+        $escaped = $this->db->real_escape_string($name);
+        $result  = $this->db->query(
+            "SELECT id, host, folder, IF(password_enc = '', '', SHA2(password_enc, 256)) AS secret"
+            . " FROM {$this->dbPrefix}dmarc_sources WHERE name = '{$escaped}' LIMIT 1"
+        );
+        $row = $result ? $result->fetch_assoc() : null;
+
+        return $row ? [
+            'id'     => (int) $row['id'],
+            'host'   => (string) $row['host'],
+            'folder' => (string) $row['folder'],
+            'secret' => (string) $row['secret'],
+        ] : null;
     }
 
     private function domainId(string $domain): int

@@ -50,6 +50,41 @@ class TlsReportArchiveTest extends TestCase
         $this->assertTrue(TlsReportArchive::looksLikeTlsRpt(gzencode(self::JSON), 'report'));
     }
 
+    public function testGzipWithABadChecksumCountsTheInflatedBytes(): void
+    {
+        if (!\function_exists('gzencode')) {
+            $this->markTestSkipped('zlib extension not available');
+        }
+
+        $body    = '{"x":"' . str_repeat('A', 300000) . '"}';
+        $payload = gzencode($body);
+        $at      = \strlen($payload) - 8;
+        $payload[$at] = \chr(\ord($payload[$at]) ^ 0xFF);
+
+        $this->assertSame([], TlsReportArchive::extract($payload, 'crc.json.gz', $stats));
+        $this->assertSame('format', $stats['reason']);
+        $this->assertGreaterThanOrEqual(\strlen($body), $stats['unpacked']);
+    }
+
+    public function testRejectedGzipReportsTheDiscardedBytes(): void
+    {
+        if (!\function_exists('gzencode')) {
+            $this->markTestSkipped('zlib extension not available');
+        }
+
+        // Over the 8 MiB ceiling: the read stops one byte past it and the
+        // inflated bytes are reported so the caller can charge them.
+        TlsReportArchive::extract(gzencode('{"x":"' . str_repeat('A', 9437184) . '"}'), 'bomb.json.gz', $stats);
+        $this->assertSame('bomb', $stats['reason']);
+        $this->assertSame(8388609, $stats['discarded']);
+
+        // Inflated but not JSON: thrown away as the wrong format, still counted.
+        $body = str_repeat('x', 4096);
+        TlsReportArchive::extract(gzencode($body), 'report.json.gz', $stats);
+        $this->assertSame('format', $stats['reason']);
+        $this->assertSame(\strlen($body), $stats['discarded']);
+    }
+
     /**
      * A highly compressible gzip member that begins with a JSON object must be
      * classified by inspecting only a bounded prefix, never by inflating the

@@ -24,7 +24,7 @@ Beyond showing the numbers, the component includes an **Action Center** that rea
 
 - Multi-domain, multi-tenant: monitor several domains, each with its own report source
 - On-demand IMAP ingestion (host, port, SSL/TLS, folder) with the password encrypted at rest; optional scheduled ingestion through the companion task plugin
-- Manual upload of `.xml`, `.gz` and `.zip` aggregate reports as an alternative input
+- Manual upload of DMARC aggregate reports (`.xml`, `.gz`, `.zip`) and TLS-RPT reports (`.json`, `.json.gz`, `.zip`) as an alternative input
 - RFC 8460 TLS-RPT JSON ingestion through the same mailbox/upload pipeline, including gzip and ZIP containers; TLS results are stored separately from DMARC reports
 - MTA-STS policy and DNS-record generation, with optional policy hosting through the companion system plugin
 - Native RFC 7489 aggregate-report XML parser (no external tools)
@@ -53,7 +53,7 @@ The component resolves the database through `DatabaseInterface`. Queries use `cr
 
 ## Installation
 
-**Availability:** No component release or `dmarcreports-v*` tag has been published yet. Build from source for now. The component is individually buildable; the [DMARC Reports package](../pkg_dmarcreports) bundles it with the module and both plugins for a single installation and update channel.
+**Availability:** Component releases are published as `dmarcreports-v*` GitHub releases (latest only). The component is also individually buildable; the [DMARC Reports package](../pkg_dmarcreports) bundles it with the module and both plugins for a single installation and update channel.
 
 From a repository checkout with Bash, rsync and zip available, run `cd com_dmarcreports` followed by `./build.sh`.
 
@@ -81,6 +81,11 @@ Open **Components → DMARC Reports**, then **Options** (top right) to set the d
 | Reject pass threshold | `99` | Aligned-pass rate (%) at which moving to `p=reject` is suggested |
 | IMAP timeout | `20` | Seconds to wait for the mailbox connection |
 | Max messages per run | `200` | Upper bound of messages fetched per ingestion run |
+| Max reports per run (`max_reports_per_run`) | `1000` | Reports stored from one mailbox per run (50–20000). Further messages stay untouched and are imported by the next run |
+| Max unpacked size per run (`max_run_unpacked_mb`) | `256` | MiB of unpacked reports processed from one mailbox per run (16–2048). Further messages stay untouched and are imported by the next run |
+| Max report attachments per message (`max_attachments_per_message`) | `10` | A message with more report attachments is held for review (1–100) |
+| Max reports per message (`max_reports_per_message`) | `20` | Reports in one message, counting every report inside its archives. A message with more is held for review (1–256) |
+| Max unpacked size per message (`max_message_unpacked_mb`) | `32` | MiB of unpacked reports in one message. A message over it, or with one report over 8 MiB, is held for review (8–256) |
 | Create unknown domains automatically (`auto_create_unknown_domains`) | `Off` | Lets an import create a domain that a report names but that is not yet listed. Such a domain is always created **unpublished**: anyone can send a report, so it is neither monitored nor served an MTA-STS policy until an administrator reviews and publishes it. Applies to the manual upload, the mailbox fetch (both also need `core.create`) and the scheduled task (which also needs *Allow automatic domain creation from scheduler tasks* and its own task parameter). While off, reports for unknown domains are skipped. |
 | DNS diagnostics | `Off` | Enables live DNS checks in domain detail/System Check; separately enabled MTA-STS also checks MX coverage and fetches the hosted policy over HTTPS. Queried names and connection metadata are disclosed as described above; report contents are not sent |
 | Allow automatic domain creation from scheduler tasks (`task_auto_create`) | `Off` | Additional administrator-controlled gate; the general auto-create option and the task's own auto-create parameter must also be on |
@@ -109,6 +114,17 @@ Manual report uploads are limited to **16 MiB**, subject also to PHP/web-server 
 The DMARC parser accepts at most **100000 records** per report. The TLS-RPT parser accepts at most **1000 policies** and **100000 failure details** per report. Malformed reports are rejected, not repaired into successful partial reports. Gzip needs PHP zlib; ZIP needs ZipArchive.
 
 Mailbox timeout defaults to 20 seconds (bounded to 5–120) and the message limit to 200 (bounded to 10–2000) **per source per poll**, not per whole multi-source task. Mailbox/transport failures and locked sources are separate from document parse failures; check source run messages as well as the scheduler result.
+
+#### Mailbox ingestion limits
+
+The reporting address is public, so anyone can send it mail. Besides the raw budget of **128 MiB** per run, every mailbox poll applies the limits from the table above, per source:
+
+- **Per message:** report attachments, reports (including every report inside its archives) and total unpacked size. A message over one of them, with a single document over the 8 MiB document limit, or one the MIME reader cannot read to the end (over 1000 parts or 20 nesting levels) is **held**. Nothing of it is stored, so a message is never half imported. It is not marked read and never deleted, but flagged `\Flagged` in the mailbox for manual review. The cursor moves past it so it cannot block newer reports. The run message names the held UIDs.
+- **Per run:** stored reports and unpacked size. The message that would exceed a run limit is **postponed**: it stays untouched and the next run starts with it. The first message of a run is always admitted, so every run makes progress. Every unpacked byte counts against the run size, measured before normalisation such as cutting a byte order mark, including held messages and gzip data inflated and then discarded (a bomb or a corrupt stream), and once a run limit is spent the following messages are postponed without being unpacked. Reports that wait for a missing PHP extension are retried before new mail, in turn across polls, with at most half the messages, half the raw budget and half of each run limit. Retries and new mail together never exceed the message limit. Retries count against the run limits only up to that half, so whatever a retry unpacks beyond it never reduces the half that new mail keeps, and neither can starve the other. The run limits are raised to at least twice the reports and four times the unpacked size per message, so one message always fits into half a run, even when it has to be unpacked twice.
+- **Log:** every held or postponed message is written to the Joomla log file `com_dmarcreports.php` with source id, UID, the limit and counts. The entry never holds report content, subjects or addresses.
+- **Re-import a held message:** if it is a genuine report, raise the limit, then move the message out of the folder and back (it receives a new UID above the cursor) or upload its attachment manually.
+
+Why these defaults: RFC 7489 (section 7.2.1.1) and RFC 9990 (section 3.5.2) put the aggregate report into one MIME part of the message, and a report covers one policy domain. RFC 7489 names ten megabytes as a commonly observed size limit for a report mail. No published size figures for the largest reports of providers such as Google, Microsoft or Yahoo were found, so the defaults follow the RFC figure and the existing decoder limits: the per-message defaults leave room for several reports and lie above the 8 MiB document and 16 MiB archive limits, so they do not hold a report the decoders would accept. The per-run defaults hold 1000 reports or 256 MiB unpacked, at least four maximal messages, and an over-limit run only delays reports to the next run.
 
 ## Usage
 
@@ -184,7 +200,7 @@ com_dmarcreports/
 ├── updates/
 │   └── update.xml                             # Joomla update server
 └── tests/
-    ├── scripts/                               # Integration test scripts (01–05, 10)
+    ├── scripts/                               # Integration test scripts (01–08, 10)
     ├── Unit/                                   # PHPUnit unit tests
     ├── docker-compose.yml
     ├── docker-compose.joomla6.yml
@@ -210,9 +226,10 @@ Order as in `tests/test.env`:
 6. **Metrics** - The `Metrics` aggregator is driven against a seeded database and returns the expected lifetime totals, rolling-window pass rates, new sources and timeline
 7. **Export** - The CSV export's keyset pagination is driven against a seeded record set and returns every record exactly once, in order, without duplicating or skipping rows as it pages; the snapshot id ceiling excludes rows ingested mid-export; and the export controller keeps its CSRF-token and `core.manage` guards
 8. **Configuration forms** (`config-forms:08-config-forms.php`) - Exercises configuration fields and their validation
-9. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator` and really renders the component pages. It asserts HTTP 200, no PHP error and no Joomla error page, no untranslated language key, and at least one string of the component's own language file on the page
-10. **Installer Messages** - shared suite: removes and reinstalls the component through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
-11. **Uninstall** - Component removal, table drop, verification
+9. **Ingestion limits** (`ingest-limits:09-ingest-limits.php`) - Drives the installed `Ingestor` and `ImapClient` against the database with crafted messages: under and over each per-message limit, many report parts, an archive over the document limit, a gzip and a zip bomb, and a run limit whose postponed message the next run imports. Asserts that held messages store nothing and that the log holds no content or addresses
+10. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator` and really renders the component pages. It asserts HTTP 200, no PHP error and no Joomla error page, no untranslated language key, and at least one string of the component's own language file on the page
+11. **Installer Messages** - shared suite: removes and reinstalls the component through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
+12. **Uninstall** - Component removal, table drop, verification
 
 A separate **PHPUnit (Unit)** job runs the parser, DNS-diagnostics and Action-Center unit tests from `tests/Unit/` without Docker. The database-backed `Metrics` aggregation is covered by the **Metrics** integration suite instead, because it needs a real database.
 
