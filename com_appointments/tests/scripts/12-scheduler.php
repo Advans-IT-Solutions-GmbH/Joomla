@@ -126,6 +126,45 @@ try {
     $check($fixture->row($freshId)['anonymised_utc'] !== null && $fixture->row($id)['anonymised_utc'] === null,
         'Event-type retention override erases the older completed booking, never a future booking');
 
+    // Close: a booking whose transfer is not delivered waits, at most 30 days after its own
+    // retention (here the event type's 200 days); a delivered one and an overdue one are erased,
+    // and the overdue one is recorded for the dashboard warning.
+    $closeCase = static function (int $daysAgo, ?string $state) use ($fixture, $event, $day, $db, $prefix): int {
+        $id = (int) $fixture->booking($event, $day . ' 15:30:00')['booking']['id'];
+        $start = gmdate('Y-m-d H:i:s', time() - $daysAgo * 86400);
+        $end = gmdate('Y-m-d H:i:s', time() - $daysAgo * 86400 + 1200);
+        $db->query("UPDATE {$prefix}appointments_bookings SET start_utc='{$start}',end_utc='{$end}' WHERE id={$id}");
+        $db->query("DELETE FROM {$prefix}appointments_close_delivery WHERE booking_id={$id}");
+        if ($state !== null) {
+            $db->query("INSERT INTO {$prefix}appointments_close_delivery (booking_id,profile,uid,target_sequence,state,mac)"
+                . " VALUES ({$id},'test','" . str_repeat('a', 64) . "',0,'{$state}','" . str_repeat('0', 64) . "')");
+        }
+        return $id;
+    };
+    $waiting = $closeCase(210, 'pending');
+    $overdue = $closeCase(240, 'retry');
+    $delivered = $closeCase(210, 'done');
+    $run('retention');
+    $check($fixture->row($waiting)['anonymised_utc'] === null && $fixture->row($delivered)['anonymised_utc'] !== null
+        && $fixture->row($overdue)['anonymised_utc'] !== null,
+        'Retention waits for a pending Close transfer, at most 30 days longer, and erases a delivered booking on time');
+    $check((int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_close_missed WHERE booking_id={$overdue}")->fetch_assoc()['n'] === 1
+        && (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_close_missed WHERE booking_id IN ({$waiting},{$delivered})")->fetch_assoc()['n'] === 0,
+        'Only the booking erased without reaching Close is recorded for the dashboard warning');
+    $dashboardCode = 'require "/var/www/html/tests/scripts/appointments-joomla.php";'
+        . ' echo "@@CLOSEWAIT@@" . json_encode((new \Advans\Component\Appointments\Administrator\Service\SchedulerService($joomlaDb,'
+        . ' new \Joomla\Registry\Registry(["retention_days" => 365])))->closeWaiting(new DateTimeImmutable("now", new DateTimeZone("UTC"))));';
+    exec('cd /var/www/html && php -r ' . escapeshellarg($dashboardCode) . ' 2>&1', $dashboardOutput);
+    $dashboardText = implode("\n", $dashboardOutput);
+    $waitingState = json_decode((string) substr($dashboardText, (int) strrpos($dashboardText, '@@CLOSEWAIT@@') + 13), true) ?: [];
+    $check(($waitingState['waiting'] ?? 0) >= 1 && ($waitingState['missed'] ?? 0) >= 1 && ($waitingState['first_forced'] ?? null) !== null,
+        'The dashboard data counts the waiting and the missed bookings and names the forced erasure day');
+    $db->query("UPDATE {$prefix}appointments_close_delivery SET state='done' WHERE booking_id={$waiting}");
+    $run('retention');
+    $check($fixture->row($waiting)['anonymised_utc'] !== null, 'Once delivered, the waiting booking is erased at the next run');
+    $db->query("DELETE FROM {$prefix}appointments_close_delivery WHERE booking_id IN ({$waiting},{$overdue},{$delivered})");
+    $db->query("DELETE FROM {$prefix}appointments_close_missed WHERE booking_id IN ({$waiting},{$overdue},{$delivered})");
+
     foreach (['old' => '-4 years', 'current' => '-1 year'] as $key => $period) {
         $time = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify($period)->format('Y-m-d H:i:s');
         $db->query("INSERT INTO {$prefix}appointments_audit (booking_id,action,path,actor_user_id,occurred_utc) VALUES ({$freshId},'anonymise','admin',{$fixture->host},'{$time}')");

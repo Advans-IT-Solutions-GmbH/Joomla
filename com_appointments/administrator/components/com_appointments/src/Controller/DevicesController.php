@@ -10,6 +10,7 @@
 namespace Advans\Component\Appointments\Administrator\Controller;
 
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
+use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\Team\LockoutService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Language\Text;
@@ -20,9 +21,10 @@ use Joomla\CMS\Session\Session;
 defined('_JEXEC') or die;
 
 /**
- * Internet calendars. Devices of all users: block with clean-up, revoke at once, block a user's
- * calendar access. Every task is a POST with the form token and needs `core.admin`; nothing
- * happens while the internet calendars are switched off.
+ * Internet calendars. Devices of all users: block (by each device's «When removed or blocked»),
+ * revoke at once, block a user's calendar access, change «When removed or blocked». Every task is
+ * a POST with the form token and needs `core.admin`; nothing happens while the internet calendars
+ * are switched off.
  *
  * Work package F.
  *
@@ -31,7 +33,8 @@ defined('_JEXEC') or die;
 class DevicesController extends BaseController
 {
     /**
-     * Block the selected devices: they receive their calendars empty, then none, then 401.
+     * Block the selected devices, each by its «When removed or blocked»: «Clean up» receives the
+     * calendars empty, then none, then 401; «Block only» gets 401 at once.
      */
     public function block(): bool
     {
@@ -80,6 +83,44 @@ class DevicesController extends BaseController
 
             return \count($users);
         }, 'COM_APPOINTMENTS_TEAM_F_DEVICES_USERS_BLOCKED');
+    }
+
+    /**
+     * Set «When removed or blocked» of the selected devices to «Clean up».
+     */
+    public function modeCleanup(): bool
+    {
+        return $this->setRemovalMode(TeamStates::REMOVAL_CLEANUP);
+    }
+
+    /**
+     * Set «When removed or blocked» of the selected devices to «Block only». A device already in
+     * the clean-up is revoked at once and receives no further empty calendar.
+     */
+    public function modeBlock(): bool
+    {
+        return $this->setRemovalMode(TeamStates::REMOVAL_BLOCK);
+    }
+
+    private function setRemovalMode(string $mode): bool
+    {
+        return $this->run(static function (TeamServices $services, array $ids, int $actor) use ($mode): int {
+            $changed = 0;
+
+            foreach ($ids as $id) {
+                try {
+                    $services->devices()->setRemovalMode($actor, $id, $mode);
+                    $changed++;
+                } catch (TeamException $e) {
+                    // A revoked device has no setting any more; the others are still set.
+                    if ($e->getCode() !== 404) {
+                        throw $e;
+                    }
+                }
+            }
+
+            return $changed;
+        }, 'COM_APPOINTMENTS_TEAM_F_DEVICES_MODE_SET');
     }
 
     /**

@@ -23,10 +23,12 @@ use Joomla\CMS\Session\Session;
 defined('_JEXEC') or die;
 
 /**
- * Internet calendars, «My calendars»: add a device, rename it, remove it.
+ * Internet calendars, «My calendars»: add a device, rename it, set «When removed or blocked»,
+ * remove it.
  *
- * Every task takes POST only with the form token (403 otherwise) and a
- * signed-in user with the feature on (404 otherwise). «Add device»
+ * Every task takes POST only with the form token (403 otherwise), a
+ * signed-in user with the feature on (404 otherwise) and an account that may
+ * use internet calendars (403 otherwise, HtmlView::requireAccess()). «Add device»
  * additionally needs a session that passed the second factor with the key
  * unlocked (423 otherwise), the one-time form value, the confirmed usage rule
  * and an effective grant; its response renders the app password directly,
@@ -36,6 +38,9 @@ defined('_JEXEC') or die;
  */
 class DevicesController extends BaseController
 {
+    /** «When removed or blocked» of the «Add device» form: the recommendation for the chosen client. */
+    public const REMOVAL_AUTO = 'auto';
+
     protected $default_view = 'mycalendars';
 
     public function create(): bool
@@ -46,6 +51,8 @@ class DevicesController extends BaseController
         $post = $this->input->post;
         $name = $post->getString('name', '');
         $client = $post->getCmd('client', '');
+        // «When removed or blocked»: the recommendation for the client unless the person chose.
+        $removal = $post->getCmd('removal_mode', self::REMOVAL_AUTO);
         $nonce = $post->getAlnum('form_nonce', '');
         $expected = (string) $session->get(HtmlView::FORM_NONCE, '');
 
@@ -66,6 +73,12 @@ class DevicesController extends BaseController
             $errors['client'] = 'COM_APPOINTMENTS_TEAM_D_ERROR_CLIENT';
         }
 
+        if ($removal !== self::REMOVAL_AUTO && !DeviceService::isRemovalMode($removal)) {
+            $errors['removal'] = 'COM_APPOINTMENTS_TEAM_D_ERROR_REMOVAL';
+        }
+
+        $form = ['name' => $name, 'client' => $client, 'removal_mode' => $removal];
+
         if ($post->getInt('rule', 0) !== 1) {
             $errors['rule'] = 'COM_APPOINTMENTS_TEAM_D_ERROR_RULE';
         } elseif ($post->getString('rule_version', '') !== TeamStates::DEVICE_RULE_VERSION) {
@@ -74,7 +87,7 @@ class DevicesController extends BaseController
         }
 
         if ($errors !== []) {
-            return $this->back('', ['name' => $name, 'client' => $client, 'errors' => $errors]);
+            return $this->back('', $form + ['errors' => $errors]);
         }
 
         // Joomla's own record that this session passed the second factor; the key
@@ -105,16 +118,18 @@ class DevicesController extends BaseController
             return $this->locked();
         }
 
+        $removalMode = $removal === self::REMOVAL_AUTO ? DeviceService::defaultRemovalMode($client) : $removal;
+
         try {
-            $result = $services->devices()->create($keys, $name, $client, true);
+            $result = $services->devices()->create($keys, $name, $client, true, $removalMode);
         } catch (TeamException $e) {
             $key = $this->known($e->getMessage());
 
             if ($key === 'COM_APPOINTMENTS_TEAM_D_ERROR_NAME_TAKEN' || $key === 'COM_APPOINTMENTS_TEAM_D_ERROR_NAME') {
-                return $this->back('', ['name' => $name, 'client' => $client, 'errors' => ['name' => $key]]);
+                return $this->back('', $form + ['errors' => ['name' => $key]]);
             }
 
-            return $this->back($key, ['name' => $name, 'client' => $client]);
+            return $this->back($key, $form);
         } catch (\Throwable $e) {
             return $this->failed($e);
         }
@@ -125,7 +140,7 @@ class DevicesController extends BaseController
             $view->setDocument($this->app->getDocument());
         }
 
-        $view->setCreated($result, (string) DeviceService::normaliseName($name), $client);
+        $view->setCreated($result, (string) DeviceService::normaliseName($name), $client, $removalMode);
         $view->display();
 
         return true;
@@ -148,6 +163,46 @@ class DevicesController extends BaseController
         }
 
         $this->setRedirect(Route::_('index.php?option=com_appointments&view=mycalendars', false), Text::_('COM_APPOINTMENTS_TEAM_D_RENAMED'));
+
+        return true;
+    }
+
+    /**
+     * «When removed or blocked» of one of the user's own devices. Another account's device is
+     * «not found», as for rename and remove.
+     */
+    public function removalMode(): bool
+    {
+        $services = $this->guard();
+        $userId = (int) $this->app->getIdentity()->id;
+        $id = $this->input->post->getInt('id', 0);
+        $mode = $this->input->post->getCmd('removal_mode', '');
+        $owned = false;
+
+        // Only the owner here, also for an administrator: the backend has its own action.
+        foreach ($services->devices()->listForUser($userId) as $candidate) {
+            $owned = $owned || $candidate->id === $id;
+        }
+
+        if (!$owned) {
+            throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
+        }
+
+        if (!DeviceService::isRemovalMode($mode)) {
+            return $this->back('', ['device' => $id, 'errors' => ['removal' => 'COM_APPOINTMENTS_TEAM_D_ERROR_REMOVAL']], $id);
+        }
+
+        try {
+            $services->devices()->setRemovalMode($userId, $id, $mode);
+        } catch (TeamException $e) {
+            if ($e->getCode() === 404) {
+                throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
+            }
+
+            return $this->back($this->known($e->getMessage()), [], $id);
+        }
+
+        $this->setRedirect(Route::_('index.php?option=com_appointments&view=mycalendars', false), Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_SAVED'));
 
         return true;
     }
@@ -178,13 +233,16 @@ class DevicesController extends BaseController
         }
 
         try {
-            // The device receives its calendars empty, then not at all, then 401 (clean-up).
+            // «Clean up»: the device receives its calendars empty, then not at all, then 401.
+            // «Block only»: 401 at once. The user's other devices are not touched.
             $services->cleanup()->startForDevice($id, 'user_removed', $userId);
         } catch (TeamException $e) {
             return $this->back($this->known($e->getMessage()));
         }
 
-        $this->setRedirect(Route::_('index.php?option=com_appointments&view=mycalendars', false), Text::_('COM_APPOINTMENTS_TEAM_D_REMOVED'));
+        $this->setRedirect(Route::_('index.php?option=com_appointments&view=mycalendars', false), Text::_(
+            $device->removal_mode === TeamStates::REMOVAL_BLOCK ? 'COM_APPOINTMENTS_TEAM_D_REMOVED_BLOCK' : 'COM_APPOINTMENTS_TEAM_D_REMOVED'
+        ));
 
         return true;
     }
@@ -228,7 +286,7 @@ class DevicesController extends BaseController
     }
 
     /**
-     * POST with the form token, a signed-in user, the feature on.
+     * POST with the form token, a signed-in user who may use internet calendars, the feature on.
      */
     private function guard(): TeamServices
     {
@@ -237,12 +295,9 @@ class DevicesController extends BaseController
             throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
         }
 
-        $services = TeamServices::fromApplication();
-        $user = $this->app->getIdentity();
-
-        if ($user === null || $user->guest || !$services->enabled()) {
-            throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
-        }
+        // The same gate as the page: 404 for a guest or a disabled feature, 403 for an
+        // account that may not use internet calendars, before any device is looked up.
+        $services = HtmlView::requireAccess();
 
         HtmlView::privateHeaders();
 

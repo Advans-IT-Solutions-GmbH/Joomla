@@ -22,7 +22,8 @@ import niquests
 from caldav.lib.error import AuthorizationError
 
 PRIVATE = c.WORK / "authenticated.json"
-MY = "/index.php?option=com_appointments&view=mycalendars"
+# «My calendars» through its menu item, the only way it opens (fixture.php setup).
+MY = c.STATE["mycalendars"]
 ACCOUNT = c.user("authenticated")
 
 
@@ -136,10 +137,12 @@ def browser_session():
     return browser
 
 
-def device(browser, name, client):
+def device(browser, name, client, removal_mode="cleanup"):
     page = request(browser, MY)
     form = Forms(page.text).find("devices.create")
-    created = submit(browser, form, {"name": name, "client": client, "rule": "1"})
+    # «When removed or blocked»: these devices prove the clean-up, so they choose «Clean up»
+    # explicitly (an «Other client» would get «Block only» by default).
+    created = submit(browser, form, {"name": name, "client": client, "rule": "1", "removal_mode": removal_mode})
     secret = Forms(created.text).secret.strip()
     require(created.status_code == 200 and bool(re.fullmatch(r"[A-Za-z0-9 -]{20,100}", secret))
             and "no-store" in created.headers.get("Cache-Control", ""),

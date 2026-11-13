@@ -8,6 +8,7 @@
 
 namespace Advans\Plugin\Task\Appointments\Extension;
 
+use Advans\Component\Appointments\Administrator\Service\PrivacyCleanup;
 use Advans\Component\Appointments\Administrator\Service\SchedulerService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Component\ComponentHelper;
@@ -29,6 +30,10 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     protected $autoloadLanguage = true;
 
     protected const TASKS_MAP = [
+        'plg_task_appointments.close' => [
+            'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_CLOSE',
+            'method' => 'closeDelivery',
+        ],
         'plg_task_appointments.reminders' => [
             'langConstPrefix' => 'PLG_TASK_APPOINTMENTS_REMINDERS',
             'form' => 'batch',
@@ -72,6 +77,20 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         return $this->execute('reminders', $event);
     }
 
+    protected function closeDelivery(ExecuteTaskEvent $event): int
+    {
+        try {
+            $this->getApplication()->bootComponent('com_appointments');
+            $result = (new \Advans\Component\Appointments\Administrator\Service\Close\Queue(
+                $this->getDatabase(), ComponentHelper::getParams('com_appointments')))->run();
+            $this->logTask('Appointments Close delivery: ' . json_encode($result, JSON_THROW_ON_ERROR));
+            return $result['failed'] > 0 ? Status::KNOCKOUT : Status::OK;
+        } catch (\Throwable $e) {
+            $this->logTask('Appointments Close delivery failed; check component configuration and delivery status.', 'error');
+            return Status::KNOCKOUT;
+        }
+    }
+
     protected function retention(ExecuteTaskEvent $event): int
     {
         return $this->execute('retention', $event);
@@ -110,11 +129,14 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Retention per calendar: delete the entries that ended longer ago than the
-     * calendar's `retention_days`; calendars with 0 keep everything. Also,
-     * whether the internet calendars are on or off: remove calendar copies of
-     * cancelled, anonymised or deleted bookings, and encrypt booking rows that
-     * are still in clear (once the booking record class exists).
+     * Retention per calendar: delete the booking copies that ended longer ago
+     * than the calendar's `retention_days`; calendars with 0 keep everything,
+     * and an entry of the calendar's own (no booking) is never deleted by age.
+     * Also, whether the internet calendars are on or off: remove calendar copies
+     * of cancelled, anonymised or deleted bookings, and encrypt booking rows that
+     * are still in clear (once the booking record class exists). While they are
+     * on: write the copies of future bookings anew where that was requested
+     * (target calendar changed, switched on again).
      */
     protected function teamRetention(ExecuteTaskEvent $event): int
     {
@@ -124,6 +146,11 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
             if (!$services->enabled()) {
                 return $result;
             }
+
+            $result['copies_restored'] = $services->bookings()->restoreCopies(200);
+            // The explicit completion signal: 0 once every restore request is done.
+            $result['restore_pending'] = $services->bookings()->restorePending();
+            $result['restore_failed'] = $services->bookings()->restoreFailed();
 
             $db = $services->db();
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
@@ -155,7 +182,8 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
      */
     private static function bookingUpkeep(TeamServices $services): array
     {
-        $result = ['orphans_removed' => $services->bookings()->removeOrphans(500)];
+        $result = ['orphans_removed' => $services->bookings()->removeOrphans(500)]
+            + PrivacyCleanup::retryCopies($services->db(), $services->bookings(), 200);
         $records = 'Advans\\Component\\Appointments\\Administrator\\Service\\BookingRecords';
 
         if (class_exists($records) && method_exists($records, 'resume')) {
@@ -200,6 +228,14 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
 
             $result = $routine($services, $services->now());
             $this->logTask('Appointments ' . $name . ': ' . json_encode($result, JSON_THROW_ON_ERROR));
+
+            // Copies that could not be written after every pass, or a clean-up that could not run:
+            // the run fails, so it is seen.
+            if (($result['restore_failed'] ?? 0) !== 0 || ($result['orphans_removed'] ?? 0) < 0) {
+                $this->logTask('Appointments ' . $name . ': calendar copies could not be restored.', 'error');
+
+                return Status::KNOCKOUT;
+            }
 
             return Status::OK;
         } catch (\Throwable $e) {

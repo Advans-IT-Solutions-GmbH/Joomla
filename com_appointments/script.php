@@ -34,6 +34,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
     private bool $hasExistingAppointmentsTables = false;
 
+    /** Whether the existing tables still have the clear-text feed credential columns of up to 1.4. */
+    private bool $hasLegacyFeedTokens = false;
+
     /**
      * The plugins this package bundles: group => [element, enabled on first install].
      * The team calendar plugins (CalDAV endpoint, key handling at sign-in) stay
@@ -42,11 +45,23 @@ class Com_appointmentsInstallerScript extends InstallerScript
     private const BUNDLED_PLUGINS = [
         'task'    => ['appointments', true],
         'privacy' => ['appointments', true],
+        'content' => ['appointmentsprivacy', true],
         'system'  => ['appointmentsdav', false],
         'user'    => ['appointments', false],
     ];
 
     private const APPOINTMENT_TABLES = [
+        'close_delivery',
+        'close_limits',
+        'close_missed',
+        // Unreleased evaluation table; postflight already removes it on update.
+        'close',
+        'privacy_staff',
+        'privacy_cleanup',
+        'privacy_outcomes',
+        'privacy_review',
+        'copy_restore',
+        'privacy_scope',
         'eventtype_calendars',
         'auth_failures',
         'teamlog_head',
@@ -76,6 +91,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
     ];
 
     private const SCHEDULER_TASK_TYPES = [
+        'plg_task_appointments.close',
         'plg_task_appointments.reminders',
         'plg_task_appointments.retention',
         'plg_task_appointments.teamcleanup',
@@ -169,6 +185,11 @@ class Com_appointmentsInstallerScript extends InstallerScript
             return false;
         }
 
+        // Read before the schema update widens the columns: only tables of a version before
+        // 1.5.0 hold clear-text feed credentials, and only those are converted, exactly once.
+        // A conversion that failed stays marked as pending and is repeated by the next installation.
+        $this->hasLegacyFeedTokens = $type !== 'uninstall' && ($this->feedTokenColumnsAreLegacy() || $this->feedTokenConversionPending());
+
         return true;
     }
 
@@ -212,10 +233,38 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $this->ensureUpdateSite();
+        $db = Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
+        require_once JPATH_ADMINISTRATOR . '/components/com_appointments/src/Service/Close/Queue.php';
+        \Advans\Component\Appointments\Administrator\Service\Close\Queue::install($db);
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_privacy_outcomes')
+            . ' (request_id INT UNSIGNED NOT NULL PRIMARY KEY, complete TINYINT NOT NULL DEFAULT 0)'
+            . ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_privacy_cleanup')
+            . ' (request_id INT UNSIGNED NOT NULL, booking_id INT UNSIGNED NOT NULL,'
+            . ' cleanup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, guest TINYINT NOT NULL, payload TEXT NOT NULL,'
+            . ' PRIMARY KEY (request_id, booking_id, cleanup_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+        if (!array_key_exists('retry_order', $db->getTableColumns('#__appointments_privacy_cleanup'))) {
+            $db->setQuery('ALTER TABLE ' . $db->quoteName('#__appointments_privacy_cleanup')
+                . ' ADD COLUMN retry_order BIGINT UNSIGNED NOT NULL DEFAULT 0')->execute();
+        }
+        $retryIndex = array_filter($db->getTableKeys('#__appointments_privacy_cleanup'),
+            static fn (object $key): bool => $key->Key_name === 'idx_privacy_retry');
+        if ($retryIndex === []) {
+            $db->setQuery('CREATE INDEX idx_privacy_retry ON ' . $db->quoteName('#__appointments_privacy_cleanup')
+                . ' (request_id, retry_order, booking_id, cleanup_key)')->execute();
+        }
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_privacy_staff')
+            . ' (request_id INT UNSIGNED NOT NULL PRIMARY KEY, payload TEXT NOT NULL)'
+            . ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+        $this->ensureCopyRestoreTable();
         $this->seedMailTemplates($parent);
         $this->installBundledPlugins($parent);
         $this->initialiseLegacyFeedSetting($type);
         $this->encryptExistingBookings($type);
+        $this->convertLegacyFeedTokens();
+        // Also removes pages an earlier version answered that the strict menu views now refuse.
+        $this->cleanPageCache();
+        $this->ensureDeviceRemovalMode();
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
@@ -251,6 +300,27 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $app->enqueueMessage($message, 'message');
 
         return true;
+    }
+
+    /**
+     * The tables of requests to write calendar copies anew and of privacy matches waiting for a
+     * decision (see install.mysql.utf8.sql), also on
+     * an update from a version without it. Independent of the schema version on purpose.
+     */
+    private function ensureCopyRestoreTable(): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_copy_restore')
+            . ' (`eventtype_id` INT UNSIGNED NOT NULL, `requested_utc` DATETIME NOT NULL,'
+            . ' `token` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, `after_booking_id` INT UNSIGNED NOT NULL DEFAULT 0,'
+            . ' `failed` TINYINT UNSIGNED NOT NULL DEFAULT 0, `passes` TINYINT UNSIGNED NOT NULL DEFAULT 0,'
+            . ' PRIMARY KEY (`eventtype_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_privacy_review')
+            . ' (`id` INT UNSIGNED NOT NULL AUTO_INCREMENT, `request_id` INT UNSIGNED NOT NULL, `calendar_id` INT UNSIGNED NOT NULL,'
+            . ' `uri` VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, `created_utc` DATETIME NOT NULL, PRIMARY KEY (`id`),'
+            . ' UNIQUE KEY `idx_privacy_review_entry` (`request_id`, `calendar_id`, `uri`), KEY `idx_privacy_review_calendar` (`calendar_id`),'
+            . ' FOREIGN KEY (`calendar_id`) REFERENCES ' . $db->quoteName('#__appointments_calendars') . ' (`id`) ON DELETE CASCADE)'
+            . ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
     }
 
     private function prepareUninstall(): bool
@@ -634,6 +704,145 @@ class Com_appointmentsInstallerScript extends InstallerScript
     }
 
     /**
+     * Whether the feed credential columns are still the CHAR(64) clear-text columns of up to 1.4.
+     * False when the tables do not exist (yet).
+     */
+    private function feedTokenColumnsAreLegacy(): bool
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+
+        try {
+            foreach (['#__appointments_eventtypes', '#__appointments_hosts'] as $table) {
+                $column = $db->setQuery('SHOW COLUMNS FROM ' . $db->quoteName($table) . ' LIKE ' . $db->quote('feed_token'))->loadAssoc();
+
+                if (\is_array($column) && strtolower((string) ($column['Type'] ?? '')) === 'char(64)') {
+                    return true;
+                }
+            }
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether an earlier conversion of the clear-text feed credentials did not finish (option
+     * `feed_token_conversion` = pending, a hidden field so that saving the options keeps it).
+     */
+    private function feedTokenConversionPending(): bool
+    {
+        try {
+            $params = $this->componentParams(Factory::getContainer()->get(DatabaseInterface::class), 'com_appointments');
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        return ($params['feed_token_conversion'] ?? '') === 'pending';
+    }
+
+    /**
+     * Token feed credentials up to 1.4 were stored in clear text. Replace each with its keyed
+     * digest (FeedToken), so the database holds no usable credential; the token in every
+     * existing subscription address stays valid. Runs only when the installation found the
+     * columns of up to 1.4 (an update, or a new installation over kept tables, whose columns
+     * the schema update does not widen), or when such a conversion did not finish: it is marked
+     * pending before it starts and done after it succeeded, so a failed conversion is repeated
+     * by the next installation of the package, and after it succeeded clear text written into
+     * the database is never converted and never authenticates. Until then the affected feeds
+     * answer 404.
+     */
+    private function convertLegacyFeedTokens(): void
+    {
+        if (!$this->hasLegacyFeedTokens) {
+            return;
+        }
+
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $mark = function (string $state) use ($db): void {
+            $params = $this->componentParams($db, 'com_appointments');
+
+            if ($params !== null) {
+                $params['feed_token_conversion'] = $state;
+                $this->saveComponentParams($db, 'com_appointments', $params);
+            }
+        };
+
+        try {
+            $mark('pending');
+            // A new installation over kept tables does not run the schema update that widens them.
+            foreach (['#__appointments_hosts', '#__appointments_eventtypes'] as $table) {
+                $db->setQuery('ALTER TABLE ' . $db->quoteName($table) . ' MODIFY ' . $db->quoteName('feed_token') . ' CHAR(67) NOT NULL')->execute();
+            }
+
+            // A new installation registers the component's namespace only after this script.
+            $source = JPATH_ADMINISTRATOR . '/components/com_appointments/src/';
+            $classes = [
+                '\\Advans\\Component\\Appointments\\Administrator\\Helper\\KeyProvider' => 'Helper/KeyProvider.php',
+                '\\Advans\\Component\\Appointments\\Administrator\\Helper\\FeedToken'   => 'Helper/FeedToken.php',
+                '\\Advans\\Component\\Appointments\\Administrator\\Service\\FeedService' => 'Service/FeedService.php',
+            ];
+
+            foreach ($classes as $class => $file) {
+                if (!class_exists($class)) {
+                    require_once $source . $file;
+                }
+            }
+
+            $keys = new \Advans\Component\Appointments\Administrator\Helper\KeyProvider((string) Factory::getApplication()->get('secret', ''));
+            (new \Advans\Component\Appointments\Administrator\Service\FeedService($db, $keys))->convertLegacy();
+            $mark('done');
+        } catch (\Throwable $e) {
+            $app = Factory::getApplication();
+            $app->getLanguage()->load('com_appointments', JPATH_ADMINISTRATOR);
+            $app->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_FEED_TOKENS_FAILED'), 'warning');
+        }
+    }
+
+    /**
+     * «System - Page Cache» answers a stored page without running the component, so a page that
+     * an earlier version let it store (the booking page with a visitor's refused entries, the
+     * activation page) would still be served after the update. Empty the site's page cache group;
+     * the pages are stored again on demand. A failure never fails the installation.
+     */
+    private function cleanPageCache(): void
+    {
+        try {
+            $app = Factory::getApplication();
+            $cache = Factory::getContainer()->get(\Joomla\CMS\Cache\CacheControllerFactoryInterface::class)->createCacheController('callback', [
+                'defaultgroup' => 'page',
+                'cachebase'    => (string) $app->get('cache_path', JPATH_SITE . '/cache'),
+            ]);
+            $cache->clean('page');
+        } catch (\Throwable $e) {
+            // Nothing to do: the page cache expires on its own after the configured cache time.
+        }
+    }
+
+    /**
+     * The setting «When removed or blocked» of each device (see install.mysql.utf8.sql), also on
+     * an update from a version without it. Every existing device gets `cleanup`, the behaviour it
+     * had so far; the system check then asks to review Outlook devices. Idempotent and
+     * independent of the schema version on purpose, so the release number does not matter.
+     */
+    private function ensureDeviceRemovalMode(): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $table = $db->replacePrefix('#__appointments_devices');
+
+        if (!\in_array($table, $db->getTableList(), true)) {
+            return;
+        }
+
+        if (\array_key_exists('removal_mode', $db->getTableColumns($table, false))) {
+            return;
+        }
+
+        $db->setQuery('ALTER TABLE ' . $db->quoteName($table) . ' ADD COLUMN ' . $db->quoteName('removal_mode')
+            . " VARCHAR(16) NOT NULL DEFAULT 'cleanup' AFTER " . $db->quoteName('client'))->execute();
+    }
+
+    /**
      * The user groups of the team calendars: one for team members, one for
      * external users, both below the registration group (normally «Registered»)
      * and without any further permission, plus a view level holding both for the
@@ -806,6 +1015,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $lang->load('plg_task_appointments', JPATH_ADMINISTRATOR)
             || $lang->load('plg_task_appointments', JPATH_PLUGINS . '/task/appointments');
         $routines = [
+            'plg_task_appointments.close' => ['PLG_TASK_APPOINTMENTS_CLOSE_TITLE', ['rule-type' => 'interval-minutes', 'interval-minutes' => 5]],
             'plg_task_appointments.reminders' => ['PLG_TASK_APPOINTMENTS_REMINDERS_TITLE', ['rule-type' => 'interval-minutes', 'interval-minutes' => 5]],
             'plg_task_appointments.retention' => ['PLG_TASK_APPOINTMENTS_RETENTION_TITLE', ['rule-type' => 'interval-hours', 'interval-hours' => 24]],
         ];
@@ -832,7 +1042,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     'title' => Text::_($titleKey),
                     'type' => $type,
                     'execution_rules' => $rules + ['exec-day' => gmdate('d'), 'exec-time' => gmdate('H:i')],
-                    'state' => $enabled ? 1 : 0,
+                    'state' => $enabled && $type !== 'plg_task_appointments.close' ? 1 : 0,
                     'params' => ['batch_size' => 100],
                     'created_by' => (int) $identity->id,
                 ]);
@@ -841,7 +1051,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     throw new \RuntimeException('The Scheduler task could not be saved.');
                 }
 
-                if (!$enabled) {
+                if (!$enabled || $type === 'plg_task_appointments.close') {
                     $app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_INSTALL_TASK_DISABLED', Text::_($titleKey)), 'notice');
                 }
             } catch (\Throwable $e) {

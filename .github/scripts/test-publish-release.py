@@ -176,7 +176,8 @@ class PublishTests(unittest.TestCase):
     def test_all_publish_workflows_use_the_guarded_helper(self):
         workflows = Path(__file__).resolve().parent.parent / "workflows"
         paths = list(workflows.glob("publish-*.yml"))
-        self.assertEqual(len(paths), 12)
+        self.assertEqual(len(paths), 13)
+        self.assertIn(workflows / "publish-system-privacyrequests.yml", paths)
         for path in paths:
             text = path.read_text(encoding="utf-8")
             with self.subTest(workflow=path.name):
@@ -198,6 +199,9 @@ class PublishTests(unittest.TestCase):
                 self.assertIn('cp .github/scripts/release-source.py "$RUNNER_TEMP/release-source.py"', step)
                 self.assertIn("RELEASE_VERSION: ${{ inputs.version }}", step)
                 self.assertIn("--path shared/build", step)
+                if path.name == "publish-system-privacyrequests.yml":
+                    self.assertIn("--path shared/installer", step)
+                    self.assertIn('--prefix "system-privacyrequests"', step)
                 self.assertNotIn("${{ inputs.version }}", text.replace(step, ""))
                 if path.name == "publish-pkg-dmarcreports.yml":
                     for child in ["com_dmarcreports", "mod_dmarcreports", "plg_task_dmarcreports", "plg_system_dmarcmtasts"]:

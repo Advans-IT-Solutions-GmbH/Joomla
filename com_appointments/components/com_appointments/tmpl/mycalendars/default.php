@@ -40,6 +40,13 @@ $aria = static function (string $key, string $describedBy = '') use ($errors, $f
 $error = fn (string $key): string => isset($errors[$key])
     ? '<div id="device-' . $key . '-error" class="invalid-feedback com-appointments-field-error">' . $this->escape(Text::_($errors[$key])) . '</div>'
     : '';
+// «When removed or blocked» of «Add device»: value => label and explanation. «Recommended» is the
+// default; the server resolves it from the chosen client (DeviceService::REMOVAL_DEFAULTS).
+$removalChoices = [
+    'auto' => ['COM_APPOINTMENTS_TEAM_D_REMOVAL_AUTO', 'COM_APPOINTMENTS_TEAM_D_REMOVAL_AUTO_DESC'],
+    TeamStates::REMOVAL_CLEANUP => ['COM_APPOINTMENTS_TEAM_D_REMOVAL_CLEANUP', 'COM_APPOINTMENTS_TEAM_D_REMOVAL_CLEANUP_DESC'],
+    TeamStates::REMOVAL_BLOCK => ['COM_APPOINTMENTS_TEAM_D_REMOVAL_BLOCK', 'COM_APPOINTMENTS_TEAM_D_REMOVAL_BLOCK_DESC'],
+];
 $date = static fn (?string $utc): string => $utc === null || $utc === ''
     ? Text::_('COM_APPOINTMENTS_TEAM_D_NEVER')
     : HTMLHelper::_('date', $utc, Text::_('DATE_FORMAT_LC2'));
@@ -61,12 +68,43 @@ $date = static fn (?string $utc): string => $utc === null || $utc === ''
                     <?php foreach ($this->calendars as $calendar) : ?>
                         <?php $colour = preg_match('/\A#[0-9A-Fa-f]{6}\z/', $calendar->colour) === 1 ? $calendar->colour : ''; ?>
                         <li class="com-appointments-mycal-item">
-                            <span class="com-appointments-mycal-swatch"<?php echo $colour !== '' ? ' style="background-color:' . $colour . '"' : ''; ?> aria-hidden="true"></span>
+                            <?php // The swatch only shows the calendar's colour, it is no control. A set colour is named for screen readers; without one the default swatch carries no information. ?>
+                            <?php if ($colour !== '') : ?>
+                                <span class="com-appointments-mycal-swatch" style="background-color:<?php echo $colour; ?>" role="img" aria-label="<?php echo $this->escape(Text::sprintf('COM_APPOINTMENTS_TEAM_D_CALENDAR_COLOUR', $colour)); ?>"></span>
+                            <?php else : ?>
+                                <span class="com-appointments-mycal-swatch" aria-hidden="true"></span>
+                            <?php endif; ?>
                             <span class="com-appointments-mycal-name"><?php echo $this->escape($calendar->title); ?></span>
                             <span class="com-appointments-mycal-meta"><?php echo Text::_($roles[$calendar->role->value]); ?></span>
+                            <?php if ($this->mailOff !== null) : ?>
+                                <?php
+                                // The user's own switch for the booking mails of this calendar; the task takes the
+                                // account from the session, the form names only the calendar and the new state.
+                                $mailOn = !\in_array($calendar->calendarId, $this->mailOff, true);
+                                $hosts = \in_array($calendar->calendarId, $this->hosted, true);
+                                $notifyId = 'mycal-notify-' . (int) $calendar->calendarId;
+                                ?>
+                                <form method="post" action="<?php echo Route::_('index.php?option=com_appointments&task=notifications.save'); ?>" class="com-appointments-mycal-notify">
+                                    <span id="<?php echo $notifyId; ?>" class="com-appointments-mycal-notify-state">
+                                        <?php echo Text::sprintf('COM_APPOINTMENTS_NOTIFY_LABEL', '<strong>' . Text::_($mailOn ? 'COM_APPOINTMENTS_NOTIFY_STATE_ON' : 'COM_APPOINTMENTS_NOTIFY_STATE_OFF') . '</strong>'); ?>
+                                    </span>
+                                    <input type="hidden" name="calendar" value="<?php echo (int) $calendar->calendarId; ?>">
+                                    <input type="hidden" name="enabled" value="<?php echo $mailOn ? '0' : '1'; ?>">
+                                    <?php echo HTMLHelper::_('form.token'); ?>
+                                    <button type="submit" class="btn btn-secondary" aria-describedby="<?php echo $notifyId . ($hosts && $mailOn ? ' ' . $notifyId . '-host' : ''); ?>">
+                                        <?php echo Text::_($mailOn ? 'COM_APPOINTMENTS_NOTIFY_TURN_OFF' : 'COM_APPOINTMENTS_NOTIFY_TURN_ON'); ?><span class="visually-hidden">: <?php echo $this->escape($calendar->title); ?></span>
+                                    </button>
+                                    <?php if ($hosts && $mailOn) : ?>
+                                        <p id="<?php echo $notifyId; ?>-host" class="com-appointments-notice" role="note"><?php echo Text::_('COM_APPOINTMENTS_NOTIFY_HOST_WARNING'); ?></p>
+                                    <?php endif; ?>
+                                </form>
+                            <?php endif; ?>
                         </li>
                     <?php endforeach; ?>
                 </ul>
+                <?php if ($this->mailOff !== null) : ?>
+                    <p class="com-appointments-mycal-notify-hint"><?php echo Text::_('COM_APPOINTMENTS_NOTIFY_HINT'); ?></p>
+                <?php endif; ?>
             <?php endif; ?>
         </section>
 
@@ -84,6 +122,8 @@ $date = static fn (?string $utc): string => $utc === null || $utc === ''
                                 <dd><?php echo Text::_(DeviceService::CLIENT_LABELS[$device->client] ?? DeviceService::CLIENT_LABELS['other']); ?></dd>
                                 <dt><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_FIELD_STATE'); ?></dt>
                                 <dd><?php echo Text::_($states[$device->state] ?? 'COM_APPOINTMENTS_TEAM_D_STATE_REMOVING'); ?></dd>
+                                <dt><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_TITLE'); ?></dt>
+                                <dd><?php echo Text::_(DeviceService::REMOVAL_LABELS[$device->removal_mode] ?? DeviceService::REMOVAL_LABELS[TeamStates::REMOVAL_CLEANUP]); ?></dd>
                                 <dt><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_FIELD_CREATED'); ?></dt>
                                 <dd><?php echo $this->escape($date($device->created_utc)); ?></dd>
                                 <dt><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_FIELD_LAST_SYNC'); ?></dt>
@@ -131,6 +171,20 @@ $date = static fn (?string $utc): string => $utc === null || $utc === ''
                         <p id="device-client-hint" class="form-text"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_UNSUPPORTED'); ?></p>
                         <?php echo $error('client'); ?>
                     </div>
+                    <?php // «When removed or blocked»: the recommendation follows the client chosen above, without script. ?>
+                    <fieldset class="com-appointments-field com-appointments-mycal-removal" aria-describedby="device-removal-hint<?php echo isset($errors['removal']) ? ' device-removal-error' : ''; ?>">
+                        <legend class="form-label"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_TITLE'); ?></legend>
+                        <p id="device-removal-hint" class="form-text"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_INTRO'); ?></p>
+                        <?php foreach ($removalChoices as $value => [$label, $description]) : ?>
+                            <div class="form-check">
+                                <input class="form-check-input<?php echo $invalid('removal'); ?>" type="radio" name="removal_mode" id="device-removal-<?php echo $value; ?>" value="<?php echo $value; ?>" aria-describedby="device-removal-<?php echo $value; ?>-desc"<?php echo $this->form['removal_mode'] === $value ? ' checked' : ''; ?>>
+                                <label class="form-check-label" for="device-removal-<?php echo $value; ?>"><?php echo Text::_($label); ?></label>
+                                <p id="device-removal-<?php echo $value; ?>-desc" class="form-text"><?php echo Text::_($description); ?></p>
+                            </div>
+                        <?php endforeach; ?>
+                        <p class="form-text"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_REMOVAL_OUTLOOK'); ?></p>
+                        <?php echo $error('removal'); ?>
+                    </fieldset>
                     <fieldset class="com-appointments-field com-appointments-mycal-rule">
                         <legend class="form-label"><?php echo Text::_('COM_APPOINTMENTS_TEAM_D_RULE_TITLE'); ?></legend>
                         <ul class="com-appointments-mycal-rule-list">

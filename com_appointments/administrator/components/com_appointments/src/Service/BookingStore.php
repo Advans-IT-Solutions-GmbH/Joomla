@@ -88,6 +88,7 @@ final class BookingStore
             if (!$db->updateObject('#__appointments_bookings', $row, 'id', true)) {
                 throw new \RuntimeException('The encrypted booking could not be stored.');
             }
+            Close\Queue::changed($db, $clear, created: true);
             $db->transactionCommit();
             $this->mirror('saved', $clear);
 
@@ -170,6 +171,7 @@ final class BookingStore
             $row = (object) $this->data()->sealChange($booking, ['id' => $bookingId, 'state' => $state,
                 'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'cancel_reason' => $booking['cancel_reason']]);
             $db->updateObject('#__appointments_bookings', $row, 'id');
+            Close\Queue::changed($db, $booking);
             $db->transactionCommit();
 
         } catch (\Throwable $e) {
@@ -233,6 +235,7 @@ final class BookingStore
                 'invitee_timezone' => $booking['invitee_timezone'], 'conference_state' => null,
                 'conference_provider' => null, 'conference_url' => null, 'conference_room' => null, 'conference_error' => null];
             $db->updateObject('#__appointments_bookings', $row, 'id', true);
+            Close\Queue::changed($db, $booking);
             $db->transactionCommit();
 
         } catch (\Throwable $e) {
@@ -245,22 +248,26 @@ final class BookingStore
 
         // Same UID, new times. A new conference link rewrites the object once more.
         $this->mirror('saved', $booking);
+        // _rescheduled_version: the row version this reschedule committed. The snapshots below may
+        // already carry a later change of someone else (a stale conference result returns the current row).
+        $version = ['_rescheduled_version' => $booking['modified_utc']];
         $cleared = $this->conference()->destroy($previous);
         if (!empty($cleared['_conference_missing']) || !empty($cleared['_conference_error'])) {
-            return $cleared;
+            return $version + $cleared;
         }
         $provisioned = $this->conference()->provision($cleared, $now);
 
-        return $provisioned + ['_conference_cleanup_error' => !empty($cleared['_conference_cleanup_error'])];
+        return $version + $provisioned + ['_conference_cleanup_error' => !empty($cleared['_conference_cleanup_error'])];
     }
 
-    public function erase(int $bookingId, \DateTimeImmutable $now, string $path, bool $delete = false, ?int $actor = null, ?SignedLink $links = null, string $signature = '', ?int $retentionDays = null): array
+    public function erase(int $bookingId, \DateTimeImmutable $now, string $path, bool $delete = false, ?int $actor = null, ?SignedLink $links = null, string $signature = '', ?int $retentionDays = null, ?PrivacyCleanup $privacyCleanup = null): array
     {
         if (!in_array($path, ['self_service', 'privacy_request', 'retention', 'admin'], true)
             || ($path === 'admin' ? $actor === null || $actor < 1 : $actor !== null)
             || ($path === 'self_service' && $links === null)
             || ($path === 'retention' && ($retentionDays === null || $retentionDays < 0 || $retentionDays > 65535))
-            || ($path !== 'retention' && $retentionDays !== null)) {
+            || ($path !== 'retention' && $retentionDays !== null)
+            || ($privacyCleanup !== null && $path !== 'privacy_request')) {
             throw new \InvalidArgumentException('Invalid erasure provenance.');
         }
         $db = $this->db;
@@ -299,7 +306,20 @@ final class BookingStore
 
                     return ['changed' => false, 'notification' => null];
                 }
+                // The Close transfer, decided here on the current delivery state under the lock:
+                // an undelivered booking waits at most SchedulerService::CLOSE_WAIT_DAYS longer.
+                // Only the retention waits; an explicit erasure never does.
+                $delivery = $db->setQuery('SELECT ' . $db->quoteName('state') . ' FROM ' . $db->quoteName(Close\Queue::TABLE)
+                    . ' WHERE ' . $db->quoteName('booking_id') . ' = ' . $bookingId . ' FOR UPDATE')->loadResult();
+                $delivery = $delivery === null ? null : (string) $delivery;
+                if (SchedulerService::waitsForClose($delivery, $end, $days, $now->setTimezone(new \DateTimeZone('UTC')))) {
+                    $db->transactionCommit();
+
+                    return ['changed' => false, 'notification' => null];
+                }
+                $closeMissed = $delivery !== null && $delivery !== 'done';
             }
+            $cleanupKey = $privacyCleanup?->remember($booking, false);
             $anonymiser = new Anonymiser();
             $erased = $anonymiser->anonymise($booking, $now);
             $notification = (int) $booking['state'] !== 2 && (int) $erased['state'] === 2
@@ -317,17 +337,31 @@ final class BookingStore
             $audit = (object) ['booking_id' => $bookingId, 'action' => $delete ? 'delete' : 'anonymise',
                 'path' => $path, 'actor_user_id' => $actor, 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')];
             $db->insertObject('#__appointments_audit', $audit);
+            if (!empty($closeMissed)) {
+                // Erased after the longest wait without reaching Close: recorded in the same
+                // transaction, so the dashboard warning can never be lost.
+                $db->setQuery('INSERT IGNORE INTO ' . $db->quoteName(SchedulerService::CLOSE_MISSED) . ' ('
+                    . implode(', ', $db->quoteName(['booking_id', 'erased_utc'])) . ') VALUES (' . $bookingId . ', '
+                    . $db->quote($now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')) . ')')->execute();
+            }
+            Close\Queue::changed($db, $erased, true);
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();
             throw $e;
         }
 
-        $this->mirror('erased', ['id' => $bookingId]);
+        $mirrored = $this->mirror('erased', ['id' => $bookingId]);
         $cleanup = $this->conference()->destroy($booking);
+        $conferenceFailed = !empty($cleanup['_conference_cleanup_error']) || !empty($cleanup['_conference_error']);
+        if ($privacyCleanup !== null && $cleanupKey !== null && $mirrored && !$conferenceFailed) {
+            $privacyCleanup->forget($bookingId, $cleanupKey);
+        }
 
         return ['changed' => true, 'notification' => $notification,
-            '_conference_cleanup_error' => !empty($cleanup['_conference_cleanup_error']) || !empty($cleanup['_conference_error'])];
+            '_close_missed' => !empty($closeMissed),
+            '_calendar_cleanup_error' => !$mirrored,
+            '_conference_cleanup_error' => $conferenceFailed];
     }
 
     /**
@@ -346,10 +380,11 @@ final class BookingStore
      * @return array{changed: bool, guest: ?string}
      */
     public function removeGuest(int $bookingId, \DateTimeImmutable $now, string $path, ?string $address = null,
-        ?SignedLink $links = null, string $signature = ''): array
+        ?SignedLink $links = null, string $signature = '', ?PrivacyCleanup $privacyCleanup = null): array
     {
         if (!in_array($path, ['self_service', 'privacy_request'], true)
-            || ($path === 'self_service' ? $links === null || $address !== null : $links !== null || $address === null)) {
+            || ($path === 'self_service' ? $links === null || $address !== null : $links !== null || $address === null)
+            || ($privacyCleanup !== null && $path !== 'privacy_request')) {
             throw new \InvalidArgumentException('Invalid guest removal provenance.');
         }
         $db = $this->db;
@@ -357,6 +392,7 @@ final class BookingStore
         if ($host === 0) {
             return ['changed' => false, 'guest' => null];
         }
+        $copyGeneration = '';
         $db->transactionStart();
 
         try {
@@ -377,6 +413,10 @@ final class BookingStore
 
                 return ['changed' => false, 'guest' => null];
             }
+            $cleanupKey = $privacyCleanup?->remember($booking, true);
+            if ($path === 'self_service') {
+                $copyGeneration = PrivacyCleanup::rememberCopy($db, $bookingId);
+            }
             $row = (object) $this->data()->sealChange($booking,
                 ['id' => $bookingId, 'guest_emails' => PrivacyAddress::withoutGuest($booking['guest_emails'], (string) $address)]);
             $db->updateObject('#__appointments_bookings', $row, 'id');
@@ -391,11 +431,20 @@ final class BookingStore
 
         // The calendar copy lists the guests as attendees. It is removed first, also while the
         // feature is off (a later switch-on must not bring the address back), and written again
-        // without the address when the feature is on.
-        $this->mirror('erased', ['id' => $bookingId]);
-        $this->mirror('saved', ['id' => $bookingId]);
+        // without the address when the feature is on. Both are attempted even if the removal
+        // fails: the sanitised rewrite alone replaces the stale copy. A cleanup reference (formal
+        // request, or the booking-only reference of the guest link, retried by the booking upkeep
+        // task) is only forgotten when both succeed.
+        $erased = $this->mirror('erased', ['id' => $bookingId]);
+        $mirrored = $this->mirror('saved', ['id' => $bookingId]) && $erased;
+        if ($mirrored && $privacyCleanup !== null && $cleanupKey !== null) {
+            $privacyCleanup->forget($bookingId, $cleanupKey);
+        }
+        if ($mirrored && $path === 'self_service') {
+            PrivacyCleanup::forgetCopy($db, $bookingId, $copyGeneration);
+        }
 
-        return ['changed' => true, 'guest' => $address];
+        return ['changed' => true, 'guest' => $address, '_calendar_cleanup_error' => !$mirrored];
     }
 
     private function bookingHost(int $bookingId, bool $missingAllowed = false): int
@@ -416,7 +465,7 @@ final class BookingStore
      * Mirror a committed booking change into the internet calendar of its event
      * type. Never throws: a calendar error must not fail a booking.
      */
-    private function mirror(string $action, array $booking): void
+    private function mirror(string $action, array $booking): bool
     {
         try {
             $team = TeamServices::fromApplication();
@@ -424,13 +473,18 @@ final class BookingStore
             // Every action also runs while the feature is off: the bridge then removes the copy
             // instead of writing it (removal needs no key).
             $bridge = $team->bookings();
-            match ($action) {
+            $result = match ($action) {
                 'saved' => $bridge->onBookingSaved($booking),
                 'cancelled' => $bridge->onBookingCancelled($booking),
                 'erased' => $bridge->onBookingErased((int) ($booking['id'] ?? 0)),
             };
+
+            return $action === 'cancelled' || $result === true;
         } catch (\Throwable $e) {
-            // The bridge logs its own failures; this only catches a missing runtime.
+            \Joomla\CMS\Log\Log::add('Appointment calendar mirroring failed (' . get_class($e) . ').',
+                \Joomla\CMS\Log\Log::WARNING, 'com_appointments');
+
+            return false;
         }
     }
 

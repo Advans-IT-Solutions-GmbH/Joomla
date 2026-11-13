@@ -65,6 +65,7 @@ class GetProductsDataTest
             $this->testGetProductsData();
             $this->testDisabledProductExcluded();
             $this->testHiddenProductsExcluded();
+            $this->testHiddenCategoryExcluded();
             $this->testNullDateWindowStaysVisible();
             $this->testGetProductOptions();
         } finally {
@@ -244,7 +245,125 @@ class GetProductsDataTest
     }
 
     /**
-     * An open publishing window is stored by Joomla either as SQL NULL or, in a
+     * Joomla hides the articles of a category that is unpublished or not readable for the
+     * visitor. The comparison must hide their products as well, or a guessed product ID hands
+     * out title, description, price and stock of a product the storefront does not show.
+     */
+    private function testHiddenCategoryExcluded(): void
+    {
+        echo "\n--- Products of an unpublished or protected category excluded ---\n";
+
+        $plugin = $this->makePlugin();
+        $method = (new ReflectionClass($plugin))->getMethod('getProductsData');
+        $method->setAccessible(true);
+
+        $productId = $this->seedHiddenProduct('category toggle', ['state' => 1, 'access' => 1, 'publish_up' => null, 'publish_down' => null]);
+        $this->test('Fixture for the category checks created', $productId !== 0);
+
+        if ($productId === 0) {
+            return;
+        }
+
+        $catid = (int) $this->db->setQuery(
+            'SELECT catid FROM ' . $this->db->quoteName('#__content')
+            . ' WHERE id = (SELECT product_source_id FROM ' . $this->db->quoteName($this->productsTable)
+            . ' WHERE ' . $this->db->quoteName($this->productsPk) . ' = ' . $productId . ')'
+        )->loadResult();
+
+        $pkCol    = $this->productsPk;
+        $returned = fn () => array_map(fn ($p) => (int) $p->$pkCol, $method->invoke($plugin, [$productId]));
+
+        $this->test('Product in a published public category is returned', $returned() === [$productId]);
+
+        foreach ([
+            'unpublished category'            => ['published = 0', 'published = 1'],
+            'category behind a view level'    => ['access = 2', 'access = 1'],
+        ] as $label => [$hide, $restore]) {
+            $this->db->setQuery('UPDATE #__categories SET ' . $hide . ' WHERE id = ' . $catid)->execute();
+
+            try {
+                $this->test("Not in results ($label)", $returned() === []);
+            } finally {
+                $this->db->setQuery('UPDATE #__categories SET ' . $restore . ' WHERE id = ' . $catid)->execute();
+            }
+        }
+
+        $this->test('Product is returned again after the category is restored', $returned() === [$productId]);
+
+        // The ancestors count too: a public category below an unpublished or protected parent
+        // or grandparent is hidden by Joomla. The fixture is a separate nested-set branch.
+        $stamp = date('YmdHis');
+        $ids   = [];
+
+        try {
+            $ids['g'] = $this->insertCategory('zz-grand-' . $stamp, 1, 90000, 90009, 1);
+            $ids['p'] = $this->insertCategory('zz-parent-' . $stamp, $ids['g'], 90001, 90008, 2);
+            $ids['c'] = $this->insertCategory('zz-child-' . $stamp, $ids['p'], 90002, 90003, 3);
+
+            $nested   = $this->seedHiddenProduct('nested category', ['state' => 1, 'access' => 1, 'publish_up' => null, 'publish_down' => null, 'catid' => $ids['c']]);
+            $nestedIn = fn () => array_map(fn ($p) => (int) $p->$pkCol, $method->invoke($plugin, [$nested]));
+
+            $this->test('Product in a public child category of a public branch is returned', $nested !== 0 && $nestedIn() === [$nested]);
+
+            foreach (['p' => 'parent', 'g' => 'grandparent'] as $level => $name) {
+                foreach ([
+                    "unpublished $name" => ['published = 0', 'published = 1'],
+                    "$name behind a view level" => ['access = 2', 'access = 1'],
+                ] as $label => [$hide, $restore]) {
+                    $this->db->setQuery('UPDATE #__categories SET ' . $hide . ' WHERE id = ' . $ids[$level])->execute();
+
+                    try {
+                        $this->test("Not in results ($label)", $nestedIn() === []);
+                        $this->test("Product of the sibling branch stays returned ($label)", $returned() === [$productId]);
+                    } finally {
+                        $this->db->setQuery('UPDATE #__categories SET ' . $restore . ' WHERE id = ' . $ids[$level])->execute();
+                    }
+                }
+            }
+
+            $this->test('Nested product is returned again after the ancestors are restored', $nestedIn() === [$nested]);
+        } finally {
+            if ($ids) {
+                $this->db->setQuery('UPDATE #__content SET catid = ' . $catid . ' WHERE catid IN (' . implode(',', $ids) . ')')->execute();
+                $this->db->setQuery('DELETE FROM #__categories WHERE id IN (' . implode(',', $ids) . ')')->execute();
+            }
+        }
+    }
+
+    private function insertCategory(string $alias, int $parentId, int $lft, int $rgt, int $level): int
+    {
+        $now = date('Y-m-d H:i:s');
+        $row = (object) [
+            'parent_id'        => $parentId,
+            'lft'              => $lft,
+            'rgt'              => $rgt,
+            'level'            => $level,
+            'path'             => $alias,
+            'extension'        => 'com_content',
+            'title'            => $alias,
+            'alias'            => $alias,
+            'note'             => '',
+            'description'      => '',
+            'published'        => 1,
+            'access'           => 1,
+            'params'           => '{}',
+            'metadata'         => '{}',
+            'created_user_id'  => 0,
+            'created_time'     => $now,
+            'modified_user_id' => 0,
+            'modified_time'    => $now,
+            'hits'             => 0,
+            'language'         => '*',
+            'version'          => 1,
+        ];
+        $this->db->insertObject('#__categories', $row, 'id');
+
+        return (int) $this->db->insertid();
+    }
+
+    /**
+     * An open publishing window is stored by Joomla either
+ as SQL NULL or, in a
      * database that was migrated from an older Joomla, as the driver's null-date
      * sentinel ('0000-00-00 00:00:00'). Both mean "no limit", so a product whose
      * article carries the sentinel is an ordinary, visible product and has to be
@@ -296,7 +415,7 @@ class GetProductsDataTest
                 'introtext'    => 'Description for ' . $label,
                 'fulltext'     => '',
                 'state'        => $article['state'],
-                'catid'        => $this->ensureCatid(),
+                'catid'        => $article['catid'] ?? $this->ensureCatid(),
                 'created'      => date('Y-m-d H:i:s'),
                 'created_by'   => 42,
                 'modified'     => date('Y-m-d H:i:s'),

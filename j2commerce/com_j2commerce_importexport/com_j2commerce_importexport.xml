@@ -3,12 +3,12 @@
     <name>COM_J2COMMERCE_IMPORTEXPORT</name>
     <element>com_j2commerce_importexport</element>
     <author>Advans IT Solutions GmbH</author>
-    <creationDate>2026-10</creationDate>
+    <creationDate>2026-11</creationDate>
     <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
     <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
     <authorEmail>info@advans.ch</authorEmail>
     <authorUrl>https://advans.ch</authorUrl>
-    <version>1.1.0</version>
+    <version>1.1.1</version>
     <description>COM_J2COMMERCE_IMPORTEXPORT_XML_DESCRIPTION</description>
     
     <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
@@ -23,6 +23,8 @@
             <folder>services</folder>
             <folder>src</folder>
             <folder>tmpl</folder>
+            <filename>access.xml</filename>
+            <filename>config.xml</filename>
             <filename>LICENSE.txt</filename>
         </files>
         
@@ -36,63 +38,6 @@
         </languages>
     </administration>
 
-    <config>
-        <fields name="params">
-            <fieldset name="basic">
-                <field
-                    name="autoload_language"
-                    type="hidden"
-                    default="1"
-                />
-                
-                <field
-                    name="batch_size"
-                    type="number"
-                    label="COM_J2COMMERCE_IMPORTEXPORT_BATCH_SIZE_LABEL"
-                    description="COM_J2COMMERCE_IMPORTEXPORT_BATCH_SIZE_DESC"
-                    default="100"
-                    min="10"
-                    max="1000"
-                    step="10"
-                />
-
-                <field
-                    name="default_format"
-                    type="list"
-                    label="COM_J2COMMERCE_IMPORTEXPORT_DEFAULT_FORMAT_LABEL"
-                    description="COM_J2COMMERCE_IMPORTEXPORT_DEFAULT_FORMAT_DESC"
-                    default="json"
-                >
-                    <option value="csv">CSV</option>
-                    <option value="xml">XML</option>
-                    <option value="json">JSON</option>
-                </field>
-
-                <field
-                    name="csv_delimiter"
-                    type="list"
-                    label="COM_J2COMMERCE_IMPORTEXPORT_CSV_DELIMITER_LABEL"
-                    description="COM_J2COMMERCE_IMPORTEXPORT_CSV_DELIMITER_DESC"
-                    default=","
-                >
-                    <option value=",">,</option>
-                    <option value=";">;</option>
-                    <option value="\t">Tab</option>
-                </field>
-
-                <field
-                    name="csv_enclosure"
-                    type="list"
-                    label="COM_J2COMMERCE_IMPORTEXPORT_CSV_ENCLOSURE_LABEL"
-                    description="COM_J2COMMERCE_IMPORTEXPORT_CSV_ENCLOSURE_DESC"
-                    default='"'
-                >
-                    <option value='"'>"</option>
-                    <option value="'">'</option>
-                </field>
-            </fieldset>
-        </fields>
-    </config>
 
 
     <updateservers>

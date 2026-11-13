@@ -7,9 +7,9 @@
  */
 
 use Advans\Component\Appointments\Administrator\Helper\DateDisplay;
+use Advans\Component\Appointments\Site\Helper\BackLink;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
-use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 
@@ -23,7 +23,11 @@ $page = $this->page;
 <div class="com-appointments com-appointments-manage com-appointments-guest">
     <div class="com-appointments-container">
         <h1 class="com-appointments-heading"><?php echo $this->escape($page['heading']); ?></h1>
-        <?php if ($page['completed']) : ?>
+        <?php if ($page['completed'] && !empty($page['calendar_pending'])) : ?>
+            <div class="com-appointments-notice" role="alert">
+                <p><?php echo Text::_('COM_APPOINTMENTS_GUEST_CALENDAR_PENDING'); ?></p>
+            </div>
+        <?php elseif ($page['completed']) : ?>
             <p class="com-appointments-status"><?php echo Text::_('COM_APPOINTMENTS_GUEST_REMOVED'); ?></p>
         <?php else : ?>
             <?php
@@ -55,6 +59,6 @@ $page = $this->page;
                 </div>
             </form>
         <?php endif; ?>
-        <p><a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_appointments&view=eventtypes'); ?>"><?php echo Text::_($page['completed'] ? 'COM_APPOINTMENTS_BACK_TO_OVERVIEW' : 'JCANCEL'); ?></a></p>
+        <p><a class="btn btn-secondary com-appointments-return" href="<?php echo BackLink::resolve(false); ?>"><?php echo Text::_($page['completed'] ? 'COM_APPOINTMENTS_BACK_TO_OVERVIEW' : 'JCANCEL'); ?></a></p>
     </div>
 </div>

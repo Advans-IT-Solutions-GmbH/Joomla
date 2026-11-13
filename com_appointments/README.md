@@ -24,6 +24,103 @@ blocked.
 > build a package from source as described below. Official packages and version changes will be
 > published only through the repository's reviewed release workflow.
 
+## Optional direct Close transfer
+
+Close transfer is **disabled by default**, has no API origin or credential default, and is separate
+from the booking and self-hosted CalDAV paths. Installing or updating this component does not
+configure Close, change an existing scheduling integration, subscribe anyone to marketing, connect a
+cloud calendar or send historical bookings. Only bookings **created after activation** are enrolled.
+
+### What is created in Close
+
+The transfer reproduces what Close's own Calendly integration does with its "Create Contacts"
+option, using only API features that every Close plan offers:
+
+- **Existing person:** the invitee is matched by exact e-mail address, not by domain. One match reuses
+  that Contact and its Lead **unchanged**. Several matches stop visibly for manual review.
+- **New person:** a new Lead with one Contact (name, e-mail, phone). Optionally the Lead name comes from
+  a form field such as the company, the Contact title from a field such as the job title, and Lead
+  custom fields from fixed values (for example the lead origin) or from answers. These values are set
+  on **new** Leads only; existing Leads and Contacts are never overwritten. No Opportunity is created.
+- **The booking itself:** one **Note** on that Lead and Contact per booking, with status, start and end
+  in the site time zone, event type, name, e-mail, phone, the configured answers with their field
+  labels, campaign, source, "new contact created" and the booking UID. Approval, rescheduling and
+  cancellation **update the same Note** (cancellation changes its title and status). Notes are written
+  in the site's default language.
+- **Optional Custom Activity** instead of a Note, only for Close plans that offer custom activities.
+  Its fields are single-valued text fields; the worker checks the type's field catalog first.
+
+The Close API has no endpoint to create a Meeting activity; Meetings come from Close's calendar
+sync. A synced calendar keeps working independently of this transfer.
+
+### Profiles: one Close organisation per event type
+
+Configure **Options > Close booking transfer**, then add one **profile** per Close organisation or
+campaign. Each profile has:
+
+| Setting | Meaning |
+|---|---|
+| Profile key | Short unique name. Changing it, the origin, the key variable, the delivery mode or the activity type stops updates of records already transferred with the old destination. |
+| Event types | New bookings of these event types use this profile. An event type belongs to at most one profile; an event type without a profile is **never transferred**. |
+| API origin, key variable | The HTTPS origin and the **name** of a server environment variable holding that organisation's API key. The key itself is never stored in the options, the database, screenshots or reports. Use one variable per organisation. |
+| Expected organisation ID | Optional `orga_…`. Before any personal data is sent, the worker reads the organisation of the configured key (`GET /api/v1/me/`, exactly one organisation required) and binds every transfer record to it. A key of another organisation blocks the affected records, and a configured expected ID that differs blocks the profile. |
+| Booking record | Note (all plans) or Custom Activity (plans with custom activities), with its type ID, field mapping and answer mapping. |
+| Answers in the note | Comma-separated local form field IDs. Nothing else from the form is transferred. Guests, conference links, cancellation reasons, consent records and capability links are never sent. |
+| Campaign, source | Fixed texts written into every Note or Activity of the profile. |
+| Lead name, contact title | Comma-separated form field IDs, for example the company field of each event type. The first non-empty answer is used. |
+| Lead fields from answers, fixed lead fields | JSON objects `{"<field ID>": "cf_…"}` and `{"cf_…": "<text>"}`. Every Lead field is fetched before any personal data, including the e-mail search, is sent; an unknown field blocks the transfer. Multi-value fields receive all selected options. |
+
+Each profile has its own **rate-limit pause**: a `429` with `Retry-After` pauses only that
+organisation, and its bookings do not occupy the batch of the other profiles. Enable transfer and, separately, the scheduled task
+**Appointments: deliver approved bookings to Close**, which is created **disabled**, including on fresh
+installations. An invalid configuration never breaks a booking: the booking is recorded for later
+routing and the dashboard shows the configuration warning; no call is made until it is fixed.
+
+### Nothing is deleted in Close
+
+Close is treated as a separate system with its own data protection handling. The component **never
+deletes or anonymises anything in Close**, and nothing on the website waits for Close:
+
+- Retention, self-service erasure, administrator erasure and native privacy **Remove** only delete the
+  local transfer record (the link to the remote IDs). A booking erased before it was sent is not sent.
+  Records already in Close keep their last transferred status, and an uncertain creation of an erased
+  booking is no longer followed up from the website; check it in Close if needed.
+- A privacy request is never blocked or left incomplete because of Close.
+- **Data subject requests for Close are handled separately in Close** by the operator (access,
+  correction, deletion there), using Close's own tools.
+
+### Failures and recovery
+
+The administrator dashboard lists the transfer records of current bookings, 100 per page, with the
+profile and a diagnostic code but no payloads or credentials. Failed rechecks rotate behind other due
+records; authentication, organisation, mapping, unknown-field and ambiguous-contact errors block visibly. The
+dashboard's safe retry action rechecks blocked records, never uncertain creations. The HTTPS transport
+uses verified TLS, no redirect, a bounded response, five-second timeouts and **no transport-level
+retry**, and it only issues GET, POST and PUT. A database advisory lock serializes workers on this
+installation; booking row locks serialize each send against erasure and rescheduling.
+
+Before a non-idempotent POST, the worker commits an uncertain intent. A timeout, server error, invalid
+create response, process crash or local persistence failure after remote success leaves that intent
+uncertain. **UID/sequence is correlation, not a remote idempotency guarantee.** Do not blindly resend.
+After locating the existing remote object, a component administrator enters its Contact, Note or
+Activity ID on the dashboard: reconciliation only GETs it and checks the e-mail, or the Lead, Contact
+and booking UID, before linking it. Duplicate prevention across independent installations is not
+guaranteed. The retry and reconciliation actions require a POST with a valid Joomla form token and
+component `core.admin` permission.
+
+Synthetic coverage without a network or credential: `php tests/close-mock.php` (PDO SQLite, sodium and
+mbstring required) runs two and three profiles against local fake Close organisations, including
+routing, new and existing contacts, enrichment, updates, rate limits per profile, uncertain creations,
+erasure without remote effect and the refusal of DELETE. The installed `close` integration suite
+exercises canonical booking mutations, native privacy Remove and a two-process erasure race with
+encrypted data and a mock transport on Joomla/MySQL/MariaDB. Neither replaces installed/browser
+acceptance or the later setup against the real accounts.
+The installed PHP harness defaults to `/var/www/html` and `http://localhost`. An exclusive native
+test lane may set `APPOINTMENTS_TEST_ROOT` to its absolute Joomla root and
+`APPOINTMENTS_TEST_BASE_URL` to its loopback HTTP(S) origin, including its port. Explicit invalid
+values fail instead of falling back. The race child inherits these variables and uses the same
+installation/database; no Joomla files or server ports need remapping.
+
 ## Requirements
 
 - [Joomla](https://github.com/joomla/joomla-cms) 5.4 or later (5.4.x, 6.x)
@@ -98,6 +195,7 @@ activation and effective content access.
 | Plugin | Role | First installation |
 |---|---|---|
 | [`privacy/appointments`](plugins/privacy/appointments/README.md) | Native privacy export/removal and calendar privacy integration | Enabled |
+| [`content/appointmentsprivacy`](plugins/content/appointmentsprivacy/README.md) | Independent veto of native removal completion while Appointments reports incomplete | Enabled |
 | [`task/appointments`](plugins/task/appointments/README.md) | Booking reminders/retention and calendar-maintenance routines | Enabled; check task states and trigger separately |
 | [`system/appointmentsdav`](plugins/system/appointmentsdav/README.md) | Local CalDAV endpoint and pre-authentication sign-in guard | Disabled until deliberate setup |
 | [`user/appointments`](plugins/user/appointments/README.md) | Password/key sessions, lockout and account/device cleanup | Disabled until deliberate setup |
@@ -115,6 +213,10 @@ The component registers its own update site during installation. Once releases a
 later versions will appear under **System → Update → Extensions**. You can also install a newer
 ZIP over the existing installation. The update-site registration does not mean that a release is
 currently available.
+
+**Before updating to 1.5.0 or later**, set **Public site URL**
+(or Joomla's `live_site`). An installation without one sends no more e-mails and takes no more
+bookings after the update, until the setting is made (see section "Scheduler, reminders and retention").
 
 ## Features
 
@@ -145,8 +247,10 @@ currently available.
   has its own Joomla permission asset and independently generated feed credential. An event type's
   host cannot change while any booking is retained; create a new event type for a different host.
 - **Menu item types.** Publish the list of event types or one event type through Joomla's menu
-  manager, in one content language or in *All*, with SEF addresses. Direct links enforce
-  publication, access and content language too.
+  manager, in one content language or in *All*, with SEF addresses. A page opens only through a
+  menu item of its type: no query parameter switches a menu item to another view or event type,
+  and without such a menu item the page answers 404 (see [Reachable addresses](#reachable-addresses)).
+  Publication, access and content language are enforced too.
 - **Public booking.** A booking page in steps, one at a time, beside an information column of
   the event type: 1. the month calendar, then the times of the chosen day, where the chosen time
   shows its **Next** button; 2. the visitor's details, with the chosen time and a **Back** link in
@@ -228,15 +332,21 @@ components. The guest links in e-mails and the calendar subscriptions stay non-S
   is chosen from the published event types; an item whose event type was unpublished later keeps it,
   marked as unpublished. Links the component builds (the event type list, the month and day
   navigation, redirects inside the booking flow) use the event type's own menu item in the current
-  language or in *All*, otherwise an *Event types* item (`/<list item>/<event type alias>`),
-  otherwise `/component/appointments/eventtype/<event type alias>`. Earlier addresses such as
-  `/component/appointments/?view=eventtype&id=…` and non-SEF
-  `index.php?option=com_appointments&view=eventtype&id=…` keep working.
+  language or in *All*, otherwise an *Event types* item (`/<list item>/<event type alias>`).
+  An event type without either menu item has no booking page. Addresses without a menu item, such
+  as `/component/appointments/eventtype/<alias>`, `/component/appointments/?view=eventtype&id=…`
+  and non-SEF `index.php?option=com_appointments&view=eventtype&id=…`, answer 404.
 - **Links in e-mails** (reschedule, cancel, erase) are built as
-  `index.php?option=com_appointments&view=manage&id=…&action=…&signature=…` from the public site URL.
-  They are signed, are also sent by the reminder task from the command line, where no site router is
-  available, and must stay valid for as long as the booking exists. On a multilingual site Joomla
-  adds the language prefix when such a link is opened.
+  `index.php?option=com_appointments&view=manage&id=…&action=…&signature=…&Itemid=…` from the public
+  site URL. They are signed, are also sent by the reminder task from the command line, where no site
+  router is available, and must stay valid for as long as the booking exists. On a multilingual site
+  Joomla adds the language prefix when such a link is opened. The `Itemid` frames the page: the
+  *Book an appointment* item of the booking's event type, otherwise an *Event types* item, each in the
+  reader's language or in *All*, published and open to guests. Without one the link has no `Itemid`.
+  The signature does not cover the `Itemid`, which only chooses the frame. The confirmation, the
+  receipts after a change and the guest's removal page use the same frame, so they are not shown
+  in the frame of the home page (its modules and content above the result). A link without an
+  `Itemid` from an earlier mail gets it with the redirect after the change.
 - **Calendar subscriptions** use `index.php?option=com_appointments&task=feed.download&…`.
 
 A site that blocks direct component addresses in its `.htaccess` therefore needs two exceptions,
@@ -267,8 +377,41 @@ No exception is needed for `tmpl=component` or `format=feed`: the component uses
 feed is served by the task `feed.download`.
 
 The router does not remove these exceptions. The signed mail links and feed URLs have to be
-stable and buildable without a site router, and without a menu item a routed address is still
-`/component/appointments/…`.
+stable and buildable without a site router, and a confirmation or signed page without a menu item
+to frame it is still routed as `/component/appointments/?view=…`.
+
+### Reachable addresses
+
+The site part answers only what a published menu item offers, plus the few endpoints that check a
+signature, a token or the browser session themselves. The component's dispatcher decides this
+before any controller runs; there is no option to relax it. Everything else answers **404**, the
+same answer as an address that does not exist, so it does not reveal that a view exists.
+
+| Request | Reachable through | Checked by the page or task |
+|---|---|---|
+| List of event types (`view=eventtypes`, also without a view) | an *Event types* menu item only | its layout, format HTML |
+| Booking page (`view=eventtype&id=…`) | its *Book an appointment* menu item (same event type), or below an *Event types* item | event type and schedule published, access level, content language; the menu item's layout; `format=raw` only for the date-and-time part that the booking script loads |
+| «My calendars» (`view=mycalendars`, layout `device` for one device) | a *My calendars* menu item only | signed in, internet calendars on, own devices |
+| Confirmation (`view=booking`) | any frame | the last booking of this browser session |
+| Reschedule, cancel, erase (`view=manage`) | any frame | signature bound to booking, action and row version |
+| Account activation (`view=activation`) | any frame | one-time token, exchanged into the session |
+| Tasks `booking.submit`, `booking.ics`, `booking.manage`, `guest.confirm`, `guest.remove`, `feed.download`, `devices.create`, `devices.rename`, `devices.remove`, `activation.complete` | any frame | POST with form token, signature, session or feed token, as described for each |
+
+Refused with 404, for example: `/<booking page>?view=eventtypes`, `/<booking page>?id=<other event
+type>`, another layout (`?layout=…`) or format (`?format=json`) of a menu item, a view without
+a menu item of its type on any menu item, a further path segment below a *Book an appointment*
+item, an unpublished event type below an *Event types* item, every task not in the table
+(including `<controller>.display`, an empty or unknown task, `controller=…` without a task) and
+`/component/appointments/…` or `index.php?option=com_appointments&view=…` without a menu item.
+With Joomla's *Strict Routing* (SEF plugin) a request whose parameters have a canonical address
+without a query is first redirected there; that address is answered by the same rules, so a
+refused combination is never shown at the requested address. An update of the component empties
+Joomla's page cache, so no page an earlier version answered is served from it.
+
+The confirmation, the signed pages and their receipts carry the `Itemid` of the event type's
+booking page (see *Links in e-mails* above). The mails of the internet calendars link «My
+calendars» with the `Itemid` of its menu item, so create that menu item before inviting users
+(see [Internet calendars](#internet-calendars), «Setting up»).
 
 ### Video conferencing
 Select a provider in **Options → Video conferencing**, then set the event's location to **Video
@@ -340,6 +483,124 @@ policies consistently with their legal obligations. Accent differences never est
 and the request's email remains authoritative even if another privacy plugin has already changed
 the associated Joomla user object.
 
+**Staff data.** When Joomla finds an account for the request, the export also contains the data
+the component keeps about that person as staff, whether or not the internet calendars are on:
+blocked periods (absences, with their reason), the host record (dates only, never the feed
+credential), the event types the account hosts with the name, role and photo shown about the
+person, and the schedules it owns. Joomla's own user plugin pseudonymises the account itself, so
+references to its id stay. Removal deletes blocked periods that are over, keeps current and future
+ones for the slot calculation but removes their reason, and revokes the host feed credential (the
+host row stays, because existing bookings lock it). Event types and schedules are team configuration
+and are never changed automatically: the removal names them for the administrator to assign another
+host and check the name, photo and role on the booking page. Deleting an account in the user manager
+does not remove these rows.
+
+Joomla runs the removal check before every removal, while it still finds the account: the check
+records the verified account and whether it is a team member for the request
+(`#__appointments_privacy_scope`), and the removal and every retry of the request use this record,
+also after Joomla's user plugin has pseudonymised the account. A request without an account is
+recorded as such. A request whose scope cannot be recorded is refused with a reason, and a request
+without a recorded scope and without an account (checked before this version and retried after the
+pseudonymisation) keeps its calendar entries for review.
+
+Visitors without an account can use the separate
+[Core privacy request adapter](../plg_system_privacyrequests/README.md), when the
+operator has installed and enabled it. The bundled Appointments plugin supplies
+callbacks; it does not itself make Core's account-only public forms guest-accessible.
+Mailbox confirmation is not proof of every identity or entitlement, and Core success
+does not cover export-only plugins or copies outside this site's control.
+
+**Failed internal cleanup remains actionable.** For a formal Core removal,
+`#__appointments_privacy_cleanup` captures an authenticated-encrypted operational
+reference in the same transaction that clears the booking/guest address. It links the
+Core request ID and booking ID to the pending cleanup, so **Remove** can retry even
+when the cleared address no longer finds the booking. It stores no erased names,
+addresses, form answers, booking prose, joining URLs or calendar keys. Primary-invitee
+references retain the booking UID, host/event IDs, UTC times, sequence/modified time and
+provider/room identifier needed to reject stale or reused conference rooms safely;
+guest references retain only the booking identity and guest-cleanup role. These
+encrypted identifiers are still linkable operational data, **not anonymous data**.
+
+References are forgotten only after the actual calendar-copy/conference cleanup
+succeeds; an empty search, acknowledgment or failed calendar rebuild cannot clear
+them. A guest retry preserves the booking, primary invitee, remaining guests and owner
+conference, and rebuilds their copy when required. An unreadable or tampered reference
+fails closed. Resolve the reported provider/storage failure and retry native Remove;
+do not delete the reference to make the warning disappear. There is no expiry that
+silently abandons unresolved cleanup and no newly activated cleanup task.
+Retries process at most 200 references, rotating attempted rows behind untouched
+ones even when they fail. An unreadable first batch cannot starve later references.
+
+A guest who leaves a booking through the **signed link** in their mail goes through the
+same calendar-copy steps: the copy is removed and, with internet calendars on, written
+again without the address. Both steps are always attempted. If either fails, the
+visitor sees that the removal is not complete instead of a success message, the failure
+is logged with the booking ID only, and a reference row with request ID `0`, the booking
+ID and a random generation as payload (no address, link or key) stays in the same table.
+Each removal writes a new generation, so an earlier removal or retry that finishes later
+never forgets the reference of a newer one. The existing
+**Appointments: internet calendar retention** Scheduler task retries these references on
+each run (at most 200, also while internet calendars are off) and forgets one only when
+both steps succeed and its generation is unchanged; its log shows `guest_copies_repaired` and `guest_copies_pending`.
+A reference whose booking was deleted meanwhile, or whose internet calendars were switched
+off, resolves once the copy can be removed; deleting all Appointments data on uninstall drops it.
+Nothing activates that task: without a configured task the reference and the stale copy
+remain until the operator resolves the failure and runs it. A formal Core request does
+not process these references, and the removed address no longer finds the booking.
+
+Before Core pseudonymises an account, **CanRemove** captures its minimal staff scope
+in authenticated-encrypted `#__appointments_privacy_staff`, bound to the Core request
+ID and exact normalized request address. Later **Remove** attempts use that retained
+user ID, not another lookup of the now-cleared account address. A scope captured
+without an account takes over an account with exactly the request address that appears
+later (a registration after the first attempt, for example); a captured account is never
+replaced by another one. Local device/key/grant/
+invitation teardown and ownership release must actually succeed; a successful staff
+teardown does not make an unsearched calendar complete. The completion guard independently
+checks the scope and remaining staff rows, even if an outcome flag says success.
+Each removal also opens an authenticated pending-attempt marker before its work.
+Expected partial failures and unexpected exceptions are logged/reported as warnings,
+not thrown across Core's listener chain: later privacy plugins must still process
+the original registered user in that same dispatch. The marker independently vetoes
+Complete even with a missing or forged outcome flag. Only the current genuinely
+successful attempt can clear it; a superseded attempt cannot overwrite a newer one.
+A captured scope with no authenticated removal attempt also remains pending, including
+when the first outcome write fails before booking cleanup can start. Older captured
+scopes without attempt metadata require a successful native Remove retry, not a forged
+success flag.
+The encrypted ID remains linkable request/audit metadata needed for subsequent Core
+retries, not anonymous booking data. Include it in the site's request-record retention
+and access policy. Earlier interrupted requests without recoverable staff provenance
+fail closed when their original account can no longer be identified; they need
+operator investigation, not an automatic scope/status migration or a success flag.
+This includes a request upgraded from a version without these tables: if Core's action
+log already records a **Remove** for it but neither a staff scope nor an outcome row
+exists, CanRemove blocks the retry and the completion guard blocks Complete. Core
+captures the scope before it writes that log entry, so a current attempt never
+matches. A site that purged or never kept that log entry cannot be detected this way.
+
+`#__appointments_privacy_outcomes` records the request's incomplete/complete callback
+outcome; outstanding cleanup references independently count as incomplete. The bundled
+**Content - Appointments privacy completion guard** vetoes native Core **Complete**
+while Appointments remains incomplete, even with the generic request adapter, DAV and
+user plugins disabled. Installation enables this guard; updates preserve its state.
+Keep it enabled while relying on the completion protection. Remove and Complete of the
+same request are serialized by a per-request database lock, also without the generic
+adapter. The guard holds the lock through Core's status save and rechecks the stored
+request state. An overlapping operation is refused with a "still running" message and
+can be retried after a reload. Core's removal audit
+records an attempt, not proof of successful teardown. Complete is a separate authorized
+Core action after a clean retry and scope review, never an automatic consequence of
+callback dispatch.
+
+Disabled calendars with remaining data, unreadable booking data and calendars the
+handling session cannot unlock are explicit remaining-scope warnings, not "nothing
+found". Use genuinely authorized key-holder access or an explicitly authorized native
+calendar-management action; Superuser status does not unlock content. Inspect delivered
+email/client calendar copies, backups and CRM/provider copies separately. Existing
+booking/audit retention still applies, but it does not purge an unresolved operational
+reference merely because the source booking has been anonymised or deleted.
+
 ### Scheduler, reminders and retention
 
 The component installs and enables **Task - Appointments**. Updates preserve an existing task's
@@ -357,10 +618,48 @@ the installation shows a warning and you create it by hand. Configure Joomla's S
 invoke its CLI from the server's cron; a quiet website must not rely solely on visitor-triggered
 execution for timely reminders.
 
+The bundled task plugin advertises these routine IDs. An advertised routine is not automatically
+a running scheduled task.
+
+| Routine ID | Purpose | Installer-created task |
+|---|---|---|
+| `plg_task_appointments.reminders` | Due booking reminders | Five-minute rule; enabled only on a fresh component installation |
+| `plg_task_appointments.retention` | Ended-booking, booking-audit and expired rate-limit retention | Daily rule; enabled only on a fresh component installation |
+| `plg_task_appointments.teamcleanup` | Blocked-device cleanup and sign-in-counter expiry | Create/configure deliberately |
+| `plg_task_appointments.teamlog` | Internet-calendar audit retention | Create/configure deliberately |
+| `plg_task_appointments.teaminvitations` | Expired internet-calendar invitations | Create/configure deliberately |
+| `plg_task_appointments.teamretention` | Per-calendar retention plus booking-calendar upkeep | Create/configure deliberately |
+| `plg_task_appointments.close` | Queued Close delivery | Five-minute rule, **created disabled**, including on fresh install |
+
+Updates create missing seeded tasks disabled and preserve any existing task of the routine,
+including disabled/trashed tasks. Configure a real Scheduler trigger separately.
+Reminder/booking-retention `batch_size` defaults to 100 and accepts 1–1000; calendar and Close
+routines use their own service bounds, not that batch form. While internet calendars are disabled,
+`teamcleanup`, `teamlog` and `teaminvitations` do nothing, but `teamretention` still removes
+booking-calendar orphans and advances booking encryption.
+
 In the component options, set **Public site URL** to the canonical HTTP(S) site root, including a
-Joomla subdirectory if applicable. CLI reminders require this setting unless Joomla's `live_site`
-is configured. It controls the signed links in reminder messages and avoids deriving a public link
-from a CLI script path. Use HTTPS in production.
+Joomla subdirectory if applicable. **This setting is required** (or Joomla's `live_site`). Every
+e-mail builds its absolute links (the signed reschedule, cancel and delete links, the guest
+removal link, the activation and administrator links of the internet calendars) from this
+setting, else from `live_site`, and **never from the address of a request**: that address follows
+the request's `Host` header, which a visitor chooses on a server that answers for any host name.
+
+Without a valid value the component fails closed and never loses a notification silently:
+
+- It sends no e-mail at all (bookings, reminders, internet calendars) and logs each refused mail
+  as an error in the `com_appointments` log.
+- Booking pages answer `503` with a neutral notice («Booking is currently not possible. Please try
+  again later.»), and a submitted booking is not saved.
+- Reschedules and cancellations through the links of earlier e-mails are refused with the same
+  notice. Erasure through its link stays possible; the host notice is then logged as not sent.
+- Invitations to the internet calendars are refused with the reason.
+- The administrator sees the reason: the component dashboard shows an error with a link to the
+  options, and the system checks report the setting as an error.
+
+A valid value is an HTTP(S) root without user name, password, query or fragment and with a
+lower-case scheme, for example `https://www.example.com` or `https://www.example.com/joomla`. Use
+HTTPS in production.
 
 **Reminder offsets** is a comma-separated list of minutes before a confirmed appointment. The
 default `1440,60` sends reminders one day and one hour beforehand; each value must be 1–525600.
@@ -385,6 +684,188 @@ rows and rate-limit windows per invocation. Run additional batches or increase t
 an existing backlog exceeds one daily batch. Monitor Scheduler results: disabling or failing the
 task prevents both personal-data retention and metadata cleanup from being enforced.
 
+### Retention and deletion rules
+
+The same rules are on the administrator page **Components → Appointments → Help & tips**, section
+**Retention and deletion**, in German, English and French. They protect the operator's own
+appointments and make sure that the data of invitees disappears everywhere after the retention
+period.
+
+**The origin decides.** Every entry in an internet calendar is either a *booking copy* or an *entry
+of its own*. The website writes a booking copy itself when somebody books (the object carries the
+booking id). Everything else is an entry of its own, including an appointment that a device such as
+Outlook uploaded. The website's automatic deletions only concern booking copies.
+
+**Bookings disappear after the booking retention.** The task *Appointments: retention* processes
+every booking whose end lies further back than the booking retention; **On erasure** decides
+between anonymising and deleting the booking entirely. All copies of the booking go with it, from
+every internet calendar and, at their next synchronisation, from every device, Outlook included. A
+cancelled booking loses its copy at once, the booking itself only after the period. The period is
+set in the Options, for example 30 days with **Delete the booking entirely**. An erasure record
+without the invitee's data remains for its own retention.
+
+**Booking copies belong to the website.** A change made to a booking copy on a device is
+overwritten at the next change of the booking (reschedule, new conference link, removed guest), and
+the copy is deleted with the booking retention at the latest. Notes about an appointment belong in
+the CRM, not in the copy.
+
+**Deleting in the calendar does not cancel the appointment.** If a device deletes a booking copy,
+the booking stays and the invitee still turns up. The website accepts that and writes the copy
+again only at the next change of the booking. Cancel only in the administrator's booking list. The
+device setup page says the same.
+
+**Entries of their own have no retention, enforced technically.** The calendar retention task
+(`CalendarObjectStore::deleteEndedBefore()`) skips every object without a booking id before it even
+reads its timing, and the deletion checks the booking id again under the row lock. A value above 0
+in a calendar's field therefore never deletes an entry of the calendar's own, whatever kind of
+calendar it is and whatever a device writes into it later. This variant was chosen over refusing
+the field for calendars that hold entries of their own, because a device can add such an entry at
+any time after the field was set, and because the check then sits at the only place that deletes.
+An entry of its own disappears only if somebody deletes it on a device, if the whole calendar is
+deleted, or if the person handling a privacy request decides to delete it (next rule).
+
+**Privacy requests change entries of their own only after a decision.** A Joomla privacy request
+removes the bookings and their copies automatically. It never changes an entry of a calendar's own
+that contains the address: such entries are recorded (request, calendar and object address only,
+no address and no content) and listed in **Privacy: review calendar entries**
+(`index.php?option=com_appointments&view=privacyreview`, for users with `core.manage` on
+com_privacy). The list shows calendar, start, title and the role of the address (organiser,
+attendee, in the text) in the session of the person handling the request, with their own key
+access. Per entry they choose **Remove only the address** (preselected: the attendee or organiser
+line goes, every other occurrence becomes a placeholder, and the entry is written only if the search
+would no longer find the address), **Delete the entry** (for every attendee and every device) or
+**Leave unchanged** (only taken off the list). If the address belongs to a user of the internet
+calendars (a grant, a device, a personal key, an owned calendar or an activation link), the request
+changes no calendar entry in which the address appears and says so; only the copies of that
+person's own bookings go with those bookings, because a copy never outlives its booking. The
+account is handled by blocking or deleting the user. A decision applies only to the version shown:
+if a device changed the entry in the meantime, it is shown again. The list has pages of 100.
+
+**The calendar retention only deletes booking copies.** Each calendar has the field **Delete
+booking copies after (days)**, default `0` (never). Booking retention deletes booking copies anyway;
+a value above 0 only deletes them earlier, on every device that synchronises the calendar. Saving a
+new value above 0 shows a warning with the number of those devices, and the edit form keeps a
+warning while the value is above 0. For team calendars the value stays `0` for now.
+
+**Removing and blocking devices, password reset.** When a device is removed or blocked, a password
+is reset or a person's calendar access is blocked, each device follows its own removal setting (see
+«Removing devices» and «Blocking and clean-up»). With **Clean up** the device receives its calendars
+empty at its next synchronisation and deletes everything it synchronises with them, for example on
+a phone. With **Block only** it is only refused and keeps its data. In both cases the server deletes
+nothing. For Outlook with the main calendar, choose **Block only**; otherwise Outlook deletes the
+host's own appointments there during a clean-up.
+
+**Copies after switching on again and with a new target calendar.** While the internet calendars
+are switched off, every booking copy is removed, and every clean-up run while they are off records a
+request for all event types (table `#__appointments_copy_restore`); changing the target calendar of
+an event type records one for that event type. Once the internet calendars are on, the task
+*Appointments: internet calendar retention* writes the copies of all future bookings anew, up to 200
+per run and one worker at a time, and moves copies out of a calendar that is no longer the target.
+All future bookings are written, also those that still have a copy, because a copy that survived
+the switched-off period may be stale. Only a copy whose ETag changed with the write (so the refresh
+was committed) and that lies in the target alone counts; after a failed write the next run starts another pass, at most five, then
+the request is kept as failed (`restore_failed` in the task log, the run fails) until a new request. Copies that a device deleted come back as well, but an entry of the target's own with the booking's UID (for
+example an imported mail attachment) is never adopted by a restore. Past bookings
+get no new copy. Without such a request nothing is rewritten, so a copy deleted on a device
+otherwise stays deleted.
+
+**Backups and restoring.** Keep backups of the website for at most 30 days and state that period in
+the privacy policy. A backup contains bookings and copies deleted since. After a restore, catch up
+on the deletions at once:
+
+1. In **System → Scheduled Tasks**, run *Appointments: retention* and *Appointments: internet
+   calendar retention* by hand at once, and again until the task log shows `bookings` 0 for the
+   first and `restore_pending` 0 and `restore_failed` 0 for the second: each run handles one batch
+   only. A request given up after five passes stays as `restore_failed` and makes the run fail;
+   resolve the cause (for example the host's Write access), then request the restore anew by
+   switching the internet calendars off and on again. Resolve failed runs before the devices
+   synchronise.
+2. Repeat every deletion requested since the date of the backup: deletion links from mails,
+   deletions in the administrator and Joomla privacy requests. The restored database no longer
+   knows them; the operator's own records decide.
+3. Block devices and revoke grants again that were blocked or revoked after the date of the backup
+   (see «Restoring a backup» for the epoch anchor).
+4. Check the devices; at their next synchronisation they receive the state of the website.
+
+**With Close, the booking retention waits for the transfer.** If the Close delivery is set up for a
+booking (it has a delivery record), *Appointments: retention* skips it while the delivery is not
+`done`, for at most 30 more days after its own retention (`SchedulerService::CLOSE_WAIT_DAYS`).
+After that it is erased anyway and recorded in `#__appointments_close_missed` (booking id and time
+only, kept 30 days). The dashboard warns while bookings wait, with the day the first one is erased
+anyway, and reports bookings erased without the transfer for 30 days. A booking without a delivery
+record never waits. The website never deletes anything in Close; Close is a separate system with
+its own deletion rules. State the waiting period in the privacy policy.
+
+#### What is deleted when
+
+| What | When | Where |
+|---|---|---|
+| Booking | After the booking retention from the end of the appointment, for example 30 days. At once through the deletion link or a deletion in the administrator. | Website. Anonymised or deleted entirely, depending on **On erasure**. |
+| Booking copy | With the booking. At once on a cancellation. Earlier if a calendar retention is set. | Every internet calendar and, at their next synchronisation, every device, Outlook included. |
+| Entry of its own | Never because of its age. | Remains until somebody deletes it. |
+| Entry of its own with the address from a privacy request | Only after a decision. Removing only the address is preselected. | Website and, at their next synchronisation, every device. |
+| Booking copies while internet calendars are switched off | At the next run of the task or the next change of the booking. | Every internet calendar. Devices synchronise only after switching on again. |
+| Calendars on a device set to **Clean up** | At the next synchronisation after removing the device, a block or a password reset. A device set to **Block only** is only refused and deletes nothing. | Only on the device. The server keeps everything. |
+| Whole internet calendar | At once when somebody deletes it with all its entries in the administrator. | Website. On devices depending on the program. |
+| Erasure record | After the erasure-audit retention in years. | Website. |
+| Internet calendar log | After twelve months. | Website. |
+| Backup of the website | After 30 days at most. | Backup storage. |
+| Data in Close | Never by the website. A booking with a pending transfer stays on the website for up to 30 more days. | Close, under the rules of the CRM. |
+
+#### Main Outlook calendar: choose «Block only» for the device
+
+The target calendar of an event type may be synchronised two-way with the host's main Outlook
+calendar. The host then sees the bookings in Outlook, and the host's own Outlook appointments block
+times on the booking page. Two rules make this safe:
+
+- The host's own appointments lie in the same calendar as the booking copies. Booking retention and
+  calendar retention still only delete booking copies there, never the host's own appointments
+  (enforced technically, see «Entries of their own have no retention» above).
+- For the Outlook device, the removal setting is **Block only** (see «Removing devices»). The
+  website then can never delete appointments in Outlook on a removal, a block or a password reset.
+
+Setup with classic Outlook and CalDav Synchronizer:
+
+1. In **Internet calendars**, create a calendar with the host as owner; leave **Blocks booking
+   times** at Yes.
+2. Choose it as **Target calendar** in the event type.
+3. On the website, add a device for Outlook in **My calendars** and choose **Block only** for it.
+4. In CalDav Synchronizer, assign the calendar to the main Outlook calendar, synchronisation mode
+   «Outlook ↔ Server (Two-Way)».
+5. Use a local Outlook calendar (for example a PST file), not an Exchange or Microsoft 365
+   mailbox; otherwise the booking copies are also stored at Microsoft.
+6. For phones and other devices with a calendar folder of their own, choose **Clean up**, so the
+   calendars disappear there completely on a removal.
+
+**Why «Block only»:** during a clean-up the website delivers an empty calendar to the device. In a
+two-way synchronisation with the main calendar, Outlook aligns the calendar with it and deletes every
+appointment in it, the host's own included. «Block only» refuses the device without delivering an
+empty calendar, so Outlook keeps everything. The booking copies still disappear from Outlook after
+the booking retention, as long as the device synchronises.
+
+#### What is never deleted
+
+- Data in Close; the website only creates and updates there.
+- Entries of their own because of their age, neither by the booking retention nor by the calendar
+  retention.
+- Contents on the server during the clean-up of a device; only the device empties its copy.
+- The user's own Outlook appointments by the website, if **Block only** is chosen for the Outlook
+  device.
+- A booking, by deleting its copy on a device.
+- Erasure records before their own retention ends, and the internet calendar log before twelve
+  months.
+- Entries of their own by a privacy request without a decision, and entries with the address of a
+  user of the internet calendars.
+
+#### What the website cannot delete
+
+- Copies on a device that no longer synchronises, for example because it was lost.
+- Booking copies somebody moved or copied into an Outlook folder that is not synchronised.
+- Appointments from booking mails that somebody accepted in Outlook. In Outlook they lie outside
+  the website; in a synchronised calendar other than the target calendar they count as entries of
+  their own.
+- Backups, until they expire after their period.
+
 ### Navigation
 
 Each administrator and site branch keeps links back to its list or overview, including empty,
@@ -392,6 +873,15 @@ disabled and recoverable error states. Administrator edit forms leave through Sa
 Cancel so their checkout is released. Authorisation and deliberate privacy-preserving 403/404
 responses take precedence over navigation; public links never grant access to another person's
 booking. Component options retain Joomla's native Close action.
+
+The button **Back to appointments** (on a form **Cancel**) leads to the list of all event types,
+through its *Event types* menu item; without such a menu item it leads to the home page. On
+a *Book an appointment* menu item, which publishes one event type, it is hidden by default, so the
+list does not show that item's visitors the other event types. The menu item's **Navigation** tab
+shows it again and chooses its target (another menu item, otherwise the list). While it is hidden,
+the confirmation, the signed pages and their receipts in that item's frame lead back to its booking
+page instead, or to the list once that booking page can no longer be opened (event type or schedule
+unpublished, another access level or language).
 
 Adding a device checks existing account and address locks without reserving a password attempt;
 successful device creation neither consumes sign-in attempts nor clears a real sign-in lock.
@@ -483,6 +973,8 @@ right is locked and can lift the lock in the devices view. Not covered, stated p
    initializes that person's key; their own authenticated key session must create it first.
 6. Add a menu item **My calendars** with the access level «Internet calendars». There each user
    adds one device per client and receives the app password and the instructions for that client.
+   The page opens only through this menu item, and the mails link it with its `Itemid`; without
+   it «My calendars» answers 404.
 
 #### Accounts
 
@@ -506,8 +998,8 @@ the real key pair and its calendar wrap exist.
 | Team groups | the group created by the installer | Members may receive grants from a calendar's managers. |
 | Group of external users | the group created by the installer | Accounts of external users belong here. Only users with the permission «Share with external users» grant to them, at most the write role, and only on calendars that allow externals. A member of both groups counts as external. |
 | Create user groups | on | Create missing groups and the access level on installation and update, and enforce MFA for both groups. |
-| Access level of «My calendars» | the level created by the installer | Shows the menu item to calendar users only. |
-| Days per clean-up phase | 14 | Longest duration of each clean-up phase of a blocked device (see below). |
+| Access level of «My calendars» | the level created by the installer | Shows the menu item to calendar users only. The page and its device actions check it on the server too, together with membership of a team group or the external group: any other signed-in account gets 403, a guest 404. The page itself opens only through its menu item (404 at any other address). |
+| Days per clean-up phase | 14 | Longest duration of each clean-up phase of a blocked device set to «Clean up» (see below). |
 | Subscription feeds with token | off on a new installation, on after an update | The previous token feeds, replaced by the internet calendars. |
 
 The CalDAV plugin holds the **CalDAV base address**, an absolute `https://` address (default: the
@@ -529,6 +1021,46 @@ it implicitly.
 | Write | view, create, change and delete events | same |
 | Manage | as write | shares with team members, revokes, edits title, colour and description |
 
+#### Notifications
+
+Who receives which mail about a booking depends on whether its event type has a **target calendar
+in use**: internet calendars switched on and the calendar active. Every user with access to that
+calendar is notified. The booking lands in the calendar as a copy only while the host has effective
+write access to it; without it the host keeps the `host_*` mail with calendar invitation, and every
+other user of the calendar still gets the calendar user mail.
+
+| Recipient | Without target calendar in use | With target calendar in use |
+|---|---|---|
+| Booking person and additional guests | their mail with calendar invitation (ICS) and their own links | unchanged |
+| Host | `host_*` mail with calendar invitation | calendar user mail **without** invitation, as below; without write access the `host_*` mail with invitation |
+| Every other user with effective access to the calendar | nothing | calendar user mail **without** invitation |
+
+Effective access means an active grant, an active account in an internet calendar group and an
+approved second factor, for internal and external users alike. Calendar users get a mail on a new
+booking (also one awaiting approval), an approval, a reschedule and a cancellation (also an
+erasure); only the host gets the reminder. There is no invitation because the appointment already
+reaches every calendar user through the synchronisation; an accepted invitation would show it a
+second time, for example in Outlook when the calendar is synchronised with the main calendar.
+
+| Role | Contents of the calendar user mail |
+|---|---|
+| Read, write, manage | What the calendar copy shows: event type, time, host, name and address of the booking person, guests, location and conference link. The host also gets the telephone number and the moderator link. Accounts that may open the booking list in the administrator also get a link to the booking. |
+| Free/busy | The calendar and the time only, when a time becomes busy, moves or becomes free again; no mail on an approval. Templates of this role can use `{calendar_title}`, `{start}`, `{end}` and `{timezone}` only; any other placeholder stays empty, so no edited template can reveal a name, an address or a title. |
+
+External users get what their role allows, like internal users with the same role. Each person
+gets each mail once: the host who is also a calendar user, an account with several grants and an
+address that already receives the booking person's or a guest's mail. Every mail uses the
+recipient's account language and time zone, otherwise the site defaults.
+
+**Switching the mails off:** in **My calendars** every calendar user switches the booking mails of
+each calendar off and on again, for their own account only; the default is on. The task takes the
+account from the signed-in session, never from the request, so neither a calendar owner nor an
+administrator can change another person's setting. A host of an event type that books into the
+calendar is warned that, with the mails off, they learn of new bookings only through the calendar.
+The setting is kept in the account's own parameters and disappears with the account. Mails about
+the account and its security cannot be switched off: new device, activation, changed grants,
+suspended access, deleted calendar and locked account.
+
 #### Devices and app passwords
 
 In **My calendars → Add device**, the user names the device, picks the client and confirms the usage
@@ -536,7 +1068,8 @@ rule: a lock code on the device, no forwarding to iCloud or Google calendars, re
 Private smartphones are allowed under that rule. Adding a device requires a password sign-in with
 the second factor in the same session and at least one grant. The app password is shown once and
 stored only as a keyed hash; the user receives a mail for every new device. The Joomla password
-never works for CalDAV. **Remove device** starts the clean-up.
+never works for CalDAV. **Remove device** acts by the device's **When removed or blocked** setting,
+chosen in **Add device** (see [Blocking and clean-up](#blocking-and-clean-up)).
 
 #### Client instructions
 
@@ -545,7 +1078,7 @@ for your site's address; the CalDAV address below assumes the default base addre
 
 | Client | Address | Refresh |
 |---|---|---|
-| Classic Outlook (Office LTSC 2024) with the CalDav Synchronizer add-in | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, then «Discover resources and assign to Outlook folders», each calendar to a new, empty folder | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
+| Classic Outlook (Office LTSC 2024) with the CalDav Synchronizer add-in | profile «Generic CalDAV/CardDAV», DAV URL `https://<site>/dav/`, then «Discover resources and assign to Outlook folders», select the calendar and assign a new, empty Outlook calendar folder; after synchronising, the calendar appears under «My Calendars» in the Outlook calendar view and must be ticked there | sync mode two-way, interval 5 minutes, «Use WebDAV collection sync» on |
 | iOS calendar | Settings → Calendar → Accounts → Add Account → Other → CalDAV account, server `<site>` | Fetch New Data → every 15 minutes |
 | DAVx⁵ (Android) | «Login with URL and user name», `https://<site>/` | calendar sync interval 15 minutes (the Android minimum) |
 | Thunderbird | New Calendar → On the Network, `https://<site>/dav/` | calendar properties → refresh every 5 minutes |
@@ -559,15 +1092,56 @@ tested set.
 Clients refresh by polling; the server keeps the CTag and the sync token (RFC 6578) exact, so a
 refresh without changes transfers no events. Menu paths can differ between client versions.
 
+The setup page links the manufacturers' official download pages, opened in a new window: CalDav Synchronizer (`https://caldavsynchronizer.org/download-2/`, own installer, administrator rights, afterwards the «CalDav Synchronizer» tab in Outlook) and DAVx⁵ (`https://www.davx5.com/download/`). The addresses are language strings (`COM_APPOINTMENTS_TEAM_D_GUIDE_OUTLOOK_URL`, `COM_APPOINTMENTS_TEAM_D_GUIDE_DAVX5_URL`), so an operator can change them with a language override; only `https://` addresses are rendered. They are plain links the visitor clicks, the server never contacts them. Thunderbird needs no download.
+
 #### Blocking and clean-up
 
-A device to be blocked first gets its calendars **empty**, so the client deletes its local copy;
-then the calendars are **no longer listed**, so the client removes them; then every request is
-refused. Each phase ends when the device has fetched it, at the latest after **Days per clean-up
-phase**. Writes are refused during the clean-up, so a client cannot upload the deleted events
-again. Triggers: «Remove device», an administrator blocking a device or a user's calendar access,
-a blocked Joomla account and a password reset. A device that never connects again keeps its local
-copy; that is why the usage rule asks for a lock code.
+Every device has the setting **When removed or blocked**. The user chooses it in **Add device** and
+can change it later on the device page in «My calendars». An administrator with `core.admin`
+changes it in **Internet calendars → Devices**. Nobody else can change it.
+
+- **Clean up** (phones and tablets): the device first gets its calendars **empty**, so the client
+  deletes its local copy. Then the calendars are **no longer listed**, so the client removes them.
+  Then every request is refused with 401. Each phase ends when the device has fetched it, at the
+  latest after **Days per clean-up phase**. Writes are refused during the clean-up, so a client
+  cannot upload the deleted events again. The server keeps every entry.
+- **Block only** (desktop programs): the device is revoked at once. Every request, PROPFIND and
+  REPORT included, is refused with 401, and an empty calendar is never served. The client reports
+  an error and deletes nothing. Its local copy stays until the user removes it in the client.
+
+**Why «Block only» for Outlook with the main calendar.** CalDav Synchronizer in two-way mode
+applies every change of the server to the Outlook folder it is assigned to. If that folder is the
+user's main Outlook calendar, the synchronised items are the user's own appointments, and an empty
+calendar during a clean-up would make Outlook delete them. With «Block only» Outlook only reports
+an error and every appointment stays. A client that synchronises into a new, empty folder of its
+own can use either setting.
+
+The form preselects **Recommended for the chosen program**, which the server resolves as follows:
+
+| Client | Recommended | Reason |
+|---|---|---|
+| Classic Outlook with CalDav Synchronizer | Block only | Two-way synchronisation, possibly with the main calendar |
+| iOS calendar | Clean up | Phone or tablet, the internet calendars are calendars of their own account |
+| DAVx⁵ (Android) | Clean up | Phone or tablet, as iOS |
+| Thunderbird | Block only | Desktop program |
+| eM Client | Block only | Desktop program |
+| Other CalDAV client | Block only | The effect of an empty calendar is unknown. A refused sign-in can be undone, deleted appointments cannot |
+
+**Who is affected.** «Remove device» in «My calendars» and **Block by device setting** in the
+backend affect that one device only, every other device keeps working unchanged. A password reset,
+a blocked Joomla account, blocked calendar access, a revoked access and a discarded invalid key
+block every device of the user, each by its own setting. **Revoke now** in the backend always
+revokes at once without the clean-up, for a lost or stolen device. When the grant for a single
+calendar is withdrawn, the device keeps its other calendars. The withdrawn calendar is no longer
+listed and answers 404, to PROPFIND and REPORT as well. A «Block only» device never receives it
+empty, a «Clean up» device only when the whole device is cleaned up later.
+
+**Updating.** Devices created before this setting existed get **Clean up**, the behaviour so far.
+**System checks** reports active Outlook devices set to **Clean up**. Set them to **Block only** if
+they synchronise two ways with the main Outlook calendar.
+
+A device that never connects again keeps its local copy. That is why the usage rule asks for a lock
+code.
 
 #### What the encryption protects, and what not
 
@@ -579,8 +1153,10 @@ possible with CalDAV clients.
   extension) shows no content and no times of calendar entries, no app password and no key. Of
   the bookings, the personal fields (names, addresses, phone, answers) are encrypted, while their
   dates, times, event types and states stay readable, because reminders and the slot calculation
-  need them. A row added or changed in the database without the site
-  secret grants nothing. A Super User without a grant sees calendar lists and the log, never
+  need them. The token feeds of the section "Calendar subscriptions" store only a keyed digest
+  of their secret address (from 1.5.0; up to 1.4 it was stored in clear text, which let a copy of
+  the database alone read every feed while the feeds were switched on). A row added or changed in
+  the database without the site secret grants nothing. A Super User without a grant sees calendar lists and the log, never
   contents. Active accounts with `core.admin` on the component can edit settings, delete valid
   foreign or orphan calendars (with `core.delete`), revoke any grant and assign an owner.
   Grants, including self-grants and owner assignments, require a password-authenticated session
@@ -602,7 +1178,8 @@ possible with CalDAV clients.
   alone does not repair that; the way back is the old site secret. That is why it is printed with
   the recovery key.
 - **Password reset:** a reset by mail or a password set by an administrator gives a new key pair;
-  the user's grants are suspended and the devices go into clean-up. A manager grants again, or an
+  the user's grants are suspended and the devices are blocked, each by its **When removed or
+  blocked** setting. A manager grants again, or an
   administrator uses the recovery key. A password reset alone never gives anybody calendar access.
 - **Losing the recovery key and every key holder** of a calendar loses that calendar's contents, by
   design.
@@ -668,20 +1245,25 @@ addresses against it.
   addresses.
 - **Calendar entries** are searched only in the session of the person handling the request, and
   only in the calendars that person can unlock (owner, manager, or keys recovered with the recovery
-  key). Removal deletes the matching entries as normal changes, so clients drop them at the next
-  synchronisation.
+  key). Removal deletes the matching booking copies as normal changes, so clients drop them at the
+  next synchronisation. Matching entries of a calendar's own are only recorded for a decision, see
+  «Retention and deletion rules»; Joomla's **Complete** stays blocked until each is decided. Entries
+  with the address of a team member (an account in the internet calendar team groups) or of another
+  calendar user are never changed automatically: the removal leaves them and reports their number
+  for the administrator to review.
 - **Never silently incomplete:** every calendar that could not be searched is named in the export
   and in the removal result, with the way to search it (sign in as a key holder, or use the
   recovery key).
 - Searches, exports and removals are logged with counts only, never the address or content.
 
-Each calendar has its own **retention** in days (0–65535). Its default `0` disables only age-based
-object deletion; it does not inherit booking retention or prevent separate removal of cancelled,
-erased or orphan booking copies. With internet calendars enabled, the calendar-retention task
-deletes an entire object or finite series after its last safely determined occurrence ends before
-the UTC cutoff. Future, endless or indeterminate series remain. The same rule covers imported,
-CalDAV-written and booking objects, but not booking rows or erasure audits. A later upload or
-booking change can recreate an object. The log records only the count.
+Each calendar has its own **Delete booking copies after (days)** (0–65535). Its default `0`
+disables age-based deletion; it does not inherit booking retention or prevent separate removal of
+cancelled, erased or orphan booking copies. With internet calendars enabled, the calendar-retention
+task deletes a **booking copy** (an object with a booking id) after its last safely determined
+occurrence ends before the UTC cutoff. Objects without a booking id (entries of the calendar's own,
+whether written by a device or imported) are never deleted by age, whatever the value; see
+«Retention and deletion rules». Booking rows and erasure audits are not touched either. A later
+booking change can recreate a copy. The log records only the count.
 
 The backend fields explain these separate lifecycles, UTC cutoffs, ranges and Scheduler prerequisites.
 An empty event-type booking-retention value inherits the component setting; booking `0` processes
@@ -726,13 +1308,28 @@ client, including the clean-up and the refresh interval. It runs only against a 
 ### Calendar subscriptions
 
 Open **Components → Appointments → Calendar feeds** with component management and options
-permission. Copy an event-type URL or a host URL into your calendar client's subscription settings.
+permission. The view lists one event-type feed per event type and one combined host feed per host.
 Event credentials also require edit permission for that event. A combined host credential is
 available and rotatable only when you may edit every event type included in that host's feed.
 Each credential controls only that feed; rotating a host URL does not rotate its event-type URLs,
 and vice versa. Rotation requires explicit confirmation and revokes the old URL immediately.
-Replace the URL in the calendar client afterwards. Normal event-type edits cannot restore an old
-credential.
+
+The database stores only a keyed digest of each credential ("h1:" plus HMAC-SHA256 over the
+feed's scope, id and token, with a key derived from the site secret), never the URL itself, so a
+digest copied to another feed opens nothing there. Therefore the view cannot show an existing
+URL: **Rotate credential** issues a new URL and shows it once, in that response only (no redirect,
+session or message stores it). Copy it into your calendar client's subscription settings right
+away; reloading the response rotates again. A new event type or host starts with a credential that
+no URL matches until it is rotated for the first time. Normal event-type edits cannot restore an
+old credential.
+
+Updating to 1.5.0 converts every stored clear-text credential into its digest, so every existing
+subscription keeps working without any action. A new installation over tables kept from an older
+version converts them the same way. The conversion runs only then, once: a clear-text value
+written into the database afterwards is never converted and never opens a feed. If the
+conversion fails, the installer says so, the affected feeds answer 404, and the conversion stays
+marked as pending: the next installation of the package repeats it. Rotating the feeds also issues
+new addresses.
 
 **Treat the full URL as a password.** Anyone who obtains it can read the calendar's appointment
 details. Never put it in an invitee email, a public page, an error report or application logs.
@@ -809,6 +1406,16 @@ Spaces, brackets, dots, slashes and hyphens are ignored, and a single national t
 dropped ("+41 079 …" is stored as `+4179…`), except for the calling codes whose national numbers
 keep it (Italy, San Marino, Vatican City, Côte d'Ivoire, Benin, Republic of the Congo). Numbers are
 stored in E.164 form, at most 15 digits.
+The number after the calling code must have a plausible length. For the calling codes whose
+national numbers have one fixed length it must have exactly that length: 10 digits for North
+America (+1) and for Russia and Kazakhstan (+7), 9 for France (+33), Spain (+34), Switzerland (+41)
+and Portugal (+351), 8 for Denmark (+45). Swiss voicemail numbers, 860 followed by a nine-digit
+number, have 12 digits after +41. Every other calling code needs at least 3 digits, and at most 15
+digits together with the code. A number that
+does not fit ("+41 123") is refused at its field with a message that the number has too few or too
+many digits for its calling code.
+With the default **Calling code choice** the preselected code is only a preselection: a visitor
+with a foreign number chooses another code or types the number with `+`.
 
 A telephone event type that collected the number through a custom telephone field (before the
 fixed field existed) asks twice after the update. Unpublish that custom field; do not delete it, so
@@ -844,15 +1451,24 @@ open, submission returns to the times of the same day with a friendly message an
 choices; an address of step 2 whose time is no longer offered shows the times of its day with the
 same message. A refusal the visitor can fix in a field returns to step 2 of the same time.
 Confirmation pages require the submitting browser's session and are not public booking lookups.
+The booking page (which shows a refused submission again with the visitor's own entries), the
+confirmation, the signed pages, their receipts, the guest removal page and the activation page of
+the internet calendars are kept out of Joomla's page cache (they exclude themselves from
+**System - Page Cache**, which ignores the browser cache headers), so a cached copy never hands
+their entries, links or form tokens to another visitor. The list of event types stays cacheable.
+Installing or updating the component empties the site's page cache, so no page that an earlier
+version let it store is served afterwards.
 Public requests use the directly connected address for rate limiting, not untrusted forwarding
-headers. Only its keyed hash is stored; no raw address is added to a booking.
+headers: an IPv4 address counts on its own, an IPv6 address counts together with its whole /64
+network (one connection usually holds all of it), an IPv4-mapped IPv6 address as its IPv4 address.
+Only a keyed hash is stored; no raw address is added to a booking.
 
 ### Page markup and styling
 
 Each public page sets its own browser title and main heading when the active menu item does not
-point at it, for example on `/component/appointments/` without a menu item: "Book an appointment"
-for the list, the event type's title for its booking page, the confirmation heading and the
-heading of the reschedule, cancel or erase page. When a menu item points at the page (for one
+point at it: the event type's title for a booking page below an *Event types* item, the
+confirmation heading and the heading of the reschedule, cancel or erase page in the frame of a
+booking page. When a menu item points at the page (for one
 event type: at that event type), its browser page title (or else its menu title) applies and its
 page heading replaces the default heading when the menu item shows the page heading. In both
 cases Joomla's **Site Name in Page Titles** setting applies. Summaries name the end date of an
@@ -1041,6 +1657,7 @@ copies, because the booking script and the server rely on them.
 | Part | Structure and classes |
 |---|---|
 | Page | `.com-appointments` plus the view (`-eventtypes`, `-eventtype`, `-confirmation`, `-manage`), inside it `.com-appointments-container` (centred column, `max-width: var(--appointments-max-width)`, on the other views `--appointments-narrow-width`); on the booking page `[data-appointments-view]` with `data-step="time"` or `"details"`, the part the script replaces |
+| Way back | `a.btn.com-appointments-return`, the button **Back to appointments** (on a form **Cancel**) at the top of the booking page and below the confirmation, manage and guest pages; left out on a *Book an appointment* menu item unless its **Navigation** options show it |
 | Card | `#appointment-booking.com-appointments-layout` with `.com-appointments-layout-time` or `-details`, `.com-appointments-layout-day` while the times of a day are shown and `.com-appointments-info-logo` or `-person`; inside it `header.com-appointments-info.com-appointments-header` and `.com-appointments-main` |
 | Information column | On step 2 first `a.btn.btn-outline-secondary.com-appointments-back[data-appointments-step]`; the logo `.com-appointments-info-media.com-appointments-info-logo > img.com-appointments-logo`, or the person `.com-appointments-info-media.com-appointments-host` with `img.com-appointments-host-photo` and `p.com-appointments-host-text` (`.com-appointments-host-name`, `.com-appointments-host-role`); then `h1.com-appointments-heading`, `ul.com-appointments-meta` (`li.com-appointments-duration`, `li.com-appointments-location-type`, on step 2 `li.com-appointments-selected` with `.com-appointments-selected-date` and `.com-appointments-selected-time`, and `li.com-appointments-selected-zone`, each with an inline `svg.com-appointments-icon`), `.com-appointments-description` and `p.com-appointments-location` |
 | Step title | `h2#appointment-step-title.com-appointments-step-title` (`tabindex="-1"`, receives the focus after a step change) with a visually hidden "Step 1 of 3:" |
@@ -1085,7 +1702,10 @@ so automatic browser-zone detection does not reload the picker and discard its e
 `task=booking.ics&id=<booking>` (a link of an earlier confirmation is refused), with the same UID and sequence as the attachment of the confirmation email, and
 the signed reschedule and cancel links of that email; like the confirmation page itself it is
 only available to the browser session that made the booking. When the links cannot be built (an
-invalid public site address in **Options**), only the `.ics` download is shown.
+invalid public site address in **Options**), only the `.ics` download is shown. The receipt of a
+reschedule likewise shows the new signed reschedule and cancel links, the same as in the reschedule
+email: only to the browser session that made the change and only while the appointment is still the
+version this change produced. The receipts of a cancellation or erasure show no links.
 
 **Booking script and slot endpoint.** `media/com_appointments/js/booking.js` is registered as the
 web asset `com_appointments.booking` (deferred, no dependency) and loaded by the booking page, the confirmation and a completed manage
@@ -1117,6 +1737,12 @@ for them: the booking person the plain purpose, each additional guest the guest 
 neutrally, never with the booking person's name), and the host `host_notice` for a new or pending
 booking, the host template for approval, reschedule, cancellation and reminder (host wording with
 the booking person's details, never a mail addressed to the booking person), and the erasure notice.
+With a target calendar in use, the host and the other users of that calendar get the eight calendar
+user templates instead, without calendar invitation: `calendar_booked`, `calendar_approved`,
+`calendar_rescheduled`, `calendar_cancelled` and `calendar_reminder` for the roles that read
+contents, `calendar_busy`, `calendar_busy_moved` and `calendar_free` for the free/busy role (see
+[Notifications](#notifications)). They know the placeholder `{calendar_title}` in addition and
+append a link to «My calendars», where each user switches them off.
 An update adds missing templates, including the guest and host templates on an existing
 installation, and never overwrites a template you edited. If you customised the invitee templates
 of those purposes for the host as well, adapt the new host templates.
@@ -1153,6 +1779,7 @@ empty, so a telephone appointment shows no empty location:
 | `{start_utc}`, `{end_utc}`, `{state}`, `{id}`, `{uid}`, `{sequence}` and the other booking columns | Raw booking values |
 | `{reschedule_url}`, `{cancel_url}`, `{erase_url}` | Signed links, in mails to the booking person only |
 | `{guest_email}`, `{guest_remove_url}` | In a guest template only: the guest's own address and the signed link that removes only that address |
+| `{calendar_title}` | In a calendar user template only: the title of the target calendar |
 
 Use only single-line values in subjects.
 
@@ -1220,7 +1847,8 @@ erasure requires delete permission. Moderator links are shown only to the host o
 administrator, not to an ordinary event editor.
 
 **System checks** requires component options permission. It reports PHP/Joomla versions, the site
-time zone, configured mail transport, enabled bundled plugins, each routine's most recent enabled
+time zone, configured mail transport, the public site URL for e-mail links (an error while
+neither it nor `live_site` is valid: no mail is sent and no booking taken), enabled bundled plugins, each routine's most recent enabled
 task and last run, invalid feed-credential counts and the oldest audit record. A configuration
 check is not a delivery test or a remote connectivity probe. Configure and monitor both Scheduler
 routines; a never-run task is explicitly shown as needing attention.
@@ -1316,7 +1944,9 @@ storing derived keys in the database, displaying them or logging them. Component
 change them. Booking changes invalidate action links through their revision; changing Joomla's
 site secret deliberately invalidates existing signatures and changes derived room identities.
 The independently random subscription credentials and optional operator JWT signing secret are
-different capabilities and have their own rotation/configuration paths.
+different capabilities and have their own rotation/configuration paths. The database holds only
+a keyed digest of each subscription credential, so changing the site secret also invalidates every
+subscription URL; rotate each feed afterwards to issue a new one.
 
 ## Uninstall
 
@@ -1396,7 +2026,7 @@ defines each stage's binding acceptance criteria. Versions are managed by the re
 
 ## Manual Acceptance Testing
 
-The [manual acceptance plan](tests/manual/README.md) contains 228 identified cases and a complete
+The [manual acceptance plan](tests/manual/README.md) contains 240 identified cases and a complete
 end-to-end scenario, including negative, boundary, concurrency and fault cases, real calendar
 clients, conferencing and all three erasure paths. Use its
 [blank report template](tests/manual/report-template.md) to record the actual tested commit and
@@ -1425,7 +2055,9 @@ reports an explicit skip once the repository's latest-release-only policy retire
 The client lane includes a complete synthetic password/TOTP sign-in, first calendar-key release
 and device creation through the real site forms. Python `caldav` and `vdirsyncer` then read,
 create, update and delete entries using those one-time app passwords. Negative checks cover
-wrong credentials, account blocking (cleanup-only access) and revoked devices. No real accounts,
+wrong credentials, account blocking (cleanup-only access) and revoked devices. A removed device set
+to «Block only» must answer 401 to PROPFIND and REPORT at once, and its `vdirsyncer` copy must stay
+complete. No real accounts,
 credentials or TOTP seeds are included in test artifacts.
 
 The full integration matrix runs on the newest Joomla 5.4 and Joomla 6 images with MySQL. A third
@@ -1451,10 +2083,17 @@ The authoritative list and order is [`tests/test.env`](tests/test.env):
 | Feeds / Scheduler | Credentials, conditional responses, independent rotation, reminders and bounded retention |
 | Conference | Automatic links, JWT separation, explicit failure, retry and lifecycle teardown |
 | Privacy | Real typed Joomla privacy events, Unicode isolation, export/removal and legal blocking |
-| Administration | Filters, CSV safety, reschedule, system checks and restricted event ACL |
+| Administration | Filters, CSV safety, reschedule, system checks, restricted event ACL by exact list/CSV row identity across pagination, Close action POST/token/component-administrator guards, and scoped mobile queue layout |
 | Backend views | Shared HTTP rendering checks for every administrator view |
 | Installer messages | Shared install/update checks in en-GB, de-DE and fr-FR |
 | Uninstall | Component removal and table cleanup |
+
+`node com_appointments/tests/close-queue-layout.cjs` (from the repository root) renders the actual
+dashboard template with synthetic data and checks all Close queue columns, the complete UID and
+ordinary reconciliation form interaction without horizontal scrolling. It uses the existing
+`shared/tests/browser` Playwright dependencies and installed Edge/Firefox browsers across all
+seven viewport widths, three locales and both themes; it makes no network requests or Joomla writes.
+This isolated layout regression complements, but does not replace, installed-site browser acceptance.
 
 PHPUnit covers the pure helpers without Joomla or a database, including DST, buffers, the slot
 grid, minimum notice, booking horizons and caps. CI treats skipped integration assertions as

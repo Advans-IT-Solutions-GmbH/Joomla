@@ -11,7 +11,8 @@
 - Exports primary-invitee booking records, decoded custom answers and field labels.
 - Exports a separate, restricted invitation record when the request address is an additional guest.
 - Handles formal removal through the component's privacy service, including its legal blocker, erasure mode and audit path.
-- Searches internet-calendar contents within the handling administrator's unlocked access and exports/removes matching entries and account-specific calendar data.
+- Searches internet-calendar contents within the handling administrator's unlocked access and exports/removes matching entries and account-specific calendar data. Entries with the address of a team member are never changed automatically; their number is reported for review.
+- Exports and removes the staff data of the account Joomla found (blocked periods, host feed credential; hosted event types and owned schedules are exported and named for review, never changed), also with the internet calendars off.
 
 ## Requirements
 
@@ -39,7 +40,7 @@ Use Joomla's confirmed privacy-request workflow with a genuinely authorised admi
 
 ## Privacy and Data Handling
 
-The request email is authoritative. Additional-guest matching is per complete normalized address, not substring or accent-insensitive collation. A guest receives no primary-invitee contact data from another person's booking. Guest removal removes only that address from the guest list and audits the action; primary-invitee removal uses the shared anonymisation/deletion transaction and future host-cancellation notice.
+The request email is authoritative. Additional-guest matching is per complete normalized address, not substring or accent-insensitive collation. Account-specific calendar export domains and their audit subject require the Core-supplied account email to match that same normalized request address. A collation-equivalent but distinct account contributes no staff data; independently address-matched bookings and calendar entries remain exportable. A guest receives no primary-invitee contact data from another person's booking. Guest removal removes only that address from the guest list and audits the action; primary-invitee removal uses the shared anonymisation/deletion transaction and future host-cancellation notice.
 
 The plugin has no separate tables, Scheduler routine or mail transport. Exports, delivered mail, calendar clients and backups need their own operator handling; a local callback does not erase external copies.
 

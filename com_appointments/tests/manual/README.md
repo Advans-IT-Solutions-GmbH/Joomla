@@ -13,7 +13,7 @@ tested commit, package and environment in every execution report.
 replace human acceptance. Installation, database inspection and controlled fault injection require
 a technically experienced tester.
 
-The plan contains **228 identified test cases**, plus the end-to-end acceptance scenario in
+The plan contains **240 identified test cases**, plus the end-to-end acceptance scenario in
 section 18. Use the [blank report template](report-template.md) for each execution.
 
 ## Publishing and storage
@@ -43,7 +43,7 @@ management links or JWTs. A blank template is not permission to publish its comp
 
 ### 1.2 Test types
 
-All 228 IDs retain their original coverage. Existing source category codes are retained.
+All 240 IDs retain their original coverage. Existing source category codes are retained.
 The source omitted categories for `FF-01`-`FF-10` and `MA-01`-`MA-08`; their Type values below
 are classifications added here, not preserved source values. Slash-separated codes mean that
 every listed aspect must be exercised, not that the tester may choose one.
@@ -100,7 +100,7 @@ and adjacent regression cases.
 
 ### 2.1.1 Mandatory coverage and conditional repetitions
 
-The default mandatory set is **all 228 identified cases**, plus all ten steps of section 18,
+The default mandatory set is **all 240 identified cases** (`CL-01`-`CL-12` only where Close transfer is to be activated), plus all ten steps of section 18,
 on both Joomla/MySQL full-run environments above. Apply the narrower browser, language and
 JavaScript repetitions specified in the matrix in addition to those full runs.
 
@@ -262,7 +262,7 @@ Perform these four steps for every field type:
 | FF-01 | POS/NEG/GRZ | Single-line text | `Test project ÄÖÜ`; exactly 255 `A` characters; exactly 255 `Ä` characters (separate submissions) | Empty required field; exactly 256 `A` characters; exactly 256 `Ä` characters | Nonempty values of up to 255 Unicode characters accepted unchanged; empty required or 256-character answers rejected with a validation error and no new booking, never silently truncated. |
 | FF-02 | POS/NEG | Multiline text | Multiple lines with `&`, commas and accented characters | HTML/script text | Meaningful line breaks retained; no unauthorised HTML or script execution. |
 | FF-03 | POS/NEG/GRZ | Number | `0`, `-1`, `1e308` (separate submissions) | Letters; `1e309`; `-1e309` | Finite numeric values accepted; nonnumeric and non-finite overflow values rejected with a validation error and no new booking. There is no configurable minimum or maximum. |
-| FF-04 | POS/NEG | Telephone | Country calling code and valid national number | Missing number; letters instead of a number | Country selector works; unusable required number refused. |
+| FF-04 | POS/NEG/GRZ | Telephone | Country calling code and valid national number; a foreign number typed with `+` while the preselected code stays selected (`+49 30 000000`, `+1 202 555 0100`) | Missing number; letters instead of a number; a number too short or too long for its code (`+41 123`, `+41 61 000 00 000`) | Country selector works; foreign numbers stored in E.164 form; unusable required number refused; a wrong length is refused at the field with the length message. |
 | FF-05 | POS/NEG | Email | Controlled test mailbox | `invalid@` | Valid address stored; invalid address refused. |
 | FF-06 | POS/NEG | URL | `https://example.org/test` | `javascript:` or an invalid URL | Only permitted URL accepted; no executable link. |
 | FF-07 | POS/NEG | Single selection | One configured option | Unconfigured option in a manipulated POST | Only configured choices accepted. |
@@ -588,6 +588,28 @@ not access control.
 | RE-07 | NEG | Open edit view directly; submit Save/Cancel without the normally held edit ID. | No bypass of edit checks. |
 | RE-08 | POS | Open a record normally, then save unchanged or cancel. | Success; checkout released afterwards. |
 | RE-09 | NEG | Edit/export/delete a mixed selection of permitted and denied event types. | No action on unauthorised records and no disclosure of their data. |
+
+### 15.3 Optional Close transfer
+
+Mandatory before Close transfer is activated on any site; otherwise record `CL-01`-`CL-12` as
+not applicable. Use **two dedicated Close test organisations** with synthetic leads only, each with
+its own test API key in its own server environment variable. Never use a production organisation,
+a production key or real people. The automated mock suites do not replace these cases.
+
+| ID | Type | Procedure | Expected result |
+|---|---|---|---|
+| CL-01 | POS | Configure two profiles (A, B) for different event types and a third event type without profile; enable transfer and the task. | Bookings of A reach only organisation A, of B only organisation B; the third event type creates no record and no request. |
+| CL-02 | INT | Book with a new synthetic e-mail address on profile A. | One new Lead with one Contact (name, e-mail, phone); Lead name, Contact title and mapped Lead fields as configured; one Note with status, local times, answers, campaign, source and UID. |
+| CL-03 | INT | Book with an e-mail address that already exists in organisation A. | Existing Lead and Contact unchanged; one new Note on them; no duplicate Lead. |
+| CL-04 | INT | Approve, reschedule and cancel the CL-02 booking. | The same Note is updated each time; cancellation changes title and status; nothing is deleted. |
+| CL-05 | INT | Erase the booking through the guest link, administrator erasure, retention and a native privacy Remove. | Local transfer record removed; Note, Contact and Lead in Close unchanged; the privacy request completes without a Close warning. |
+| CL-06 | NEG | Map a Lead field that does not exist in the organisation; book. | Record blocked with a diagnostic code before any request carries the e-mail address. |
+| CL-07 | NEG | Point the key variable of profile A to the key of organisation B; change a transferred booking. | Record blocked as organisation changed; nothing reaches organisation B. |
+| CL-08 | FEH | Unset the key variable of profile B; book on B and on A. | B blocked with a credential diagnosis, A delivered normally. |
+| CL-09 | KON | Book on A and B in quick succession from two browsers while the task runs. | Both bookings succeed; each is delivered once; no duplicate Notes. |
+| CL-10 | FEH | Interrupt the network during a create (isolated environment) and run the task again. | Record stays uncertain, no blind resend; reconciliation with the verified remote ID resumes with an update. |
+| CL-11 | POS | Open the dashboard at 375 and 1600 px in light and dark mode with blocked and uncertain records. | Profile, status and diagnostic code readable; retry and reconciliation usable; no payload or credential shown. |
+| CL-12 | NEG | Call retry and reconciliation without token, by GET and as an editor without `core.admin`. | Refused; no request to Close. |
 
 ## 16. Input, request and privacy robustness
 

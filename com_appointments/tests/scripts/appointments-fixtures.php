@@ -1,9 +1,10 @@
 <?php
 
 require_once __DIR__ . '/appointments-http.php';
-require_once '/var/www/html/configuration.php';
+require_once __DIR__ . '/appointments-environment.php';
+require_once appointments_test_root() . '/configuration.php';
 defined('_JEXEC') || define('_JEXEC', 1);
-$helper = '/var/www/html/administrator/components/com_appointments/src/Helper/';
+$helper = appointments_test_root() . '/administrator/components/com_appointments/src/Helper/';
 require_once $helper . 'KeyProvider.php';
 require_once $helper . 'UtcTimestamp.php';
 require_once $helper . 'SignedLink.php';
@@ -49,7 +50,7 @@ final class AppointmentsFixture
 
     public function booking(int $event, string $start, array $details = []): array
     {
-        $client = new AppointmentsHttp('http://localhost', $this->suite . '-guest');
+        $client = new AppointmentsHttp(appointments_test_base_url(), $this->suite . '-guest');
         [$browser, $path, $form] = $client->bookingForm($event, $start, $details);
         sleep(2);
         $html = $browser->request($path, $form);

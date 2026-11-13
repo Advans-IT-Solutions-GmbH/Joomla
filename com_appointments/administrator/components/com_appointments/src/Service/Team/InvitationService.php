@@ -10,15 +10,14 @@
 namespace Advans\Component\Appointments\Administrator\Service\Team;
 
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Joomla\CMS\Access\Access;
-use Joomla\CMS\Application\ConsoleApplication;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Log\Log;
-use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\User;
 
 defined('_JEXEC') or die;
@@ -141,18 +140,7 @@ final class InvitationService implements InvitationServiceInterface
      */
     public static function link(string $token): string
     {
-        $app = Factory::getApplication();
-        $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
-
-        if ($base === '') {
-            $base = (string) $app->get('live_site', '');
-        }
-
-        if ($base === '' && !$app instanceof ConsoleApplication) {
-            $base = Uri::root();
-        }
-
-        return self::activationLink($base, $token);
+        return self::activationLink(self::siteBase(), $token);
     }
 
     /**
@@ -160,18 +148,11 @@ final class InvitationService implements InvitationServiceInterface
      */
     public static function activationLink(string $base, string $token): string
     {
-        $parts = parse_url($base);
-
-        if (!self::tokenFormatValid($token) || !filter_var($base, FILTER_VALIDATE_URL) || !\is_array($parts)
-            || !\in_array($parts['scheme'] ?? '', ['http', 'https'], true)
-            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
+        if (!self::tokenFormatValid($token)) {
             throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_INVALID', 400);
         }
 
-        $base = preg_replace('#(?:/index\.php)+/*$#', '', rtrim($base, '/'));
-        $base = preg_replace('#\Ahttp://#', 'https://', $base);
-
-        return $base . '/index.php?' . http_build_query([
+        return self::normalisedBase($base) . '/index.php?' . http_build_query([
             'option' => 'com_appointments', 'view' => 'activation', 'token' => $token,
         ], '', '&', PHP_QUERY_RFC3986);
     }
@@ -179,10 +160,50 @@ final class InvitationService implements InvitationServiceInterface
     /**
      * The administrator page that revokes a completed activation in one step.
      * It shows the account and asks for a confirmation (POST with token).
+     * Built from the same configured site address as the activation link, so the Host
+     * header of the activating request does not decide where the administrators' link points.
      */
     public static function revokeUrl(int $invitationId): string
     {
-        return rtrim(Uri::root(), '/') . '/administrator/index.php?option=com_appointments&view=invitations&layout=revoke&id=' . $invitationId;
+        return self::revokeLink(self::siteBase(), $invitationId);
+    }
+
+    public static function revokeLink(string $base, int $invitationId): string
+    {
+        if ($invitationId < 1) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_INVALID', 400);
+        }
+
+        return self::normalisedBase($base) . '/administrator/index.php?' . http_build_query([
+            'option' => 'com_appointments', 'view' => 'invitations', 'layout' => 'revoke', 'id' => $invitationId,
+        ], '', '&', PHP_QUERY_RFC3986);
+    }
+
+    /**
+     * The component's public_site_url, then live_site (PublicSiteUrl), never the address of the
+     * request. Without one, no activation link is built and no invitation is sent (fail closed).
+     */
+    private static function siteBase(): string
+    {
+        return PublicSiteUrl::current() ?? throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_SITE_URL', 503);
+    }
+
+    /**
+     * An absolute HTTPS site root without a trailing slash or index.php. Anything else is refused.
+     */
+    private static function normalisedBase(string $base): string
+    {
+        $parts = parse_url($base);
+
+        if (!filter_var($base, FILTER_VALIDATE_URL) || !\is_array($parts)
+            || !\in_array($parts['scheme'] ?? '', ['http', 'https'], true)
+            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
+            throw new TeamException('COM_APPOINTMENTS_TEAM_C_ERROR_INVALID', 400);
+        }
+
+        $base = preg_replace('#(?:/index\.php)+/*$#', '', rtrim($base, '/'));
+
+        return preg_replace('#\Ahttp://#', 'https://', $base);
     }
 
     // ------------------------------------------------------------------
@@ -281,6 +302,9 @@ final class InvitationService implements InvitationServiceInterface
     public function invite(int $actorUserId, int $userId): int
     {
         $this->assertEnabled();
+        // Before anything is stored: without a configured public site URL the activation mail
+        // could not be sent (fail closed), so the invitation is refused with that reason.
+        self::siteBase();
         $user = GrantService::user($userId);
 
         if ($user === null) {
@@ -500,8 +524,10 @@ final class InvitationService implements InvitationServiceInterface
 
         try {
             $this->services->mailer()->activationCompleted((int) $row->id, $userId, self::revokeUrl((int) $row->id));
-        } catch (\Throwable) {
-            // The log holds the completion; the administrators see it in the list.
+        } catch (\Throwable $e) {
+            // The activation stands (the team log holds it and the administrators see it in the
+            // list), but the missing notice to them is an error, e.g. without a public site URL.
+            Log::add('Internet calendar activation notice not sent: exception ' . $e::class, Log::ERROR, 'com_appointments');
         }
 
         return $userId;

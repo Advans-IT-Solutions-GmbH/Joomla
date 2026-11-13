@@ -30,6 +30,7 @@ failed=0
 pending=0
 WORK=""
 AUTH_CONTAINER=""
+BLOCK_CONTAINER=""
 
 echo "=== CalDAV client tests ==="
 
@@ -131,6 +132,10 @@ teardown() {
         echo "✗ Authenticated client container cleanup failed"
         failed=$((failed + 1))
     fi
+    if [ -n "${BLOCK_CONTAINER:-}" ] && ! docker rm -f "$BLOCK_CONTAINER" >/dev/null; then
+        echo "✗ Block only client container cleanup failed"
+        failed=$((failed + 1))
+    fi
     rm -rf "$WORK"
     unset WORK
 }
@@ -138,6 +143,14 @@ trap teardown EXIT
 
 client() {
     if docker run --rm --network "$NETWORK" --user "$(id -u):$(id -g)" -e HOME=/work -v "$WORK:/work" "$IMAGE" "$1"; then
+        return 0
+    fi
+    failed=$((failed + 1))
+    return 1
+}
+
+blockclient() {
+    if docker exec "$BLOCK_CONTAINER" python -I /opt/caldav-clients/clients.py "$1"; then
         return 0
     fi
     failed=$((failed + 1))
@@ -186,6 +199,14 @@ if ! AUTH_CONTAINER="$(docker run --rm -d --network "$NETWORK" --user "$(id -u):
     failed=$((failed + 1))
     summary
 fi
+# The refused requests of the «Block only» device count against its address like failed sign-ins.
+# A source address of its own keeps them out of the budget of the clean-up and lock-out phases.
+if ! BLOCK_CONTAINER="$(docker run --rm -d --network "$NETWORK" --user "$(id -u):$(id -g)" \
+    -e HOME=/work -v "$WORK:/work" --entrypoint sleep "$IMAGE" infinity)"; then
+    echo "✗ The Block only client container did not start"
+    failed=$((failed + 1))
+    summary
+fi
 
 client seed || summary
 
@@ -204,6 +225,10 @@ step mfa-disable && client mfa-denied
 step mfa-enable && client mfa-restored
 
 step revoke && client revoked
+
+# «Block only»: removing BLOCKONLY's Outlook device revokes it at once. The client gets
+# 401, never an empty calendar, and keeps its local copy.
+step block-start && blockclient block-revoked
 
 # Successful collection/home listings advance delivered phases immediately.
 # The Scheduler timeout path uses a separate device that never fetches them.

@@ -7,9 +7,11 @@ out, for the booking core: hosted scheduling backends, cloud calendar APIs, remo
 scripts, map tiles, avatar services, error reporting services and analytics. Every asset ships in
 the package.
 
-Two deliberate exceptions exist, both opt-in and both inert until an operator configures them:
+Deliberate exceptions exist, all inert until an operator configures/enables them:
 
 - A conferencing adapter that has to call a provider (see `references/conferencing.md`).
+- The optional direct Close delivery worker, independent of the booking/CalDAV paths, with no
+  external origin or credential default (component README, "Optional direct Close transfer").
 - Joomla's own update server lookup, which is Joomla's behaviour and not the component's.
 
 If a feature cannot be built without a third-party call, it does not go into version 1. Record it in
@@ -84,14 +86,35 @@ Joomla expects.
 
 ## Routing
 
-The site router (`Site\Service\Router`, a `RouterView` with Joomla's `MenuRules`, `StandardRules`
-and `NomenuRules`, registered through `RouterFactory` in the service provider) registers only the
-two menu views, `eventtypes` and `eventtype` (key `id`, segment = alias). Menu items in a content
-language and in "All" are both found by `MenuRules`. The confirmation page, the signed manage
+The site router (`Site\Service\Router`, a `RouterView` with Joomla's `MenuRules` and
+`StandardRules`, registered through `RouterFactory` in the service provider) registers only the
+three menu views, `eventtypes`, `eventtype` (key `id`, segment = alias of a published event type)
+and `mycalendars`. There are no `NomenuRules`: `/component/appointments/<view>/…` is a 404. Menu
+items in a content language and in "All" are both found by `MenuRules`. The confirmation page, the signed manage
 pages, the tasks and the feed keep their query string. The signed links in e-mails are built
 non-SEF from the public site URL, without the router, because the reminder task runs on the CLI;
 they must keep resolving unchanged. The "Book an appointment" menu item picks its event type with
 the component's `Eventtypelist` field, never with a raw-query `sql` field.
+
+These pages are no menu views, so they carry an explicit `Itemid` as their frame, otherwise Joomla
+frames them with the default (home) menu item. `Administrator\Helper\ManageMenuItem` picks it from
+the database (also on the CLI): the event type's "Book an appointment" item, else an "Event types"
+item, in the reader's language before "All", published and open to guests. The signature does not
+cover the `Itemid`. The controller looks it up only after the signature is verified. The way back
+(`Site\Helper\BackLink`) is hidden on a one-event-type menu item unless its "Navigation" options
+show it.
+
+**Only what a menu item opens.** `Site\Dispatcher\Dispatcher` checks every request with
+`Administrator\Helper\MenuViews::allows()` before a controller runs. The list, a booking page and
+«My calendars» open only through the active menu item of their own type, with its event type,
+layout and format (`format=raw` only for the booking page's date-and-time part); an "Event types"
+item also opens the booking pages of the event types it lists. `booking`, `manage` and
+`activation` need no menu item (session, signature, token). Tasks are an explicit list
+(`MenuViews::TASKS`); every other task, including the inherited `display` task of each controller
+and the default task an unknown task falls back to, is refused. Refusals are
+`RouteNotFoundException` (404, `JERROR_PAGE_NOT_FOUND`), like an unknown address. A new view,
+layout or task is unreachable until it is added there; mails link «My calendars» with
+`MenuViews::itemFor()`. Suites open the pages through menu items (`tests/scripts/appointments-menu.php`).
 
 ## Domain logic lives in helpers, not in models
 
@@ -108,7 +131,7 @@ engine is where the bugs will be, and it has to be testable in isolation.
 | `BookingGuard` | Re-validate a slot at submission time inside the locked transaction: still in the future, still within the horizon and the minimum notice, no overlap with another booking of any event type of the same host once buffers are applied, still within the daily and weekly caps. See "Concurrency". |
 | `IcsWriter` | Build RFC 5545 output for a booking and for a feed. See `references/calendar-and-ics.md`. |
 | `KeyProvider` | Derive one signing key per purpose from the Joomla site secret. See `references/data-model.md`, section "Signing keys". |
-| `FeedToken` | Create, verify and rotate the per-feed token; constant-time comparison. |
+| `FeedToken` | Create, verify and rotate the per-feed token; stores only its keyed digest, constant-time comparison. |
 | `SignedLink` | Create and verify the reschedule, cancel and erasure links. The action is part of the signature, so a cancel link is rejected for an erasure. |
 | `MailComposer` | Render a template with booking placeholders, in the recipient's language, and attach the ICS. |
 | `ConferenceManager` | Resolve the configured provider and ask it for a link. See `references/conferencing.md`. |
@@ -177,8 +200,11 @@ simultaneous submissions for two overlapping slots of one host, across two event
   administrator interface. A rotated token invalidates the old URL immediately.
 - All output escaped. All queries through `quoteName()` and `quote()` or bound parameters.
 - No secret is ever written to a log, a URL in an e-mail body, or an error message.
-- Rate limiting on the public booking endpoint and on the feed endpoint, counted per IP in a small
+- Rate limiting on the public booking endpoint and on the feed endpoint, counted per IPv4 address
+  or per IPv6 /64 (`RateLimiter::subject()`, the grouping of the sign-in lock-out) in a small
   table with a short retention, so a blocked feed URL cannot be brute forced.
+- Every public page that renders session data (entries of a refused submission, form tokens, signed
+  links) calls `NoPageCache::apply()`: «System - Page Cache» ignores the browser cache headers.
 
 ## What an installation adds on top
 

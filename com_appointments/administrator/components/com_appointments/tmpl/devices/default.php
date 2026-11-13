@@ -55,6 +55,7 @@ $clients = \defined($labels) ? (array) \constant($labels) : [];
                 <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_DEVICE'); ?></th>
                 <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_USER'); ?></th>
                 <th scope="col"><?php echo Text::_('JSTATUS'); ?></th>
+                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_REMOVAL'); ?></th>
                 <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_LAST_SYNC'); ?></th>
                 <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_CREATED'); ?></th>
                 <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_RULE'); ?></th>
@@ -73,6 +74,9 @@ $clients = \defined($labels) ? (array) \constant($labels) : [];
                             <br><small><?php echo $this->escape((string) $item->revoked_utc . ' ' . (string) $item->revoke_reason); ?></small>
                         <?php endif; ?>
                     </td>
+                    <?php // Only `block` skips the clean-up; any other stored value acts as «Clean up». ?>
+                    <td><?php echo Text::_((string) ($item->removal_mode ?? '') === TeamStates::REMOVAL_BLOCK
+                        ? 'COM_APPOINTMENTS_TEAM_D_REMOVAL_BLOCK' : 'COM_APPOINTMENTS_TEAM_D_REMOVAL_CLEANUP'); ?></td>
                     <td><?php echo $this->escape((string) ($item->last_sync_utc ?? Text::_('COM_APPOINTMENTS_TEAM_F_NEVER'))); ?></td>
                     <td><?php echo $this->escape((string) $item->created_utc); ?></td>
                     <td><?php echo $this->escape((string) $item->rule_version . ', ' . (string) $item->rule_accepted_utc); ?></td>

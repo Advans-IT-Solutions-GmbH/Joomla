@@ -173,6 +173,9 @@ function team_d_totp(string $base32, int $time): string
 return static function (TeamSuite $suite): void {
     $db = $suite->db;
     $p = $suite->prefix;
+    // «My calendars» opens only through its menu item (appointments-menu.php).
+    require_once __DIR__ . '/appointments-menu.php';
+    $myCalendars = '/index.php?option=com_appointments&view=mycalendars&Itemid=' . appointments_menu_item('index.php?option=com_appointments&view=mycalendars');
 
     // ------------------------------------------------------------------
     // Part 1: always
@@ -185,10 +188,10 @@ return static function (TeamSuite $suite): void {
             && !in_array('password', $columns, true) && !in_array('app_password', $columns, true);
     });
 
-    $suite->test('«My calendars» answers 404 while the internet calendars are off', static function () use ($suite) {
+    $suite->test('«My calendars» answers 404 while the internet calendars are off', static function () use ($suite, $myCalendars) {
         // With strict routing Joomla first redirects to the SEF address of the view; follow it.
         $browser = new TeamDBrowser($suite->base);
-        $browser->request('/index.php?option=com_appointments&view=mycalendars');
+        $browser->request($myCalendars);
 
         if ($browser->status !== 404) {
             throw new RuntimeException('HTTP ' . $browser->status);
@@ -288,7 +291,24 @@ return static function (TeamSuite $suite): void {
                     $db->query("UPDATE {$p}appointments_templates SET published=" . ($published ? 1 : 0) . " WHERE eventtype_id=0 AND purpose='team_device_added' AND language='{$language}'");
                     try {
                         $before = AppointmentsMail::snapshot();
-                        $enabled->mailer()->deviceAdded($id, 'Mail fixture device', 'other', new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+                        // The mailer logs the failing phase and exception class only: collect them for the report.
+                        static $mailLog = null;
+
+                        if ($mailLog === null) {
+                            $mailLog = new \ArrayObject();
+                            \Joomla\CMS\Log\Log::addLogger(['logger' => 'callback', 'callback' => static function ($entry) use ($mailLog): void {
+                                $mailLog[] = (string) $entry->message;
+                            }], \Joomla\CMS\Log\Log::ALL, ['com_appointments']);
+                        }
+
+                        $mailLog->exchangeArray([]);
+
+                        try {
+                            $enabled->mailer()->deviceAdded($id, 'Mail fixture device', 'other', new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+                        } catch (\Throwable $e) {
+                            throw new \RuntimeException($e::class . ' ' . $e->getMessage() . ' (' . $language . ', published=' . (int) $published . '): '
+                                . implode(' | ', $mailLog->getArrayCopy()), 0, $e);
+                        }
                         $messages = AppointmentsMail::messagesSince($before);
                         if (count($messages) !== 1) {
                             return false;
@@ -425,7 +445,7 @@ return static function (TeamSuite $suite): void {
             sort($ids);
 
             return $ids === [$active, $cleanup]
-                && $columns === ['id', 'name', 'client', 'state', 'created_utc', 'last_sync_utc'];
+                && $columns === ['id', 'name', 'client', 'removal_mode', 'state', 'created_utc', 'last_sync_utc'];
         });
 
         $suite->test('«Last synchronised» is written at most once a minute, the first sync of a calendar and a changed role always, the sync token only rises', static function () use ($enabled, $joomla, $user, $device, $db, $p, $tag, &$state) {
@@ -491,6 +511,18 @@ return static function (TeamSuite $suite): void {
             'D: A device whose owner was changed in the database stays revoked for its real owner',
             'D: A device row with a broken MAC is refused without an exception',
             'D: A user key row with a broken MAC refuses every device and «Add device»',
+            'D: An eligible member opens «My calendars» through its menu item',
+            'D: A guest gets 404 for «My calendars» and every device task while the feature is on',
+            'D: A signed-in account outside the internet calendar groups gets 403 for the page and the device layout, devices.display is 404',
+            'D: A Super User outside the internet calendar groups gets 403 for «My calendars»',
+            'D: «Add device» refuses a signed-in account outside the groups with 403 and creates nothing',
+            'D: «Rename device» refuses a signed-in account outside the groups with 403 and changes nothing',
+            'D: «Remove device» refuses a signed-in account outside the groups with 403 and changes nothing',
+            'D: A member without the configured access level gets 403 for the page and every device task',
+            'D: With the page cache on, another browser never receives the token-free activation page',
+            'D: «When removed or blocked» refuses a signed-in account outside the groups with 403 and changes nothing',
+            'D: «Add device» stores the recommendation for the client or the chosen «When removed or blocked» and shows it',
+            'D: Only the owner or an administrator changes «When removed or blocked», and «Block only» ends a running clean-up at once',
         ];
 
         if ($stubs !== []) {
@@ -559,7 +591,7 @@ return static function (TeamSuite $suite): void {
 
             return true;
         };
-        $page = static fn (TeamDBrowser $browser): string => $browser->request('/index.php?option=com_appointments&view=mycalendars');
+        $page = static fn (TeamDBrowser $browser): string => $browser->request($myCalendars);
         $submit = static function (TeamDBrowser $browser, string $html, array $fields) {
             $form = TeamDBrowser::form($html, 'devices.create');
 
@@ -814,6 +846,41 @@ return static function (TeamSuite $suite): void {
             return $refusedDevice && $refusedAdd && $services->devices()->authenticate($tag . 'member', $created) !== null;
         });
 
+        $suite->test($flow[31], static function () use ($services, $probe, $refusal, $user, $db, $p, $member, $admin, $tag) {
+            // «Other client»: «Block only» unless chosen otherwise.
+            $made = $probe($tag . ' setting');
+
+            if ($made === []) {
+                return false;
+            }
+
+            $id = (int) $made['device_id'];
+            $row = static fn (): array => $db->query("SELECT removal_mode, state FROM {$p}appointments_devices WHERE id = {$id}")->fetch_assoc() ?: [];
+            $stranger = $user('stranger', 'Stranger-' . bin2hex(random_bytes(8)) . '!', [2]);
+            $default = ($row()['removal_mode'] ?? '') === TeamStates::REMOVAL_BLOCK;
+            $foreign = $refusal(static fn () => $services->devices()->setRemovalMode($stranger, $id, TeamStates::REMOVAL_CLEANUP)) === 404
+                && ($row()['removal_mode'] ?? '') === TeamStates::REMOVAL_BLOCK;
+            $invalid = $refusal(static fn () => $services->devices()->setRemovalMode($member, $id, 'empty')) === 400;
+            // An administrator of the component may change it, the owner below as well.
+            $services->devices()->setRemovalMode($admin, $id, TeamStates::REMOVAL_CLEANUP);
+            $owner = ($row()['removal_mode'] ?? '') === TeamStates::REMOVAL_CLEANUP;
+            $services->cleanup()->startForDevice($id, 'test', $member);
+            $cleanup = (int) ($row()['state'] ?? -1) === TeamStates::DEVICE_CLEANUP_EMPTY;
+            // Switched to «Block only» during the clean-up: revoked now, no further empty calendar.
+            $services->devices()->setRemovalMode($member, $id, TeamStates::REMOVAL_BLOCK);
+            $revoked = (int) ($row()['state'] ?? -1) === TeamStates::DEVICE_REVOKED
+                && $services->devices()->authenticate($tag . 'member', $made['app_password']) === null;
+            $logged = (int) $db->query("SELECT COUNT(*) AS n FROM {$p}appointments_teamlog WHERE event = 'device.removal_mode' AND subject_user_id = {$member}")
+                ->fetch_assoc()['n'] >= 2;
+
+            if (!($default && $foreign && $invalid && $owner && $cleanup && $revoked && $logged)) {
+                echo '    setting: default ' . (int) $default . ', foreign ' . (int) $foreign . ', invalid ' . (int) $invalid . ', owner ' . (int) $owner
+                    . ', clean-up ' . (int) $cleanup . ', revoked ' . (int) $revoked . ', logged ' . (int) $logged . "\n";
+            }
+
+            return $default && $foreign && $invalid && $owner && $cleanup && $revoked && $logged;
+        });
+
         $suite->test($flow[7], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page) {
             // A session of its own: the key and factor probes above may have closed the first one's keys.
             $browser = new TeamDBrowser($suite->base);
@@ -844,11 +911,11 @@ return static function (TeamSuite $suite): void {
 
             return $browser->status === 423 && $noForm && $noPassword && $unchanged;
         });
-        $suite->test($flow[8], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page) {
+        $suite->test($flow[8], static function () use ($suite, $p, $member, $tag, $password, $secret, $signIn, $page, $myCalendars) {
             $browser = new TeamDBrowser($suite->base);
             $signIn($browser, $tag . 'member', $password, $secret);
             $id = (int) $suite->count("SELECT id FROM {$p}appointments_devices WHERE user_id = {$member} AND state = 1 ORDER BY id LIMIT 1");
-            $html = $browser->request('/index.php?option=com_appointments&view=mycalendars&layout=device&id=' . $id);
+            $html = $browser->request($myCalendars . '&layout=device&id=' . $id);
             $form = TeamDBrowser::form($html, 'devices.remove');
 
             if ($form === null) {
@@ -897,6 +964,206 @@ return static function (TeamSuite $suite): void {
             return $unchanged && $noPassword && $noDetail;
         });
 
+        $suite->test($flow[30], static function () use ($suite, $db, $p, $member, $tag, $password, $secret, $signIn, $page) {
+            $browser = new TeamDBrowser($suite->base);
+            $signIn($browser, $tag . 'member', $password, $secret);
+            $results = [];
+
+            // Name suffix, client, the choice sent (null: the radio «Recommended» left as it is), the stored value.
+            foreach ([
+                ['outlook', 'outlook-caldavsynchronizer', null, TeamStates::REMOVAL_BLOCK],
+                ['tablet', 'davx5', null, TeamStates::REMOVAL_CLEANUP],
+                ['thunderbird', 'thunderbird', 'auto', TeamStates::REMOVAL_BLOCK],
+                ['outlook folder', 'outlook-caldavsynchronizer', TeamStates::REMOVAL_CLEANUP, TeamStates::REMOVAL_CLEANUP],
+                ['phone blocked', 'davx5', TeamStates::REMOVAL_BLOCK, TeamStates::REMOVAL_BLOCK],
+            ] as [$suffix, $client, $choice, $expected]) {
+                $form = TeamDBrowser::form($page($browser), 'devices.create');
+
+                if ($form === null) {
+                    echo "    setting on add: no form for {$suffix}\n";
+
+                    return false;
+                }
+
+                $name = $tag . ' mode ' . $suffix;
+                $fields = $form['fields'] + ['name' => $name, 'client' => $client, 'rule' => 1] + ($choice === null ? [] : ['removal_mode' => $choice]);
+                $html = $browser->request($form['action'], $fields, 0);
+                $row = $db->query("SELECT removal_mode FROM {$p}appointments_devices WHERE user_id = {$member} AND name = '"
+                    . $db->real_escape_string($name) . "'")->fetch_assoc();
+                $results[$suffix] = $row !== null && $row['removal_mode'] === $expected && str_contains($html, 'id="created-removal"');
+            }
+
+            // A forged value creates nothing.
+            $form = TeamDBrowser::form($page($browser), 'devices.create');
+            $before = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}");
+            $form !== null && $browser->request($form['action'], $form['fields'] + ['name' => $tag . ' mode forged', 'client' => 'davx5', 'rule' => 1,
+                'removal_mode' => 'empty'], 0);
+            $results['forged'] = $form !== null && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $before;
+
+            if (\in_array(false, $results, true)) {
+                echo '    setting on add: ' . json_encode($results) . "\n";
+            }
+
+            return !\in_array(false, $results, true);
+        });
+
+        // ------------------------------------------------------------------
+        // Access: only accounts that may use internet calendars, on the server,
+        // also at the address without a menu item (the test site has none).
+        // ------------------------------------------------------------------
+
+        $tokenOf = static function (TeamDBrowser $browser): string {
+            // The sign-in page carries the form token of this session (sign-in or sign-out form).
+            $html = $browser->request('/index.php?option=com_users&view=login');
+
+            return preg_match('/name="([a-f0-9]{32})" value="1"/', $html, $m) === 1 ? $m[1] : '';
+        };
+        $tasks = static function (TeamDBrowser $browser, string $token, int $deviceId): array {
+            $statuses = [];
+
+            foreach ([
+                'devices.create' => ['name' => 'Refused phone', 'client' => 'davx5', 'rule' => 1, 'rule_version' => TeamStates::DEVICE_RULE_VERSION, 'form_nonce' => bin2hex(random_bytes(16))],
+                'devices.rename' => ['id' => $deviceId, 'name' => 'Refused rename'],
+                'devices.remove' => ['id' => $deviceId, 'confirm' => 1],
+                'devices.removalMode' => ['id' => $deviceId, 'removal_mode' => TeamStates::REMOVAL_BLOCK],
+            ] as $task => $fields) {
+                $browser->request('/index.php?option=com_appointments&task=' . $task, [$token => 1] + $fields, 0);
+                $statuses[$task] = $browser->status;
+            }
+
+            return $statuses;
+        };
+        $deviceRow = static fn (int $id): ?array => $db->query("SELECT name, state, row_mac FROM {$p}appointments_devices WHERE id = {$id}")->fetch_assoc() ?: null;
+        $outsiders = [];
+
+        foreach (['outsider' => [2], 'superuser' => [8]] as $name => $groups) {
+            $outsiderPassword = 'Outsider-' . bin2hex(random_bytes(8)) . '!';
+            $outsiderId = $user($name, $outsiderPassword, $groups);
+            $outsiderMfa = \Joomla\CMS\Factory::getApplication()->bootComponent('com_users')->getMVCFactory()->createTable('Mfa', 'Administrator');
+            $outsiderMfa->save(['user_id' => $outsiderId, 'title' => 'Test', 'method' => 'totp', 'default' => 1, 'options' => ['key' => $secret]]);
+            $outsiders[$name] = ['id' => $outsiderId, 'password' => $outsiderPassword, 'device' => $device($outsiderId, $tag . ' ' . $name . ' phone', TeamStates::DEVICE_ACTIVE)];
+        }
+
+        $outsiderBrowser = new TeamDBrowser($suite->base);
+        $outsiderSignedIn = $signIn($outsiderBrowser, $tag . 'outsider', $outsiders['outsider']['password'], $secret);
+        $outsiderToken = $outsiderSignedIn ? $tokenOf($outsiderBrowser) : '';
+        // Taken before the refused requests, so a change made by any of them is detected.
+        $outsiderBefore = $deviceRow($outsiders['outsider']['device']);
+        $outsiderStatuses = $outsiderToken !== '' ? $tasks($outsiderBrowser, $outsiderToken, $outsiders['outsider']['device']) : [];
+
+        $suite->test($flow[21], static function () use ($suite, $tag, $password, $secret, $signIn, $myCalendars) {
+            $browser = new TeamDBrowser($suite->base);
+            $signIn($browser, $tag . 'member', $password, $secret);
+            $html = $browser->request($myCalendars);
+
+            if ($browser->status !== 200) {
+                echo '    eligible member: page answered ' . $browser->status . "\n";
+            }
+
+            return $browser->status === 200 && str_contains($html, 'appointments');
+        });
+
+        $suite->test($flow[22], static function () use ($suite, $tokenOf, $tasks, $outsiders, $myCalendars) {
+            $guest = new TeamDBrowser($suite->base);
+            $guest->request($myCalendars);
+            $page = $guest->status;
+            $token = $tokenOf($guest);
+            $statuses = $token !== '' ? $tasks($guest, $token, $outsiders['outsider']['device']) : [];
+
+            if ($page !== 404 || array_values(array_unique($statuses)) !== [404]) {
+                echo '    guest: page ' . $page . ', tasks ' . json_encode($statuses) . "\n";
+            }
+
+            return $page === 404 && \count($statuses) === 4 && array_values(array_unique($statuses)) === [404];
+        });
+
+        $suite->test($flow[23], static function () use ($outsiderBrowser, $outsiderSignedIn, $outsiders, $myCalendars) {
+            if (!$outsiderSignedIn) {
+                return false;
+            }
+
+            $statuses = [];
+
+            foreach ([
+                'page' => $myCalendars,
+                'device' => $myCalendars . '&layout=device&id=' . $outsiders['outsider']['device'],
+                // No task of the site displays a view: the dispatcher answers 404 for everyone (MenuViews).
+                'display' => '/index.php?option=com_appointments&task=devices.display',
+            ] as $key => $path) {
+                $html = $outsiderBrowser->request($path);
+                // Joomla's error page with the «not authorised» message, never an empty page or the form.
+                $content = trim($html) !== '' && !str_contains($html, 'devices.create') && !str_contains($html, 'form_nonce');
+                $statuses[$key] = $outsiderBrowser->status . ($content ? '' : ' (empty or with the form)');
+            }
+
+            $expected = ['page' => '403', 'device' => '403', 'display' => '404'];
+
+            if ($statuses !== $expected) {
+                echo '    outsider: ' . json_encode($statuses) . "\n";
+            }
+
+            return $statuses === $expected;
+        });
+
+        $suite->test($flow[24], static function () use ($suite, $tag, $secret, $signIn, $outsiders, $myCalendars) {
+            $browser = new TeamDBrowser($suite->base);
+
+            if (!$signIn($browser, $tag . 'superuser', $outsiders['superuser']['password'], $secret)) {
+                return false;
+            }
+
+            $browser->request($myCalendars);
+
+            return $browser->status === 403;
+        });
+
+        foreach (['devices.create' => 25, 'devices.rename' => 26, 'devices.remove' => 27, 'devices.removalMode' => 29] as $task => $index) {
+            $suite->test($flow[$index], static function () use ($task, $outsiderStatuses, $outsiderBefore, $deviceRow, $suite, $p, $outsiders) {
+                $id = $outsiders['outsider']['id'];
+                $unchanged = $outsiderBefore !== null && $deviceRow($outsiders['outsider']['device']) === $outsiderBefore
+                    && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$id}") === 1;
+
+                if (($outsiderStatuses[$task] ?? 0) !== 403 || !$unchanged) {
+                    echo '    outsider ' . $task . ': ' . ($outsiderStatuses[$task] ?? 'not sent') . ', unchanged ' . (int) $unchanged . "\n";
+                }
+
+                return ($outsiderStatuses[$task] ?? 0) === 403 && $unchanged;
+            });
+        }
+
+        $suite->test($flow[28], static function () use ($suite, $db, $p, $tag, $password, $secret, $signIn, $tokenOf, $tasks, $decoded, $member, $deviceRow, $myCalendars) {
+            // A level that holds no group: the member keeps the team group but lacks the level.
+            $db->query("INSERT INTO {$p}viewlevels (title, ordering, rules) VALUES ('" . $db->real_escape_string($tag . ' level') . "', 0, '[]')");
+            $level = (int) $db->insert_id;
+            $restricted = $decoded;
+            $restricted['team_viewlevel'] = $level;
+            $db->query("UPDATE {$p}extensions SET params='" . $db->real_escape_string(json_encode($restricted)) . "' WHERE type='component' AND element='com_appointments'");
+            $deviceId = (int) $suite->count("SELECT id FROM {$p}appointments_devices WHERE user_id = {$member} ORDER BY id LIMIT 1");
+            $before = $deviceId > 0 ? $deviceRow($deviceId) : null;
+            $count = $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}");
+
+            try {
+                $browser = new TeamDBrowser($suite->base);
+                $signIn($browser, $tag . 'member', $password, $secret);
+                $browser->request($myCalendars);
+                $page = $browser->status;
+                $token = $tokenOf($browser);
+                $statuses = $token !== '' && $deviceId > 0 ? $tasks($browser, $token, $deviceId) : [];
+            } finally {
+                $db->query("UPDATE {$p}extensions SET params='" . $db->real_escape_string(json_encode($decoded)) . "' WHERE type='component' AND element='com_appointments'");
+                $db->query("DELETE FROM {$p}viewlevels WHERE id = {$level}");
+            }
+
+            $unchanged = $before !== null && $deviceRow($deviceId) === $before
+                && $suite->count("SELECT COUNT(*) FROM {$p}appointments_devices WHERE user_id = {$member}") === $count;
+
+            if ($page !== 403 || array_values(array_unique($statuses)) !== [403] || !$unchanged) {
+                echo '    member without level: page ' . $page . ', tasks ' . json_encode($statuses) . ', unchanged ' . (int) $unchanged . "\n";
+            }
+
+            return $page === 403 && \count($statuses) === 4 && array_values(array_unique($statuses)) === [403] && $unchanged;
+        });
+
         // ------------------------------------------------------------------
         // Account activation (an administrator created the account)
         // ------------------------------------------------------------------
@@ -934,38 +1201,70 @@ return static function (TeamSuite $suite): void {
         $activation = new TeamDBrowser($suite->base);
         $activationForm = null;
 
-        $suite->test($flow[10], static function () use ($activation, $linkPath, &$activationForm) {
-            if ($linkPath === '' || str_contains($linkPath, 'index.php/index.php')) {
-                return false;
-            }
+        // With «System - Page Cache» on, the token-free activation page of one browser must never be
+        // stored and handed to another browser.
+        $pageCache = (int) $db->query("SELECT enabled FROM {$p}extensions WHERE type='plugin' AND folder='system' AND element='cache'")->fetch_row()[0];
+        $db->query("UPDATE {$p}extensions SET enabled=1 WHERE type='plugin' AND folder='system' AND element='cache'");
+        $activationLocation = '';
 
-            $activation->request($linkPath, null, 0);
-            $location = $activation->header('Location');
+        try {
+            $suite->test($flow[10], static function () use ($activation, $linkPath, &$activationForm, &$activationLocation) {
+                if ($linkPath === '' || str_contains($linkPath, 'index.php/index.php')) {
+                    return false;
+                }
 
-            // A canonical-address redirect (e.g. strict SEF routing) keeps the query; a browser follows it.
-            for ($hop = 0; $hop < 3 && \in_array($activation->status, [301, 302, 307, 308], true) && str_contains($location, 'token='); $hop++) {
-                $activation->request($location, null, 0);
+                $activation->request($linkPath, null, 0);
                 $location = $activation->header('Location');
-            }
 
-            if ($activation->status !== 303 || $location === '' || str_contains($location, 'token=')) {
-                // Never the token itself: only where the answer points to.
-                echo '    activation: exchange answered ' . $activation->status . ' to '
-                    . (preg_replace('/token=[^&\s]*/', 'token=[masked]', $location) ?: 'no Location') . "\n";
+                // A canonical-address redirect (e.g. strict SEF routing) keeps the query; a browser follows it.
+                for ($hop = 0; $hop < 3 && \in_array($activation->status, [301, 302, 307, 308], true) && str_contains($location, 'token='); $hop++) {
+                    $activation->request($location, null, 0);
+                    $location = $activation->header('Location');
+                }
 
-                return false;
-            }
+                if ($activation->status !== 303 || $location === '' || str_contains($location, 'token=')) {
+                    // Never the token itself: only where the answer points to.
+                    echo '    activation: exchange answered ' . $activation->status . ' to '
+                        . (preg_replace('/token=[^&\s]*/', 'token=[masked]', $location) ?: 'no Location') . "\n";
 
-            $html = $activation->request($location);
-            $activationForm = TeamDBrowser::form($html, 'activation.complete');
+                    return false;
+                }
 
-            if ($activationForm === null) {
-                echo '    activation: page answered ' . $activation->status . " without the activation form\n";
-            }
+                $html = $activation->request($location);
+                $activationForm = TeamDBrowser::form($html, 'activation.complete');
+                $activationLocation = $location;
 
-            return $activationForm !== null && !isset($activationForm['fields']['token']) && isset($activationForm['fields']['nonce'])
-                && str_contains($activation->header('Cache-Control'), 'no-store') && $activation->header('Referrer-Policy') === 'no-referrer';
-        });
+                if ($activationForm === null) {
+                    echo '    activation: page answered ' . $activation->status . " without the activation form\n";
+                }
+
+                return $activationForm !== null && !isset($activationForm['fields']['token']) && isset($activationForm['fields']['nonce'])
+                    && str_contains($activation->header('Cache-Control'), 'no-store') && $activation->header('Referrer-Policy') === 'no-referrer';
+            });
+
+            $suite->test($flow[29], static function () use ($suite, &$activationForm, &$activationLocation) {
+                if ($activationForm === null || $activationLocation === '') {
+                    return false;
+                }
+
+                $other = new TeamDBrowser($suite->base);
+                $nonce = (string) $activationForm['fields']['nonce'];
+
+                foreach ([1, 2] as $attempt) {
+                    $html = $other->request($activationLocation);
+
+                    if ($other->status !== 404 || str_contains($html, $nonce) || TeamDBrowser::form($html, 'activation.complete') !== null) {
+                        echo '    activation: another browser got ' . $other->status . " on request {$attempt}\n";
+
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+        } finally {
+            $db->query("UPDATE {$p}extensions SET enabled={$pageCache} WHERE type='plugin' AND folder='system' AND element='cache'");
+        }
 
         $suite->test($flow[11], static function () use ($suite, &$activationForm, $db, $p, $fresh, $hashBefore) {
             if ($activationForm === null) {

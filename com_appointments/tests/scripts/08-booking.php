@@ -29,7 +29,7 @@ $admin = new AppointmentsHttp('http://localhost', 'booking-admin');
 
 $prepare = static function (int $event, string $start) use ($check): array {
     $client = new AppointmentsHttp('http://localhost', 'booking-guest');
-    $html = $client->request('/index.php?option=com_appointments&view=eventtype&id=' . $event . '&timezone=UTC&start=' . urlencode($start));
+    $html = $client->request(appointments_page($event, '&timezone=UTC&start=' . urlencode($start)));
     $check($client->status === 200 && str_contains($html, 'name="booking[start]"'), 'No-JavaScript booking form rendered');
     $document = new DOMDocument();
     @$document->loadHTML($html);
@@ -221,6 +221,29 @@ try {
     $check($email instanceof DOMElement && $email->getAttribute('value') === 'not-an-address' && $bookings($eventIds[0]) === 1,
         'A refused submission keeps the entered values and creates no booking');
 
+    // With Joomla's page cache on, the booking page that shows one visitor's refused entries must not
+    // be stored and served to the next visitor of the same address.
+    $cacheState = (int) $db->query("SELECT enabled FROM {$prefix}extensions WHERE type='plugin' AND folder='system' AND element='cache'")->fetch_row()[0];
+    $db->query("UPDATE {$prefix}extensions SET enabled=1 WHERE type='plugin' AND folder='system' AND element='cache'");
+    try {
+        $marker = 'cache-' . bin2hex(random_bytes(6));
+        $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+        $request = $prepare($eventIds[0], $slot);
+        $request[2]['booking']['first_name'] = $marker;
+        $request[2]['booking']['email'] = $marker . '-not-an-address';
+        sleep(2);
+        $body = $request[0]->request($request[1], $request[2]);
+        $refusedAt = (string) end($request[0]->locations);
+        $check(str_contains($body, $marker) && $refusedAt !== '', 'With the page cache on, the refused submission still shows its own entries');
+        $next = new AppointmentsHttp('http://localhost', 'booking-cache-next');
+        $nextBody = $next->request(preg_replace('#^https?://[^/]+#', '', $refusedAt));
+        $nextBody .= $next->request(preg_replace('#^https?://[^/]+#', '', $refusedAt));
+        $check($next->status === 200 && !str_contains($nextBody, $marker),
+            'Another visitor of the same booking page address never receives the refused entries from the page cache');
+    } finally {
+        $db->query("UPDATE {$prefix}extensions SET enabled={$cacheState} WHERE type='plugin' AND folder='system' AND element='cache'");
+    }
+
     $request = $prepare($eventIds[0], $slot);
     $request[2]['consent'] = 0;
     $request[2]['booking']['first_name'] = '';
@@ -257,8 +280,8 @@ try {
         && str_contains($body, 'com_appointments.focusSystemMessage')
         && $xpath->query('//*[@data-appointments-result]')->length === 0,
         'A forged form signature is present in Joomla\'s live region without a result fragment');
-    $cleanPage = $request[0]->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventIds[0]
-        . '&timezone=UTC&start=' . urlencode($slot));
+    $cleanPage = $request[0]->request(appointments_page($eventIds[0],
+        '&timezone=UTC&start=' . urlencode($slot)));
     $check(!str_contains($cleanPage, 'com_appointments.focusSystemMessage'),
         'The one-request error-message focus option is consumed after the refused submission');
 
@@ -287,7 +310,7 @@ try {
     // stored. Acknowledge: a required checkbox, nothing stored.
     $db->query("DELETE FROM {$prefix}appointments_ratelimit");
     $modeForm = static fn (int $event, string $start): DOMXPath => $dom((new AppointmentsHttp('http://localhost', 'booking-mode'))
-        ->request('/index.php?option=com_appointments&view=eventtype&id=' . $event . '&timezone=UTC&start=' . urlencode($start)));
+        ->request(appointments_page($event, '&timezone=UTC&start=' . urlencode($start))));
     $stored = static fn (int $event, string $start): ?array => $db->query("SELECT id,consent_utc,consent_version FROM {$prefix}appointments_bookings"
         . " WHERE eventtype_id={$event} AND start_utc='{$start}' AND state IN (0,1)")->fetch_assoc();
     $setParams(['consent_mode' => 'unknown-mode']);
@@ -369,7 +392,9 @@ try {
 
     // Release test 22.10.: dates in words of the site language, times without a zone abbreviation.
     $dates = new AppointmentsHttp('http://localhost', 'booking-dates');
+    // Below the list of event types, so the booking page has no menu item of its own.
     $html = $dates->request('/index.php?option=com_appointments&view=eventtype&id=' . $eventIds[1]
+        . '&Itemid=' . appointments_menu_item('index.php?option=com_appointments&view=eventtypes')
         . '&timezone=UTC&month=' . substr($day, 0, 7) . '&day=' . $day);
     $xpath = $dom($html);
     $date = new DateTimeImmutable($day, $utc);
@@ -416,8 +441,8 @@ try {
     $db->query("INSERT INTO {$prefix}appointments_eventtypes (title,alias,schedule_id,host_user_id,duration_minutes,slot_step_minutes,horizon_days,feed_token,created_utc,modified_utc) VALUES ('{$title}','{$title}',{$schedule},{$host},60,60,400,'{$token}','{$time}','{$time}')");
     $eventIds[] = $repeatedEvent = (int) $db->insert_id;
     $localDay = (new DateTimeImmutable('@' . ($back - 3600)))->setTimezone($zurich);
-    $html = $dates->request('/index.php?option=com_appointments&view=eventtype&id=' . $repeatedEvent
-        . '&timezone=Europe%2FZurich&month=' . $localDay->format('Y-m') . '&day=' . $localDay->format('Y-m-d'));
+    $html = $dates->request(appointments_page($repeatedEvent,
+        '&timezone=Europe%2FZurich&month=' . $localDay->format('Y-m') . '&day=' . $localDay->format('Y-m-d')));
     $xpath = $dom($html);
     $labels = [];
     foreach ($xpath->query('//div[contains(@class, "com-appointments-slot")]/label') as $label) {
@@ -437,8 +462,8 @@ try {
     $db->query("DELETE FROM {$prefix}appointments_ratelimit");
     $page = new AppointmentsHttp('http://localhost', 'booking-page');
     // Step 1 shows the times of the day, step 2 (start=) the details form of the chosen time.
-    $show = static fn (int $event, string $start = ''): DOMXPath => $dom($page->request('/index.php?option=com_appointments&view=eventtype&id=' . $event
-        . '&timezone=UTC' . ($start === '' ? '&month=' . substr($day, 0, 7) . '&day=' . $day : '&start=' . urlencode($start))));
+    $show = static fn (int $event, string $start = ''): DOMXPath => $dom($page->request(appointments_page($event,
+        '&timezone=UTC' . ($start === '' ? '&month=' . substr($day, 0, 7) . '&day=' . $day : '&start=' . urlencode($start)))));
     $freeSlot = $day . ' 15:00:00';
 
     // Without JavaScript every step is a link or a form; the script is an external, deferred
@@ -496,6 +521,8 @@ try {
     // One host serves both events, so each books its own hour.
     foreach (['phone_host_calls' => $day . ' 11:00:00', 'phone_invitee_calls' => $day . ' 13:00:00'] as $location => $phoneSlot) {
         $title = $tag . '-' . $location;
+        // Four submissions per location; each location starts with a fresh hourly booking budget.
+        $db->query("DELETE FROM {$prefix}appointments_ratelimit");
         $db->query("INSERT INTO {$prefix}appointments_schedules (title,timezone,owner_user_id,published,created_utc,modified_utc) VALUES ('{$title}','UTC',{$host},1,'{$time}','{$time}')");
         $schedule = (int) $db->insert_id;
         $scheduleIds[] = $schedule;
@@ -513,6 +540,11 @@ try {
             && $number->getAttribute('type') === 'tel' && $number->hasAttribute('required')
             && $selected instanceof DOMElement && $selected->getAttribute('value') === '41',
             $location . ': the telephone number is a fixed required field with the configured calling code preselected');
+        $codes = array_map(static fn (DOMElement $option): string => $option->getAttribute('value'),
+            iterator_to_array($xpath->query('//select[@id="booking-phone-country"]/option')));
+        $check(count(array_intersect(['1', '41', '44', '49', '33', '423'], $codes)) === 6
+            && $xpath->query('//*[contains(concat(" ", @class, " "), " com-appointments-tel-fixed ")]')->length === 0,
+            $location . ': the preselected calling code is only a preselection, every other code can be chosen');
 
         $request = $prepare($phoneEvent, $phoneSlot);
         sleep(2);
@@ -521,24 +553,34 @@ try {
             $location . ': a booking without a telephone number is refused at the telephone field');
 
         $request = $prepare($phoneEvent, $phoneSlot);
-        $request[2]['booking']['phone'] = ['country' => '41', 'number' => '12'];
+        $request[2]['booking']['phone'] = ['country' => '41', 'number' => 'call me'];
         sleep(2);
         $body = $request[0]->request($request[1], $request[2]);
         $check($fieldError($dom($body), 'booking-phone', 'Please enter a valid telephone number with its country calling code.')
             && $bookings($phoneEvent) === 0, $location . ': an invalid telephone number is refused at the telephone field');
 
+        // "+41 123": a known calling code, but Swiss numbers have nine digits after it.
         $request = $prepare($phoneEvent, $phoneSlot);
-        $request[2]['booking']['phone'] = ['country' => '41', 'number' => '079 123 45 67'];
+        $request[2]['booking']['phone'] = ['country' => '41', 'number' => '+41 123'];
+        sleep(2);
+        $body = $request[0]->request($request[1], $request[2]);
+        $check($fieldError($dom($body), 'booking-phone', 'This number has too few or too many digits for its country calling code. Please check the number and the calling code.')
+            && $bookings($phoneEvent) === 0, $location . ': a number too short for its calling code is refused at the telephone field');
+
+        // One location books a Swiss number, the other a foreign one typed with "+" while +41 stays preselected.
+        [$typed, $expected] = $location === 'phone_host_calls' ? ['079 123 45 67', '+41791234567'] : ['+1 202 555 0100', '+12025550100'];
+        $request = $prepare($phoneEvent, $phoneSlot);
+        $request[2]['booking']['phone'] = ['country' => '41', 'number' => $typed];
         $before = AppointmentsMail::snapshot();
         sleep(2);
         $body = $request[0]->request($request[1], $request[2]);
         $stored = appointments_open_booking($db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$phoneEvent} AND state IN (0,1)")->fetch_assoc());
-        $check(str_contains($body, 'Appointment confirmed') && $stored && $stored['invitee_phone'] === '+41791234567'
+        $check(str_contains($body, 'Appointment confirmed') && $stored && $stored['invitee_phone'] === $expected
             && $stored['custom_fields'] === '[]', $location . ': the number is stored in invitee_phone in international form');
-        $mailed = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool => str_contains(AppointmentsMail::decoded($mime), '+41791234567'));
+        $mailed = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool => str_contains(AppointmentsMail::decoded($mime), $expected));
         $check($mailed !== [], $location . ': the notification mail states the telephone number');
         $detail = $admin->request('/administrator/index.php?option=com_appointments&view=booking&id=' . (int) ($stored['id'] ?? 0));
-        $check($admin->status === 200 && str_contains($detail, '+41791234567'), $location . ': the administrator detail shows the telephone number');
+        $check($admin->status === 200 && str_contains($detail, $expected), $location . ': the administrator detail shows the telephone number');
     }
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";

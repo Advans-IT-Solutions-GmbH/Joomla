@@ -26,6 +26,14 @@
             <option value="guest_reschedule">COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_RESCHEDULE</option>
             <option value="guest_cancellation">COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_CANCELLATION</option>
             <option value="guest_reminder">COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_REMINDER</option>
+            <option value="calendar_booked">COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_BOOKED</option>
+            <option value="calendar_approved">COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_APPROVED</option>
+            <option value="calendar_rescheduled">COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_RESCHEDULED</option>
+            <option value="calendar_cancelled">COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_CANCELLED</option>
+            <option value="calendar_reminder">COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_REMINDER</option>
+            <option value="calendar_busy">COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_BUSY</option>
+            <option value="calendar_busy_moved">COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_BUSY_MOVED</option>
+            <option value="calendar_free">COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_FREE</option>
             <option value="team_device_added">COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_DEVICE_ADDED</option>
             <option value="team_invitation">COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_INVITATION</option>
             <option value="team_invitation_accepted">COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_INVITATION_ACCEPTED</option>

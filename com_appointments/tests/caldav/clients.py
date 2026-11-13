@@ -632,6 +632,10 @@ def phase_revoked() -> None:
           listed == {calendar("writer", "T")}, f"{sorted(listed)}")
     gone = propfind(calendar("writer", "R"), "writer", "0", "<d:displayname/>")
     check("The revoked calendar answers 404", gone.status_code == 404, str(gone.status_code))
+    # WRITER's device is «Block only» («Other client»): no empty view of the withdrawn calendar.
+    report_status = sync_collection(calendar("writer", "R"), "writer", "")[0]
+    check("A REPORT on the revoked calendar answers 404, never an empty calendar",
+          report_status in (403, 404), str(report_status))
     seeds = saved()["seeds"]
     check("Objects of the revoked calendar answer 404",
           get(calendar("writer", "R") + seeds["EV-5"]["uid"] + ".ics", "writer").status_code == 404)
@@ -645,9 +649,17 @@ def phase_revoked() -> None:
     initial = vdirsyncer("sync", who="cleanup-guard")
     check("The independent vdirsyncer deletion-guard profile has a non-empty local copy",
           discover.returncode == 0 and initial.returncode == 0 and len(local_items("cleanup-guard")) >= 3)
+    # Baseline of the «Block only» device: a real client with a full local copy.
+    block_discover = vdirsyncer("discover", who="blockonly")
+    block_initial = vdirsyncer("sync", who="blockonly")
+    check("Block only baseline: vdirsyncer holds a local copy of CAL-T",
+          block_discover.returncode == 0 and block_initial.returncode == 0 and len(local_items("blockonly")) >= 3,
+          str(len(local_items("blockonly"))))
     save({"owner_baseline": objects(calendar("owner", "T"), "owner"),
           "cleanup_known": list(objects(calendar("cleanup-sync", "T"), "cleanup-sync")),
-          "cleanup_token": collection_props(calendar("cleanup-sync", "T"), "cleanup-sync")["token"]})
+          "cleanup_token": collection_props(calendar("cleanup-sync", "T"), "cleanup-sync")["token"],
+          "block_local": len(local_items("blockonly")),
+          "block_token": collection_props(calendar("blockonly", "T"), "blockonly")["token"]})
 
 
 def unchanged_for_owner(phase: str) -> None:
@@ -656,6 +668,29 @@ def unchanged_for_owner(phase: str) -> None:
     changed = {h for h in before.keys() | after.keys() if before.get(h) != after.get(h)}
     check(f"Clean-up, {phase}: nothing deleted, changed or uploaded on the server since before the clean-up",
           after == before and len(before) >= 3, f"{sorted(changed)}")
+
+
+def phase_block_revoked() -> None:
+    # «Block only»: 401 for every request at once. No empty calendar, no tombstones.
+    before = saved()
+    who = "blockonly"
+    for label, response in (
+        ("PROPFIND of the calendar home", propfind(home(who), who, "1", "<d:resourcetype/>")),
+        ("PROPFIND of the calendar", propfind(calendar(who, "T"), who, "1", "<d:getetag/>")),
+    ):
+        check(f"Block only: {label} is refused with 401", response.status_code == 401, str(response.status_code))
+        check(f"Block only: {label} carries no calendar", b"multistatus" not in response.content)
+    status, _, changed, deleted, body = sync_collection(calendar(who, "T"), who, before["block_token"])
+    check("Block only: REPORT sync-collection is refused with 401, no deletions reported",
+          status == 401 and not changed and not deleted and b"multistatus" not in body, str(status))
+    sync = vdirsyncer("sync", who=who)
+    check("Block only: vdirsyncer reports an error", sync.returncode != 0)
+    check("Block only: vdirsyncer deleted nothing locally",
+          len(local_items(who)) == before["block_local"] and before["block_local"] >= 3,
+          f"{len(local_items(who))} of {before['block_local']}")
+    check("Block only: another device keeps working",
+          propfind(calendar("writer", "T"), "writer", "0", "<d:displayname/>").status_code == 207)
+    unchanged_for_owner("block only")
 
 
 def phase_cleanup_empty() -> None:
@@ -741,6 +776,7 @@ PHASES = {
     "mfa-denied": phase_mfa_denied,
     "mfa-restored": phase_mfa_restored,
     "revoked": phase_revoked,
+    "block-revoked": phase_block_revoked,
     "cleanup-empty": phase_cleanup_empty,
     "cleanup-hidden": phase_cleanup_hidden,
     "cleanup-revoked": phase_cleanup_revoked,

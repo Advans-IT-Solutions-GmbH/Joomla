@@ -4,7 +4,7 @@ require __DIR__ . '/appointments-fixtures.php';
 require __DIR__ . '/appointments-joomla.php';
 
 $fixture = new AppointmentsFixture('administration');
-$admin = new AppointmentsHttp('http://localhost', 'administration-admin');
+$admin = new AppointmentsHttp(appointments_test_base_url(), 'administration-admin');
 $db = $fixture->db;
 $prefix = $fixture->prefix;
 $failed = 0;
@@ -30,6 +30,39 @@ $export = static function (AppointmentsHttp $client, array $filters = []) use ($
         'task' => 'bookings.exportCsv', $token => 1, 'filter_eventtype_id' => '',
         'filter_state' => '', 'filter_search' => '', 'filter_from' => '', 'filter_to' => '',
     ], $filters));
+};
+$listIds = static function (string $html): array {
+    $document = new DOMDocument();
+    @$document->loadHTML($html);
+    $ids = [];
+    foreach ((new DOMXPath($document))->query('//form[@id="adminForm"]//tbody/tr//input[@name="cid[]"]') as $input) {
+        $ids[] = (int) $input->getAttribute('value');
+    }
+
+    return $ids;
+};
+$csvIds = static function (string $csv): array {
+    $stream = fopen('php://temp', 'r+');
+    if ($stream === false) {
+        throw new RuntimeException('Cannot open the CSV assertion stream.');
+    }
+    try {
+        if (fwrite($stream, $csv) !== strlen($csv) || !rewind($stream)) {
+            throw new RuntimeException('Cannot prepare the CSV assertion stream.');
+        }
+        $header = fgetcsv($stream, 0, ',', '"', '');
+        if ($header === false || $header[0] !== 'id') {
+            throw new RuntimeException('The booking export has no CSV id column.');
+        }
+        $ids = [];
+        while (($row = fgetcsv($stream, 0, ',', '"', '')) !== false) {
+            $ids[] = (int) $row[0];
+        }
+
+        return $ids;
+    } finally {
+        fclose($stream);
+    }
 };
 
 try {
@@ -64,6 +97,7 @@ try {
         $id = $fixture->event();
         $events[] = $id;
         $row = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$id}")->fetch_assoc();
+        $row['title'] = $tag . ($index === 0 ? '-event-allowed' : '-event-denied');
         $row['conference_params'] = [];
         $admin->submit('eventtype', $row);
         $asset = $db->query("SELECT id FROM {$prefix}assets WHERE name='com_appointments.eventtype.{$id}'")->fetch_assoc();
@@ -81,7 +115,7 @@ try {
     // The last names sort opposite to the start times, so a list that still sorts by time fails the checks below.
     $first = $fixture->booking($eventA, $day . ' 10:00:00', ['first_name' => '=1+1', 'last_name' => 'zzz-' . $tag])['booking'];
     $second = $fixture->booking($eventA, $day . ' 11:00:00', ['first_name' => $tag . '-allowed', 'last_name' => 'aaa-' . $tag . '-surname'])['booking'];
-    $third = $fixture->booking($eventB, $day . ' 12:00:00', ['first_name' => $tag . '-denied', 'email' => 'other@example.test'])['booking'];
+    $third = $fixture->booking($eventB, $day . ' 12:00:00', ['first_name' => $tag . '-denied', 'email' => $tag . '-denied@example.test'])['booking'];
     $id = (int) $first['id'];
     $db->query("UPDATE {$prefix}appointments_bookings SET state=0 WHERE id={$id}");
     $html = $listing($admin, ['filter_state' => '0']);
@@ -151,6 +185,12 @@ try {
     $check((new DOMXPath($document))->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
         'Administrator navigation loads its local responsive styles outside event-type forms too');
     $styles = $admin->request('/media/com_appointments/css/admin.css');
+    $check((new DOMXPath($document))->query('//section[contains(concat(" ",normalize-space(@class)," ")," com-appointments-close ")]')->length === 1
+        && str_contains($styles, '.com-appointments-close-queue')
+        && preg_match('~\.com-appointments-close-queue\s*\{[^}]*table-layout:\s*fixed~', $styles) === 1
+        && preg_match('~\.com-appointments-close\s+code\s*\{[^}]*overflow-wrap:\s*anywhere~', $styles) === 1
+        && preg_match('~@media\s*\(max-width:\s*767\.98px\)[\s\S]*?\.com-appointments-close-queue\s+td\s*\{[^}]*display:\s*block~', $styles) === 1,
+        'The installed Close queue has scoped wrapping and a stacked mobile layout without hiding recovery fields');
     $check($admin->status === 200
         && preg_match('~#calendar-form\s+\.switcher\s*\{[^}]*max-inline-size:\s*100%~', $styles) === 1,
         'The installed stylesheet bounds native calendar switchers to their settings column without clipping');
@@ -170,11 +210,11 @@ try {
             $document = new DOMDocument();
             @$document->loadHTML($help);
             $helpXpath = new DOMXPath($document);
-            $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 8
+            $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 10
                 && $helpXpath->query('//a[@id="toolbar-back"]')->length === 1,
                 'Central help has all generic topics and a real overview return, enabled=' . $enabled);
             $topicLinks = $helpXpath->query('//div[@id="appointments-help"]/nav/a[starts-with(@href,"#help-")]');
-            $topicTargetsValid = $topicLinks->length === 8;
+            $topicTargetsValid = $topicLinks->length === 10;
             foreach ($topicLinks as $topicLink) {
                 $target = substr($topicLink->getAttribute('href'), 1);
                 $topicTargetsValid = $topicTargetsValid && preg_match('/^help-[a-z]+$/D', $target) === 1
@@ -182,13 +222,23 @@ try {
             }
             $check($topicTargetsValid
                 && $helpXpath->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
-                'All eight native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
+                'All ten native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
+            $check(str_contains($help, 'id="help-removal"') && str_contains($help, 'PROPFIND and REPORT')
+                && str_contains($help, 'main Outlook calendar'),
+                'Central help explains removing devices and why Outlook with the main calendar uses «Block only», enabled=' . $enabled);
             $overviewButton = $helpXpath->query('//div[@id="appointments-help"]/nav/a[contains(@class,"btn-primary")]')->item(0);
             $check($overviewButton !== null && trim($overviewButton->textContent) === 'Overview',
                 'Help overview button uses the runtime language catalogue, enabled=' . $enabled);
             $check(str_contains($help, 'THISANDFUTURE') && str_contains($help, 'does not mean unlimited retention')
                 && str_contains($help, 'fixed 12-month period') && !str_contains($help, 'COM_APPOINTMENTS_HELP_'),
                 'Central help renders the separate translated retention contracts, enabled=' . $enabled);
+            $check($helpXpath->query('//section[@id="help-retention"]//h2[normalize-space()="Retention and deletion"]')->length === 1
+                && $helpXpath->query('//table[@id="help-retention-table"]/tbody/tr')->length === 11
+                && str_contains($help, 'never deletes entries of your own') && str_contains($help, 'does not cancel the appointment')
+                && str_contains($help, 'Block only') && str_contains($help, 'catch up on the deletions at once')
+                && str_contains($help, 'Remove only the address') && str_contains($help, 'view=privacyreview')
+                && str_contains($help, 'the booking retention waits until the booking has reached Close'),
+                'Central help states the retention and deletion rules with the overview table, enabled=' . $enabled);
             $check((int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_user_keys")->fetch_row()[0] === $keyRows,
                 'Reading central help never initialises personal keys, enabled=' . $enabled);
             $calendars = $admin->request('/administrator/index.php?option=com_appointments&view=calendars');
@@ -243,6 +293,48 @@ try {
         && str_contains($system, 'Latest enabled retention task') && !str_contains($system, $config->secret),
         'System checks report task/audit health without exposing signing credentials');
 
+    // Without a valid public site URL or live_site the component sends no mail and takes no booking (fail closed).
+    $siteUrlRow = static fn (string $html, string $status): bool => preg_match('#Public site URL for e-mail links</th>\s*<td class="text-'
+        . ($status === 'ok' ? 'success">OK' : 'danger fw-bold">Error') . '#', $html) === 1;
+    $withSiteUrl = static function (string $url) use ($db, $prefix, $componentParams): void {
+        $params = json_decode($componentParams, true) ?: [];
+        $params['public_site_url'] = $url;
+        $encoded = $db->real_escape_string(json_encode($params));
+        $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
+    };
+    try {
+        if (trim((string) ($config->live_site ?? '')) === '') {
+            $withSiteUrl('');
+            $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
+            $check($admin->status === 200 && $siteUrlRow($system, 'attention') && str_contains($system, 'Not set')
+                && str_contains($system, 'Host header'),
+                'Without a public site URL and live_site, the system checks report an error naming the public site URL');
+        }
+        if (trim((string) ($config->live_site ?? '')) === '') {
+            $dashboard = $admin->request('/administrator/index.php?option=com_appointments');
+            $check($admin->status === 200 && str_contains($dashboard, 'id="appointments-site-url-missing"') && str_contains($dashboard, 'alert-danger'),
+                'Without a public site URL the dashboard shows an error that no mails are sent and no bookings taken');
+        }
+        $withSiteUrl('https://www.example.test/site');
+        $dashboard = $admin->request('/administrator/index.php?option=com_appointments');
+        $check($admin->status === 200 && !str_contains($dashboard, 'id="appointments-site-url-missing"'),
+            'With a valid public site URL the dashboard shows no error');
+        $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
+        $check($admin->status === 200 && $siteUrlRow($system, 'ok') && str_contains($system, 'https://www.example.test/site'),
+            'A configured public site URL satisfies the system check and is shown');
+        // The same values that NotificationService::linkBase() refuses: a query, an upper-case scheme,
+        // surrounding spaces, and an option of spaces only (which mail links use instead of live_site).
+        foreach (['https://www.example.test/?x=1', 'HTTPS://www.example.test', ' https://www.example.test ', '   '] as $refused) {
+            $withSiteUrl($refused);
+            $system = $admin->request('/administrator/index.php?option=com_appointments&view=system');
+            $check($admin->status === 200 && $siteUrlRow($system, 'attention'),
+                'A public site URL that mail links refuse is an error: ' . json_encode($refused));
+        }
+    } finally {
+        $encoded = $db->real_escape_string($componentParams);
+        $db->query("UPDATE {$prefix}extensions SET params='{$encoded}' WHERE element='com_appointments' AND type='component'");
+    }
+
     $parent = $db->query("SELECT rgt FROM {$prefix}usergroups WHERE id=6")->fetch_assoc();
     $right = (int) $parent['rgt'];
     $db->begin_transaction();
@@ -264,6 +356,7 @@ try {
     $rules = json_decode($componentRules, true, 512, JSON_THROW_ON_ERROR);
     $rules['core.manage'][(string) $groupId] = 1;
     $rules['core.options'][(string) $groupId] = 0;
+    $rules['core.admin'][(string) $groupId] = 0;
     $db->query("UPDATE {$prefix}assets SET rules='" . $db->real_escape_string(json_encode($rules, JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR)) . "' WHERE name='com_appointments'");
     foreach ([$eventA => 1, $eventB => 0] as $event => $edit) {
         $rules = $db->real_escape_string(json_encode([
@@ -272,7 +365,7 @@ try {
         ], JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR));
         $db->query("UPDATE {$prefix}assets SET rules='{$rules}' WHERE name='com_appointments.eventtype.{$event}'");
     }
-    $restricted = new AppointmentsHttp('http://localhost', 'administration-restricted');
+    $restricted = new AppointmentsHttp(appointments_test_base_url(), 'administration-restricted');
     $oldUsername = getenv('JOOMLA_ADMIN_USERNAME');
     $oldPassword = getenv('JOOMLA_ADMIN_PASSWORD');
     try {
@@ -283,9 +376,86 @@ try {
         putenv($oldUsername === false ? 'JOOMLA_ADMIN_USERNAME' : 'JOOMLA_ADMIN_USERNAME=' . $oldUsername);
         putenv($oldPassword === false ? 'JOOMLA_ADMIN_PASSWORD' : 'JOOMLA_ADMIN_PASSWORD=' . $oldPassword);
     }
-    $html = $listing($restricted);
-    $check($restricted->status === 200 && str_contains($html, $tag . '-allowed') && !str_contains($html, $tag . '-denied'),
+    $closeParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
+    try {
+        $disabledClose = array_replace(json_decode($closeParams, true, 512, JSON_THROW_ON_ERROR), [
+            'close_enabled' => 0, 'close_profiles' => [],
+        ]);
+        $db->query("UPDATE {$prefix}extensions SET params='"
+            . $db->real_escape_string(json_encode($disabledClose, JSON_THROW_ON_ERROR))
+            . "' WHERE element='com_appointments' AND type='component'");
+        $closeDashboard = '/administrator/index.php?option=com_appointments&view=dashboard';
+        $closeHtml = $admin->request($closeDashboard);
+        $check($admin->status === 200 && str_contains($closeHtml, 'Transfer disabled: no CRM calls.')
+            && str_contains($closeHtml, 'Close configuration is incomplete or invalid.')
+            && str_contains($closeHtml, 'task=close.retry'),
+            'Administrator sees disabled Close status, configuration warning and safe retry form');
+        $adminToken = $admin->token($closeHtml);
+        $restrictedHtml = $restricted->request($closeDashboard);
+        $check($restricted->status === 200 && !str_contains($restrictedHtml, 'task=close.retry')
+            && !str_contains($restrictedHtml, 'task=close.reconcile')
+            && !str_contains($restrictedHtml, 'Close booking transfer'),
+            'Event editor with component access but no core.admin sees no Close controls');
+        $restrictedToken = $restricted->token($listing($restricted));
+        foreach (['retry', 'reconcile'] as $action) {
+            $endpoint = '/administrator/index.php?option=com_appointments&task=close.' . $action;
+            $admin->request($endpoint . '&' . $adminToken . '=1');
+            $check($admin->status === 403, 'Close ' . $action . ' rejects GET even with a valid token');
+            $admin->request($endpoint, ['booking_id' => 0, 'remote_id' => 'acti_fixture']);
+            $check($admin->status === 403, 'Close ' . $action . ' rejects a tokenless POST');
+            $admin->request($endpoint, [$adminToken => 'invalid', 'booking_id' => 0]);
+            $check($admin->status === 403, 'Close ' . $action . ' rejects an invalid POST token');
+            $admin->request($endpoint . '&' . $adminToken . '=1', ['booking_id' => 0]);
+            $check($admin->status === 403, 'Close ' . $action . ' does not accept a query token for POST');
+            $restricted->request($endpoint, [$restrictedToken => 1, 'booking_id' => 0, 'remote_id' => 'acti_fixture']);
+            $check($restricted->status === 403, 'Close ' . $action . ' rejects a valid-token event editor without core.admin');
+        }
+        $retryHtml = $admin->request('/administrator/index.php?option=com_appointments&task=close.retry', [$adminToken => 1]);
+        $check($admin->status === 200 && str_contains($retryHtml, 'Delivery pass finished.')
+            && str_contains($retryHtml, 'Transfer disabled: no CRM calls.'),
+            'Authorised token-protected retry returns to the dashboard without enabling delivery');
+        $invalidReconcile = $admin->request('/administrator/index.php?option=com_appointments&task=close.reconcile', [
+            $adminToken => 1, 'booking_id' => 0, 'remote_id' => 'acti_fixture',
+        ]);
+        $check($admin->status === 200 && str_contains($invalidReconcile, 'Close delivery could not run.'),
+            'Authorised reconciliation rejects an invalid booking locally with a visible error');
+    } finally {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($closeParams)
+            . "' WHERE element='com_appointments' AND type='component'");
+    }
+    // Joomla ignores the top-level limit once list options are supplied.
+    $scopeFilters = ['filter_search' => $tag, 'limit' => 100, 'limitstart' => 0,
+        'list' => ['limit' => 100, 'fullordering' => 'b.start_utc ASC']];
+    $expectedIds = [(int) $first['id'], (int) $second['id']];
+    sort($expectedIds);
+    $deniedId = (int) $third['id'];
+    $adminIds = $listIds($listing($admin, $scopeFilters));
+    sort($adminIds);
+    $allFixtureIds = [...$expectedIds, $deniedId];
+    sort($allFixtureIds);
+    $check($admin->status === 200 && $adminIds === $allFixtureIds,
+        'The scoped administrator control renders all three booking fixture rows');
+    $html = $listing($restricted, $scopeFilters);
+    $restrictedIds = $listIds($html);
+    sort($restrictedIds);
+    $check($restricted->status === 200 && $restrictedIds === $expectedIds,
         'Per-event editor sees only permitted booking contacts');
+    $pagedIds = [];
+    $pagesOk = true;
+    foreach ([0, 1] as $start) {
+        $pageIds = $listIds($listing($restricted, array_replace($scopeFilters, [
+            'limit' => 1, 'limitstart' => $start, 'list' => ['limit' => 1, 'fullordering' => 'b.start_utc ASC'],
+        ])));
+        $pagesOk = $pagesOk && $restricted->status === 200 && count($pageIds) === 1
+            && !in_array($deniedId, $pageIds, true);
+        $pagedIds = [...$pagedIds, ...$pageIds];
+    }
+    sort($pagedIds);
+    $check($pagesOk && $pagedIds === $expectedIds,
+        'Per-event booking permissions hold across single-row pages');
+    $deniedPageIds = $listIds($listing($restricted, array_replace($scopeFilters, ['filter_eventtype_id' => $eventB])));
+    $check($restricted->status === 200 && $deniedPageIds === [],
+        'An explicit denied-event booking filter cannot widen the editor scope');
     $calendarHub = $restricted->request('/administrator/index.php?option=com_appointments&view=calendars');
     $check($restricted->status === 200 && !str_contains($calendarHub, 'id="toolbar-devices"')
         && !str_contains($calendarHub, 'id="toolbar-teamlog"') && !str_contains($calendarHub, 'id="toolbar-invitations"'),
@@ -294,8 +464,12 @@ try {
         $restricted->request('/administrator/index.php?option=com_appointments&view=' . $view);
         $check($restricted->status === 403, 'Direct calendar branch access retains its permission boundary: ' . $view);
     }
-    $csv = $export($restricted);
-    $check(str_contains($csv, $tag . '-allowed') && !str_contains($csv, 'other@example.test'),
+    $csv = $export($restricted, $scopeFilters);
+    $exportedIds = $csvIds($csv);
+    sort($exportedIds);
+    $check($restricted->status === 200
+        && strtolower(trim(explode(';', $restricted->contentType, 2)[0])) === 'text/csv'
+        && $exportedIds === $expectedIds,
         'CSV cannot widen the editor scope');
     $dashboard = $restricted->request('/administrator/index.php?option=com_appointments&view=dashboard');
     $deniedTitle = $db->query("SELECT title FROM {$prefix}appointments_eventtypes WHERE id={$eventB}")->fetch_assoc()['title'];
@@ -303,8 +477,13 @@ try {
     $allowedTitle = $db->query("SELECT title FROM {$prefix}appointments_eventtypes WHERE id={$eventA}")->fetch_assoc()['title'];
     foreach (['eventtypes' => [$allowedTitle, $deniedTitle], 'fields' => [$tag . '-allowed-field', $tag . '-denied-field'],
         'templates' => [$tag . '-allowed-template', $tag . '-denied-template']] as $view => [$allowed, $denied]) {
-        $html = $restricted->request('/administrator/index.php?option=com_appointments&view=' . $view . '&limit=100&filter_eventtype_id=-1');
+        $html = $restricted->request('/administrator/index.php?' . http_build_query([
+            'option' => 'com_appointments', 'view' => $view, 'limit' => 100, 'limitstart' => 0,
+            'filter_eventtype_id' => -1, 'filter_search' => $tag, 'list' => ['limit' => 100],
+        ]));
+        $rowIds = $listIds($html);
         $check($restricted->status === 200 && str_contains($html, $allowed) && !str_contains($html, $denied)
+            && ($view !== 'eventtypes' || $rowIds === [$eventA])
             && ($view !== 'templates' || !str_contains($html, $tag . '-sitewide-template')),
             'Administrator list hides denied event metadata and site-wide template content: ' . $view);
     }
@@ -316,7 +495,10 @@ try {
     $denyAll = $db->real_escape_string(json_encode(['core.edit' => [(string) $groupId => 0]], JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR));
     $db->query("UPDATE {$prefix}assets SET rules='{$denyAll}' WHERE name='com_appointments.eventtype.{$eventA}'");
     foreach (['eventtypes', 'fields', 'templates'] as $view) {
-        $html = $restricted->request('/administrator/index.php?option=com_appointments&view=' . $view . '&limit=100&filter_eventtype_id=-1');
+        $html = $restricted->request('/administrator/index.php?' . http_build_query([
+            'option' => 'com_appointments', 'view' => $view, 'limit' => 100, 'limitstart' => 0,
+            'filter_eventtype_id' => -1, 'filter_search' => $tag, 'list' => ['limit' => 100],
+        ]));
         $check($restricted->status === 200 && !str_contains($html, $allowedTitle) && !str_contains($html, $deniedTitle)
             && !str_contains($html, $tag . '-allowed-field') && !str_contains($html, $tag . '-allowed-template')
             && !str_contains($html, $tag . '-sitewide-template'), 'An empty event ACL scope returns no list rows: ' . $view);

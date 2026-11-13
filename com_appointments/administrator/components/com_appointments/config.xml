@@ -36,6 +36,35 @@
         <field name="audit_retention_years" type="number" label="COM_APPOINTMENTS_CONFIG_AUDIT_RETENTION" description="COM_APPOINTMENTS_CONFIG_AUDIT_RETENTION_DESC" default="3" min="1" max="100" required="true" filter="raw" validate="range" />
         <field name="removal_block_reason" type="textarea" label="COM_APPOINTMENTS_CONFIG_REMOVAL_BLOCK" description="COM_APPOINTMENTS_CONFIG_REMOVAL_BLOCK_DESC" filter="string" />
     </fieldset>
+    <fieldset name="close" label="COM_APPOINTMENTS_CLOSE_TITLE">
+        <field name="close_note" type="note" description="COM_APPOINTMENTS_CLOSE_NOTE" filter="unset" />
+        <field name="close_enabled" type="radio" layout="joomla.form.field.radio.switcher" label="JENABLED" default="0" filter="integer" validate="options">
+            <option value="0">JNO</option><option value="1">JYES</option>
+        </field>
+        <field name="close_profiles" type="subform" multiple="true" layout="joomla.form.field.subform.repeatable" max="20" label="COM_APPOINTMENTS_CLOSE_PROFILES" description="COM_APPOINTMENTS_CLOSE_PROFILES_DESC">
+            <form>
+                <field name="key" type="text" label="COM_APPOINTMENTS_CLOSE_PROFILE_KEY" description="COM_APPOINTMENTS_CLOSE_PROFILE_KEY_DESC" filter="cmd" maxlength="32" pattern="[a-z0-9][a-z0-9_\-]{0,31}" required="true" />
+                <field name="eventtypes" type="sql" multiple="true" label="COM_APPOINTMENTS_CLOSE_PROFILE_EVENTTYPES" description="COM_APPOINTMENTS_CLOSE_PROFILE_EVENTTYPES_DESC" query="SELECT id AS value, title AS text FROM #__appointments_eventtypes ORDER BY title" key_field="value" value_field="text" filter="array" />
+                <field name="origin" type="url" label="COM_APPOINTMENTS_CLOSE_ORIGIN" filter="url" />
+                <field name="credential_env" type="text" label="COM_APPOINTMENTS_CLOSE_CREDENTIAL" description="COM_APPOINTMENTS_CLOSE_CREDENTIAL_DESC" filter="string" maxlength="101" />
+                <field name="organization_id" type="text" label="COM_APPOINTMENTS_CLOSE_ORGANIZATION" description="COM_APPOINTMENTS_CLOSE_ORGANIZATION_DESC" filter="string" maxlength="110" />
+                <field name="delivery" type="list" label="COM_APPOINTMENTS_CLOSE_DELIVERY" description="COM_APPOINTMENTS_CLOSE_DELIVERY_DESC" default="note" filter="cmd" validate="options">
+                    <option value="note">COM_APPOINTMENTS_CLOSE_DELIVERY_NOTE</option>
+                    <option value="activity">COM_APPOINTMENTS_CLOSE_DELIVERY_ACTIVITY</option>
+                </field>
+                <field name="activity_type" type="text" label="COM_APPOINTMENTS_CLOSE_TYPE" filter="string" maxlength="110" showon="delivery:activity" />
+                <field name="activity_fields" type="textarea" label="COM_APPOINTMENTS_CLOSE_FIELDS" description="COM_APPOINTMENTS_CLOSE_FIELDS_DESC" filter="raw" showon="delivery:activity" />
+                <field name="activity_answers" type="textarea" label="COM_APPOINTMENTS_CLOSE_ACTIVITY_ANSWERS" description="COM_APPOINTMENTS_CLOSE_ACTIVITY_ANSWERS_DESC" filter="raw" showon="delivery:activity" />
+                <field name="note_answers" type="text" label="COM_APPOINTMENTS_CLOSE_NOTE_ANSWERS" description="COM_APPOINTMENTS_CLOSE_NOTE_ANSWERS_DESC" filter="string" maxlength="1000" />
+                <field name="campaign" type="text" label="COM_APPOINTMENTS_CLOSE_CAMPAIGN" description="COM_APPOINTMENTS_CLOSE_CAMPAIGN_DESC" filter="string" maxlength="255" />
+                <field name="source" type="text" label="COM_APPOINTMENTS_CLOSE_SOURCE" description="COM_APPOINTMENTS_CLOSE_SOURCE_DESC" filter="string" maxlength="255" />
+                <field name="lead_name" type="text" label="COM_APPOINTMENTS_CLOSE_LEAD_NAME" description="COM_APPOINTMENTS_CLOSE_LEAD_NAME_DESC" filter="string" maxlength="1000" />
+                <field name="contact_title" type="text" label="COM_APPOINTMENTS_CLOSE_CONTACT_TITLE" description="COM_APPOINTMENTS_CLOSE_CONTACT_TITLE_DESC" filter="string" maxlength="1000" />
+                <field name="lead_answers" type="textarea" label="COM_APPOINTMENTS_CLOSE_LEAD_ANSWERS" description="COM_APPOINTMENTS_CLOSE_LEAD_ANSWERS_DESC" filter="raw" />
+                <field name="lead_values" type="textarea" label="COM_APPOINTMENTS_CLOSE_LEAD_VALUES" description="COM_APPOINTMENTS_CLOSE_LEAD_VALUES_DESC" filter="raw" />
+            </form>
+        </field>
+    </fieldset>
     <fieldset name="conference" label="COM_APPOINTMENTS_CONFERENCE_SETTINGS" addfieldprefix="Advans\Component\Appointments\Administrator\Field">
         <field name="conference_provider" type="Conferenceprovider" label="COM_APPOINTMENTS_EVENTTYPE_PROVIDER" default="none" filter="cmd" validate="options">
             <option value="none">JNONE</option>
@@ -73,6 +102,7 @@
             <option value="">JNONE</option>
         </field>
         <field name="booking_data_migration" type="hidden" filter="raw" />
+        <field name="feed_token_conversion" type="hidden" filter="cmd" />
         <field name="team_create_groups" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_CONFIG_TEAM_CREATE_GROUPS" description="COM_APPOINTMENTS_CONFIG_TEAM_CREATE_GROUPS_DESC" default="1" filter="integer" validate="options">
             <option value="0">JNO</option><option value="1">JYES</option>
         </field>
