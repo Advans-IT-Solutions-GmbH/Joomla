@@ -132,7 +132,8 @@ try {
         'id' => $gid, 'signature' => $guestQuery['signature'], $visitor->token($visitor->request($guestLink)) => 1,
     ]);
     $after = $fixture->row($gid);
-    $check(str_contains($html, 'Your address has been removed from this appointment.') && $after['guest_emails'] === 'keep@example.test',
+    $check(str_contains($html, 'Your address has been removed from this appointment.') && !str_contains($html, 'could not be updated yet')
+        && $after['guest_emails'] === 'keep@example.test',
         'The confirmed guest link removes exactly that address from the guest list');
     $check($after['invitee_email'] === $guestBooking['invitee_email'] && $after['invitee_name'] === $guestBooking['invitee_name']
         && (int) $after['state'] === (int) $guestBooking['state'] && $after['anonymised_utc'] === null

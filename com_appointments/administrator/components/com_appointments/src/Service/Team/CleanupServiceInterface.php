@@ -23,6 +23,10 @@ defined('_JEXEC') or die;
  * the clean-up cannot reach it, which is why the usage rule asks for a device
  * lock code.
  *
+ * Only a device set to «Clean up» (`removal_mode` `cleanup`) goes through these
+ * phases. A device set to «Block only» (`block`) is revoked at once and never
+ * receives an empty calendar.
+ *
  * @since  1.4.0
  */
 interface CleanupServiceInterface
@@ -32,12 +36,17 @@ interface CleanupServiceInterface
     public const VIEW_HIDDEN = 'hidden';
 
     /**
-     * Start the clean-up for every device of a user and suspend the user's grants.
+     * Start the clean-up for every device of a user and suspend the user's grants. Each
+     * device follows its own «When removed or blocked».
      *
-     * @return  int  Devices put into clean-up.
+     * @return  int  Devices put into clean-up or, when set to «Block only», revoked.
      */
     public function startForUser(int $userId, string $reason, ?int $actorUserId): int;
 
+    /**
+     * Remove or block one active device: the clean-up for `cleanup`, an immediate
+     * revocation (401) for `block`. The user's other devices are not touched.
+     */
     public function startForDevice(int $deviceId, string $reason, ?int $actorUserId): void;
 
     /**

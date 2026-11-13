@@ -12,19 +12,19 @@ namespace Advans\Component\Appointments\Administrator\Service\Team;
 use Advans\Component\Appointments\Administrator\Helper\DefaultTemplates;
 use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Helper\MailLanguage;
+use Advans\Component\Appointments\Administrator\Helper\MenuViews;
+use Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
 use Advans\Component\Appointments\Administrator\Table\TemplateTable;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Joomla\CMS\Access\Access;
-use Joomla\CMS\Application\ConsoleApplication;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Language;
 use Joomla\CMS\Language\LanguageFactoryInterface;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Mail\MailerFactoryInterface;
-use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\ParameterType;
 use Joomla\Database\QueryInterface;
@@ -61,6 +61,9 @@ final class TeamMailer implements TeamMailerInterface
         4 => 'COM_APPOINTMENTS_TEAM_D_ROLE_MANAGE',
     ];
 
+    /** @var array<string, string> Address of «My calendars» by language and view levels (myCalendarsUrl()). */
+    private array $myCalendarsUrls = [];
+
     public function __construct(private readonly TeamServices $services)
     {
     }
@@ -78,9 +81,9 @@ final class TeamMailer implements TeamMailerInterface
                 '{device_name}' => $deviceName,
                 '{client}' => $language->_(DeviceService::CLIENT_LABELS[$client] ?? DeviceService::CLIENT_LABELS['other']),
                 '{created}' => $this->when($createdUtc, $language, $recipient),
-                '{mycalendars_url}' => $this->siteUrl('index.php?option=com_appointments&view=mycalendars'),
+                '{mycalendars_url}' => $this->myCalendarsUrl($recipient, $this->languageOf($recipient)),
             ];
-        }, [$this->siteUrl('index.php?option=com_appointments&view=mycalendars') => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
+        }, fn (object $recipient, string $tag): array => [$this->myCalendarsUrl($recipient, $tag) => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
     }
 
     public function invitation(string $email, #[\SensitiveParameter] string $link, \DateTimeImmutable $expiresUtc): void
@@ -177,15 +180,15 @@ final class TeamMailer implements TeamMailerInterface
         $actor = $this->user($actorUserId);
         $title = (string) $calendar->title;
 
-        $this->deliver('team_grant_changed', $recipients, function (Language $language) use ($title, $grantee, $actor, $roleLabelKey): array {
+        $this->deliver('team_grant_changed', $recipients, function (Language $language, object $recipient) use ($title, $grantee, $actor, $roleLabelKey): array {
             return [
                 '{calendar_title}' => $title,
                 '{grantee_name}' => $grantee !== null ? (string) $grantee->name : '',
                 '{actor_name}' => $actor !== null ? (string) $actor->name : '',
                 '{role}' => $this->role($language, $roleLabelKey),
-                '{mycalendars_url}' => $this->siteUrl('index.php?option=com_appointments&view=mycalendars'),
+                '{mycalendars_url}' => $this->myCalendarsUrl($recipient, $this->languageOf($recipient)),
             ];
-        }, [$this->siteUrl('index.php?option=com_appointments&view=mycalendars') => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
+        }, fn (object $recipient, string $tag): array => [$this->myCalendarsUrl($recipient, $tag) => 'COM_APPOINTMENTS_TEAM_D_MAIL_LINK_MYCALENDARS']);
     }
 
     public function accessSuspended(int $userId, string $reason): void
@@ -244,9 +247,10 @@ final class TeamMailer implements TeamMailerInterface
     /**
      * @param   object[]                                          $recipients  Rows with id, name, email, params.
      * @param   callable(Language, object): array<string,string>  $values
-     * @param   array<string, string>                             $links       URL => language key of its label in the HTML part.
+     * @param   array<string, string>|\Closure                    $links       URL => language key of its label in the HTML part, or a
+     *                                                                    function of recipient and language tag that returns them.
      */
-    private function deliver(string $purpose, array $recipients, callable $values, array $links = []): void
+    private function deliver(string $purpose, array $recipients, callable $values, array|\Closure $links = []): void
     {
         try {
             $app = Factory::getApplication();
@@ -259,6 +263,15 @@ final class TeamMailer implements TeamMailerInterface
         if (!$app->get('mailonline', true)) {
             $error = new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MAIL', 503);
             $this->logFailure('mail-disabled', $error, Log::WARNING);
+
+            throw $error;
+        }
+
+        // Fail closed: without a configured public site URL no mail goes out, so no link is ever
+        // built from the Host header of a request. The system checks show this as an error.
+        if ($this->publicBase() === null) {
+            $error = new TeamException('COM_APPOINTMENTS_TEAM_D_ERROR_MAIL', 503);
+            $this->logFailure('public-site-url-missing', $error);
 
             throw $error;
         }
@@ -283,11 +296,12 @@ final class TeamMailer implements TeamMailerInterface
                 $language->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments', $tag, true);
                 $phase = 'template';
                 $template = $this->template($purpose, $tag, $language);
+                $recipientLinks = $links instanceof \Closure ? $links($recipient, $tag) : $links;
                 $phase = 'message-compose';
                 $message = self::fill($template, [
                     '{site_name}' => $siteName,
                     '{user_name}' => (string) $recipient->name,
-                ] + $values($language, $recipient), array_keys($links));
+                ] + $values($language, $recipient), array_keys($recipientLinks));
 
                 $phase = 'mailer-setup';
                 $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
@@ -296,7 +310,7 @@ final class TeamMailer implements TeamMailerInterface
                 $mailer->setSubject($message['subject']);
                 $known = [];
 
-                foreach ($links as $url => $labelKey) {
+                foreach ($recipientLinks as $url => $labelKey) {
                     $known[$url] = $language->_($labelKey);
                 }
 
@@ -329,7 +343,9 @@ final class TeamMailer implements TeamMailerInterface
 
     private function logFailure(string $phase, \Throwable $error, int $priority = Log::ERROR): void
     {
-        Log::add('Internet calendar mail failed: phase=' . $phase . ', exception=' . $error::class, $priority, 'com_appointments');
+        // The class and the place only: an exception message may hold an address or a link.
+        Log::add('Internet calendar mail failed: phase=' . $phase . ', exception=' . $error::class . ' at ' . basename($error->getFile()) . ':' . $error->getLine(),
+            $priority, 'com_appointments');
     }
 
     /**
@@ -486,28 +502,57 @@ final class TeamMailer implements TeamMailerInterface
         return $recipients;
     }
 
+    /**
+     * Address of «My calendars» through its menu item: the page opens only through a published menu
+     * item of its type (MenuViews), so without one the link has no Itemid and the page answers 404.
+     * The item the recipient may open, in the recipient's language or in "All" (MenuViews::itemFor()),
+     * looked up once per language and set of view levels. A language-specific item adds its `lang`
+     * code, so the page opens in that language whatever the reader's cookie or browser names.
+     */
+    private function myCalendarsUrl(object $recipient, string $tag): string
+    {
+        try {
+            $levels = array_values(array_unique(array_map('intval', Access::getAuthorisedViewLevels((int) ($recipient->id ?? 0)))));
+        } catch (\Throwable $e) {
+            // The mail still goes out; its link then lacks the menu item, which the log names.
+            $this->logFailure('mycalendars-view-levels', $e, Log::WARNING);
+            $levels = [];
+        }
+
+        sort($levels);
+        $key = $tag . '|' . implode(',', $levels);
+
+        if (!isset($this->myCalendarsUrls[$key])) {
+            $db = $this->services->db();
+
+            try {
+                $itemId = MenuViews::itemFor($db, 'mycalendars', $tag, $levels);
+                $code = MenuViews::languageCode($db, $itemId);
+            } catch (\Throwable $e) {
+                // The mail still goes out; its link then lacks the menu item, which the log names.
+                $this->logFailure('mycalendars-menu-item', $e, Log::WARNING);
+                $itemId = 0;
+                $code = '';
+            }
+            $this->myCalendarsUrls[$key] = $this->siteUrl('index.php?option=com_appointments&view=mycalendars'
+                . ($itemId > 0 ? '&Itemid=' . $itemId : '') . ($code !== '' ? '&lang=' . urlencode($code) : ''));
+        }
+
+        return $this->myCalendarsUrls[$key];
+    }
+
     private function siteUrl(string $path): string
     {
         return rtrim($this->publicBase() ?? '', '/') . '/' . $path;
     }
 
     /**
-     * The public site URL: the component's public_site_url, then live_site, then the request root.
+     * The public site URL: the component's public_site_url, then live_site (PublicSiteUrl), never
+     * the address of the request. Null when none is configured; then no mail is sent at all.
      */
     private function publicBase(): ?string
     {
-        $app = Factory::getApplication();
-        $base = (string) ComponentHelper::getParams('com_appointments')->get('public_site_url', '');
-
-        if ($base === '') {
-            $base = (string) $app->get('live_site', '');
-        }
-
-        if ($base === '' && !($app instanceof ConsoleApplication)) {
-            $base = Uri::root();
-        }
-
-        return filter_var($base, FILTER_VALIDATE_URL) && preg_match('#\Ahttps?://#i', $base) === 1 ? $base : null;
+        return PublicSiteUrl::current();
     }
 
     private function query(): QueryInterface

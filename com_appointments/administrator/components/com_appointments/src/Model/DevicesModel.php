@@ -43,7 +43,7 @@ class DevicesModel extends ListModel
     {
         $db = $this->getDatabase();
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['d.id', 'd.user_id', 'd.name', 'd.client', 'd.state', 'd.rule_version',
+        $query->select($db->quoteName(['d.id', 'd.user_id', 'd.name', 'd.client', 'd.removal_mode', 'd.state', 'd.rule_version',
             'd.rule_accepted_utc', 'd.created_utc', 'd.last_sync_utc', 'd.cleanup_started_utc', 'd.revoked_utc', 'd.revoke_reason']))
             ->select($db->quoteName('u.name', 'user_name'))
             ->select($db->quoteName('u.username', 'user_username'))

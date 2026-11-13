@@ -327,7 +327,7 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         return $etag;
     }
 
-    public function putSealed(int $calendarId, string $ics, int $bookingId): string
+    public function putSealed(int $calendarId, string $ics, int $bookingId, bool $adopt = true): string
     {
         $uid = self::inspect($ics);
         $keys = $this->services->keys();
@@ -344,11 +344,21 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
             // booking mail's ICS there): that object becomes the booking's, so the
             // event never shows twice.
             $query = $this->query()
-                ->select($db->quoteName('uri'))
+                ->select($db->quoteName(['uri', 'booking_id']))
                 ->from($db->quoteName('#__appointments_calendar_objects'))
                 ->where($db->quoteName('calendar_id') . ' = ' . (int) $calendarId)
                 ->where($db->quoteName('uid_hash') . ' = ' . $db->quoteBinary($uidHash));
-            $uri = (string) ($db->setQuery((string) $query . ' FOR UPDATE')->loadResult() ?: $this->bookingUri($calendarId, $uid));
+            $same = $db->setQuery((string) $query . ' FOR UPDATE')->loadAssoc() ?: null;
+
+            // Without adoption an entry of the calendar's own with this UID stays as it is:
+            // nothing is written, and the caller is told so with an empty ETag.
+            if (!$adopt && $same !== null && $same['booking_id'] === null) {
+                $db->transactionCommit();
+
+                return '';
+            }
+
+            $uri = (string) ($same['uri'] ?? '') ?: $this->bookingUri($calendarId, $uid);
             $existing = $this->lockObject($calendarId, $uri);
 
             // The derived address may belong to another event by now (a writer reused it after
@@ -490,12 +500,28 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
         return $done;
     }
 
+    /**
+     * Whether the calendar's age-based retention may delete an object: only a
+     * booking copy (an object with a booking id) whose last end lies before the
+     * cutoff. An entry of the calendar's own (no booking id, for example written
+     * by a device) never expires, whatever retention the calendar has. Pure.
+     */
+    public static function expires(?int $bookingId, ?\DateTimeImmutable $lastEnd, \DateTimeImmutable $before): bool
+    {
+        return $bookingId !== null && $lastEnd !== null && $lastEnd < $before;
+    }
+
     public function deleteEndedBefore(int $calendarId, \DateTimeImmutable $beforeUtc): int
     {
         $before = $beforeUtc->setTimezone(new \DateTimeZone('UTC'));
         $deleted = 0;
 
         foreach ($this->listing($calendarId) as $object) {
+            // An own entry is not even opened: the retention only ever deletes booking copies.
+            if ($object->bookingId === null) {
+                continue;
+            }
+
             // Times without a zone count as UTC: the retention works in days, hours do not matter.
             try {
                 $skeleton = $this->services->keys()->openTiming($calendarId, $object->uri, $object->timing);
@@ -504,12 +530,14 @@ final class CalendarObjectStore implements CalendarObjectStoreInterface
                 $end = null;
             }
 
-            if ($end === null || $end >= $before) {
+            if (!self::expires($object->bookingId, $end, $before)) {
                 continue;
             }
 
-            // Only the version that was judged: a change in the meantime may have moved the event.
-            if ($this->deleteOne($calendarId, $object->uri, null, static fn (array $o): bool => $o['id'] === $object->id && hash_equals($o['etag'], $object->etag)) !== null) {
+            // Only the version that was judged, and only while it is still a booking copy:
+            // a change in the meantime may have moved the event.
+            if ($this->deleteOne($calendarId, $object->uri, null, static fn (array $o): bool => $o['id'] === $object->id
+                && $o['booking_id'] !== null && hash_equals($o['etag'], $object->etag)) !== null) {
                 $deleted++;
             }
         }

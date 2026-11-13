@@ -196,8 +196,12 @@ Required properties: `DTSTAMP`, `DTSTART`, `DTEND`, `SUMMARY`, `DESCRIPTION`, `O
 
 The attachment is sent as `text/calendar; charset=UTF-8; method=REQUEST` with the file name
 `invite.ics`, **and** as a second attachment part of type `application/ics` where the mail client
-needs it. Joomla's `Mail` class takes both. Attach it to **every** e-mail to the invitee and to the
-host, without exception — that is a stated constraint of the project.
+needs it. Joomla's `Mail` class takes both. Attach it to **every** e-mail to the invitee and the
+guests, without exception, and to the host's mail while the event type has no target calendar in
+use. With a target calendar in use (internet calendars on, calendar active), the host (while it
+holds effective write access, else it keeps the mail with ICS) and every other user of that calendar get their mail **without** an
+attachment: the entry arrives through the synchronisation, and an accepted invitation would show it
+twice (maintainer's decision, `team-calendars.md`, section 12).
 
 `DESCRIPTION` carries the conference link when there is one, and so does `LOCATION` when the
 location type is `conference`. A plain-text `DESCRIPTION` with the link on its own line is what mail
@@ -230,9 +234,18 @@ installations from 1.4.0, removed in 2.0.0. See `references/team-calendars.md`, 
 
 The feed URL is a bearer secret: anyone holding it sees the bookings. Treat it as a credential.
 
-- 32 random bytes, hex encoded, in the path or query. Compared with `hash_equals()`.
+- 32 random bytes, hex encoded, in the query. The database stores only `h1:` plus HMAC-SHA256 of
+  `scope:id:token` under the server key of purpose `feed-token` (`FeedToken`, from 1.5.0), never the
+  token, so a database copy alone opens no feed, a row written without the site secret matches no
+  token and a digest copied to another feed matches nothing there. The
+  digests are compared with `hash_equals()`. A stored value without the prefix is a clear-text token
+  from before 1.5.0: it never authenticates. The installer replaces it with its digest once, when it
+  finds the `CHAR(64)` columns of up to 1.4 (update, or new installation over kept tables), with
+  `FeedService::convertLegacy()`, so existing addresses keep working. Nothing else converts: a value
+  planted later stays unusable.
 - Rotatable from the administrator interface, per feed. Rotation invalidates the old URL at once and
-  the interface says so before rotating.
+  the interface says so before rotating. Because only the digest is stored, the rotation response is
+  the only place a URL is ever shown (no redirect, session or message queue holds it).
 - `X-Robots-Tag: noindex, nofollow` and `Cache-Control: private, no-store` on the response.
 - Rate limited per IP. Authentication compares fixed-length tokens in constant time; wrong,
   malformed and unknown credentials return the same generic `404`, not `403`. Authenticate before

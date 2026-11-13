@@ -18,7 +18,7 @@ type's `host_user_id` is not required to be the owner of its schedule.
 | Column | Type | Notes |
 |---|---|---|
 | `user_id` | `INT UNSIGNED NOT NULL` | primary key, the Joomla user id |
-| `feed_token` | `CHAR(64) NOT NULL` | hex, 32 random bytes, **no default** |
+| `feed_token` | `CHAR(67) NOT NULL` | `h1:` plus HMAC-SHA256 (hex) of `host:<user_id>:<token>` (token of 32 random bytes), never the token (`FeedToken`), **no default** |
 | `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
 
 Unique `feed_token`.
@@ -68,7 +68,7 @@ The bookable thing.
 | `language` | `CHAR(7) NOT NULL DEFAULT '*'` | |
 | `published` | `TINYINT(1) NOT NULL DEFAULT 1` | |
 | `ordering` | `INT NOT NULL DEFAULT 0` | |
-| `feed_token` | `CHAR(64) NOT NULL` | hex, 32 random bytes, **no default**: a default of `''` would give the first row inserted by a forgetful code path an empty bearer credential, and the unique index would only catch the second one |
+| `feed_token` | `CHAR(67) NOT NULL` | `h1:` plus HMAC-SHA256 (hex) of `event:<id>:<token>` (token of 32 random bytes), never the token (`FeedToken`), **no default**: a default of `''` would give the first row inserted by a forgetful code path an empty bearer credential, and the unique index would only catch the second one |
 | `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
 | `checked_out`, `checked_out_time` | Joomla standard | |
 
@@ -228,7 +228,7 @@ E-mail templates. One row per (event type or site-wide) × purpose × language.
 |---|---|---|
 | `id` | `INT UNSIGNED AUTO_INCREMENT` | |
 | `eventtype_id` | `INT UNSIGNED NOT NULL DEFAULT 0` | `0` = site-wide fallback |
-| `purpose` | `VARCHAR(32) NOT NULL` | `confirmation`, `pending`, `approved`, `reschedule`, `cancellation`, `reminder`, `host_notice`, `erasure_notice`, and the guest templates `guest_confirmation`, `guest_pending`, `guest_approved`, `guest_reschedule`, `guest_cancellation`, `guest_reminder` that an additional guest receives instead of the invitee's template (`DefaultTemplates::GUEST`), and the host templates `host_approved`, `host_reschedule`, `host_cancellation`, `host_reminder` (`DefaultTemplates::HOST`, with `host_notice` for confirmation and pending) |
+| `purpose` | `VARCHAR(32) NOT NULL` | `confirmation`, `pending`, `approved`, `reschedule`, `cancellation`, `reminder`, `host_notice`, `erasure_notice`, and the guest templates `guest_confirmation`, `guest_pending`, `guest_approved`, `guest_reschedule`, `guest_cancellation`, `guest_reminder` that an additional guest receives instead of the invitee's template (`DefaultTemplates::GUEST`), and the host templates `host_approved`, `host_reschedule`, `host_cancellation`, `host_reminder` (`DefaultTemplates::HOST`, with `host_notice` for confirmation and pending), the mails without ICS to the users of a target calendar `calendar_booked`, `calendar_approved`, `calendar_rescheduled`, `calendar_cancelled`, `calendar_reminder`, `calendar_busy`, `calendar_busy_moved`, `calendar_free` (`DefaultTemplates::CALENDAR_KEYS`, `CalendarNotice`), and the internet calendar mails (`DefaultTemplates::TEAM_KEYS`) |
 | `language` | `CHAR(7) NOT NULL` | |
 | `subject` | `VARCHAR(255) NOT NULL` | |
 | `body` | `MEDIUMTEXT NOT NULL` | |

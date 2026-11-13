@@ -13,6 +13,7 @@ use Advans\Component\Appointments\Administrator\Helper\Team\CalendarAccess;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\Team\DeviceService;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
+use Advans\Component\Appointments\Site\Helper\NoPageCache;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
@@ -51,21 +52,27 @@ class HtmlView extends BaseHtmlView
     /** @var object[] */
     protected $devices = [];
 
+    /** @var int[]|null The calendars whose booking mails the user switched off; null when unknown. */
+    protected $mailOff = [];
+
+    /** @var int[] The calendars that are the target calendar of an event type the user hosts. */
+    protected $hosted = [];
+
     /** Language key of the reason why «Add device» is not offered, empty when it is. */
     protected $addBlocked = '';
 
     /** Whether a part of the internet calendars this page needs is not available yet. */
     protected $unavailable = false;
 
-    /** @var array{name: string, client: string, errors: array<string, string>, device: int} */
-    protected $form = ['name' => '', 'client' => '', 'errors' => [], 'device' => 0];
+    /** @var array{name: string, client: string, removal_mode: string, errors: array<string, string>, device: int} */
+    protected $form = ['name' => '', 'client' => '', 'removal_mode' => 'auto', 'errors' => [], 'device' => 0];
 
     protected $formNonce = '';
 
     /** @var object|null The device of the `device` layout. */
     protected $device;
 
-    /** @var array{device_id: int, app_password: string, name: string, client: string, mail_sent: bool}|null */
+    /** @var array{device_id: int, app_password: string, name: string, client: string, removal_mode: string, mail_sent: bool}|null */
     protected $created;
 
     protected $davUrl = '';
@@ -115,6 +122,8 @@ class HtmlView extends BaseHtmlView
         $this->form = [
             'name' => \is_string($state['name'] ?? null) ? $state['name'] : '',
             'client' => \is_string($state['client'] ?? null) ? $state['client'] : '',
+            'removal_mode' => \is_string($state['removal_mode'] ?? null) && DeviceService::isRemovalMode($state['removal_mode'])
+                ? $state['removal_mode'] : 'auto',
             'errors' => array_filter((array) ($state['errors'] ?? []), 'is_string'),
             'device' => (int) ($state['device'] ?? 0),
         ];
@@ -146,6 +155,16 @@ class HtmlView extends BaseHtmlView
 
         $this->setLayout('default');
         $this->calendars = $this->calendarsOf($services, $userId);
+
+        try {
+            // The user's own switch for the booking mails of each calendar (on unless switched off).
+            $this->mailOff = \Advans\Component\Appointments\Administrator\Helper\NotificationSwitch::muted($services->db(), $userId);
+            $this->hosted = \Advans\Component\Appointments\Administrator\Helper\NotificationSwitch::hostedCalendars($services->db(), $userId);
+        } catch (\Throwable $e) {
+            // Unknown: the page shows no switch rather than a wrong state.
+            $this->mailOff = null;
+        }
+
         $this->addBlocked = $this->forcedBlock !== '' ? $this->forcedBlock
             : ($this->unavailable ? 'COM_APPOINTMENTS_MYCALENDARS_NOT_READY' : $this->addBlockedReason($services, $userId));
 
@@ -167,13 +186,15 @@ class HtmlView extends BaseHtmlView
      *
      * @param   array{device_id: int, app_password: string, mail_sent?: bool}  $result
      */
-    public function setCreated(array $result, string $name, string $client): void
+    public function setCreated(array $result, string $name, string $client, string $removalMode = ''): void
     {
+        $client = DeviceService::isClient($client) ? $client : 'other';
         $this->created = [
             'device_id' => (int) $result['device_id'],
             'app_password' => (string) $result['app_password'],
             'name' => $name,
-            'client' => DeviceService::isClient($client) ? $client : 'other',
+            'client' => $client,
+            'removal_mode' => DeviceService::isRemovalMode($removalMode) ? $removalMode : DeviceService::defaultRemovalMode($client),
             'mail_sent' => (bool) ($result['mail_sent'] ?? true),
         ];
         $this->setLayout('created');
@@ -238,9 +259,8 @@ class HtmlView extends BaseHtmlView
     {
         $app = Factory::getApplication();
 
-        if (method_exists($app, 'allowCache')) {
-            $app->allowCache(false);
-        }
+        // Also out of «System - Page Cache»: the activation page answers guests with account data.
+        NoPageCache::apply($app);
 
         $app->setHeader('Cache-Control', 'private, no-store, max-age=0', true);
         $app->setHeader('Pragma', 'no-cache', true);

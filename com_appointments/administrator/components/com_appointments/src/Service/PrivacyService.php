@@ -186,7 +186,7 @@ final class PrivacyService
         return array_column($db->setQuery($query)->loadAssocList(), 'label', 'id');
     }
 
-    public function remove(string $address, \DateTimeImmutable $now): array
+    public function remove(string $address, \DateTimeImmutable $now, int $requestId = 0): array
     {
         $mode = (string) $this->params->get('erase_mode', 'anonymise');
         if (!in_array($mode, ['anonymise', 'delete'], true)) {
@@ -198,6 +198,9 @@ final class PrivacyService
         if ($this->legalReason() !== '' && $this->hasBookings($address)) {
             throw new \RuntimeException('Appointment removal is blocked by the configured legal reason.');
         }
+        $cleanup = $requestId > 0 ? new PrivacyCleanup($this->db,
+            new KeyProvider((string) Factory::getApplication()->get('secret', '')), $requestId, $address) : null;
+        $cleanup?->retry($address);
         // A guest address is removed from the guest list only; the other person's booking stays.
         // Collected first, because each removal changes the rows the generator pages through.
         $guestIds = [];
@@ -205,12 +208,14 @@ final class PrivacyService
             $guestIds[] = $guestBooking['id'];
         }
         foreach ($guestIds as $guestId) {
-            $result['guest_removed'] += $store->removeGuest($guestId, $now, 'privacy_request', $address)['changed'] ? 1 : 0;
+            $erasure = $store->removeGuest($guestId, $now, 'privacy_request', $address, privacyCleanup: $cleanup);
+            $result['guest_removed'] += $erasure['changed'] ? 1 : 0;
+            $result['cleanup_failed'] += !empty($erasure['_calendar_cleanup_error']) ? 1 : 0;
         }
         foreach ($this->bookings($address) as $booking) {
-            $erasure = $store->erase((int) $booking['id'], $now, 'privacy_request', $mode === 'delete');
+            $erasure = $store->erase((int) $booking['id'], $now, 'privacy_request', $mode === 'delete', privacyCleanup: $cleanup);
             $result['removed'] += $erasure['changed'] ? 1 : 0;
-            $result['cleanup_failed'] += !empty($erasure['_conference_cleanup_error']) ? 1 : 0;
+            $result['cleanup_failed'] += !empty($erasure['_conference_cleanup_error']) || !empty($erasure['_calendar_cleanup_error']) ? 1 : 0;
             if ($erasure['notification'] !== null) {
                 try {
                     $mail->send($erasure['notification'], 'erasure_notice', $now, true);
@@ -219,6 +224,8 @@ final class PrivacyService
                 }
             }
         }
+
+        $result['cleanup_failed'] = max($result['cleanup_failed'], $cleanup?->pending() ?? 0);
 
         return $result;
     }

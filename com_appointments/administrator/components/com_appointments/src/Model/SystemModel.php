@@ -9,8 +9,10 @@
 namespace Advans\Component\Appointments\Administrator\Model;
 
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
+use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\FeedService;
 use Advans\Component\Appointments\Administrator\Service\Team\AuditService;
 use Advans\Component\Appointments\Administrator\Service\Team\EpochAnchorInterface;
@@ -42,6 +44,8 @@ class SystemModel extends BaseDatabaseModel
             ['label' => 'COM_APPOINTMENTS_SYSTEM_TIMEZONE', 'ok' => in_array($timezone, \DateTimeZone::listIdentifiers(), true), 'value' => $timezone],
             ['label' => 'COM_APPOINTMENTS_SYSTEM_MAIL', 'ok' => (bool) $app->get('mailonline', true),
                 'value' => (string) $app->get('mailer', 'mail')],
+            self::siteUrlCheck((string) ComponentHelper::getParams('com_appointments')->get('public_site_url', ''),
+                (string) $app->get('live_site', '')),
         ];
         foreach (['task' => 'COM_APPOINTMENTS_SYSTEM_TASK', 'privacy' => 'COM_APPOINTMENTS_SYSTEM_PRIVACY'] as $group => $label) {
             $query = $this->query()->select($db->quoteName('enabled'))->from($db->quoteName('#__extensions'))
@@ -64,7 +68,7 @@ class SystemModel extends BaseDatabaseModel
         $invalid = 0;
         foreach (['eventtypes', 'hosts'] as $table) {
             $query = $this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_' . $table))
-                ->where($db->quoteName('feed_token') . " NOT REGEXP '^[a-f0-9]{64}$'");
+                ->where($db->quoteName('feed_token') . " NOT REGEXP '^h1:[a-f0-9]{64}$'");
             $invalid += (int) $db->setQuery($query)->loadResult();
         }
         $checks[] = ['label' => 'COM_APPOINTMENTS_SYSTEM_FEEDS', 'ok' => $invalid === 0, 'value' => (string) $invalid];
@@ -209,6 +213,16 @@ class SystemModel extends BaseDatabaseModel
         $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_LEGACY_FEEDS', !$legacy,
             Text::_($legacy ? 'COM_APPOINTMENTS_TEAM_F_SYSTEM_LEGACY_ON' : 'JDISABLED'), 'COM_APPOINTMENTS_TEAM_F_SYSTEM_LEGACY_FIX');
 
+        // Outlook devices that would receive an empty calendar when removed or blocked. Devices
+        // from before the setting existed have «Clean up»; one that synchronises two ways with
+        // the main calendar would delete the person's own appointments there.
+        $outlook = (int) $db->setQuery($this->query()->select('COUNT(*)')->from($db->quoteName('#__appointments_devices'))
+            ->where($db->quoteName('client') . ' = ' . $db->quote('outlook-caldavsynchronizer'))
+            ->where($db->quoteName('state') . ' = ' . TeamStates::DEVICE_ACTIVE)
+            ->where($db->quoteName('removal_mode') . ' <> ' . $db->quote(TeamStates::REMOVAL_BLOCK)))->loadResult();
+        $checks[] = $this->check('COM_APPOINTMENTS_TEAM_F_SYSTEM_OUTLOOK_CLEANUP', $outlook === 0, (string) $outlook,
+            'COM_APPOINTMENTS_TEAM_F_SYSTEM_OUTLOOK_CLEANUP_FIX');
+
         foreach (['teamcleanup' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_CLEANUP', 'teamlog' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_LOG',
             'teaminvitations' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_INVITATIONS', 'teamretention' => 'COM_APPOINTMENTS_TEAM_F_SYSTEM_TASK_RETENTION'] as $routine => $label) {
             $task = $db->setQuery($this->query()->select($db->quoteName(['last_execution', 'last_exit_code']))
@@ -325,6 +339,23 @@ class SystemModel extends BaseDatabaseModel
         curl_close($ch);
 
         return ['status' => $status, 'headers' => "\n" . str_replace("\r", '', \is_string($raw) ? substr($raw, 0, $size) : '')];
+    }
+
+    /**
+     * Every mail builds its absolute links from the component's public site URL, else Joomla's
+     * live_site (PublicSiteUrl), never from the request. Without a valid one the component sends
+     * no mail and takes no booking (fail closed), so this check is an error, not a warning.
+     *
+     * @return  array{label: string, ok: bool, value: string, remedy: string, severity: string}
+     */
+    public static function siteUrlCheck(string $publicSiteUrl, string $liveSite): array
+    {
+        $configured = $publicSiteUrl !== '' ? $publicSiteUrl : $liveSite;
+
+        return ['label' => 'COM_APPOINTMENTS_SYSTEM_SITE_URL', 'ok' => PublicSiteUrl::resolve($publicSiteUrl, $liveSite) !== null,
+            'value' => $configured === '' ? Text::_('COM_APPOINTMENTS_SYSTEM_SITE_URL_UNSET') : $configured,
+            'remedy' => $configured === '' ? 'COM_APPOINTMENTS_SYSTEM_SITE_URL_FIX' : 'COM_APPOINTMENTS_SYSTEM_SITE_URL_INVALID',
+            'severity' => 'error'];
     }
 
     /**

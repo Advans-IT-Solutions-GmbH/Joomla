@@ -134,7 +134,7 @@ jobs:
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
         with:
           php-version: '8.3'
-          extensions: mbstring, dom, xml, zip
+          extensions: mbstring, dom, xml, zip, pdo_sqlite, sodium
           tools: composer
       - name: Install Composer dependencies
         run: |
@@ -144,6 +144,8 @@ jobs:
         run: |
           cd com_appointments
           composer test:unit
+      - name: Synthetic Close delivery lifecycle (no network)
+        run: php com_appointments/tests/close-mock.php
 
   # The CalDAV libraries in lib/ are generated code: sabre/dav and its
   # dependencies from the pinned composer.lock, prefixed with php-scoper. This
@@ -223,6 +225,8 @@ jobs:
             script: 'administration'
           - name: '16 - Menu items and routing'
             script: 'menu-routing'
+          - name: '17 - Close synthetic delivery'
+            script: 'close'
           - name: '21 - Team calendars'
             script: 'teamcalendars'
           - name: 'Installer Messages'
@@ -331,6 +335,8 @@ jobs:
             script: 'administration'
           - name: '16 - Menu items and routing'
             script: 'menu-routing'
+          - name: '17 - Close synthetic delivery'
+            script: 'close'
           - name: '21 - Team calendars'
             script: 'teamcalendars'
           - name: 'Installer Messages'
@@ -410,6 +416,8 @@ jobs:
             script: 'installation'
           - name: '02 - Structure'
             script: 'structure'
+          - name: '17 - Close synthetic delivery'
+            script: 'close'
           - name: '20 - Uninstall'
             script: 'uninstall'
     steps:

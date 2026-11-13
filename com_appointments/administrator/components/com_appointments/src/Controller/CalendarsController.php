@@ -12,6 +12,7 @@ namespace Advans\Component\Appointments\Administrator\Controller;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole;
 use Advans\Component\Appointments\Administrator\Helper\Team\KeyContext;
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamException;
+use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Controller\BaseController;
@@ -382,6 +383,8 @@ class CalendarsController extends BaseController
         $back = $id > 0 ? $this->editUrl($id) : Route::_('index.php?option=com_appointments&view=calendar&layout=edit', false);
 
         return $this->attempt(function () use ($services, $id, $data, $close): void {
+            $before = $this->retentionOf($services, $id);
+
             if ($id > 0) {
                 $services->calendars()->update($this->actor(), $id, $data);
                 $saved = $id;
@@ -401,6 +404,7 @@ class CalendarsController extends BaseController
 
             $this->app->setUserState(self::CONTEXT . '.data', null);
             $this->app->enqueueMessage(Text::_($id > 0 ? 'COM_APPOINTMENTS_TEAM_C_SAVED' : 'COM_APPOINTMENTS_TEAM_C_CREATED'), 'message');
+            $this->retentionWarning($services, $saved, $before);
 
             // Without core.edit the new calendar's edit page is closed to this
             // user (its manager edits it), so «apply» ends in the list as well.
@@ -411,6 +415,44 @@ class CalendarsController extends BaseController
                 $this->setRedirect($this->editUrl($saved));
             }
         }, $back);
+    }
+
+    /** The calendar's retention in days, 0 when it is new or cannot be read. */
+    private function retentionOf(TeamServices $services, int $calendarId): int
+    {
+        try {
+            return $calendarId > 0 ? (int) ($services->calendars()->get($calendarId)?->retention_days ?? 0) : 0;
+        } catch (\Throwable $e) {
+            return 0;
+        }
+    }
+
+    /**
+     * A calendar retention set or changed to a value above 0 deletes booking copies on
+     * every device that synchronises the calendar: said once at the save, with the number
+     * of those devices. Never fails the save.
+     */
+    private function retentionWarning(TeamServices $services, int $calendarId, int $before): void
+    {
+        try {
+            $days = $this->retentionOf($services, $calendarId);
+
+            if ($days < 1 || $days === $before) {
+                return;
+            }
+
+            $db = $services->db();
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select('COUNT(DISTINCT ' . $db->quoteName('dc.device_id') . ')')
+                ->from($db->quoteName('#__appointments_device_calendars', 'dc'))
+                ->join('INNER', $db->quoteName('#__appointments_devices', 'd'), $db->quoteName('d.id') . ' = ' . $db->quoteName('dc.device_id'))
+                ->where($db->quoteName('dc.calendar_id') . ' = ' . $calendarId)
+                ->where($db->quoteName('d.state') . ' <> ' . TeamStates::DEVICE_REVOKED);
+            $devices = (int) $db->setQuery($query)->loadResult();
+            $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_C_RETENTION_SET_WARNING', $days, $devices), 'warning');
+        } catch (\Throwable $e) {
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_C_RETENTION_SET_WARNING_PLAIN'), 'warning');
+        }
     }
 
     /**

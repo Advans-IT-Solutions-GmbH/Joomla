@@ -30,13 +30,15 @@ interface DeviceServiceInterface
      * and at least one effective grant. Logs
      * `device.created` with the rule version, mails the user.
      *
-     * @param   string  $client  One of `outlook-caldavsynchronizer`, `apple`, `davx5`, `thunderbird`, `emclient`, `other`.
+     * @param   string       $client       One of `outlook-caldavsynchronizer`, `apple`, `davx5`, `thunderbird`, `emclient`, `other`.
+     * @param   string|null  $removalMode  «When removed or blocked»: `cleanup` or `block`; null takes the
+     *                                     recommendation for the client (DeviceService::REMOVAL_DEFAULTS).
      *
      * @return  array{device_id: int, app_password: string}  The password in display form, to show once.
      *
-     * @throws  \Advans\Component\Appointments\Administrator\Helper\Team\TeamException  403 without the rule or without a grant.
+     * @throws  \Advans\Component\Appointments\Administrator\Helper\Team\TeamException  403 without the rule or without a grant, 400 for an unknown client or setting.
      */
-    public function create(KeyContext $keys, string $name, string $client, bool $ruleAccepted): array;
+    public function create(KeyContext $keys, string $name, string $client, bool $ruleAccepted, ?string $removalMode = null): array;
 
     /**
      * Authenticate a CalDAV request. Returns null for every failure without
@@ -63,7 +65,7 @@ interface DeviceServiceInterface
     public function touch(DeviceSession $session, ?int $calendarId, ?int $role = null, ?int $syncToken = null): void;
 
     /**
-     * @return  object[]  The user's devices: id, name, client, state, created_utc, last_sync_utc. Never a hash or salt.
+     * @return  object[]  The user's devices: id, name, client, removal_mode, state, created_utc, last_sync_utc. Never a hash or salt.
      */
     public function listForUser(int $userId): array;
 
@@ -77,6 +79,16 @@ interface DeviceServiceInterface
     public function rename(int $actorUserId, int $deviceId, string $name): void;
 
     /**
+     * Change «When removed or blocked» of a device that is not revoked: by its owner or a user with
+     * `core.admin` on the component (404 for anybody else, as for an unknown device). Logs
+     * `device.removal_mode`. A device already in the clean-up that is set to `block` is revoked at
+     * once, so it receives no further empty calendar.
+     *
+     * @throws  \Advans\Component\Appointments\Administrator\Helper\Team\TeamException  400 for an unknown value, 404.
+     */
+    public function setRemovalMode(int $actorUserId, int $deviceId, string $mode): void;
+
+    /**
      * Compare-and-set of a device state; recomputes `row_mac`. Leaving
      * DEVICE_ACTIVE clears `usk_wrapped`: a device in clean-up never gets keys
      * again. Used by the clean-up (work package F).
@@ -88,7 +100,8 @@ interface DeviceServiceInterface
     /**
      * Final revocation (state 0, 401 from then on). The user's own «remove
      * device» and an administrator's «block device» start the clean-up instead
-     * (work package F); this is its last step or an emergency stop.
+     * (work package F); this is its last step or an emergency stop, and the
+     * immediate answer for a device set to «Block only» (`removal_mode` `block`).
      */
     public function revoke(?int $actorUserId, int $deviceId, string $reason): void;
 }

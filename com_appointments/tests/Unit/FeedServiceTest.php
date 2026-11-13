@@ -1,5 +1,7 @@
 <?php
 
+use Advans\Component\Appointments\Administrator\Helper\FeedToken;
+use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Service\FeedService;
 use Joomla\Database\DatabaseInterface;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -26,20 +28,26 @@ final class FeedServiceTest extends TestCase
         $db->expects(self::once())->method('setQuery')->willReturnSelf();
         $db->expects(self::once())->method('loadAssoc')->willReturn($credential);
         $db->expects(self::never())->method('loadAssocList');
-        self::assertNull((new FeedService($db))->download($scope, $id, $token, new DateTimeImmutable('2026-10-01T12:00:00Z')));
+        self::assertNull((new FeedService($db, new KeyProvider('feed-service-test-secret')))->download($scope, $id, $token, new DateTimeImmutable('2026-10-01T12:00:00Z')));
     }
 
     public static function invalidCredentials(): array
     {
-        $stored = ['feed_token' => str_repeat('a', 64), 'title' => 'Fixture'];
+        $key = (new KeyProvider('feed-service-test-secret'))->key(KeyProvider::PURPOSE_FEED_TOKEN);
+        $digest = FeedToken::digest($key, 'event', 1, str_repeat('a', 64));
+        $stored = ['feed_token' => $digest, 'title' => 'Fixture'];
+        $legacy = ['feed_token' => str_repeat('a', 64), 'title' => 'Fixture'];
 
         return [
             'wrong' => ['event', 1, str_repeat('b', 64), $stored],
+            'stored digest as token' => ['event', 1, substr($digest, 3), $stored],
+            'unconverted clear text' => ['event', 1, str_repeat('a', 64), $legacy],
             'malformed' => ['event', 1, 'bad', $stored],
             'unknown' => ['event', 1, str_repeat('a', 64), null],
             'invalid scope' => ['invalid', 1, str_repeat('a', 64), $stored],
             'missing ID' => ['event', 0, str_repeat('a', 64), $stored],
             'wrong host' => ['host', 1, str_repeat('b', 64), $stored],
+            'digest of another scope' => ['host', 1, str_repeat('a', 64), $stored],
         ];
     }
 }

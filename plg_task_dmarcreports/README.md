@@ -29,17 +29,15 @@ IMAP connections to the configured mailbox sources; parsing and report storage r
 
 ## Installation
 
-**Availability:** No task-plugin release or `task-dmarcreports-v*` tag has been published yet.
-Build from source with `cd plg_task_dmarcreports` and `./build.sh` (Bash, rsync and zip required),
-or build the [DMARC Reports package](../pkg_dmarcreports) for the complete solution.
-Individual buildability is retained; it does not imply an existing release download.
+**Availability:** Standalone releases are published as `task-dmarcreports-v*` GitHub releases
+(latest only). To build from source, run `cd plg_task_dmarcreports` and `./build.sh` (Bash, rsync
+and zip required), or build the [DMARC Reports package](../pkg_dmarcreports) for the complete solution.
 
-Install the built ZIP like any Joomla extension (Extensions → Manage → Install). The plugin is
+Install the ZIP like any Joomla extension (System → Install → Extensions). The plugin is
 enabled automatically on a fresh install. It is also bundled in `pkg_dmarcreports`, which is the
 recommended way to install the whole DMARC solution together.
 
-Standalone installs register their own update server; package installs use the package channel.
-Updates become downloadable when releases are published. Release retention is latest-only per
+Standalone installs register their own update server; package installs use the package channel. Release retention is latest-only per
 extension/tag family, not the monorepo's global latest release.
 
 ## Configuration

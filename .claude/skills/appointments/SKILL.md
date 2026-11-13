@@ -54,16 +54,27 @@ See the component README, "Email templates", and the repository-wide language co
 1. **No external service calls for the core booking flow.** No cloud calendar API, no hosted
    scheduling backend, no analytics, no remote font or script. The component must work on a server
    with all outbound traffic blocked, except for the optional conferencing adapters that are
-   explicitly opt-in.
+   explicitly opt-in, and the optional direct CRM delivery worker described in the component
+   README, "Optional direct Close transfer". CRM delivery is off by default, has no external
+   origin/credential default, and never requires a cloud calendar or changes the booking core.
+   It routes per event type through profiles (one Close organisation each), only creates and
+   updates, and never deletes in Close. Website erasure and privacy requests drop only the local
+   link and never wait for Close; Close data subject requests are handled in Close.
 2. **The component owns the calendar.** It does not read a user's existing mailbox or calendar to
    detect conflicts. Conflicts are prevented by the component's own availability rules, its own
    bookings and its own blocked periods. Anything else is a later, opt-in extension.
-3. **Every outgoing e-mail carries the iCalendar entry**, as an attachment, for every state change:
-   confirmation, reschedule and cancellation. See `references/calendar-and-ics.md`.
+3. **Every e-mail to the invitee and the guests carries the iCalendar entry**, as an attachment, for
+   every state change: confirmation, reschedule and cancellation. So does the host's mail while the
+   event type has no target calendar in use. With one, the host and every user of the target
+   calendar get a mail without attachment (the entry arrives through the synchronisation). See
+   `references/calendar-and-ics.md` and `references/team-calendars.md`, section 12.
 4. **An invitee can get their data deleted without an account**, from a link in the e-mail they
    already hold, and through Joomla's own data subject request workflow. See
    `references/privacy-and-deletion.md`. This is a shipped feature, not a manual database task for
    the operator.
+   Formal Core retries retain minimal encrypted, still-linkable cleanup references
+   until actual teardown/rebuild succeeds; the bundled content guard independently
+   blocks premature Core Complete. Never equate an empty retry with completed erasure.
 5. **Joomla 5.4 and 6, like every other extension in this repository.** No platform special case,
    no change to the shared infrastructure. See `references/architecture.md`, section "Platform".
 6. **GPL-3.0-or-later**, published in this public repository, usable by any Joomla operator. No

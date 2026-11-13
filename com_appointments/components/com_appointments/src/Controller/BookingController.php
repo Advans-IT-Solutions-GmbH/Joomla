@@ -40,6 +40,16 @@ class BookingController extends BaseController
         }
 
         $eventId = $this->input->getInt('id', 0);
+
+        // Fail closed: without a configured public site URL no mail can be sent, so no booking is
+        // taken. The booking page then shows its neutral notice; nothing of the form is kept.
+        if (\Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl::current() === null) {
+            \Joomla\CMS\Log\Log::add('Appointment booking refused: no valid public site URL is configured.', \Joomla\CMS\Log\Log::ERROR, 'com_appointments');
+            $this->setRedirect(Route::_('index.php?option=com_appointments&view=eventtype&id=' . $eventId, false));
+
+            return false;
+        }
+
         $events = $this->getModel('Eventtype');
         $event = $events->getItem($eventId);
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
@@ -226,6 +236,14 @@ class BookingController extends BaseController
         }
         if ($fieldErrors !== []) {
             $this->app->setUserState($errorsKey, $fieldErrors);
+            return false;
+        }
+        // Fail closed like a new booking: a reschedule or cancellation is never saved while its
+        // mails cannot be sent. Erasure stays possible; its host notice is logged as not sent.
+        if ($model->action() !== 'erase' && \Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl::current() === null) {
+            \Joomla\CMS\Log\Log::add('Appointment change refused: no valid public site URL is configured.', \Joomla\CMS\Log\Log::ERROR, 'com_appointments');
+            $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_UNAVAILABLE'), 'error');
+            $this->app->setUserState($focusKey, true);
             return false;
         }
 

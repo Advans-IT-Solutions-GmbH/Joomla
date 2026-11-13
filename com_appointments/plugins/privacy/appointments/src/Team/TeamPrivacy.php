@@ -8,8 +8,11 @@
 
 namespace Advans\Plugin\Privacy\Appointments\Team;
 
+use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CalendarKeyring;
+use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
+use Advans\Component\Appointments\Administrator\Service\Team\PrivacyReview;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Joomla\CMS\Application\CMSApplicationInterface;
 use Joomla\CMS\Language\Text;
@@ -38,8 +41,11 @@ defined('_JEXEC') or die;
  * The export of an entry keeps the requester's own data: other attendees and other addresses in the
  * text are replaced. Staff data of an account (devices, grants, activation links, log rows) is
  * exported without any hash, salt, key or other person's id; log rows in which the person only
- * acted show the event and the time. Removal deletes the matching entries as normal changes and,
- * for an account, its devices, keys, grants and activation links like a deleted account; owned
+ * acted show the event and the time. Removal deletes the matching booking copies as normal
+ * changes. Entries of a calendar's own are never changed automatically: they are recorded for a
+ * decision per entry ({@see PrivacyReview}), and an address of a team member or of another calendar
+ * user changes no entry at all (counted for the administrator to review). For an account it deletes
+ * the devices, keys, grants and activation links like a deleted account; owned
  * calendars keep their contents with owner 0. Log rows stay for their retention of twelve months,
  * because they are the evidence of who did what.
  *
@@ -51,6 +57,7 @@ defined('_JEXEC') or die;
 final class TeamPrivacy
 {
     private const LOG_ROWS = 5000;
+    private bool $staffRemoved = false;
 
     /**
      * The end of this request's time budget (microtime), shared by search and removal.
@@ -369,7 +376,9 @@ final class TeamPrivacy
             $counts['not_searched'] = -1;
         }
 
-        $userId = $user !== null ? (int) $user->id : 0;
+        // Core's database lookup may equate distinct accented mailbox addresses.
+        $userId = $user !== null && (int) $user->id > 0
+            && PrivacyAddress::matches((string) $user->email, $email) ? (int) $user->id : 0;
 
         if ($userId > 0) {
             try {
@@ -393,27 +402,66 @@ final class TeamPrivacy
     }
 
     /**
-     * Delete the entries with this address and the staff data of the account.
-     * Never throws; messages are queued for the administrator.
+     * Delete the booking copies with this address and the staff data of the account. Entries of
+     * a calendar's own are never changed here: they are recorded for the handling person, who
+     * decides per entry (remove only the address, the default, or delete the entry) in «Privacy:
+     * calendar entries»; until every recorded entry is decided, Joomla's Complete stays blocked
+     * (PrivacyOutcome). An address of a team member or another calendar user changes no entry at
+     * all. Never throws; messages are queued for the administrator; false means incomplete.
+     *
+     * @param   int|null   $staffUserId  The staff account retained for the request
+     *                                   (PrivacyStaffCleanup); null falls back to $user.
+     * @param   int        $requestId    The Joomla privacy request, recorded in the log row.
+     * @param   bool|null  $teamMember   The team-member decision the removal check captured for
+     *                                   the account (StaffPrivacy::capture()), null to decide now.
      */
-    public function remove(string $email, ?User $user): void
+    public function remove(string $email, ?User $user, ?int $staffUserId = null, int $requestId = 0, ?bool $teamMember = null): bool
     {
+        $this->staffRemoved = false;
         if ($this->services === null) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_FAILED'), 'warning');
 
-            return;
+            return false;
         }
 
         $deleted = 0;
+        $kept = 0;
+        $review = [];
+        $untouched = 0;
         $failed = 0;
         $unsearched = [];
         $staff = false;
+        $userId = $staffUserId ?? ($user !== null ? (int) $user->id : 0);
+        // The address of a team member is in many entries of the team: those are never changed automatically.
+        $teamMember ??= $userId > 0 && !self::changesEntriesOf($this->audienceOf($userId));
 
         try {
+            // Decided before anything else of the request changes the account.
+            $calendarUser = PrivacyReview::calendarUser($this->services->db(), $email, $userId);
             $search = $this->search($email, null);
             $unsearched = $search['unsearched'];
 
             foreach ($search['matches'] as $match) {
+                if ($teamMember) {
+                    $kept++;
+
+                    continue;
+                }
+
+                if ($calendarUser) {
+                    // The address of a calendar user: nothing is changed automatically.
+                    $untouched++;
+
+                    continue;
+                }
+
+                if ($match['booking_id'] === null) {
+                    // An entry of the calendar's own: only after a look at it.
+                    $review[] = $match;
+
+                    continue;
+                }
+
                 if (microtime(true) > $this->deadline) {
                     // Out of time: what is left is reported, not dropped.
                     $unsearched[$match['calendar_id']] = $match['title'];
@@ -436,8 +484,6 @@ final class TeamPrivacy
             Log::add('Team calendars: the privacy removal of calendar entries failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
         }
 
-        $userId = $user !== null ? (int) $user->id : 0;
-
         if ($userId > 0) {
             try {
                 $db = $this->services->db();
@@ -445,6 +491,7 @@ final class TeamPrivacy
                     ->where($db->quoteName('user_id') . ' = ' . $userId))->execute();
                 $this->services->cleanup()->onUserDeleted($userId);
                 $staff = true;
+                $this->staffRemoved = true;
             } catch (\Throwable $e) {
                 $failed++;
                 Log::add('Team calendars: the privacy removal of staff data failed (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
@@ -452,6 +499,28 @@ final class TeamPrivacy
         }
 
         $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_F_PRIVACY_REMOVED', $deleted), 'message');
+
+        if ($kept > 0) {
+            $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_F_PRIVACY_TEAM_KEPT', $kept), 'warning');
+        }
+
+        if ($untouched > 0) {
+            $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_F_PRIVACY_CALENDAR_USER', $untouched), 'warning');
+        }
+
+        if ($review !== []) {
+            try {
+                if ($requestId > 0) {
+                    (new PrivacyReview($this->services))->record($requestId, $review, $this->services->now());
+                }
+
+                $this->app->enqueueMessage(Text::sprintf($requestId > 0 ? 'COM_APPOINTMENTS_TEAM_F_PRIVACY_REVIEW' : 'COM_APPOINTMENTS_TEAM_F_PRIVACY_REVIEW_NO_REQUEST',
+                    \count($review)), 'warning');
+            } catch (\Throwable $e) {
+                $failed++;
+                Log::add('Team calendars: the privacy review list could not be written (' . \get_class($e) . ').', Log::WARNING, 'com_appointments');
+            }
+        }
 
         if ($staff) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_TEAM_F_PRIVACY_STAFF_REMOVED'), 'message');
@@ -468,8 +537,36 @@ final class TeamPrivacy
         $this->record(AuditEvent::PRIVACY_DELETE, [
             'actor_user_id'   => $this->actorId(),
             'subject_user_id' => $userId > 0 ? $userId : null,
-            'details'         => ['entries' => $deleted, 'failed' => $failed, 'not_searched' => \count($unsearched), 'staff' => $staff],
+            'details'         => ['entries' => $deleted, 'kept' => $kept, 'failed' => $failed, 'not_searched' => \count($unsearched), 'staff' => $staff,
+                'request' => max(0, $requestId), 'team_member' => $teamMember, 'review' => \count($review), 'untouched' => $untouched],
         ]);
+
+        return $failed === 0 && $unsearched === [];
+    }
+
+    public function staffRemoved(): bool
+    {
+        return $this->staffRemoved;
+    }
+
+    /**
+     * Whether a removal request may change the calendar entries that hold the address of an
+     * account with this audience. Never for a team member: their address is in many entries of
+     * the team, which the administrator reviews instead. Pure.
+     */
+    public static function changesEntriesOf(string $audience): bool
+    {
+        return $audience !== TeamStates::AUDIENCE_TEAM;
+    }
+
+    /** The audience of an account; a check that cannot be made counts as team member, so nothing is changed. */
+    private function audienceOf(int $userId): string
+    {
+        try {
+            return $this->services->grants()->audienceOf($userId);
+        } catch (\Throwable $e) {
+            return TeamStates::AUDIENCE_TEAM;
+        }
     }
 
     /**
@@ -479,7 +576,7 @@ final class TeamPrivacy
      *
      * @param   string|null  $otherPerson  The label for other attendees when exporting, null when deleting.
      *
-     * @return  array{matches: array<int, array{id: int, calendar_id: int, uri: string, etag: string, modified_utc: string, title: string, content: string}>, unsearched: array<int, string>}
+     * @return  array{matches: array<int, array{id: int, calendar_id: int, uri: string, etag: string, modified_utc: string, title: string, content: string, booking_id: int|null}>, unsearched: array<int, string>}
      */
     private function search(string $email, ?string $otherPerson): array
     {
@@ -577,7 +674,7 @@ final class TeamPrivacy
 
                         $matches[] = ['id' => $object->id, 'calendar_id' => $object->calendarId, 'uri' => $object->uri,
                             'etag' => $object->etag, 'modified_utc' => $object->modifiedUtc->format('Y-m-d H:i:s'), 'title' => $title,
-                            'content' => $content];
+                            'content' => $content, 'booking_id' => $object->bookingId];
                     }
 
                     unset($ics);
@@ -609,7 +706,7 @@ final class TeamPrivacy
         $db = $this->services->db();
         $sets = [
             ['appointments_staff_devices', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_DEVICES', '#__appointments_devices',
-                ['id', 'name', 'client', 'state', 'rule_version', 'rule_accepted_utc', 'created_utc', 'last_sync_utc',
+                ['id', 'name', 'client', 'removal_mode', 'state', 'rule_version', 'rule_accepted_utc', 'created_utc', 'last_sync_utc',
                     'cleanup_started_utc', 'revoked_utc', 'revoke_reason']],
             ['appointments_staff_grants', 'COM_APPOINTMENTS_TEAM_F_PRIVACY_GRANTS', '#__appointments_calendar_grants',
                 ['id', 'calendar_id', 'role', 'state', 'audience', 'created_utc', 'modified_utc']],

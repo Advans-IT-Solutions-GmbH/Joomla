@@ -91,8 +91,8 @@ $inspect = static function (array $before, array $booking, string $method, strin
 };
 
 try {
-    $check((int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_templates WHERE eventtype_id=0 AND published=1")->fetch_assoc()['n'] === 75,
-        'All twenty-five purposes (eight, six guest, four host and seven internet calendar templates) have editable defaults in all three languages');
+    $check((int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_templates WHERE eventtype_id=0 AND published=1")->fetch_assoc()['n'] === 99,
+        'All thirty-three purposes (eight, six guest, four host, eight calendar user and seven internet calendar templates) have editable defaults in all three languages');
     $admin->login();
     $username = $db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin');
     $host = (int) $db->query("SELECT id FROM {$prefix}users WHERE username='{$username}'")->fetch_assoc()['id'];
@@ -267,6 +267,85 @@ try {
         && !preg_match('/"(?:error|danger)":\[[^\]]*Your appointment was saved, but/', $html)
         && !preg_match('/(?:type="(?:error|danger)"|alert-(?:error|danger))[^>]*>(?:(?!<\/).)*Your appointment was saved, but/s', $html),
         'The mail failure after a saved booking is shown as a warning, not as an error');
+    if (is_file($rejectDelivery) && !unlink($rejectDelivery)) {
+        throw new RuntimeException('Cannot restore the test mail transport.');
+    }
+
+    // Fail closed on the public site URL: mails take their links only from the configured address,
+    // never from the Host header of the request, and without one no mail is sent and no booking taken.
+    $componentParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];
+    $siteUrl = (string) (json_decode($componentParams, true)['public_site_url'] ?? '');
+    $resend = static function (string $publicSiteUrl) use ($event, $day): array {
+        $script = sys_get_temp_dir() . '/mail-site-url-' . bin2hex(random_bytes(4)) . '.php';
+        file_put_contents($script, '<?php
+            require "/var/www/html/tests/scripts/appointments-joomla.php";
+            // The bootstrap sets the test host; the request now claims a foreign one (the Host header,
+            // not the mail server name of the Message-ID), and Joomla forgets the addresses it derived,
+            // so a link taken from the request would show it.
+            $_SERVER["HTTP_HOST"] = "attacker.example.test";
+            \Joomla\CMS\Uri\Uri::reset();
+            \Joomla\CMS\Component\ComponentHelper::getParams("com_appointments")->set("public_site_url", ' . var_export($publicSiteUrl, true) . ');
+            $row = $joomlaDb->setQuery("SELECT * FROM #__appointments_bookings WHERE eventtype_id = ' . (int) $event . ' AND start_utc = \'' . $day . ' 12:00:00\'")->loadAssoc();
+            $service = new \Advans\Component\Appointments\Administrator\Service\NotificationService($joomlaDb);
+            $result = ["sent" => false, "links" => ""];
+            try { $result["links"] = implode(" ", $service->links($row)); } catch (\Throwable $e) { $result["links"] = "refused"; }
+            try { $service->send($row, "confirmation", new DateTimeImmutable("now", new DateTimeZone("UTC"))); $result["sent"] = true; } catch (\Throwable $e) { $result["error"] = get_class($e); }
+            echo "\n@@SITEURL@@" . json_encode($result);');
+        $output = [];
+        exec('cd /var/www/html && HTTP_HOST=attacker.example.test php ' . escapeshellarg($script) . ' 2>&1', $output);
+        unlink($script);
+        $text = implode("\n", $output);
+        $at = strrpos($text, '@@SITEURL@@');
+
+        return $at === false ? ['error' => substr($text, 0, 500)] : (array) json_decode(substr($text, $at + 11), true);
+    };
+    $before = $spool();
+    $result = $resend($siteUrl);
+    $mails = implode("\n", array_map([AppointmentsMail::class, 'decoded'], AppointmentsMail::messagesSince($before)));
+    $check($siteUrl !== '' && ($result['sent'] ?? false) === true && str_starts_with((string) $result['links'], rtrim($siteUrl, '/') . '/index.php?')
+        && str_contains($mails, rtrim($siteUrl, '/') . '/index.php?option=com_appointments') && !str_contains($mails . $result['links'], 'attacker.example.test'),
+        'With a public site URL, mails sent during a request with a foreign Host header link only to the configured address');
+    $before = $spool();
+    $result = $resend('');
+    $check(($result['sent'] ?? true) === false && ($result['links'] ?? '') === 'refused' && $before === $spool(),
+        'Without a public site URL (and without live_site) no mail is sent and no link is built, also not from the Host header');
+
+    // The booking page and its submission while no public site URL is configured, with «System - Page
+    // Cache» on: a page rendered while the address was valid must not be served from the cache afterwards.
+    $pageCache = (int) $db->query("SELECT enabled FROM {$prefix}extensions WHERE type='plugin' AND folder='system' AND element='cache'")->fetch_row()[0];
+    $db->query("UPDATE {$prefix}extensions SET enabled=1 WHERE type='plugin' AND folder='system' AND element='cache'");
+    // Fresh request limits for the page and booking requests below (16:00 is a time no earlier step booked).
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+    $client = new AppointmentsHttp('http://localhost', 'mail-site-url');
+    [$browser, $path, $form] = $client->bookingForm($event, $day . ' 16:00:00');
+    // The booking page through its menu item, the only way it opens (appointments-menu.php).
+    $guestPage = appointments_page($event);
+    $earlier = new AppointmentsHttp('http://localhost', 'mail-site-url-earlier');
+    $earlier->request($guestPage);
+    $unset = json_decode($componentParams, true) ?: [];
+    $unset['public_site_url'] = '';
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($unset)) . "' WHERE element='com_appointments' AND type='component'");
+    try {
+        $page = $browser->request($guestPage);
+        $check($browser->status === 503 && str_contains($page, 'Booking is currently not possible') && !str_contains($page, 'name="booking[start]"'),
+            'Without a public site URL the booking page answers 503 with a neutral notice and no form');
+        $later = new AppointmentsHttp('http://localhost', 'mail-site-url-later');
+        $page = $later->request($guestPage);
+        $check($later->status === 503 && !str_contains($page, 'name="booking[start]"'),
+            'With the page cache on, a booking page rendered while the address was valid is not served after it is cleared');
+        sleep(2);
+        $before = $spool();
+        $html = $browser->request($path, $form);
+        $saved = (int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 16:00:00'")->fetch_row()[0];
+        $check($saved === 0 && $before === $spool() && str_contains($html, 'Booking is currently not possible'),
+            'Without a public site URL a submitted booking is not saved and no mail is sent');
+    } finally {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($componentParams) . "' WHERE element='com_appointments' AND type='component'");
+        $db->query("UPDATE {$prefix}extensions SET enabled={$pageCache} WHERE type='plugin' AND folder='system' AND element='cache'");
+    }
+    // The details step of a free time: its form names the time field.
+    $page = $browser->request($guestPage . '&timezone=UTC&start=' . urlencode($day . ' 16:00:00'));
+    $check($browser->status === 200 && str_contains($page, 'name="booking[start]"'), 'With a public site URL the booking page shows its form again');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;

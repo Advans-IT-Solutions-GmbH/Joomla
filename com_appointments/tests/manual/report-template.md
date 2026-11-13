@@ -21,7 +21,7 @@ Environments:
 - Languages inspected:
 
 Coverage declaration (before execution; plan section 2.1.1):
-- Full 228-case runs and section 18: Joomla 5.4/MySQL; Joomla 6/MySQL:
+- Full 240-case runs and section 18: Joomla 5.4/MySQL; Joomla 6/MySQL:
 - MariaDB repeat set and section 18:
 - Required browser / language / JavaScript repetitions:
 - Outlook Desktop / Thunderbird client repetitions and versions:
