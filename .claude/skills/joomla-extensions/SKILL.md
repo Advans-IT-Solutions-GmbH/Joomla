@@ -90,9 +90,10 @@ Shared installer support and the repeatable administrator check are staged at bu
 See the root `README.md`, section "Installation safety and repeatable system checks", for
 the file-backup/explicit-approval flow and administrator menu paths.
 
-**Site backups around test installations: Akeeba only.** When you install a package on a test
+**Site backups on hosted sites: Akeeba only.** When you install a package on a hosted test
 installation (or a production change is prepared), a site backup is made only with Akeeba Backup.
-A new backup before the change is allowed and expected
+Disposable local and CI containers (`references/testing.md`) carry no Akeeba and need no backup,
+they are rebuilt instead. A new backup before the change on a hosted site is allowed and expected
 (`php cli/joomla.php akeeba:backup:take --profile=1 --description="…"` in the site root). Existing
 Akeeba backups (`.jpa` archives, their logs and records) are managed by the maintainer: never
 delete, move, rename or prune them, not even through Akeeba itself, only report count, size and
