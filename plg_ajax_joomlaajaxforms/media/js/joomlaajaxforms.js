@@ -1162,6 +1162,33 @@ const JoomlaAjaxForms = {
     },
 
     /**
+     * Make sure a profile form handed to com_users carries its task.
+     *
+     * The core form carries the task on its submit button (task=profile.save),
+     * which submitNatively() sends along. Without that button, for example when
+     * saveProfile() is called through the API without a submit event, the task
+     * is added as a hidden field, so com_users saves instead of only showing
+     * the form again.
+     *
+     * @param {HTMLFormElement} form - The profile form
+     */
+    ensureProfileTask: function(form) {
+        var submitter = form.joomlaajaxformsSubmitter;
+        var carriesTask = !!(submitter && submitter.name === 'task' && !submitter.disabled)
+            || Array.prototype.some.call(form.elements, function(el) {
+                return el.name === 'task' && !el.disabled && el.type !== 'submit' && el.type !== 'button';
+            });
+
+        if (!carriesTask) {
+            var task = document.createElement('input');
+            task.type = 'hidden';
+            task.name = 'task';
+            task.value = 'profile.save';
+            form.appendChild(task);
+        }
+    },
+
+    /**
      * Save user profile via AJAX
      *
      * @param {HTMLFormElement} form - The profile form
@@ -1254,29 +1281,18 @@ const JoomlaAjaxForms = {
         .then(function(rawData) {
             JoomlaAjaxForms.enableSubmit(submitBtn);
             if (rawData === null) {
-                // The core form carries its task on the submit button. Without
-                // that button (saveProfile() called through the API) the task
-                // is added, so com_users saves instead of showing the form.
-                var submitter = form.joomlaajaxformsSubmitter;
-                var carriesTask = (submitter && submitter.name === 'task')
-                    || Array.prototype.some.call(form.elements, function(el) {
-                        return el.name === 'task' && !el.disabled && el.type !== 'submit' && el.type !== 'button';
-                    });
-
-                if (!carriesTask) {
-                    var task = document.createElement('input');
-                    task.type = 'hidden';
-                    task.name = 'task';
-                    task.value = 'profile.save';
-                    form.appendChild(task);
-                }
-
+                JoomlaAjaxForms.ensureProfileTask(form);
                 JoomlaAjaxForms.submitNatively(form);
                 return;
             }
                 var serverErrorMsg = JoomlaAjaxForms.extractAndClearMessages(rawData);
                 JoomlaAjaxForms.clearSystemMessages();
             var data = JoomlaAjaxForms.unwrapResponse(rawData);
+            // A switched-off profile save is handed to com_users as well, and
+            // needs the same task when saveProfile() was called through the API.
+            if (data && !data.success && data.disabled === true) {
+                JoomlaAjaxForms.ensureProfileTask(form);
+            }
             if (JoomlaAjaxForms.handOverIfDisabled(data, form)) {
                 return;
             }

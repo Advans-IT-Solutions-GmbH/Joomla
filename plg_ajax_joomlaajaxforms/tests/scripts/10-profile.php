@@ -374,11 +374,20 @@ class ProfileTest
         // The script side: a redirected answer is handed to com_users.
         $source = (string) @file_get_contents(ajaxforms_script_path());
         $body   = preg_match('/\n    saveProfile:\s*function\s*\(form\)\s*\{(.*?)\n    \}\n/s', $source, $m) ? $m[1] : '';
+        $ensure = preg_match('/\n    ensureProfileTask:\s*function\s*\(form\)\s*\{(.*?)\n    \},\n/s', $source, $m) ? $m[1] : '';
         $this->test(
             'saveProfile() hands a redirected answer to com_users',
             str_contains($body, 'response.redirected')
                 && str_contains($body, 'JoomlaAjaxForms.submitNatively(form)')
-                && str_contains($body, "'profile.save'")
+                && str_contains($ensure, "'profile.save'")
+        );
+        // A form handed over without its submit button (saveProfile() called
+        // through the API) gets task=profile.save, after a redirect and after
+        // the "disabled" answer of a switched-off profile save alike.
+        $this->test(
+            'saveProfile() adds the task before both hand-overs',
+            substr_count($body, 'JoomlaAjaxForms.ensureProfileTask(form)') === 2
+                && preg_match('/ensureProfileTask\(form\);\s*\}\s*if \(JoomlaAjaxForms\.handOverIfDisabled\(data, form\)\)/', $body) === 1
         );
 
         $user    = ajaxforms_create_test_user('forcedreset');
