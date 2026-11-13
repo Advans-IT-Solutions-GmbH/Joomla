@@ -15,6 +15,8 @@ namespace {
         public $menutypes = [];
         public $viewlevels = [];
         public $categories = [];
+        public $canExport = true;
+        public $canImport = true;
         public function render($file) { include $file; }
     };
     $view->render($argv[1]);
@@ -151,4 +153,11 @@ test('unsupported import types and XML are not advertised; exports remain unchan
     assert.deepEqual([...importSelect.matchAll(/value="([^"]+)"/g)].map(match => match[1]), ['products_full']);
     assert.match(rendered, /accept="\.csv,\.json"/);
     assert.match(rendered, /<option value="xml">XML<\/option>/);
+});
+
+test('a dashboard without import and export sections runs without errors', () => {
+    const noElements = {
+        document: {getElementById: () => null, addEventListener: (_event, callback) => callback()},
+    };
+    assert.doesNotThrow(() => vm.runInNewContext(script, noElements));
 });

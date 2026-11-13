@@ -238,6 +238,18 @@ class ImportModelTest
                     && !$author->authorise('core.edit.state', 'com_content.category.2')
                     && !$author->authorise('core.edit', 'com_content.category.2'));
 
+            // Joomla's text filter applies to the importing identity, not to the session user.
+            $filterText = new ReflectionMethod($model, 'applyTextFilter');
+            $filterText->setAccessible(true);
+            $markup = '<p>kept</p><script>alert(1)</script>';
+            $this->test('The Author group (default blocklist filter) loses script elements in imported text',
+                fn () => !str_contains($filterText->invoke($model, $markup), '<script')
+                    && str_contains($filterText->invoke($model, $markup), '<p>kept</p>'));
+            $context['application']->loadIdentity($context['identity']);
+            $this->test('A group without text filtering keeps the markup of an imported text',
+                fn () => $filterText->invoke($model, $markup) === $markup);
+            $context['application']->loadIdentity($author);
+
             $created = $row('default state');
             $this->test('A restricted author imports a new product as an unpublished article', function () use ($model, $db, $created) {
                 $result = $model->importProductFull($created, []);

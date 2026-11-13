@@ -64,6 +64,22 @@ final class DefaultTemplates
     ];
 
     /**
+     * Booking mails to the users of the event type's target calendar (CalendarNotice), never
+     * with a calendar entry attached: the entry arrives through the calendar synchronisation.
+     * The calendar_busy* and calendar_free mails go to the free/busy role and show the time only.
+     */
+    public const CALENDAR_KEYS = [
+        'calendar_booked' => ['COM_APPOINTMENTS_MAIL_CALENDAR_BOOKED_SUBJECT', 'COM_APPOINTMENTS_MAIL_CALENDAR_BOOKED_BODY'],
+        'calendar_approved' => ['COM_APPOINTMENTS_MAIL_CALENDAR_APPROVED_SUBJECT', 'COM_APPOINTMENTS_MAIL_CALENDAR_APPROVED_BODY'],
+        'calendar_rescheduled' => ['COM_APPOINTMENTS_MAIL_CALENDAR_RESCHEDULED_SUBJECT', 'COM_APPOINTMENTS_MAIL_CALENDAR_RESCHEDULED_BODY'],
+        'calendar_cancelled' => ['COM_APPOINTMENTS_MAIL_CALENDAR_CANCELLED_SUBJECT', 'COM_APPOINTMENTS_MAIL_CALENDAR_CANCELLED_BODY'],
+        'calendar_reminder' => ['COM_APPOINTMENTS_MAIL_CALENDAR_REMINDER_SUBJECT', 'COM_APPOINTMENTS_MAIL_CALENDAR_REMINDER_BODY'],
+        'calendar_busy' => ['COM_APPOINTMENTS_MAIL_CALENDAR_BUSY_SUBJECT', 'COM_APPOINTMENTS_MAIL_CALENDAR_BUSY_BODY'],
+        'calendar_busy_moved' => ['COM_APPOINTMENTS_MAIL_CALENDAR_BUSY_MOVED_SUBJECT', 'COM_APPOINTMENTS_MAIL_CALENDAR_BUSY_MOVED_BODY'],
+        'calendar_free' => ['COM_APPOINTMENTS_MAIL_CALENDAR_FREE_SUBJECT', 'COM_APPOINTMENTS_MAIL_CALENDAR_FREE_BODY'],
+    ];
+
+    /**
      * Mails of the internet calendars (work package D). Site-wide only (event type 0), never
      * with a calendar entry attached; NotificationService sends only the purposes of SENT.
      */
@@ -78,12 +94,13 @@ final class DefaultTemplates
     ];
 
     /**
-     * Every seeded template purpose: the booking mails and the internet calendar mails.
+     * Every seeded template purpose: the booking mails, the booking mails to calendar users and
+     * the internet calendar mails.
      *
      * @return  array<string, array{0: string, 1: string}>
      */
     public static function all(): array
     {
-        return self::KEYS + self::TEAM_KEYS;
+        return self::KEYS + self::CALENDAR_KEYS + self::TEAM_KEYS;
     }
 }

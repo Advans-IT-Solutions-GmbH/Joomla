@@ -27,6 +27,8 @@ class HtmlView extends BaseHtmlView implements DatabaseAwareInterface
     protected $menutypes;
     protected $viewlevels;
     protected $categories;
+    protected $canExport = false;
+    protected $canImport = false;
 
     /**
      * Database resolved once per request by getDb().
@@ -38,6 +40,10 @@ class HtmlView extends BaseHtmlView implements DatabaseAwareInterface
         $this->menutypes = $this->getMenuTypes();
         $this->viewlevels = $this->getViewLevels();
         $this->categories = $this->getCategories();
+
+        $user = Factory::getApplication()->getIdentity();
+        $this->canExport = $user->authorise('importexport.export', 'com_j2commerce_importexport');
+        $this->canImport = $user->authorise('importexport.import', 'com_j2commerce_importexport');
 
         $this->addToolbar();
         return parent::display($tpl);
@@ -79,7 +85,10 @@ class HtmlView extends BaseHtmlView implements DatabaseAwareInterface
     protected function addToolbar()
     {
         ToolbarHelper::title(Text::_('COM_J2COMMERCE_IMPORTEXPORT'), 'upload');
-        ToolbarHelper::preferences('com_j2commerce_importexport');
+        $user = Factory::getApplication()->getIdentity();
+        if ($user->authorise('core.admin', 'com_j2commerce_importexport') || $user->authorise('core.options', 'com_j2commerce_importexport')) {
+            ToolbarHelper::preferences('com_j2commerce_importexport');
+        }
     }
 
     protected function getMenuTypes(): array

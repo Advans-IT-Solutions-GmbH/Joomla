@@ -64,6 +64,8 @@ class HtmlView extends BaseHtmlView
             $toolbar->standardButton('unpublish')->text(Text::_('COM_APPOINTMENTS_TEAM_F_DEVICES_BLOCK_USER'))->task('devices.blockUser')->listCheck(true);
             $toolbar->standardButton('delete')->text(Text::_('COM_APPOINTMENTS_TEAM_F_DEVICES_REVOKE'))->task('devices.revoke')->listCheck(true);
             $toolbar->standardButton('unlock')->text(Text::_('COM_APPOINTMENTS_TEAM_F_DEVICES_UNLOCK'))->task('devices.unlock')->listCheck(true);
+            $toolbar->standardButton('trash')->text(Text::_('COM_APPOINTMENTS_TEAM_F_DEVICES_SET_CLEANUP'))->task('devices.modeCleanup')->listCheck(true);
+            $toolbar->standardButton('cancel-circle')->text(Text::_('COM_APPOINTMENTS_TEAM_F_DEVICES_SET_BLOCK'))->task('devices.modeBlock')->listCheck(true);
         }
 
         $toolbar->linkButton('dashboard')->url('index.php?option=com_appointments')->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'));

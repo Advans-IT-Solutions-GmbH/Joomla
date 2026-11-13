@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Administrator\Service;
 
+use Advans\Component\Appointments\Administrator\Helper\FeedToken;
 use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
@@ -35,7 +36,8 @@ final class HostStore
         }
 
         $time = $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
-        $token = bin2hex(random_bytes(32));
+        // A stored value that no token matches: a rotation issues the first address.
+        $token = FeedToken::unissued();
         // An existing host keeps its independently rotatable feed credential.
         $sql = 'INSERT INTO ' . $db->quoteName('#__appointments_hosts')
             . ' (' . implode(',', $db->quoteName(['user_id', 'feed_token', 'created_utc', 'modified_utc'])) . ')'

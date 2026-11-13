@@ -43,14 +43,20 @@ package; a deviation is a change to this file in the same pull request, agreed w
 - **Log:** sign-ins and changes only (no read access), 12 months, hash chain, checksum visible in
   the administrator only.
 - **Failed sign-ins:** temporary lock after 10 failures with a growing delay, never permanent.
-- **Blocking a user:** clean-up mode. The device sees the calendar as deleted on its next
-  synchronisation and removes its local copy; after that it is blocked completely. Tested per client.
+- **Blocking a user:** per device setting «When removed or blocked» (`removal_mode`, section 11).
+  «Clean up»: the device sees the calendar as deleted on its next synchronisation and removes its
+  local copy, after that it is blocked completely. «Block only»: 401 at once, never an empty
+  calendar, so a two-way client (Outlook with the main calendar) deletes nothing. Tested per client.
 - **Encryption B:** calendar contents are encrypted on the server so that only authorised users can
   decrypt them. One recovery key for the whole site, kept offline by the owner as two printouts in
   separate places. After a password reset a manager grants again, or the recovery key is used.
 - **Retention per calendar:** `0` disables only age-based object deletion, not booking-copy cleanup.
-  Scheduler deletes whole objects after their last safely determined occurrence ends before the UTC
-  cutoff; future, endless or indeterminate series stay. Booking retention and erasure audits are
+  Scheduler deletes whole **booking copies** (objects with a booking id) after their last safely
+  determined occurrence ends before the UTC cutoff; future, endless or indeterminate series stay.
+  Objects without a booking id (entries of the calendar's own) are never deleted by age, enforced in
+  `deleteEndedBefore()` itself (decision of 11.11.2026, see the component README, «Retention and
+  deletion rules»). The field is labelled «Delete booking copies after (days)»; saving a value above 0
+  warns with the number of synchronising devices. Booking retention and erasure audits are
   separate (booking `0` means the next run after the end, not unlimited). Backend field help explains
   these distinctions and the required tasks; the calendar log records the count, never content.
 - **Backend Help & tips:** a native administrator page, linked from the manifest menu, dashboard
@@ -68,8 +74,12 @@ package; a deviation is a change to this file in the same pull request, agreed w
   a remedy; the README lists the prerequisites (section 8.3).
 - **Private smartphones are allowed** for internet calendars. No device management is required; the
   usage rule (lock code, no forwarding, report a loss) and the clean-up are the safeguards.
-- **Mails as today:** content and ICS of booking mails also go to the team; they are outside the
-  calendar encryption.
+- **Booking mails to every calendar user** (maintainer, 11.11.2026: every user with access to a
+  calendar is notified by mail): with a target calendar in use, every user with an effective access
+  gets a mail on a new booking, an approval, a reschedule and a cancellation, the host included,
+  **without ICS** (the entry arrives through the synchronisation; an accepted invitation showed it
+  twice). Contents per role, free/busy without personal data. Each user can switch these mails off
+  per calendar, for their own account only (section 12). They are outside the calendar encryption.
 - Generic: no installation-specific value anywhere. Everything is a setting.
 
 ## 2. Threat model: what encryption B protects, and what not
@@ -113,7 +123,8 @@ and rejected by the maintainer: whoever controls the server controls everything 
   (server key), contents stay encrypted.
 - **Devices that never connect again** keep their local copy. The clean-up only reaches devices that
   synchronise. This is why the usage rule requires a device lock code.
-- **Booking mails** to the team carry content and ICS in clear, as decided (outside the encryption).
+- **Booking mails** to the calendar users carry the content their role reads in clear, as decided
+  (outside the encryption); free/busy mails carry the time only.
 
 ## 3. Architecture
 
@@ -296,7 +307,7 @@ calendar means losing that calendar's contents: by design.
 - Change by the same user in an unlocked session (profile edit): rewrap with the new password.
 - Anything else (reset by e-mail, password set by an administrator, unlocked session missing):
   `resetUserKey()`: new key pair, all wraps of the user deleted, all grants `GRANT_SUSPENDED`, all
-  devices into clean-up, mail to the user and to the managers concerned. A manager re-grants, or an
+  devices blocked by their `removal_mode` (section 11), mail to the user and to the managers concerned. A manager re-grants, or an
   administrator uses the recovery key. This is the requirement, and it also means that a password
   reset by e-mail can never give anybody calendar access on its own.
 
@@ -636,8 +647,10 @@ or the external group and, when `team_viewlevel` is set, holding that access lev
 with Joomla's «not authorised» page). The view and every device task (`devices.create`, `rename`,
 `remove`) check this on the server for every request, also at an address without a menu item; the
 menu item's access level only hides the link. Super Users have no exception. Content: calendars
-with role, devices with client, state and last synchronisation, «Add device» (name, client, checkbox with the usage rule
-text and its version, `TeamStates::DEVICE_RULE_VERSION`), «Remove device» (starts the clean-up). The
+with role, devices with client, state, «When removed or blocked» and last synchronisation, «Add device» (name, client,
+«When removed or blocked» with «Recommended» preselected, checkbox with the usage rule text and its version,
+`TeamStates::DEVICE_RULE_VERSION`), the device page (rename, change «When removed or blocked», task
+`devices.removalMode`, owner only), «Remove device» (by the device's setting, section 11). The
 created page shows the app password once (copy button, no autocomplete, `Cache-Control: no-store`),
 the server address, the user name and the client-specific instructions (section 16). The app
 password is never in a URL, a log, a mail or the session.
@@ -664,12 +677,58 @@ Grants of a blocked user are suspended. Client behaviour per client is part of t
 differ (Outlook with CalDav Synchronizer in two-way mode must delete the Outlook items, not upload
 them again; one-way «Outlook → server» would try to upload, which the refused writes stop).
 
+**«When removed or blocked»** (`#__appointments_devices.removal_mode`, decided by the maintainer):
+- `cleanup` («Clean up»): the phases above. For phones and tablets.
+- `block` («Block only»): every trigger revokes the device at once (`DeviceService::revoke()`, log
+  `device.blocked` with the actor, then `device.revoked`), 401 for every request, never the empty
+  view. For desktop clients with two-way synchronisation: an empty calendar would make Outlook
+  delete the items of the folder it is assigned to, the user's own appointments when that is the
+  main calendar. Authentication also refuses a `block` device found in a clean-up state (race with a
+  change of the setting), and setting `block` on a device in clean-up revokes it.
+- Each device follows its own setting. Removing one device never touches the others. User-wide
+  triggers (password reset, blocked account or calendar access, revoked access, discarded key)
+  block every device of the user, each by its setting.
+- A withdrawn grant of one calendar is never an empty view for an active device: the calendar is
+  no longer listed and answers 404 (PROPFIND and REPORT). Only a `cleanup` device that is cleaned up
+  later receives it empty (`calendarsInCleanup()`).
+- Recommendation by client (`DeviceService::REMOVAL_DEFAULTS`, preselected as «Recommended»): Outlook,
+  Thunderbird, eM Client and «Other» `block`, iOS and DAVx⁵ `cleanup`. Changed by the owner in «My
+  calendars» or by `core.admin` in the backend devices view (`devices.modeCleanup`, `devices.modeBlock`),
+  logged as `device.removal_mode`. Not part of the row MAC: it grants no access, both values end in
+  revocation.
+- Update: `script.php` adds the column independent of the schema version, existing devices get
+  `cleanup` (unchanged behaviour). The system check reports active Outlook devices with `cleanup`.
+
 ## 12. Mails (work package D)
 
 `TeamMailerInterface`: new device (always), activation link, activation completed (to the
 administrators, with the one-step revoke link), grant changed (to owner and managers), access
 suspended, calendar deleted (to the former owner and managers, `calendarDeleted()`). They are DB templates (`#__appointments_templates`, eventtype_id 0, no ICS), editable
-under Templates. Joomla mailer, recipient language, no secret except the activation link. Booking mails stay as they are, with content and ICS to the team.
+under Templates. Joomla mailer, recipient language, no secret except the activation link. These
+mails cannot be switched off.
+
+**Booking mails to the calendar users** (`Helper/CalendarNotice`, `NotificationService`). A target
+calendar is *in use* when the feature is on and the calendar active; otherwise nothing changes: the
+host gets the mail with ICS. Every user with access to a calendar in use is notified. When the host
+holds no effective write access (`BookingCalendarBridge` then writes no copy), only the host falls
+back to the mail with ICS (`host_fallback`), every other user still gets theirs. In use:
+
+| Recipient | Mail | ICS |
+|---|---|---|
+| Booking person, additional guests | as before, with their signed links | yes |
+| Every effective grant (active grant, valid row, active account in a calendar group, second factor), internal or external, host included | `calendar_booked` (new, pending), `calendar_approved`, `calendar_rescheduled`, `calendar_cancelled` (also on erasure); the reminder `calendar_reminder` to the host only | no |
+| Role read, write, manage | what the calendar copy shows (event type, time, host, invitee name and address, guests, location, conference link); the host also the telephone and the moderator link; a link to the booking in the administrator for accounts with `core.login.admin` and `core.manage` | no |
+| Role free/busy | `calendar_busy` (new, pending), `calendar_busy_moved` (reschedule), `calendar_free` (cancellation, erasure), no mail on approval; only `{calendar_title}`, `{start}`, `{end}`, `{timezone}`, every other placeholder of an edited template stays empty | no |
+
+Each account and each address once (the host first; an address that already gets the booking
+person's or a guest's mail gets none). Recipient's account language and time zone, else the site
+defaults. Every mail links «My calendars», where each user switches the booking mails of each
+calendar off and on (`Helper/NotificationSwitch`, default on, stored as a list of calendar ids in the
+account's own `#__users.params`, key `appointments_booking_mail_off`, no table). The task
+`notifications.save` takes the account from the session only, never from the request, and needs an
+effective access to the calendar (404 otherwise); a calendar owner or an administrator cannot change
+another person's switch. A host of an event type booking into the calendar is warned that, switched
+off, they learn of new bookings only through the calendar.
 
 ## 13. Administrator views
 
@@ -678,8 +737,11 @@ under Templates. Joomla mailer, recipient language, no secret except the activat
   availability, retention), grants, rotate key, recovery key setup and use. Navigation links on the
   dashboard (C).
 - Retention per calendar (F): Scheduler routine «calendar retention» calls
-  `CalendarObjectStoreInterface::deleteEndedBefore()` for each calendar with `retention_days > 0`.
-- `invitations` (C, `appointments.team.external`: activation links, the revoke page), `devices` (F: all devices, «last synchronised», block with clean-up, revoke),
+  `CalendarObjectStoreInterface::deleteEndedBefore()` for each calendar with `retention_days > 0`
+  (booking copies only) and `BookingCalendarBridgeInterface::restoreCopies()` for the recorded
+  requests to rewrite future booking copies (table `#__appointments_copy_restore`: target calendar
+  changed, or copies removed while switched off).
+- `invitations` (C, `appointments.team.external`: activation links, the revoke page), `devices` (F: all devices, «last synchronised», «When removed or blocked», block by that setting, revoke, change the setting),
   `teamlog` (F: events, verify, checksum).
 - System view (F): libsodium, HTTPS, Authorization header, well-known reachability, plugins enabled,
   MFA enforcement, recovery key present, site secret fingerprint changed.
@@ -702,8 +764,9 @@ under Templates. Joomla mailer, recipient language, no secret except the activat
   a `booking_id` is skipped only when that booking has the same host as the asking event type; a
   booking of another host in the same calendar blocks.
 - A booking is written sealed into the target calendar on create/approve/reschedule (same UID as the
-  mail ICS, so a team member's client does not show it twice when the mail ICS was accepted too),
-  removed on cancellation and erasure. Calendar errors never fail a booking.
+  mail ICS of the invitee), removed on cancellation and erasure. Calendar errors never fail a booking.
+  A client that keeps the calendar in a folder of its own (Outlook with CalDav Synchronizer) showed an
+  accepted mail ICS a second time; the calendar users therefore get no ICS (section 12).
 - Known race, accepted: a calendar PUT does not take the host lock, so an event created in the very
   second of a booking is not seen by that booking.
 
@@ -746,7 +809,8 @@ appearing by itself within the interval, a revoked grant disappearing, and the c
   write and busy blocking; log chain; schema pinned (column sets).
 - CalDAV clients in the CI (G): Python `caldav` and `vdirsyncer` in a container against the J6 lane
   over HTTPS (self-signed certificate in the test image): discovery via well-known, sync-token
-  incremental sync, ETag preconditions, free/busy redaction, clean-up deletes the local copy.
+  incremental sync, ETag preconditions, free/busy redaction, clean-up deletes the local copy, a
+  removed «Block only» device gets 401 for PROPFIND and REPORT and keeps its local copy.
 - Manual (G), Hyper-V test VM, only when nobody works on the machine: Outlook LTSC 2024 with CalDav
   Synchronizer, plus iOS/macOS, DAVx⁵, Thunderbird, eM Client; per client the checklist of
   section 16. Never against a production site.

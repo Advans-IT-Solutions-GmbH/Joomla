@@ -17,6 +17,7 @@ HTMLHelper::_('bootstrap.collapse');
 
 <div class="j2commerce-importexport">
     <div class="row">
+        <?php if ($this->canExport) : ?>
         <!-- Export Section -->
         <div class="col-lg-6 mb-4">
             <div class="card">
@@ -73,6 +74,8 @@ HTMLHelper::_('bootstrap.collapse');
             </div>
         </div>
         
+        <?php endif; ?>
+        <?php if ($this->canImport) : ?>
         <!-- Import Section -->
         <div class="col-lg-6 mb-4">
             <div class="card">
@@ -188,6 +191,7 @@ HTMLHelper::_('bootstrap.collapse');
                 </div>
             </div>
         </div>
+        <?php endif; ?>
     </div>
 </div>
 
@@ -198,16 +202,23 @@ document.addEventListener('DOMContentLoaded', function() {
     const menuCheckbox = document.getElementById('opt-menu');
     const menuOptions = document.getElementById('menu-options');
 
-    exportType.addEventListener('change', function() {
-        exportInfo.style.display = this.value === 'products_full' ? 'block' : 'none';
-    });
+    // A section is absent for a user without the matching permission.
+    if (exportType) {
+        exportType.addEventListener('change', function() {
+            exportInfo.style.display = this.value === 'products_full' ? 'block' : 'none';
+        });
+    }
+
+    // Import form handling
+    const importForm = document.getElementById('import-form');
+    if (!importForm) {
+        return;
+    }
 
     menuCheckbox.addEventListener('change', function() {
         menuOptions.style.display = this.checked ? 'block' : 'none';
     });
 
-    // Import form handling
-    const importForm = document.getElementById('import-form');
     const importPreview = document.getElementById('import-preview');
     const previewContent = document.getElementById('preview-content');
     const processButton = document.getElementById('process-import');

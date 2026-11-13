@@ -1,9 +1,15 @@
 <?php
 
 defined('_JEXEC') || define('_JEXEC', 1);
-defined('JPATH_BASE') || define('JPATH_BASE', '/var/www/html');
+require_once __DIR__ . '/appointments-environment.php';
+$appointmentsRoot = appointments_test_root();
+if (defined('JPATH_BASE') && realpath(JPATH_BASE) !== $appointmentsRoot) {
+    throw new RuntimeException('JPATH_BASE does not match APPOINTMENTS_TEST_ROOT.');
+}
+defined('JPATH_BASE') || define('JPATH_BASE', $appointmentsRoot);
 require_once JPATH_BASE . '/includes/defines.php';
-$_SERVER['HTTP_HOST'] = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$appointmentsUrl = parse_url(appointments_test_base_url());
+$_SERVER['HTTP_HOST'] = $appointmentsUrl['host'] . (isset($appointmentsUrl['port']) ? ':' . $appointmentsUrl['port'] : '');
 $_SERVER['SCRIPT_NAME'] = '/index.php';
 require_once JPATH_BASE . '/includes/framework.php';
 $container = \Joomla\CMS\Factory::getContainer();

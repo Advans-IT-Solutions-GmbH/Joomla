@@ -103,6 +103,7 @@ class ComponentFunctionsTest
         $this->testScanForIssues();
         $this->testClassifyExtension();
         $this->testPageHasNoFixedText();
+        $this->testResponsiveAndThemeLayout();
         $this->testLocalizationGuardCatchesHardcodedText();
         $this->testTextsFollowTheLanguage();
 
@@ -290,6 +291,40 @@ class ComponentFunctionsTest
             !preg_match("/(?:enqueueMessage|\['messages'\]\[\]\s*=|'reason'\s*=>)\s*\(?\s*'[A-Za-z][^']*\s[^']*'/", $source));
     }
 
+    private function testResponsiveAndThemeLayout(): void
+    {
+        echo "\n--- Responsive and theme layout ---\n";
+
+        $source = (string) file_get_contents($this->mainFile);
+        $styleStart = strpos($source, '<style>');
+        $styleEnd = strpos($source, '</style>', $styleStart === false ? 0 : $styleStart);
+        $styles = $styleStart === false || $styleEnd === false
+            ? ''
+            : substr($source, $styleStart, $styleEnd - $styleStart);
+
+        $this->test('Component does not override page-wide template backgrounds',
+            !preg_match('/(?:^|[},])\s*(?:html|body|#wrapper|#content|\.com_j2store_cleanup)\s*\{[^}]*background\s*:/s', $styles)
+            && !str_contains($source, '<html style="background: #000'));
+        $this->test('Component surface prefers Atum unprefixed body colors with Bootstrap fallback',
+            str_contains($styles, 'var(--body-bg, var(--bs-body-bg, #fff))')
+            && str_contains($styles, 'var(--body-color, var(--bs-body-color, #212529))'));
+        preg_match_all('/var\(--bs-([a-z-]+),\s*(#[a-fA-F0-9]+)\)/', $source, $tokens, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        $missingAtumTokens = [];
+        foreach ($tokens as $token) {
+            $prefix = 'var(--' . $token[1][0] . ', ';
+            if (substr($source, $token[0][1] - strlen($prefix), strlen($prefix)) !== $prefix) {
+                $missingAtumTokens[] = $token[1][0];
+            }
+        }
+        $this->test('All semantic color tokens prefer Atum names before prefixed Bootstrap fallbacks',
+            count($tokens) === 44 && $missingAtumTokens === [],
+            implode(', ', $missingAtumTokens));
+        $this->test('Wide tables scroll within responsive containers rather than the page',
+            str_contains($styles, '.j2cleanup .table-responsive')
+            && preg_match('/\.j2cleanup \.table-responsive\s*\{[^}]*overflow-x:\s*auto/s', $styles) === 1
+            && substr_count($source, '<div class="table-responsive">') === 3);
+    }
+
     /**
      * A guard that cannot fail is worth nothing, so the scanner itself is checked here, with
      * the constructs it has to see through and the ones it has to leave alone. Every case is a
@@ -341,6 +376,9 @@ class ComponentFunctionsTest
             'returned through a local variable' => "<?php function label() { \$t = 'Hardcoded Label'; return \$t; } echo htmlspecialchars(label()); ?>",
             'returned by a function another one calls' => "<?php function inner() { return 'Hardcoded Label'; } function outer() { return inner(); } echo outer(); ?>",
             'assigned from a function'   => "<?php function label() { return 'Hardcoded Label'; } \$x = label(); echo \$x; ?>",
+            'emitted inside a boolean predicate' => "<?php function eligible(): bool { echo 'Hardcoded Label'; return true; } echo eligible(); ?>",
+            'printed inside a boolean predicate' => "<?php function eligible(): bool { print 'Hardcoded Label'; return true; } echo eligible(); ?>",
+            'returned by a typed string function' => "<?php function label(): string { return 'Hardcoded Label'; } echo label(); ?>",
         ];
 
         foreach ($visible as $label => $snippet) {
@@ -387,6 +425,8 @@ class ComponentFunctionsTest
             'a function that returns a translation' => "<?php function label() { return Text::_('COM_X'); } echo label(); ?>",
             'a function that calls itself' => "<?php function f(\$n) { return \$n ? f(\$n - 1) : Text::_('COM_X'); } echo f(2); ?>",
             'a function whose text is never returned' => "<?php function f() { \$unused = 'Hardcoded Label'; return Text::_('COM_X'); } echo f(); ?>",
+            'a boolean predicate with literal arguments' => "<?php function eligible(): bool { return str_starts_with(\$element, 'com_j2store_'); } echo eligible() ? Text::_('COM_A') : Text::_('COM_B'); ?>",
+            'a boolean predicate assigned before output' => "<?php function eligible(): bool { return in_array(\$type, ['j2store', 'j2commerce'], true); } \$eligible = eligible(); echo \$eligible ? Text::_('COM_A') : Text::_('COM_B'); ?>",
         ];
 
         // The literal HTML between the PHP blocks: attributes a reader sees or hears. Every case
@@ -987,6 +1027,15 @@ class ComponentFunctionsTest
             $open = $i;
             while ($open < $end && $tokens[$open]['text'] !== '{') {
                 $open++;
+            }
+
+            // A bool return cannot carry the string arguments its predicate examines.
+            if (($tokens[$open - 2]['text'] ?? '') === ':'
+                && strtolower($tokens[$open - 1]['text'] ?? '') === 'bool') {
+                $returns[strtolower($tokens[$i + 1]['text'])] = [
+                    'text' => [], 'variables' => [], 'functions' => [], 'sources' => [],
+                ];
+                continue;
             }
 
             $body  = array_slice($tokens, $open + 1, max(0, $end - $open - 1));

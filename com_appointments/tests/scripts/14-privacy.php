@@ -11,6 +11,7 @@ $check = static function (bool $ok, string $message) use (&$failed): void {
     $failed += $ok ? 0 : 1;
 };
 $originalParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
+$staffRows = [];
 
 try {
     $event = $fixture->event();
@@ -55,6 +56,88 @@ try {
     $check(str_contains($exported, 'PRIVATE-ANSWER') && str_contains($exported, 'custom_answer_12')
         && str_contains($exported, $one['booking']['uid']) && !str_contains($exported, 'other@example.test'),
         'Export contains every stored field and readable custom answers, scoped to the request address');
+    $staffTag = 'export' . bin2hex(random_bytes(5));
+    $staffEmail = $staffTag . '-müller@example.test';
+    $requestEmail = $staffTag . '-muller@example.test';
+    $db->query("INSERT INTO {$prefix}users (name,username,email,password,block,registerDate,params)
+        VALUES ('Export staff','{$staffTag}','" . $db->real_escape_string($staffEmail) . "','',0,UTC_TIMESTAMP(),'{}')");
+    $staffId = (int) $db->insert_id;
+    $calendarId = 0;
+    try {
+        $db->query("INSERT INTO {$prefix}appointments_calendars (uri,title,owner_user_id,row_mac,created_utc,modified_utc)
+            VALUES ('{$staffTag}','Export bystander calendar',0,REPEAT(CHAR(0),32),UTC_TIMESTAMP(),UTC_TIMESTAMP())");
+        $calendarId = (int) $db->insert_id;
+        $db->query("INSERT INTO {$prefix}appointments_devices
+            (user_id,name,client,secret_hash,kek_salt,user_key_version,state,rule_version,rule_accepted_utc,created_utc,row_mac)
+            VALUES ({$staffId},'Export bystander phone','davx5',UNHEX('" . bin2hex(random_bytes(32)) . "'),
+                UNHEX('" . bin2hex(random_bytes(16)) . "'),1,1,'1',UTC_TIMESTAMP(),UTC_TIMESTAMP(),REPEAT(CHAR(0),32))");
+        $db->query("INSERT INTO {$prefix}appointments_calendar_grants
+            (calendar_id,user_id,role,state,audience,granted_by,row_mac,created_utc,modified_utc)
+            VALUES ({$calendarId},{$staffId},3,1,'team',1,REPEAT(CHAR(0),32),UTC_TIMESTAMP(),UTC_TIMESTAMP())");
+        $db->query("INSERT INTO {$prefix}appointments_invitations
+            (token_hash,user_id,email_hash,state,invited_by,created_utc,expires_utc,row_mac)
+            VALUES (UNHEX('" . bin2hex(random_bytes(32)) . "'),{$staffId},REPEAT(CHAR(2),32),2,1,
+                UTC_TIMESTAMP(),UTC_TIMESTAMP(),REPEAT(CHAR(0),32))");
+        $teamParams = array_replace(json_decode($originalParams, true) ?: [], ['teamcal_enabled' => 1]);
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($teamParams)) . "' WHERE element='com_appointments' AND type='component'");
+        \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments')->loadArray($teamParams);
+        $team = \Advans\Component\Appointments\Administrator\Service\Team\TeamServices::fromApplication();
+        $team->audit()->log(\Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent::DEVICE_CREATED,
+            ['subject_user_id' => $staffId]);
+        $staffUser = \Joomla\CMS\Factory::getContainer()->get(\Joomla\CMS\User\UserFactoryInterface::class)->loadUserById($staffId);
+        $fixture->update($firstId, ['invitee_email' => $requestEmail]);
+        $componentStaffDomains = ['appointments_staff_absences', 'appointments_staff_host', 'appointments_staff_event_types', 'appointments_staff_schedules'];
+        foreach ([
+            ['matching staff address', $staffEmail, $staffUser, true, []],
+            ['trimmed Unicode case match', ' ' . mb_strtoupper($staffEmail, 'UTF-8') . ' ', $staffUser, true, []],
+            ['distinct accent-equivalent address', $requestEmail, $staffUser, false, [$firstId]],
+            ['unrelated address with its own booking', 'invitee@example.test', $staffUser, false, [$secondId]],
+            ['null account with its own booking', $requestEmail, null, false, [$firstId]],
+        ] as [$label, $address, $account, $staffExpected, $bookingIds]) {
+            $request->email = $address;
+            $beforeLog = (int) $joomlaDb->setQuery('SELECT COALESCE(MAX(id),0) FROM #__appointments_teamlog')->loadResult();
+            $scopeExport = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', ['subject' => $request, 'user' => $account]);
+            $plugin->onPrivacyExportRequest($scopeExport);
+            $staffDomains = [];
+            $exportBookingIds = [];
+            $guestItems = 0;
+            foreach ($scopeExport->getArgument('result') as $set) {
+                foreach ($set as $scopeDomain) {
+                    if (str_starts_with($scopeDomain->name, 'appointments_staff_')) {
+                        $staffDomains[$scopeDomain->name] = count($scopeDomain->getItems());
+                    } elseif ($scopeDomain->name === 'appointments_bookings') {
+                        $exportBookingIds = array_map(static fn ($item): int => (int) $item->id, $scopeDomain->getItems());
+                    } elseif ($scopeDomain->name === 'appointments_guest_invitations') {
+                        $guestItems += count($scopeDomain->getItems());
+                    }
+                }
+            }
+            $subjects = $joomlaDb->setQuery("SELECT subject_user_id FROM #__appointments_teamlog WHERE id>{$beforeLog} AND event='privacy.export' ORDER BY id DESC")->loadColumn();
+            $check(count($subjects) === 1 && ($staffExpected
+                // The internet calendar staff domains hold rows; the staff data domains of the component
+                // (blocked periods, host record, event types, schedules) are present, empty or not.
+                ? count(array_diff_key($staffDomains, array_flip($componentStaffDomains))) === 4
+                    && min(array_diff_key($staffDomains, array_flip($componentStaffDomains))) >= 1
+                    && array_diff($componentStaffDomains, array_keys($staffDomains)) === [] && (int) $subjects[0] === $staffId
+                : $staffDomains === [] && $subjects[0] === null
+                    && !str_contains(serialize($scopeExport->getArgument('result')), 'Export bystander phone')),
+                'Native privacy export scopes staff domains and audit subject for ' . $label);
+            $check($exportBookingIds === $bookingIds && ($address !== 'invitee@example.test' || $guestItems === 1),
+                'Native privacy export retains independently address-matched bookings and invitations for ' . $label);
+        }
+    } finally {
+        $fixture->update($firstId, ['invitee_email' => 'invitee@example.test']);
+        foreach (['appointments_devices', 'appointments_calendar_grants', 'appointments_invitations'] as $table) {
+            $db->query("DELETE FROM {$prefix}{$table} WHERE user_id={$staffId}");
+        }
+        if ($calendarId > 0) {
+            $db->query("DELETE FROM {$prefix}appointments_calendars WHERE id={$calendarId}");
+        }
+        $db->query("DELETE FROM {$prefix}users WHERE id={$staffId}");
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($originalParams) . "' WHERE element='com_appointments' AND type='component'");
+        \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments')->set('teamcal_enabled', (int) (json_decode($originalParams, true)['teamcal_enabled'] ?? 0));
+        $request->email = ' INVITEE@example.test ';
+    }
     $params = array_replace(json_decode($originalParams, true) ?: [], ['removal_block_reason' => 'Configured retention obligation']);
     $blockedPlugin = new \Advans\Plugin\Privacy\Appointments\Extension\Appointments(['name' => 'appointments', 'type' => 'privacy']);
     $blockedPlugin->setApplication($application);
@@ -111,9 +194,116 @@ try {
     $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $request, 'user' => $wrongAccount]);
     $plugin->onPrivacyCanRemoveData($canRemove);
     $check(!$canRemove->getArgument('result')[0]->canRemove, 'Core account collation mismatch is explicitly blocked before another privacy plugin can remove it');
+
+    // Staff data of an account, with the internet calendars off: blocked periods, host record,
+    // hosted event types and owned schedules.
+    $tag = 'privacy-staff-' . bin2hex(random_bytes(4));
+    $db->query("INSERT INTO {$prefix}users (name,username,email,password,block,sendEmail,registerDate,params)"
+        . " VALUES ('Staff {$tag}','{$tag}','{$tag}@example.test','',0,0,UTC_TIMESTAMP(),'{}')");
+    $staffId = (int) $db->insert_id;
+    $staffRows['user'] = $staffId;
+    $db->query("INSERT INTO {$prefix}appointments_blocked (user_id,title,start_utc,end_utc,created_utc) VALUES"
+        . " ({$staffId},'PAST-REASON-{$tag}',DATE_SUB(UTC_TIMESTAMP(),INTERVAL 10 DAY),DATE_SUB(UTC_TIMESTAMP(),INTERVAL 9 DAY),UTC_TIMESTAMP()),"
+        . " ({$staffId},'FUTURE-REASON-{$tag}',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 9 DAY),DATE_ADD(UTC_TIMESTAMP(),INTERVAL 10 DAY),UTC_TIMESTAMP())");
+    $db->query("INSERT INTO {$prefix}appointments_hosts (user_id,feed_token,created_utc,modified_utc) VALUES ({$staffId},'"
+        . bin2hex(random_bytes(32)) . "',UTC_TIMESTAMP(),UTC_TIMESTAMP())");
+    $db->query("INSERT INTO {$prefix}appointments_schedules (title,timezone,owner_user_id,published,created_utc,modified_utc)"
+        . " VALUES ('SCHEDULE-{$tag}','UTC',{$staffId},1,UTC_TIMESTAMP(),UTC_TIMESTAMP())");
+    $staffRows['schedule'] = (int) $db->insert_id;
+    $db->query("INSERT INTO {$prefix}appointments_eventtypes (title,alias,schedule_id,host_user_id,info_layout,info_name,feed_token,created_utc,modified_utc)"
+        . " VALUES ('EVENT-{$tag}','{$tag}',{$staffRows['schedule']},{$staffId},'person','NAME-{$tag}','" . bin2hex(random_bytes(32)) . "',UTC_TIMESTAMP(),UTC_TIMESTAMP())");
+    $staffRows['event'] = (int) $db->insert_id;
+    $hostToken = (string) $db->query("SELECT feed_token FROM {$prefix}appointments_hosts WHERE user_id={$staffId}")->fetch_row()[0];
+    $staffUser = \Joomla\CMS\User\User::getInstance($staffId);
+    $request->email = $tag . '@example.test';
+    $export = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', ['subject' => $request, 'user' => $staffUser]);
+    $plugin->onPrivacyExportRequest($export);
+    $staffDomains = [];
+    foreach ($export->getArgument('result') as $set) {
+        foreach ($set as $domain) {
+            if (str_starts_with($domain->name, 'appointments_staff_')) {
+                $staffDomains[$domain->name] = $domain;
+            }
+        }
+    }
+    $staffExport = serialize($staffDomains);
+    $check(array_keys($staffDomains) === ['appointments_staff_absences', 'appointments_staff_host', 'appointments_staff_event_types', 'appointments_staff_schedules']
+        && count($staffDomains['appointments_staff_absences']->getItems()) === 2 && count($staffDomains['appointments_staff_host']->getItems()) === 1
+        && str_contains($staffExport, 'PAST-REASON-' . $tag) && str_contains($staffExport, 'FUTURE-REASON-' . $tag)
+        && str_contains($staffExport, 'NAME-' . $tag) && str_contains($staffExport, 'SCHEDULE-' . $tag),
+        'A staff account exports its blocked periods with reasons, its host record, hosted event types and owned schedules, with the internet calendars off');
+    $check(!str_contains($staffExport, $hostToken) && !str_contains($staffExport, 'feed_token'),
+        'The staff export never contains the feed credential');
+    // Joomla finds the account by database collation (e.g. without accents): only an exactly matching
+    // address makes the staff data the requester's.
+    $collated = new \Joomla\CMS\User\User();
+    $collated->id = $staffId;
+    $collated->email = 'privacy-stäff-' . substr($tag, 14) . '@example.test';
+    $request->email = 'privacy-staff-' . substr($tag, 14) . '@example.test';
+    $export = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', ['subject' => $request, 'user' => $collated]);
+    $plugin->onPrivacyExportRequest($export);
+    $leaked = false;
+    foreach ($export->getArgument('result') as $set) {
+        foreach ($set as $domain) {
+            $leaked = $leaked || str_starts_with($domain->name, 'appointments_staff_absences');
+        }
+    }
+    $check(!$leaked, 'An account whose address does not match the request exactly gets no staff export');
+    $request->email = $tag . '@example.test';
+    // Joomla runs the removal check before every removal, while it still finds the account. The
+    // removal itself here gets no account, as a retry after Joomla pseudonymised it: the scope
+    // captured by the check decides. A stored request, which the plugin locks and checks.
+    $staffRequest = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
+    $staffRequest->email = $tag . '@example.test';
+    $staffRequest->request_type = 'remove';
+    $staffRequest->status = 1;
+    $staffRequest->requested_at = gmdate('Y-m-d H:i:s');
+    if (!$staffRequest->store()) {
+        throw new RuntimeException('The staff privacy request fixture could not be stored.');
+    }
+    $staffRows['request'] = (int) $staffRequest->id;
+    $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $staffRequest, 'user' => $staffUser]);
+    $plugin->onPrivacyCanRemoveData($canRemove);
+    $scope = $db->query("SELECT user_id FROM {$prefix}appointments_privacy_scope WHERE request_id=" . (int) $staffRequest->id)->fetch_row();
+    $check($canRemove->getArgument('result')[0]->canRemove !== false && $scope !== null && (int) $scope[0] === $staffId,
+        'The removal check captures the verified account of the request');
+    $application->getMessageQueue(true);
+    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $staffRequest, 'user' => null]));
+    $blocked = $db->query("SELECT title, end_utc > UTC_TIMESTAMP() AS future FROM {$prefix}appointments_blocked WHERE user_id={$staffId}")->fetch_all(MYSQLI_ASSOC);
+    $check(count($blocked) === 1 && $blocked[0]['title'] === '' && (int) $blocked[0]['future'] === 1,
+        'Removal without the account (a retry) deletes past blocked periods and keeps future ones without their reason');
+    $host = $db->query("SELECT feed_token FROM {$prefix}appointments_hosts WHERE user_id={$staffId}")->fetch_row();
+    $check($host !== null && $host[0] !== $hostToken,
+        'Removal revokes the host feed credential and keeps the host row, which bookings lock');
+    $hosted = $db->query("SELECT host_user_id, info_name FROM {$prefix}appointments_eventtypes WHERE id={$staffRows['event']}")->fetch_assoc();
+    $owned = $db->query("SELECT owner_user_id, title FROM {$prefix}appointments_schedules WHERE id={$staffRows['schedule']}")->fetch_assoc();
+    $messages = implode("\n", array_column($application->getMessageQueue(true), 'message'));
+    $check((int) $hosted['host_user_id'] === $staffId && $hosted['info_name'] === 'NAME-' . $tag
+        && (int) $owned['owner_user_id'] === $staffId && $owned['title'] === 'SCHEDULE-' . $tag
+        && str_contains($messages, 'EVENT-' . $tag) && str_contains($messages, 'SCHEDULE-' . $tag),
+        'Event types and schedules of the staff account are never changed automatically and are named for review');
+    require __DIR__ . '/privacy-provenance-cases.php';
 } catch (Throwable $e) {
     $check(false, 'Privacy integration failed: ' . $e->getMessage());
 } finally {
+    if (isset($staffRows['request'])) {
+        foreach (['appointments_privacy_scope', 'appointments_privacy_staff', 'appointments_privacy_outcomes', 'appointments_privacy_cleanup'] as $table) {
+            $db->query("DELETE FROM {$prefix}{$table} WHERE request_id=" . (int) $staffRows['request']);
+        }
+        $db->query("DELETE FROM {$prefix}privacy_requests WHERE id=" . (int) $staffRows['request']);
+    }
+    if (isset($staffRows['event'])) {
+        $db->query("DELETE FROM {$prefix}appointments_eventtypes WHERE id=" . (int) $staffRows['event']);
+    }
+    if (isset($staffRows['schedule'])) {
+        $db->query("DELETE FROM {$prefix}appointments_schedules WHERE id=" . (int) $staffRows['schedule']);
+    }
+    if (isset($staffRows['user'])) {
+        $staffId = (int) $staffRows['user'];
+        $db->query("DELETE FROM {$prefix}appointments_blocked WHERE user_id={$staffId}");
+        $db->query("DELETE FROM {$prefix}appointments_hosts WHERE user_id={$staffId}");
+        $db->query("DELETE FROM {$prefix}users WHERE id={$staffId}");
+    }
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($originalParams) . "' WHERE element='com_appointments' AND type='component'");
     $fixture->cleanup();
 }

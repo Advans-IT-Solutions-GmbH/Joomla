@@ -153,7 +153,7 @@ final class DavMemoryStore implements CalendarObjectStoreInterface
         return $this->seed($calendarId, $uri, $ics, $existing['booking'] ?? null);
     }
 
-    public function putSealed(int $calendarId, string $ics, int $bookingId): string
+    public function putSealed(int $calendarId, string $ics, int $bookingId, bool $adopt = true): string
     {
         return $this->seed($calendarId, 'booking-' . $bookingId . '.ics', $ics, $bookingId);
     }

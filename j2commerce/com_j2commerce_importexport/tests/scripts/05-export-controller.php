@@ -124,6 +124,29 @@ class ExportControllerTest
             return $line === "a\tb\n";
         });
 
+        // --- CSV injection ---
+        $neutralize = $rc->getMethod('neutralizeFormula');
+
+        $this->test('Formula cells get a leading apostrophe', function () use ($neutralize) {
+            foreach (['=1+1', '+SUM(A1)', '-2+3', '@SUM(A1)', "\tx", "\rx"] as $cell) {
+                if ($neutralize->invoke(null, $cell) !== "'" . $cell) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+
+        $this->test('Text, numbers and empty cells are not changed', function () use ($neutralize) {
+            foreach (['Plain', '', '12', '-5', '-5.25', 'a=b', 12, null] as $cell) {
+                if ($neutralize->invoke(null, $cell) !== $cell) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+
         echo "\n=== Export Controller Summary ===\n";
         echo "Passed: {$this->passed}\n";
         echo "Failed: {$this->failed}\n";

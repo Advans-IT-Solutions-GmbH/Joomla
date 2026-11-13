@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Administrator\Service;
 
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Service\Team\LockoutService;
 use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
@@ -25,7 +26,7 @@ final class RateLimiter
             throw new \InvalidArgumentException('Invalid rate-limit input.');
         }
 
-        $bucket = hash_hmac('sha256', $endpoint . ':' . $ip, $this->keys->key(KeyProvider::PURPOSE_RATE_LIMIT));
+        $bucket = hash_hmac('sha256', $endpoint . ':' . self::subject($ip), $this->keys->key(KeyProvider::PURPOSE_RATE_LIMIT));
         $window = $now->setTimestamp(intdiv($now->getTimestamp(), $windowSeconds) * $windowSeconds)
             ->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
         $db = $this->db;
@@ -40,5 +41,17 @@ final class RateLimiter
             ->where($db->quoteName('window_utc') . ' = ' . $db->quote($window));
 
         return (int) $db->setQuery($query)->loadResult() <= $limit;
+    }
+
+    /**
+     * Whom a bucket counts. An IPv4 address as it is (the same buckets as before). One
+     * IPv6 connection usually holds a whole /64, so a single address would let it fill
+     * every bucket anew: IPv6 counts per /64, an IPv4-mapped IPv6 address as its IPv4
+     * address, the same grouping as the sign-in lock-out ({@see LockoutService::normaliseAddress()}).
+     * The caller has validated the address.
+     */
+    public static function subject(string $ip): string
+    {
+        return str_contains($ip, ':') ? (string) LockoutService::normaliseAddress($ip) : $ip;
     }
 }

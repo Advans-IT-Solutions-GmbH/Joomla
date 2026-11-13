@@ -1056,13 +1056,20 @@ sleep(3);
                 $db->query("INSERT INTO {$p}appointments_calendar_grants (calendar_id, user_id, role, state, audience, granted_by, row_mac, created_utc, modified_utc) VALUES ({$calendar}, {$userId}, 2, 1, 'team', 1, REPEAT(CHAR(0), 32), UTC_TIMESTAMP(), UTC_TIMESTAMP())");
                 $db->query("INSERT INTO {$p}appointments_calendar_key_wraps (calendar_id, key_version, user_id, user_key_version, wrapped, created_utc) VALUES ({$calendar}, 1, {$userId}, 1, REPEAT(CHAR(1), 80), UTC_TIMESTAMP())");
                 $db->query("INSERT INTO {$p}appointments_invitations (token_hash, user_id, email_hash, state, invited_by, created_utc, expires_utc, row_mac) VALUES (UNHEX('" . bin2hex(random_bytes(32)) . "'), {$userId}, REPEAT(CHAR(2), 32), 2, 1, UTC_TIMESTAMP(), UTC_TIMESTAMP(), REPEAT(CHAR(0), 32))");
-                $run('$application->bootComponent("com_privacy");
+                $removal = $run('$application->bootComponent("com_privacy");
                     $plugin = $application->bootPlugin("appointments", "privacy");
                     $request = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
                     $request->email = ' . var_export($tag . 'gone@example.test', true) . ';
                     $request->status = 1;
+                    $incomplete = false;
                     $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance(' . $userId . ')]));
-                    return true;');
+                    $unsearched = false;
+                    foreach ($application->getMessageQueue() as $message) {
+                        $incomplete = $incomplete || ($message["type"] === "warning"
+                            && $message["message"] === \Joomla\CMS\Language\Text::_("PLG_PRIVACY_APPOINTMENTS_INCOMPLETE"));
+                        $unsearched = $unsearched || ($message["type"] === "warning" && str_contains($message["message"], "F removal"));
+                    }
+                    return ["incomplete" => $incomplete, "unsearched" => $unsearched];');
                 $left = 0;
 
                 foreach (['appointments_devices', 'appointments_calendar_grants', 'appointments_calendar_key_wraps', 'appointments_invitations', 'appointments_user_keys'] as $table) {
@@ -1074,7 +1081,10 @@ sleep(3);
 
                 // With the device and grant services still stubs, the epochs cannot be raised,
                 // so nothing may be deleted except the activation links.
-                return $teardownStub ? $left === 3 && $logged === 1 : $left === 0 && $rotation === 1 && $logged === 1;
+                // This deliberately unkeyed calendar cannot be searched by the
+                // CLI actor. Staff cleanup is not proof of complete erasure.
+                return $removal['incomplete'] === true && $removal['unsearched'] === true
+                    && ($teardownStub ? $left === 3 && $logged === 1 : $left === 0 && $rotation === 1 && $logged === 1);
             } finally {
                 foreach (['appointments_devices', 'appointments_calendar_grants', 'appointments_calendar_key_wraps', 'appointments_invitations'] as $table) {
                     $db->query("DELETE FROM {$p}{$table} WHERE user_id={$userId}");
@@ -1085,12 +1095,75 @@ sleep(3);
             }
         });
 
+        $suite->test('A removal for a team member keeps their calendar entries, also on a retry after the account was pseudonymised and for a request without a known scope', static function () use ($run) {
+            $result = $run('
+                $db = $services->db();
+                $group = (int) (((array) $services->params()->get("team_groups", []))[0] ?? 0);
+                $name = "teamfprivteam" . bin2hex(random_bytes(3));
+                $db->setQuery("INSERT INTO #__users (name, username, email, password, block, registerDate, params) VALUES (\"F team\", \"$name\", \"$name@example.test\", \"\", 0, UTC_TIMESTAMP(), \"{}\")")->execute();
+                $uid = (int) $db->insertid();
+                $db->setQuery("INSERT INTO #__user_usergroup_map (user_id, group_id) VALUES ($uid, $group)")->execute();
+
+                try {
+                    $application->bootComponent("com_privacy");
+                    $plugin = $application->bootPlugin("appointments", "privacy");
+                    // A stored removal request: the plugin locks it and checks its state, and CanRemove
+                    // captures the staff account the removals then use.
+                    $request = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
+                    $request->email = "$name@example.test";
+                    $request->request_type = "remove";
+                    $request->status = 1;
+                    $request->requested_at = gmdate("Y-m-d H:i:s");
+                    if (!$request->store()) {
+                        throw new \RuntimeException("The privacy request fixture could not be stored.");
+                    }
+                    // The removal check captures the scope, then the first run with the account and a
+                    // retry in which Joomla no longer finds it.
+                    $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent("onPrivacyCanRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance($uid)]));
+                    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => \Joomla\CMS\User\User::getInstance($uid)]));
+                    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => null]));
+                    // A request checked before the scope existed, retried after the pseudonymisation:
+                    // neither a scope nor an account, so nothing of the calendars is changed, never guessed.
+                    $unknown = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
+                    $unknown->email = "$name@example.test";
+                    $unknown->request_type = "remove";
+                    $unknown->status = 1;
+                    $unknown->requested_at = gmdate("Y-m-d H:i:s");
+                    if (!$unknown->store()) {
+                        throw new \RuntimeException("The privacy request fixture could not be stored.");
+                    }
+                    $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $unknown, "user" => null]));
+                    $rows = $db->setQuery("SELECT details FROM #__appointments_teamlog WHERE event = " . $db->quote(AuditEvent::PRIVACY_DELETE) . " ORDER BY id DESC", 0, 3)->loadColumn();
+
+                    return ["request" => (int) $request->id, "unknown" => (int) $unknown->id,
+                        "rows" => array_map(static fn ($d): ?array => AuditService::decodeDetails($d), $rows)];
+                } finally {
+                    foreach ([$request ?? null, $unknown ?? null] as $fixtureRequest) {
+                        if (!empty($fixtureRequest->id)) {
+                            foreach (["appointments_privacy_cleanup", "appointments_privacy_staff", "appointments_privacy_outcomes", "appointments_privacy_scope"] as $table) {
+                                $db->setQuery("DELETE FROM #__$table WHERE request_id = " . (int) $fixtureRequest->id)->execute();
+                            }
+                            $db->setQuery("DELETE FROM #__privacy_requests WHERE id = " . (int) $fixtureRequest->id)->execute();
+                        }
+                    }
+                    $db->setQuery("DELETE FROM #__user_usergroup_map WHERE user_id = $uid")->execute();
+                    $db->setQuery("DELETE FROM #__users WHERE id = $uid")->execute();
+                }');
+            $rows = $result['rows'] ?? [];
+            $unknownRows = array_filter($rows, static fn (?array $row): bool => (int) ($row['request'] ?? 0) === (int) ($result['unknown'] ?? -1));
+            $requestRows = array_values(array_filter($rows, static fn (?array $row): bool => (int) ($row['request'] ?? 0) === (int) ($result['request'] ?? -1)));
+
+            // The request without a scope fails closed before any calendar change (PrivacyStaffCleanup).
+            return $unknownRows === [] && \count($requestRows) === 2
+                && !empty($requestRows[0]['team_member']) && !empty($requestRows[1]['team_member']);
+        });
+
         $privacyOpen = $openPackages(['A', 'B', 'C', 'D', 'E', 'F']);
 
         if ($privacyOpen !== '') {
-            $suite->pending('Privacy export and removal find calendar entries by the address blind index (needs objects written through A)', $privacyOpen);
+            $suite->pending('A privacy request finds an own calendar entry, leaves it unchanged and removes only the address after the decision', $privacyOpen);
         } else {
-            $suite->test('Privacy export and removal find calendar entries by the address blind index (needs objects written through A)', static function () use (
+            $suite->test('A privacy request finds an own calendar entry, leaves it unchanged and removes only the address after the decision', static function () use (
                 $suite,
                 $startHttpFixture,
                 $stopHttpFixture,
@@ -1173,6 +1246,10 @@ sleep(3);
                         $request = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
                         $request->email = ' . var_export($email, true) . ';
                         $request->status = 1;
+                        $request->request_type = "remove";
+                        if (!$request->store()) {
+                            throw new \RuntimeException("The privacy request fixture could not be stored.");
+                        }
                         $user = \Joomla\CMS\User\User::getInstance(0);
                         $export = new \Joomla\CMS\Event\Privacy\ExportRequestEvent("onPrivacyExportRequest", ["subject" => $request, "user" => $user]);
                         $plugin->onPrivacyExportRequest($export);
@@ -1189,11 +1266,62 @@ sleep(3);
                                 }
                             }
                         }
+                        $wrongUser = \Joomla\CMS\Factory::getContainer()->get(\Joomla\CMS\User\UserFactoryInterface::class)->loadUserById(' . (int) $account['id'] . ');
+                        $beforeLog = (int) $joomlaDb->setQuery("SELECT COALESCE(MAX(id),0) FROM #__appointments_teamlog")->loadResult();
+                        $mismatch = new \Joomla\CMS\Event\Privacy\ExportRequestEvent("onPrivacyExportRequest", ["subject" => $request, "user" => $wrongUser]);
+                        $plugin->onPrivacyExportRequest($mismatch);
+                        $mismatchItems = 0; $mismatchContent = ""; $staffDomains = 0;
+                        foreach ($mismatch->getArgument("result") as $set) {
+                            foreach ($set as $domain) {
+                                if (str_starts_with($domain->name, "appointments_staff_")) { $staffDomains++; }
+                                if ($domain->name !== "appointments_calendar_entries") { continue; }
+                                foreach ($domain->getItems() as $item) {
+                                    $mismatchItems++;
+                                    foreach ($item->getFields() as $field) {
+                                        if ($field->name === "content") { $mismatchContent .= (string) $field->value; }
+                                    }
+                                }
+                            }
+                        }
+                        $subjects = $joomlaDb->setQuery("SELECT subject_user_id FROM #__appointments_teamlog WHERE id > $beforeLog AND event = \"privacy.export\"")->loadColumn();
+                        // The stored removal request: the removal check locks it, retains its scope and records
+                        // that it has no account, so the removal may change the entries of the address.
+                        $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent("onPrivacyCanRemoveData", ["subject" => $request, "user" => null]));
                         $remove = new \Joomla\CMS\Event\Privacy\RemoveDataEvent("onPrivacyRemoveData", ["subject" => $request, "user" => $user]);
                         $plugin->onPrivacyRemoveData($remove);
                         $remaining = (int) $joomlaDb->setQuery("SELECT COUNT(*) FROM #__appointments_calendar_objects WHERE calendar_id = ' . (int) $fixture->calendarId . ' AND uri = " . $joomlaDb->quote(' . var_export($uri, true) . '))->loadResult();
+                        $recorded = (int) $joomlaDb->setQuery("SELECT COUNT(*) FROM #__appointments_privacy_review WHERE request_id = " . (int) $request->id)->loadResult();
+                        // Open decisions block Complete of the Joomla request until each entry is decided.
+                        $blockedBefore = \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $request->id)
+                            && \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::reviewPending($joomlaDb, (int) $request->id);
+                        $review = new \Advans\Component\Appointments\Administrator\Service\Team\PrivacyReview(\Advans\Component\Appointments\Administrator\Service\Team\TeamServices::fromApplication());
+                        $actor = (int) $application->getIdentity()->id;
+                        $pending = $review->pending($actor);
+                        $row = $pending[0] ?? [];
+                        $stale = $review->apply((int) ($row["id"] ?? 0), "address", $actor, "[removed]", "0");
+                        $applied = $review->apply((int) ($row["id"] ?? 0), "address", $actor, "[removed]", (string) ($row["etag"] ?? ""));
+                        $blockedAfter = \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::reviewPending($joomlaDb, (int) $request->id)
+                            || \Advans\Component\Appointments\Administrator\Service\PrivacyOutcome::incomplete($joomlaDb, (int) $request->id);
+                        $again = new \Joomla\CMS\Event\Privacy\ExportRequestEvent("onPrivacyExportRequest", ["subject" => $request, "user" => $user]);
+                        $plugin->onPrivacyExportRequest($again);
+                        $itemsAfter = 0;
+                        foreach ($again->getArgument("result") as $set) {
+                            foreach ($set as $domain) {
+                                if ($domain->name === "appointments_calendar_entries") { $itemsAfter += \count($domain->getItems()); }
+                            }
+                        }
+                        $kept = (int) $joomlaDb->setQuery("SELECT COUNT(*) FROM #__appointments_calendar_objects WHERE calendar_id = ' . (int) $fixture->calendarId . ' AND uri = " . $joomlaDb->quote(' . var_export($uri, true) . '))->loadResult();
+                        $left = (int) $joomlaDb->setQuery("SELECT COUNT(*) FROM #__appointments_privacy_review WHERE request_id = " . (int) $request->id)->loadResult();
+                        foreach (["appointments_privacy_cleanup", "appointments_privacy_staff", "appointments_privacy_outcomes", "appointments_privacy_scope", "appointments_privacy_review"] as $table) {
+                            $joomlaDb->setQuery("DELETE FROM #__$table WHERE request_id = " . (int) $request->id)->execute();
+                        }
+                        $joomlaDb->setQuery("DELETE FROM #__privacy_requests WHERE id = " . (int) $request->id)->execute();
                         $result = ["domain" => $domainFound, "items" => $items, "content" => $content, "remaining" => $remaining,
-                            "actor" => (int) $application->getIdentity()->id];
+                            "mismatch_items" => $mismatchItems, "mismatch_content" => $mismatchContent,
+                            "mismatch_staff" => $staffDomains, "mismatch_subjects" => $subjects,
+                            "actor" => $actor, "recorded" => $recorded, "pending" => \count($pending), "readable" => (bool) ($row["readable"] ?? false),
+                            "roles" => $row["roles"] ?? [], "stale" => $stale, "applied" => $applied, "items_after" => $itemsAfter, "kept" => $kept, "left" => $left,
+                            "blocked_before" => $blockedBefore, "blocked_after" => $blockedAfter];
                         echo "\n@@TEAMFPRIV@@".json_encode($result);';
                     token_get_all("<?php\n" . $php, TOKEN_PARSE);
                     exec('cd /var/www/html && php -r ' . escapeshellarg($php) . ' 2>&1', $output, $exit);
@@ -1205,17 +1333,36 @@ sleep(3);
                     }
 
                     $result = json_decode(substr($text, $marker + 13), true);
-                    $removed = $suite->http('GET', $fixture->calendar('owner') . $uri, [
+                    $after = $suite->http('GET', $fixture->calendar('owner') . $uri, [
                         'Authorization: Basic ' . base64_encode($account['username'] . ':' . $account['app_password']),
                     ]);
 
+                    // The removal itself leaves the own entry as it is and records it for a decision;
+                    // the decision «remove only the address» keeps the entry without the address.
                     return is_array($result)
                         && $result['domain'] === true
                         && $result['items'] === 1
                         && str_contains($result['content'], $email)
-                        && $result['remaining'] === 0
+                        && $result['mismatch_items'] === 1
+                        && str_contains($result['mismatch_content'], $email)
+                        && $result['mismatch_staff'] === 0
+                        && $result['mismatch_subjects'] === [null]
+                        && $result['remaining'] === 1
+                        && $result['recorded'] === 1
+                        && $result['blocked_before'] === true
+                        && $result['pending'] >= 1
+                        && $result['readable'] === true
+                        && $result['roles'] === ['attendee']
+                        && $result['stale'] === 'COM_APPOINTMENTS_PRIVACY_REVIEW_CHANGED'
+                        && $result['applied'] === 'COM_APPOINTMENTS_PRIVACY_REVIEW_ADDRESS_REMOVED'
+                        && $result['blocked_after'] === false
+                        && $result['items_after'] === 0
+                        && $result['kept'] === 1
+                        && $result['left'] === 0
                         && $result['actor'] === (int) $account['id']
-                        && $removed['status'] === 404;
+                        && $after['status'] === 200
+                        && str_contains((string) $after['body'], 'Privacy calendar fixture')
+                        && !str_contains(strtolower((string) $after['body']), strtolower($email));
                 } finally {
                     $stopHttpFixture($fixture, $originalParams, $plugins);
                 }

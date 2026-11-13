@@ -17,6 +17,9 @@ final class TeamDavFixture
 {
     public const LOCKOUT_SOURCE_IP = '127.0.0.2';
 
+    /** Source of the requests that expect 401 from a blocked device, so they never count against the others. */
+    public const BLOCK_SOURCE_IP = '127.0.0.3';
+
     public \Advans\Component\Appointments\Administrator\Service\Team\TeamServices $services;
     public int $calendarId;
     public string $calendarUri;
@@ -69,7 +72,7 @@ final class TeamDavFixture
         $this->services->keys()->createRecoveryKey($this->adminId);
         $this->createdRecoveryKey = true;
 
-        foreach (['owner', 'reader', 'writer', 'freebusy', 'denied', 'nomfa', 'cleanup', 'cleanupadmin', 'lockout'] as $name) {
+        foreach (['owner', 'reader', 'writer', 'freebusy', 'denied', 'nomfa', 'cleanup', 'cleanupadmin', 'lockout', 'blockonly', 'mixed'] as $name) {
             $username = 'dav_' . $name . '_' . $this->token;
             $password = bin2hex(random_bytes(24));
             $userId = $this->insertUser($username, $password, $groupId);
@@ -110,16 +113,31 @@ final class TeamDavFixture
             'cleanup' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Write,
             'cleanupadmin' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Manage,
             'lockout' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
+            'blockonly' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Write,
+            'mixed' => \Advans\Component\Appointments\Administrator\Helper\Team\CalendarRole::Read,
         ] as $name => $role) {
             $this->services->grants()->grant($owner['id'], $this->calendarId, $this->accounts[$name]['id'], $role, $owner['keys']);
         }
 
+        // «When removed or blocked»: the recommendation of the client unless set here. «Other
+        // client» is «Block only»; the clean-up account chooses «Clean up» explicitly.
+        $clients = ['blockonly' => 'outlook-caldavsynchronizer', 'mixed' => 'davx5'];
+        $modes = ['cleanup' => \Advans\Component\Appointments\Administrator\Helper\Team\TeamStates::REMOVAL_CLEANUP];
+
         foreach ($this->accounts as $name => &$account) {
-            $device = $this->services->devices()->create($account['keys'], 'CalDAV test ' . $name, 'other', true);
+            $device = $this->services->devices()->create($account['keys'], 'CalDAV test ' . $name, $clients[$name] ?? 'other', true, $modes[$name] ?? null);
             $account['device_id'] = (int) $device['device_id'];
             $account['app_password'] = (string) $device['app_password'];
         }
         unset($account);
+
+        // A second device each: «blockonly» keeps a phone («Clean up») next to its Outlook device,
+        // «mixed» has an Outlook device («Block only») next to its phone.
+        foreach (['blockonly' => 'davx5', 'mixed' => 'outlook-caldavsynchronizer'] as $name => $client) {
+            $device = $this->services->devices()->create($this->accounts[$name]['keys'], 'CalDAV test ' . $name . ' second', $client, true);
+            $this->accounts[$name]['second_device_id'] = (int) $device['device_id'];
+            $this->accounts[$name]['second_app_password'] = (string) $device['app_password'];
+        }
 
         $this->services->grants()->revoke(
             $owner['id'],
@@ -176,6 +194,26 @@ final class TeamDavFixture
         ];
     }
 
+    /**
+     * @return array{state: int, removal_mode: string}|null
+     */
+    public function device(int $deviceId): ?array
+    {
+        $result = $this->suite->db->query("SELECT state, removal_mode FROM {$this->suite->prefix}appointments_devices WHERE id=" . $deviceId);
+        $row = $result ? $result->fetch_assoc() : null;
+
+        return $row ? ['state' => (int) $row['state'], 'removal_mode' => (string) $row['removal_mode']] : null;
+    }
+
+    /**
+     * Entries of one event in the calendar log for a user.
+     */
+    public function logged(string $event, int $userId): int
+    {
+        return $this->suite->count("SELECT COUNT(*) FROM {$this->suite->prefix}appointments_teamlog WHERE event = '"
+            . $this->suite->db->real_escape_string($event) . "' AND subject_user_id = " . $userId);
+    }
+
     public function expireJournal(): bool
     {
         $p = $this->suite->prefix;
@@ -220,6 +258,18 @@ final class TeamDavFixture
                         $buckets = \Advans\Component\Appointments\Administrator\Service\Team\LockoutService::buckets($key, $identity, $ip);
                     } finally {
                         \Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite::wipe($key);
+                    }
+
+                    // The address the blocked-device cases used: only its address bucket matters.
+                    $blockKey = $this->services->keyProvider()->key(\Advans\Component\Appointments\Administrator\Helper\KeyProvider::PURPOSE_TEAM_AUTH_BUCKET);
+                    try {
+                        $blockBuckets = \Advans\Component\Appointments\Administrator\Service\Team\LockoutService::buckets($blockKey, 'dav:blocked', self::BLOCK_SOURCE_IP);
+                    } finally {
+                        \Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite::wipe($blockKey);
+                    }
+
+                    if (isset($blockBuckets['ip'])) {
+                        $buckets[] = $blockBuckets['ip'];
                     }
 
                     foreach ($buckets as $bucket) {
@@ -807,7 +857,112 @@ return static function (TeamSuite $suite): void {
 
                     $f->services->cleanup()->advance($now);
 
-                    return $send('PROPFIND', $f->home('cleanup'), 'cleanup', ['Depth: 1'])['status'] === 401;
+                    return $f->device($account['device_id'])['removal_mode'] === \Advans\Component\Appointments\Administrator\Helper\Team\TeamStates::REMOVAL_CLEANUP
+                        && $send('PROPFIND', $f->home('cleanup'), 'cleanup', ['Depth: 1'])['status'] === 401;
+                },
+            ],
+            [
+                'A removed «Block only» device gets 401 for PROPFIND and REPORT at once, never an empty calendar, and the owner\'s other device keeps working',
+                ['B', 'C', 'D', 'F'],
+                static function (TeamDavFixture $f) use ($send, $propfind, $ics): bool {
+                    $states = \Advans\Component\Appointments\Administrator\Helper\Team\TeamStates::class;
+                    $account = $f->accounts['blockonly'];
+                    $path = $f->calendar('blockonly');
+                    $ip = TeamDavFixture::BLOCK_SOURCE_IP;
+                    $created = $send('PUT', $path . 'blockonly.ics', 'blockonly', ['Content-Type: text/calendar'], $ics('blockonly-' . $f->calendarId, 'Block only object'));
+                    $listed = $propfind('blockonly', $path, '1', '<d:getetag/>');
+                    $outlook = $f->device($account['device_id']);
+                    $phone = $f->device($account['second_device_id']);
+
+                    // The recommendations of the clients: Outlook «Block only», DAVx5 «Clean up».
+                    if ($created['status'] !== 201 || $listed['status'] !== 207 || !str_contains($listed['body'], 'blockonly.ics')
+                        || $outlook === null || $outlook['removal_mode'] !== $states::REMOVAL_BLOCK
+                        || $phone === null || $phone['removal_mode'] !== $states::REMOVAL_CLEANUP) {
+                        return false;
+                    }
+
+                    $f->services->cleanup()->startForDevice($account['device_id'], 'user_removed', $account['id']);
+                    $after = $f->device($account['device_id']);
+                    $propfindBody = '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:getetag/></d:prop></d:propfind>';
+                    $reportBody = '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token></d:sync-token>'
+                        . '<d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>';
+                    $answers = [
+                        $send('PROPFIND', $f->home('blockonly'), 'blockonly', ['Depth: 1', 'Content-Type: application/xml'], $propfindBody, null, $ip),
+                        $send('PROPFIND', $path, 'blockonly', ['Depth: 1', 'Content-Type: application/xml'], $propfindBody, null, $ip),
+                        $send('REPORT', $path, 'blockonly', ['Depth: 1', 'Content-Type: application/xml'], $reportBody, null, $ip),
+                    ];
+                    $refused = array_map(static fn (array $answer): int => $answer['status'], $answers) === [401, 401, 401]
+                        && !str_contains(implode('', array_column($answers, 'body')), 'multistatus');
+                    // The same person's phone and another person's device are untouched.
+                    $second = $send('PROPFIND', $path, 'blockonly', ['Depth: 1', 'Content-Type: application/xml'], $propfindBody, $account['second_app_password']);
+                    $reader = $propfind('reader', $f->calendar('reader'), '1', '<d:getetag/>');
+                    $logged = $f->logged('device.blocked', (int) $account['id']) === 1;
+
+                    if (!$refused || $after === null || $after['state'] !== $states::DEVICE_REVOKED) {
+                        echo '    block only: state ' . json_encode($after) . ', answers ' . json_encode(array_column($answers, 'status')) . "\n";
+                    }
+
+                    return $refused && $after !== null && $after['state'] === $states::DEVICE_REVOKED && $logged
+                        && $second['status'] === 207 && str_contains($second['body'], 'blockonly.ics')
+                        && $f->device($account['second_device_id'])['state'] === $states::DEVICE_ACTIVE
+                        && $reader['status'] === 207 && str_contains($reader['body'], 'blockonly.ics');
+                },
+            ],
+            [
+                'A password reset with both settings: the «Clean up» device is served empty, the «Block only» device gets 401, other accounts keep working',
+                ['B', 'C', 'D', 'F'],
+                static function (TeamDavFixture $f) use ($send, $propfind): bool {
+                    $states = \Advans\Component\Appointments\Administrator\Helper\Team\TeamStates::class;
+                    $account = $f->accounts['mixed'];
+                    $path = $f->calendar('mixed');
+                    $ip = TeamDavFixture::BLOCK_SOURCE_IP;
+                    $propfindBody = '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:getetag/></d:prop></d:propfind>';
+                    $reportBody = '<?xml version="1.0"?><d:sync-collection xmlns:d="DAV:"><d:sync-token></d:sync-token>'
+                        . '<d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>';
+                    // Both devices synchronise first, so the clean-up knows the calendar.
+                    $phoneBefore = $propfind('mixed', $path, '1', '<d:getetag/>');
+                    $outlookBefore = $send('PROPFIND', $path, 'mixed', ['Depth: 1', 'Content-Type: application/xml'], $propfindBody, $account['second_app_password']);
+
+                    if ($phoneBefore['status'] !== 207 || !str_contains($phoneBefore['body'], '.ics')
+                        || $outlookBefore['status'] !== 207 || !str_contains($outlookBefore['body'], '.ics')
+                        || $f->device($account['device_id'])['removal_mode'] !== $states::REMOVAL_CLEANUP
+                        || $f->device($account['second_device_id'])['removal_mode'] !== $states::REMOVAL_BLOCK) {
+                        return false;
+                    }
+
+                    // The step of every password reset (KeySession::resetFlow) for the whole user.
+                    $count = $f->services->cleanup()->startForUser($account['id'], 'password_reset', null);
+                    $phone = $f->device($account['device_id']);
+                    $outlook = $f->device($account['second_device_id']);
+                    $outlookAnswers = [
+                        $send('PROPFIND', $path, 'mixed', ['Depth: 1', 'Content-Type: application/xml'], $propfindBody, $account['second_app_password'], $ip),
+                        $send('REPORT', $path, 'mixed', ['Depth: 1', 'Content-Type: application/xml'], $reportBody, $account['second_app_password'], $ip),
+                    ];
+                    $empty = $propfind('mixed', $path, '1', '<d:getetag/>');
+                    $reader = $propfind('reader', $f->calendar('reader'), '1', '<d:getetag/>');
+
+                    if ($phone['state'] !== $states::DEVICE_CLEANUP_EMPTY || $outlook['state'] !== $states::DEVICE_REVOKED) {
+                        echo '    mixed reset: phone ' . json_encode($phone) . ', outlook ' . json_encode($outlook) . "\n";
+                    }
+
+                    return $count === 2 && $phone['state'] === $states::DEVICE_CLEANUP_EMPTY && $outlook['state'] === $states::DEVICE_REVOKED
+                        && array_map(static fn (array $answer): int => $answer['status'], $outlookAnswers) === [401, 401]
+                        && $empty['status'] === 207 && !str_contains($empty['body'], '.ics')
+                        && $reader['status'] === 207 && str_contains($reader['body'], '.ics');
+                },
+            ],
+            [
+                'A withdrawn calendar answers 404 to PROPFIND and REPORT for a «Block only» device, never an empty calendar',
+                ['B', 'C', 'D', 'F'],
+                static function (TeamDavFixture $f) use ($send, $propfind, $sync): bool {
+                    $device = $f->device($f->accounts['denied']['device_id']);
+                    $collection = $propfind('denied', $f->calendar('denied'), '1', '<d:getetag/>');
+                    $report = $sync('denied', $f->calendar('denied'));
+
+                    return $device !== null && $device['removal_mode'] === \Advans\Component\Appointments\Administrator\Helper\Team\TeamStates::REMOVAL_BLOCK
+                        && $device['state'] === \Advans\Component\Appointments\Administrator\Helper\Team\TeamStates::DEVICE_ACTIVE
+                        && \in_array($collection['status'], [403, 404], true) && \in_array($report['status'], [403, 404], true)
+                        && !str_contains($collection['body'] . $report['body'], 'multistatus');
                 },
             ],
             [

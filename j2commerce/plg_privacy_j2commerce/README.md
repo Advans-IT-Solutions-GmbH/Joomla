@@ -185,6 +185,31 @@ The same page also works for customers with an account, so the request mail can 
 
 **Requirement:** the bundled system plugin **System - J2Commerce Privacy Consent** must be enabled (the installer enables it on the first installation), otherwise the mail keeps Joomla's links.
 
+### Coexistence with the standalone Core privacy adapter
+
+The optional [Core privacy requests system plugin](../../plg_system_privacyrequests/)
+adds public account-free removal-request creation without replacing this shop
+plugin or its guest confirmation. Its
+[three-package upgrade and rollback procedure](../../plg_system_privacyrequests/#existing-site-three-package-upgrade-and-rollback-boundary)
+applies when upgrading an existing coupled test installation: generic plugin ZIP,
+Appointments component ZIP, then this existing shop plugin ZIP; keep the generic
+adapter disabled until its operator contact route and captured test delivery are
+verified. Do not install a shop solely to use the standalone adapter.
+
+Keep this plugin, the existing **Guest Request Confirmation** setting and its
+bundled consent system plugin in their verified states. Administrator-created
+export/removal mail keeps this plugin's existing guest route; the generic adapter
+uses the distinct native `com_privacy.notification.remove` template and its own
+route. Already-sent shop links are not rewritten or migrated. Registered Core
+requests, legal blockers, anonymization and retention responsibilities remain in
+place. No request statuses or accounts are manufactured during the handover.
+
+The coupled upgrade checks preserved disabled task/mail states; that is not a
+claim about a fresh shop installation, whose existing installer enables its
+bundled task plugin. Do not activate real mail or Scheduler work as part of this
+handover. While the generic adapter is disabled, hold processing of its managed
+requests rather than bypassing its additional completion guard.
+
 ---
 
 ## Checkout and Profile Behavior
@@ -332,6 +357,17 @@ The integration uses **direct DB queries** against AcyMailing's tables — no Ac
 **An unsubscribe outlives a removal request.** Before a subscriber is removed, the plugin fires `onJ2CommercePrivacyBeforeNewsletterRemoval` (plugin group `j2commerce`, arguments `email` and `acymId`) while the subscriber still exists. A shop plugin can keep a minimal suppression record there, so the address is never subscribed again automatically after its list rows (including an unsubscribed status) are gone. If a listener throws, the subscriber is kept, the error is logged (`plg_privacy_j2commerce`, User Actions Log entry "AcyMailing subscriber kept") and the administrator gets a warning to repeat the removal. The rest of the removal request is carried out. The removal message and the customer e-mail then name the newsletter data as kept, not as deleted.
 
 The plugin detects AcyMailing by scanning the database for a table ending in `acym_configuration`. If not found, all AcyMailing code paths are bypassed.
+
+If the initial subscriber-address lookup fails while AcyMailing is detected, the
+existing privacy removal callback logs a sanitized error and displays an administrator
+warning. The removal summary and customer notice identify newsletter removal as
+unverified/kept, not deleted. Repair the lookup/storage problem and retry native Core
+**Remove** before assessing completion. This is the existing AcyMailing integration,
+not a second newsletter-erasure engine; Core's successful callback dispatch alone
+does not prove newsletter deletion. When the standalone Core guest-request adapter
+is enabled, that warning also prevents its successful removal outcome and separate
+**Complete**. Without such a completion guard, the administrator must not interpret
+Core's separate completion action as verified erasure.
 
 ### Privacy Suite: what is exported and deleted
 

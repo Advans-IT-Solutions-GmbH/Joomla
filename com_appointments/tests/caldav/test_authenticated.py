@@ -15,6 +15,7 @@ class AuthenticatedHarnessTests(unittest.TestCase):
         stub.BASE = "https://localhost:43572"
         stub.CA = "/private-test-work/ca.pem"
         stub.user = lambda _: {"totp": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"}
+        stub.STATE = {"mycalendars": "/index.php?option=com_appointments&view=mycalendars&Itemid=101"}
         spec = importlib.util.spec_from_file_location("authenticated_test_target", pathlib.Path(__file__).with_name("authenticated.py"))
         cls.target = importlib.util.module_from_spec(spec)
         with patch.dict(sys.modules, {"clients": stub}):

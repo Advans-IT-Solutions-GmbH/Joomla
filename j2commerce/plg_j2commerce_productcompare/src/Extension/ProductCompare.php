@@ -664,6 +664,12 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
                 . ' = ' . $db->quoteName('p') . '.' . $db->quoteName('product_source_id')
                 . ' AND ' . $db->quoteName('p') . '.' . $db->quoteName('product_source')
                 . ' = ' . $db->quote('com_content'))
+            // The article's category. Joomla hides the articles of a category that is unpublished
+            // or not readable for the visitor, so the comparison must not hand them out either.
+            ->join('LEFT', $db->quoteName('#__categories', 'cv')
+                . ' ON ' . $db->quoteName('cv') . '.' . $db->quoteName('id')
+                . ' = ' . $db->quoteName('c') . '.' . $db->quoteName('catid')
+                . ' AND ' . $db->quoteName('cv') . '.' . $db->quoteName('extension') . ' = ' . $db->quote('com_content'))
             ->whereIn($db->quoteName('p') . '.' . $db->quoteName($productsPk), $productIds)
             ->where($db->quoteName('p') . '.' . $db->quoteName('enabled') . ' = 1')
             // The shop's own hidden-product flag, same gate as the sitemap query.
@@ -674,6 +680,16 @@ class ProductCompare extends CMSPlugin implements DatabaseAwareInterface, Subscr
             // hand out title, description, price and stock of a hidden product.
             ->where($db->quoteName('c') . '.' . $db->quoteName('state') . ' = 1')
             ->whereIn($db->quoteName('c') . '.' . $db->quoteName('access'), $this->viewLevels())
+            // The category and each of its parents must be published and readable too.
+            ->where($db->quoteName('cv') . '.' . $db->quoteName('id') . ' IS NOT NULL')
+            ->where(
+                'NOT EXISTS (SELECT 1 FROM ' . $db->quoteName('#__categories', 'anc')
+                . ' WHERE ' . $db->quoteName('anc.extension') . ' = ' . $db->quote('com_content')
+                . ' AND ' . $db->quoteName('anc.lft') . ' <= ' . $db->quoteName('cv.lft')
+                . ' AND ' . $db->quoteName('anc.rgt') . ' >= ' . $db->quoteName('cv.rgt')
+                . ' AND (' . $db->quoteName('anc.published') . ' <> 1'
+                . ' OR ' . $db->quoteName('anc.access') . ' NOT IN (' . implode(',', $this->viewLevels()) . ')))'
+            )
             // Same language rule as a storefront list view: the language of the request
             // plus '*'. Without it the comparison could show an article of another
             // content language that the shop hides from this visitor.
