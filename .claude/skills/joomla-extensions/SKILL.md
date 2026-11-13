@@ -96,7 +96,9 @@ A new backup before the change is allowed and expected
 (`php cli/joomla.php akeeba:backup:take --profile=1 --description="…"` in the site root). Existing
 Akeeba backups (`.jpa` archives, their logs and records) are managed by the maintainer: never
 delete, move, rename or prune them, not even through Akeeba itself, only report count, size and
-age. No self-made backups on the server: no `backup-*` folders, no `mysqldump`/`.sql` dumps, no
+age. The Akeeba configuration (profiles, output directory, quotas, post-processing) is the
+maintainer's too and stays unchanged, so what a new backup does with older archives is his
+setting, not the agent's. No self-made backups on the server: no `backup-*` folders, no `mysqldump`/`.sql` dumps, no
 `files.tar.gz`, no copies of `configuration.php`, no `state.json` snapshots, neither in the home
 directory nor in the webroot. Temporary work files go into one folder of your own, removed at the
 end of the task. The review backups the shared installer writes itself (root `README.md`, section
