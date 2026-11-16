@@ -491,11 +491,12 @@ class ImportModelTest
 
             $this->test('A failure after the menu item was stored leaves no article, product or menu item behind',
                 function () use ($newModel, $afterMenu, $menuOptions, $db) {
+                    $orphans = $this->orphanProducts($db);
                     try {
                         $newModel(ImportModelFailingAfterMenu::class)->importProductFull($afterMenu, $menuOptions);
                     } catch (\RuntimeException $e) {
                         return str_contains($e->getMessage(), 'Forced failure after the menu item was stored')
-                            && $this->rowLeftovers($db, $afterMenu) === [];
+                            && $this->rowLeftovers($db, $afterMenu) === [] && $this->orphanProducts($db) === $orphans;
                     }
 
                     return false;
@@ -503,11 +504,12 @@ class ImportModelTest
 
             $this->test('A failure in a later row step leaves no category, article, asset, product or menu item behind',
                 function () use ($newModel, $inTransaction, $menuOptions, $db) {
+                    $orphans = $this->orphanProducts($db);
                     try {
                         $newModel(ImportModelFailingInRowTransaction::class)->importProductFull($inTransaction, $menuOptions);
                     } catch (\RuntimeException $e) {
                         return str_contains($e->getMessage(), 'Forced failure in a later row step')
-                            && $this->rowLeftovers($db, $inTransaction) === [];
+                            && $this->rowLeftovers($db, $inTransaction) === [] && $this->orphanProducts($db) === $orphans;
                     }
 
                     return false;
@@ -641,6 +643,20 @@ class ImportModelTest
             importExportRemoveTestAdministrator($publisherId);
             Access::clearStatics();
         }
+    }
+
+    /**
+     * Shop products whose article no longer exists, so a removed article's product is
+     * noticed even though it can no longer be found by the article's alias.
+     */
+    private function orphanProducts(object $db): int
+    {
+        $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName('#__' . $this->shop . '_products', 'p')
+            . ' LEFT JOIN ' . $db->quoteName('#__content', 'c') . ' ON ' . $db->quoteName('c.id') . ' = ' . $db->quoteName('p.product_source_id')
+            . ' WHERE ' . $db->quoteName('p.product_source') . ' = ' . $db->quote('com_content')
+            . ' AND ' . $db->quoteName('c.id') . ' IS NULL');
+
+        return (int) $db->loadResult();
     }
 
     private function countRows(object $db, string $table, string $column, string $value, string $extra = ''): int
