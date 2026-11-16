@@ -107,6 +107,43 @@ final class BookingDataTest extends TestCase
         $data->open($tampered);
     }
 
+    /** Readers of many rows (search, name order, privacy lookup) leave the large origin out but keep the whole-row check. */
+    public function testALightReadWithoutTheOriginKeepsTheWholeRowCheck(): void
+    {
+        $update = (new \DateTimeImmutable('2026-11-04 10:00:00', new \DateTimeZone('UTC')))->getTimestamp();
+        $clear = $this->row();
+        unset($clear['attribution']);
+        $failed = [];
+
+        $opened = $this->data($update)->openLenient($clear + [BookingData::ORIGIN_NULL => 1], $failed);
+        self::assertSame([], $failed, 'A row of 1.3 has no origin: read in clear while the migration runs');
+        self::assertSame('anna@example.test', $opened['invitee_email']);
+        self::assertArrayNotHasKey(BookingData::ORIGIN_NULL, $opened, 'The marker does not leave the read');
+
+        $this->data($update)->openLenient($clear + [BookingData::ORIGIN_NULL => 0], $failed);
+        self::assertCount(8, $failed, 'An origin that is present (sealed or put in) makes the row no row of 1.3');
+        $this->data($update)->openLenient($clear, $failed);
+        self::assertCount(8, $failed, 'Without the marker a read without the origin cannot tell');
+
+        $sealed = $this->data()->seal($this->row());
+        unset($sealed['attribution']);
+        $opened = $this->data()->openLenient($sealed + [BookingData::ORIGIN_NULL => 0], $failed);
+        self::assertSame([], $failed);
+        self::assertSame('anna@example.test', $opened['invitee_email']);
+
+        $db = new class {
+            public function quoteName(string $name): string
+            {
+                return '`' . $name . '`';
+            }
+        };
+        $select = BookingData::lightSelect($db, 'b');
+        self::assertContains('`b.invitee_email`', $select);
+        self::assertContains('`b.created_utc`', $select);
+        self::assertNotContains('`b.attribution`', $select);
+        self::assertSame('(`b.attribution` IS NULL) AS `' . BookingData::ORIGIN_NULL . '`', end($select));
+    }
+
     public function testClearTextCountsOnlyWhileTheMigrationRuns(): void
     {
         $failed = [];

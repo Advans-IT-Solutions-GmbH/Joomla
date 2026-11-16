@@ -395,7 +395,8 @@ final class BookingRecords
 
         do {
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-            $query->select($db->quoteName(array_merge(['id'], BookingData::readColumns())))->from($db->quoteName('#__appointments_bookings'))
+            // Without the large origin (BookingData::lightSelect()): only the addresses are needed.
+            $query->select(BookingData::lightSelect($db))->from($db->quoteName('#__appointments_bookings'))
                 ->where($db->quoteName('id') . ' > ' . $last)
                 ->where($db->quoteName('anonymised_utc') . ' IS NULL')
                 ->where('(' . $db->quoteName('invitee_email') . ' IS NOT NULL OR ' . $db->quoteName('guest_emails') . ' IS NOT NULL)')
@@ -440,7 +441,7 @@ final class BookingRecords
         $needle = mb_strtolower(trim($needle), 'UTF-8');
         $query = clone $query;
         // A unique order, so paging the candidates neither skips nor repeats a row.
-        $query->clear('select')->clear('order')->select($db->quoteName(array_merge(['b.id'], BookingData::readColumns('b'))))->order($db->quoteName('b.id') . ' DESC');
+        $query->clear('select')->clear('order')->select(BookingData::lightSelect($db, 'b'))->order($db->quoteName('b.id') . ' DESC');
         $ids = [];
         $offset = 0;
         $batch = 500;
@@ -478,7 +479,7 @@ final class BookingRecords
     {
         $db = $this->db;
         $query = clone $query;
-        $query->clear('select')->clear('order')->select($db->quoteName(array_merge(['b.id'], BookingData::readColumns('b'))))
+        $query->clear('select')->clear('order')->select(BookingData::lightSelect($db, 'b'))
             ->order($db->quoteName('b.id') . ' DESC');
         $rows = [];
         $offset = 0;

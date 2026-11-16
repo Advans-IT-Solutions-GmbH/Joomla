@@ -25,7 +25,8 @@ defined('_JEXEC') or die;
  * bookings are anonymised or deleted. The export counts them per day, event type and campaign.
  *
  * Written inside the booking's own transaction, under its host lock: the row and its state
- * always follow the booking in order. A failure is logged and never fails the booking. Bookings
+ * always follow the booking in order. A failure is logged and does not fail the booking, except a
+ * deadlock or lock wait timeout, which rolled back the whole transaction and is passed on. Bookings
  * without a record of their origin (made before 1.6.0 or with the option `attribution_capture`
  * off) get no row.
  *
@@ -52,6 +53,11 @@ final class CampaignStats
                 'eventtype_title' => Attribution::clean($eventTitle, 255)] + Attribution::campaign($record) + ['state' => $state]);
             $db->insertObject(self::TABLE, $row);
         } catch (\Throwable $e) {
+            // A deadlock or lock wait rolled back the whole booking transaction: the caller must fail.
+            if (Team\AuditService::isLockConflict($e)) {
+                throw $e;
+            }
+
             Log::add('Appointment campaign statistics: a booking could not be counted (' . $e::class . ').', Log::WARNING, 'com_appointments');
         }
     }
@@ -76,6 +82,11 @@ final class CampaignStats
             $db->setQuery('UPDATE ' . $db->quoteName(self::TABLE) . ' SET ' . $db->quoteName('state') . ' = ' . $state
                 . ' WHERE ' . $db->quoteName('booking_id') . ' = ' . $bookingId)->execute();
         } catch (\Throwable $e) {
+            // A deadlock or lock wait rolled back the whole booking transaction: the caller must fail.
+            if (Team\AuditService::isLockConflict($e)) {
+                throw $e;
+            }
+
             Log::add('Appointment campaign statistics: a state change could not be counted (' . $e::class . ').', Log::WARNING, 'com_appointments');
         }
     }

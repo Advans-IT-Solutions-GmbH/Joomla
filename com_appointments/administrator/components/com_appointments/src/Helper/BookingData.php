@@ -63,6 +63,12 @@ final class BookingData
     public const COLUMNS = ['invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone',
         'guest_emails', 'custom_fields', 'cancel_reason', 'conference_url', 'attribution'];
 
+    /**
+     * The key a light read ({@see self::lightSelect()}) carries instead of the large `attribution`
+     * column: 1 when the origin is NULL. Set by the SQL of the read only, never by a form.
+     */
+    public const ORIGIN_NULL = '_origin_null';
+
     /** Request-internal only; never supplied by a form, storage or another trust boundary. */
     public const OPENED = '_opened';
 
@@ -205,6 +211,24 @@ final class BookingData
             array_merge(['id', 'eventtype_id', 'host_user_id', 'uid', 'created_utc'], self::COLUMNS));
     }
 
+    /**
+     * The select list of a read of many rows that needs no origin (search, order by name, lookup
+     * by address): {@see self::readColumns()} without the large `attribution` column, which is
+     * replaced by {@see self::ORIGIN_NULL}, so the whole-row decision on clear values of 1.3 still
+     * holds (a row of 1.3 has no origin). $db quotes the names.
+     *
+     * @return  string[]
+     */
+    public static function lightSelect(object $db, string $alias = ''): array
+    {
+        $prefix = $alias === '' ? '' : $alias . '.';
+        $columns = array_map(static fn (string $column): string => $db->quoteName($prefix . $column),
+            array_merge(['id', 'eventtype_id', 'host_user_id', 'uid', 'created_utc'], array_values(array_diff(self::COLUMNS, ['attribution']))));
+        $columns[] = '(' . $db->quoteName($prefix . 'attribution') . ' IS NULL) AS ' . $db->quoteName(self::ORIGIN_NULL);
+
+        return $columns;
+    }
+
     /** Whether a stored value has the form of a sealed value. */
     public static function isSealed(mixed $value): bool
     {
@@ -226,7 +250,7 @@ final class BookingData
     public function seal(array $row): array
     {
         $context = self::context($row);
-        unset($row[self::OPENED], $row[self::CLEAR], $row[self::UNVERIFIED]);
+        unset($row[self::OPENED], $row[self::CLEAR], $row[self::UNVERIFIED], $row[self::ORIGIN_NULL]);
 
         foreach (self::COLUMNS as $column) {
             if (!\array_key_exists($column, $row) || $row[$column] === null) {
@@ -328,6 +352,7 @@ final class BookingData
         }
 
         $row[self::OPENED] = true;
+        unset($row[self::ORIGIN_NULL]);
 
         return $row;
     }
@@ -419,6 +444,15 @@ final class BookingData
         }
 
         foreach (self::COLUMNS as $column) {
+            // A light read has no origin column, only whether it is NULL (a row of 1.3 has none).
+            if ($column === 'attribution' && !\array_key_exists($column, $row) && \array_key_exists(self::ORIGIN_NULL, $row)) {
+                if ((string) $row[self::ORIGIN_NULL] !== '1') {
+                    return false;
+                }
+
+                continue;
+            }
+
             if (!\array_key_exists($column, $row) || self::isSealed($row[$column])) {
                 return false;
             }
