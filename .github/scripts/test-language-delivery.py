@@ -290,34 +290,55 @@ with tempfile.TemporaryDirectory(prefix="joomla-options-") as directory:
 # when the label is missing.
 with tempfile.TemporaryDirectory(prefix="joomla-params-") as directory:
     fixture = Path(directory)
+    own = 'PLG_SYSTEM_EXAMPLE="Example"\nPLG_SYSTEM_EXAMPLE_FIELDSET_EXTRA="Extra"\n'
     for tag in TAGS:
         folder = fixture / "language" / tag
         folder.mkdir(parents=True)
-        (folder / "plg_example.ini").write_text(
-            'PLG_EXAMPLE="Example"\nPLG_EXAMPLE_FIELDSET_EXTRA="Extra"\n', encoding="utf-8"
-        )
+        (folder / "plg_system_example.ini").write_text(own, encoding="utf-8")
     declarations = "".join(
-        f'<language tag="{tag}">{tag}/plg_example.ini</language>' for tag in TAGS
+        f'<language tag="{tag}">{tag}/plg_system_example.ini</language>' for tag in TAGS
     )
     manifest = fixture / "example.xml"
     valid_manifest = (
-        '<extension type="plugin" group="system"><name>PLG_EXAMPLE</name>'
+        '<extension type="plugin" group="system"><name>PLG_SYSTEM_EXAMPLE</name><element>example</element>'
         f'<languages folder="language">{declarations}</languages>'
         '<config><fields name="params"><fieldset name="basic"/><fieldset name="advanced"/>'
-        '<fieldset name="extra" label="PLG_EXAMPLE_FIELDSET_EXTRA"/></fields></config></extension>'
+        '<fieldset name="extra" label="PLG_SYSTEM_EXAMPLE_FIELDSET_EXTRA"/></fields></config></extension>'
     )
     manifest.write_text(valid_manifest, encoding="utf-8")
     command = ["php", str(LINT), str(fixture)]
+    package_command = ["php", str(LINT), "--package", str(fixture)]
     check(command, ROOT, True, "Language files OK")
+    check(package_command, ROOT, True, "Language files OK")
     manifest.write_text(valid_manifest.replace(
-        '<fieldset name="extra" label="PLG_EXAMPLE_FIELDSET_EXTRA"/>',
-        '<fieldset name="extra"/><fieldset name="other" label="PLG_EXAMPLE_FIELDSET_EXTRA"/>',
+        '<fieldset name="extra" label="PLG_SYSTEM_EXAMPLE_FIELDSET_EXTRA"/>',
+        '<fieldset name="extra"/><fieldset name="other" label="PLG_SYSTEM_EXAMPLE_FIELDSET_EXTRA"/>',
     ), encoding="utf-8")
     check(command, ROOT, False, 'parameter fieldset "extra" has no label')
     manifest.write_text(valid_manifest.replace(
-        'label="PLG_EXAMPLE_FIELDSET_EXTRA"/>',
-        'label="PLG_EXAMPLE_FIELDSET_EXTRA" description="COM_PLUGINS_EXTRA_FIELDSET_DESC"/>',
+        'label="PLG_SYSTEM_EXAMPLE_FIELDSET_EXTRA"/>',
+        'label="PLG_SYSTEM_EXAMPLE_FIELDSET_EXTRA" description="COM_PLUGINS_EXTRA_FIELDSET_DESC"/>',
     ), encoding="utf-8")
-    check(command, ROOT, False, "description COM_PLUGINS_EXTRA_FIELDSET_DESC is not defined in de-DE")
-    check(["php", str(LINT), "--package", str(fixture)], ROOT, False,
-          "description COM_PLUGINS_EXTRA_FIELDSET_DESC is not defined in fr-FR")
+    check(command, ROOT, False, "description COM_PLUGINS_EXTRA_FIELDSET_DESC is not defined in the de-DE plg_system_example.ini")
+    check(package_command, ROOT, False, "description COM_PLUGINS_EXTRA_FIELDSET_DESC is not defined in the fr-FR plg_system_example.ini")
+
+    # A translation in a file the edit screen does not load (here a bundled
+    # sibling plugin's file) does not count.
+    manifest.write_text(valid_manifest, encoding="utf-8")
+    sibling = fixture / "plugins" / "system" / "sibling"
+    for tag in TAGS:
+        (fixture / "language" / tag / "plg_system_example.ini").write_text('PLG_SYSTEM_EXAMPLE="Example"\n', encoding="utf-8")
+        (sibling / "language" / tag).mkdir(parents=True)
+        (sibling / "language" / tag / "plg_system_sibling.ini").write_text(
+            'PLG_SYSTEM_SIBLING="Sibling"\nPLG_SYSTEM_EXAMPLE_FIELDSET_EXTRA="Extra"\n', encoding="utf-8"
+        )
+    (sibling / "sibling.xml").write_text(
+        '<extension type="plugin" group="system"><name>PLG_SYSTEM_SIBLING</name><element>sibling</element>'
+        '<files><folder>language</folder></files></extension>',
+        encoding="utf-8",
+    )
+    check(package_command, ROOT, False, "label PLG_SYSTEM_EXAMPLE_FIELDSET_EXTRA is not defined in the en-GB plg_system_example.ini")
+    for tag in TAGS:
+        (fixture / "language" / tag / "plg_system_example.ini").write_text(own, encoding="utf-8")
+    shutil.rmtree(fixture / "plugins")
+    check(command, ROOT, True, "Language files OK")

@@ -537,6 +537,53 @@ function lint_xml_line(SimpleXMLElement $element): int
 }
 
 /**
+ * Keys per language of the named language files that one manifest installs:
+ * declared in <languages> or inside an installed `language` folder, below the
+ * manifest node $scope ('/extension' or '/extension/administration').
+ *
+ * @param string[] $names  file names without the optional "<tag>." prefix
+ *
+ * @return array<string, array<string, string>>  tag => key => value
+ */
+function lint_manifest_strings(SimpleXMLElement $xml, string $base, string $scope, array $names): array
+{
+    $strings = [];
+    $add     = static function (string $tag, string $file) use (&$strings, $names): void {
+        $name = preg_replace('/^' . preg_quote($tag, '/') . '\./', '', basename($file));
+
+        if (in_array($name, $names, true) && is_file($file)) {
+            $strings[$tag] = ($strings[$tag] ?? []) + lint_ini_keys($file);
+        }
+    };
+
+    foreach ($xml->xpath($scope . '/languages') as $block) {
+        $folder = $base . ((string) $block['folder'] !== '' ? '/' . $block['folder'] : '');
+
+        foreach ($block->language as $language) {
+            $add((string) $language['tag'], $folder . '/' . $language);
+        }
+    }
+
+    foreach ($xml->xpath($scope . '/files') as $block) {
+        $source = $base . ((string) $block['folder'] !== '' ? '/' . $block['folder'] : '');
+
+        foreach ($block->folder as $folder) {
+            if (basename((string) $folder) !== 'language') {
+                continue;
+            }
+
+            foreach (SUPPORTED_TAGS as $tag) {
+                foreach (glob("$source/$folder/$tag/*.ini") ?: [] as $file) {
+                    $add($tag, $file);
+                }
+            }
+        }
+    }
+
+    return $strings;
+}
+
+/**
  * Options screens never show a raw language key.
  *
  * com_config titles every tab of a component's Options screen with the label of
@@ -551,17 +598,18 @@ function lint_xml_line(SimpleXMLElement $element): int
  * layout joomla.edit.params. An unlabelled fieldset falls back to
  * JGLOBAL_FIELDSET_<name> and then <option>_<name>_FIELDSET_LABEL, which core
  * defines only for the names in UNLABELLED_PARAM_FIELDSETS. Their label and
- * description must be defined in every shipped language of the extension.
+ * description must be defined in every shipped language of the files that edit
+ * screen loads, as installed by the same manifest: plg_<group>_<element>.ini or
+ * its .sys.ini for a plugin, mod_<name>.ini for a module. A parent, sibling or
+ * installer-support file does not count.
  *
  * A Joomla core key is accepted without a definition only from CORE_OPTIONS_KEYS.
  * Any other key, own or not (the build appends the shared installer strings such
  * as ADVANS_CHECK_TITLE to every language file), must be defined as above.
  *
- * @param array<string, array<string, mixed>> $definedByTag  tag => key => definition
- *
  * @return string[] keys Joomla reads by convention, without the code naming them
  */
-function lint_options_screens(string $extensionDir, array $definedByTag, callable $addError): array
+function lint_options_screens(string $extensionDir, callable $addError): array
 {
     $byConvention = [];
 
@@ -587,6 +635,19 @@ function lint_options_screens(string $extensionDir, array $definedByTag, callabl
         $base = dirname($manifest);
 
         if ($type === 'plugin' || $type === 'module') {
+            $element = (string) $xml->element;
+
+            foreach ($xml->xpath('/extension/files/*[@' . $type . ']') as $entry) {
+                $element = $element !== '' ? $element : (string) $entry[$type];
+            }
+
+            // The files the edit screen loads: plg_<group>_<element>(.sys).ini
+            // or mod_<name>.ini, as installed by this manifest.
+            $names = $type === 'plugin'
+                ? ["plg_{$xml['group']}_$element.ini", "plg_{$xml['group']}_$element.sys.ini"]
+                : [strtolower($element !== '' ? $element : (string) $xml->name) . '.ini'];
+            $strings = lint_manifest_strings($xml, $base, '/extension', $names);
+
             foreach ($xml->xpath('/extension/config//fieldset') as $fieldset) {
                 $name = (string) $fieldset['name'];
 
@@ -607,8 +668,13 @@ function lint_options_screens(string $extensionDir, array $definedByTag, callabl
                     }
 
                     foreach (SUPPORTED_TAGS as $tag) {
-                        if (!isset($definedByTag[$tag][$key])) {
-                            $addError($manifest, lint_xml_line($fieldset), "parameter fieldset \"$name\" $attribute $key is not defined in $tag");
+                        if (!isset($strings[$tag][$key])) {
+                            $addError(
+                                $manifest,
+                                lint_xml_line($fieldset),
+                                "parameter fieldset \"$name\" $attribute $key is not defined in the $tag "
+                                    . implode(' or ', $names) . ' this manifest installs'
+                            );
                         }
                     }
                 }
@@ -640,32 +706,7 @@ function lint_options_screens(string $extensionDir, array $definedByTag, callabl
                 continue;
             }
 
-            // The administrator <component>.ini per language: declared in the
-            // manifest, or installed inside the component folder.
-            $strings = [];
-
-            foreach ($xml->xpath('/extension/administration/languages') as $block) {
-                $languageFolder = $base . ((string) $block['folder'] !== '' ? '/' . $block['folder'] : '');
-
-                foreach ($block->language as $language) {
-                    $tag  = (string) $language['tag'];
-                    $file = $languageFolder . '/' . $language;
-
-                    if (preg_match('/^(?:' . preg_quote($tag, '/') . '\.)?' . preg_quote($element, '/') . '\.ini$/', basename($file))
-                        && is_file($file)
-                    ) {
-                        $strings[$tag] = ($strings[$tag] ?? []) + lint_ini_keys($file);
-                    }
-                }
-            }
-
-            foreach (SUPPORTED_TAGS as $tag) {
-                foreach (["$folder/language/$tag/$element.ini", "$folder/language/$tag/$tag.$element.ini"] as $file) {
-                    if (is_file($file)) {
-                        $strings[$tag] = ($strings[$tag] ?? []) + lint_ini_keys($file);
-                    }
-                }
-            }
+            $strings = lint_manifest_strings($xml, $base, '/extension/administration', ["$element.ini"]);
 
             foreach (SUPPORTED_TAGS as $tag) {
                 if (!isset($strings[$tag])) {
@@ -980,7 +1021,7 @@ foreach ($directories as $extensionDir) {
         }
     }
 
-    $byConvention = lint_options_screens($extensionDir, $definedByTag, $addError);
+    $byConvention = lint_options_screens($extensionDir, $addError);
 
     if (!$packageMode) {
         lint_usage($extensionDir, $definedByTag, array_unique($fileNames), $byConvention, $addError);
