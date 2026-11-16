@@ -186,6 +186,75 @@ try {
     }
     $check($waited && $released && $keep->status === 200 && (string) $fixture->row($gid)['guest_emails'] === '',
         'A guest removal waits while a mail delivery holds the guest list and lands right after it');
+
+    // Issue #351: erasure outside a web request. A PHP script that boots Joomla like cli/joomla.php
+    // (console application, CLI session, extension namespace map) erases a booking without and one
+    // with a conference room, and runs the retention routine of the Scheduler for an old booking
+    // with a room. None may throw after the commit; the room is released (the fixed provider has
+    // nothing to tear down) or the failure is reported, never thrown.
+    $consoleEvent = $fixture->event();
+    $plain = $fixture->booking($consoleEvent, $day . ' 13:00:00')['booking'];
+    $withRoom = $fixture->booking($consoleEvent, $day . ' 14:00:00')['booking'];
+    $old = $fixture->booking($consoleEvent, $day . ' 15:00:00')['booking'];
+    $erasedIds = array_merge($erasedIds, [(int) $plain['id'], (int) $withRoom['id'], (int) $old['id']]);
+    $room = ['conference_provider' => 'fixed', 'conference_url' => 'https://example.test/console-room', 'conference_room' => 'console-room',
+        'conference_state' => 'ok', 'conference_error' => null];
+    $fixture->update((int) $withRoom['id'], $room);
+    $fixture->update((int) $old['id'], $room);
+    $db->query("UPDATE {$prefix}appointments_bookings SET start_utc=DATE_SUB(UTC_TIMESTAMP(), INTERVAL 800 DAY),"
+        . " end_utc=DATE_ADD(DATE_SUB(UTC_TIMESTAMP(), INTERVAL 800 DAY), INTERVAL 30 MINUTE) WHERE id=" . (int) $old['id']);
+    $script = sys_get_temp_dir() . '/appointments-console-erase-' . bin2hex(random_bytes(4)) . '.php';
+    file_put_contents($script, '<?php
+        const _JEXEC = 1;
+        define("JPATH_BASE", "/var/www/html");
+        require_once JPATH_BASE . "/includes/defines.php";
+        require_once JPATH_BASE . "/includes/framework.php";
+        $container = \Joomla\CMS\Factory::getContainer();
+        $container->alias("session", "session.cli")->alias("JSession", "session.cli")
+            ->alias(\Joomla\CMS\Session\Session::class, "session.cli")->alias(\Joomla\Session\Session::class, "session.cli")
+            ->alias(\Joomla\Session\SessionInterface::class, "session.cli");
+        $app = $container->get(\Joomla\Console\Application::class);
+        \Joomla\CMS\Factory::$application = $app;
+        $app->createExtensionNamespaceMap();
+        $db = $container->get(\Joomla\Database\DatabaseInterface::class);
+        $now = new DateTimeImmutable("now", new DateTimeZone("UTC"));
+        $result = [];
+        foreach (["plain" => ' . (int) $plain['id'] . ', "room" => ' . (int) $withRoom['id'] . '] as $label => $id) {
+            try {
+                $erased = (new \Advans\Component\Appointments\Administrator\Service\BookingStore($db))->erase($id, $now, "admin", true, ' . (int) $fixture->host . ');
+                $result[$label] = ["ok" => true, "cleanup_error" => !empty($erased["_conference_cleanup_error"])];
+            } catch (\Throwable $e) {
+                $result[$label] = ["ok" => false, "error" => get_class($e) . ": " . substr($e->getMessage(), 0, 160)];
+            }
+        }
+        try {
+            $retention = (new \Advans\Component\Appointments\Administrator\Service\SchedulerService($db,
+                \Joomla\CMS\Component\ComponentHelper::getParams("com_appointments")))->retention($now);
+            $result["retention"] = ["ok" => true, "failed" => (int) $retention["failed"]];
+        } catch (\Throwable $e) {
+            $result["retention"] = ["ok" => false, "error" => get_class($e) . ": " . substr($e->getMessage(), 0, 160)];
+        }
+        echo "\n@@CONSOLE@@" . json_encode($result);');
+    $output = [];
+    exec('cd /var/www/html && php ' . escapeshellarg($script) . ' 2>&1', $output);
+    @unlink($script);
+    $text = implode("\n", $output);
+    $at = strrpos($text, '@@CONSOLE@@');
+    $console = $at === false ? [] : (array) json_decode(substr($text, $at + 11), true);
+    if ($at === false) {
+        echo '    console: ' . substr($text, 0, 1200) . "\n";
+    }
+    foreach (['plain' => 'a booking without a conference', 'room' => 'a booking with a conference room'] as $key => $label) {
+        $check(($console[$key]['ok'] ?? false) === true && ($console[$key]['cleanup_error'] ?? true) === false,
+            'Console erasure of ' . $label . ' completes without an exception and without a cleanup error: ' . json_encode($console[$key] ?? $text));
+    }
+    $check($fixture->stored((int) $plain['id']) === null && $fixture->stored((int) $withRoom['id']) === null
+        && (int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_audit WHERE booking_id IN (" . (int) $plain['id'] . ',' . (int) $withRoom['id'] . ") AND path='admin'")->fetch_row()[0] === 2,
+        'The console erasures removed both bookings and recorded them once each');
+    $retained = $fixture->stored((int) $old['id']);
+    $check(($console['retention']['ok'] ?? false) === true && ($console['retention']['failed'] ?? 1) === 0
+        && ($retained === null || $retained['anonymised_utc'] !== null) && ($retained['conference_room'] ?? null) === null,
+        'The Scheduler retention outside a web request erases an old booking with a room and releases it: ' . json_encode($console['retention'] ?? $text));
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;
