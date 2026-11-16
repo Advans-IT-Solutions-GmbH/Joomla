@@ -768,7 +768,9 @@ function getClassStructure(string $source): array
             $current = count($stack) - 1;
             $after   = $tokens[$i + 3] ?? null;
 
-            if ($after === '=' || $id($after) === T_COALESCE_EQUAL) {
+            if ($after === '(') {
+                // $this->app() calls a method, the property is not involved.
+            } elseif ($after === '=' || $id($after) === T_COALESCE_EQUAL) {
                 $stack[$current]['initialized'] = true;
             } else {
                 $stack[$current]['uses'] = true;
@@ -867,22 +869,9 @@ function isIssueAvailable(array $issue): bool
             return class_exists((string) ($issue['class'] ?? $issue['detail']));
 
         case 'pluginApp':
-            // CMSPlugin fills $app only when the plugin class declares it and
-            // it is not private (deprecated, removal announced for 7.0).
-            if (!empty($issue['private'])) {
-                return false;
-            }
-
-            if (!empty($issue['declared'])) {
-                return (int) JVERSION < (int) ($issue['removedIn'] ?? 0);
-            }
-
-            // Undeclared here: it depends on the parent class. A parent this
-            // request has not loaded (e.g. one the plugin includes itself) is
-            // unknown, and unknown is never reported as missing.
-            $parent = (string) ($issue['parent'] ?? '');
-
-            return $parent === '' || !class_exists($parent) || property_exists($parent, 'app');
+            // CMSPlugin fills a declared non-private $app until Joomla 7
+            // (deprecated since 4.3). Only that case is a finding.
+            return (int) JVERSION < (int) ($issue['removedIn'] ?? 0);
 
         case 'factory':
             return preg_match('/^Factory::(\w+)\(\)$/', (string) $issue['detail'], $m) === 1
@@ -943,11 +932,15 @@ function scanForIssues($path, $patterns) {
                 // [subject, class or plugin class info].
                 $subjects = [];
                 if ($probe === 'pluginApp') {
-                    // $this->app is the deprecated CMSPlugin property only in a
-                    // plugin class that reads it without setting it itself.
+                    // The deprecated CMSPlugin mechanism: a plugin class declares a
+                    // non-private $app, does not set it itself and reads it, so it
+                    // relies on CMSPlugin filling it. Without an own declaration $app
+                    // comes from elsewhere (trait, parent, __get) or is only checked
+                    // with isset(); that is not provable from one file and no finding.
                     // Module dispatchers and console commands own their $app.
                     foreach ($structure['classes'] as $class) {
-                        if ($class['uses'] && !$class['initialized'] && preg_match('/Plugin$/i', $class['parent']) === 1) {
+                        if ($class['uses'] && $class['declared'] && !$class['private'] && !$class['initialized']
+                            && preg_match('/Plugin$/i', $class['parent']) === 1) {
                             $subjects[] = [$info['api'], $class];
                         }
                     }
@@ -975,9 +968,7 @@ function scanForIssues($path, $patterns) {
                         'probe'     => $probe,
                     ];
 
-                    if ($probe === 'pluginApp') {
-                        $issue += ['parent' => $target['parent'], 'declared' => $target['declared'], 'private' => $target['private']];
-                    } else {
+                    if ($probe !== 'pluginApp') {
                         $issue['class'] = $target;
                     }
 

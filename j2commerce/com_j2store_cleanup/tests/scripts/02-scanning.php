@@ -208,7 +208,10 @@ class PlgSystemOld extends CMSPlugin
 PHP]);
             $this->test('$this->app in a plugin is deprecated, not incompatible', $r['status'] === 'deprecated', $r['status'] . ': ' . self::details($r));
 
-            // --- $this->app in a plugin that does not declare it: CMSPlugin fills nothing ---
+            // --- Without an own $app declaration the class does not use the
+            //     deprecated CMSPlugin mechanism. Where $app comes from then
+            //     (trait, parent, __get, isset checks) is not provable from
+            //     one file, so it is no finding, never "missing". ---
             $r = $this->classify('plugin_app_undeclared', ['plugin.php' => <<<'PHP'
 <?php
 namespace Acme\Plugin\System\Old\Extension;
@@ -218,7 +221,50 @@ class Old extends CMSPlugin
     public function onAfterRoute() { return $this->app->getInput(); }
 }
 PHP]);
-            $this->test('$this->app in a plugin without a declared $app is incompatible', $r['status'] === 'incompatible', $r['status'] . ': ' . self::details($r));
+            $this->test('$this->app in a plugin without its own $app declaration is no finding', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            $r = $this->classify('plugin_app_guarded', ['plugin.php' => <<<'PHP'
+<?php
+use Joomla\CMS\Plugin\CMSPlugin;
+class PlgSystemGuarded extends CMSPlugin
+{
+    public function a() { return isset($this->app) || empty($this->app); }
+    public function b($fallback) { return $this->app ?? $fallback; }
+}
+PHP]);
+            $this->test('isset/empty/?? on an undeclared $this->app is no finding', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            $r = $this->classify('plugin_app_trait', [
+                'AppTrait.php' => "<?php\ntrait AcmeAppTrait\n{\n    private \$app;\n    public function __construct() { \$this->app = \\Joomla\\CMS\\Factory::getApplication(); }\n}\n",
+                'plugin.php'   => "<?php\nclass PlgSystemTrait extends \\Joomla\\CMS\\Plugin\\CMSPlugin\n{\n    use AcmeAppTrait;\n    public function onAfterRoute() { return \$this->app->getInput(); }\n}\n",
+            ]);
+            $this->test('$app from a trait is no finding', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            $r = $this->classify('plugin_app_method', ['plugin.php' => <<<'PHP'
+<?php
+use Joomla\CMS\Plugin\CMSPlugin;
+class PlgSystemMethod extends CMSPlugin
+{
+    protected $app;
+    private function app() { return $this->getApplication(); }
+    public function onAfterRoute() { return $this->app()->getInput(); }
+}
+PHP]);
+            $this->test('$this->app() is a method call, not the property', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            // The scanner never loads a parent class: an autoloader that fails
+            // on a missing dependency must not abort the page.
+            spl_autoload_register(static function (string $class): void {
+                if (str_starts_with($class, 'Acme\\Broken\\')) {
+                    throw new \Error('autoloader hit a missing dependency for ' . $class);
+                }
+            });
+            try {
+                $r = $this->classify('plugin_app_broken_parent', ['plugin.php' => "<?php\nclass PlgSystemBrokenParent extends \\Acme\\Broken\\BasePlugin\n{\n    public function f() { return \$this->app->getInput(); }\n}\n"]);
+                $this->test('A parent whose autoload fails does not abort the scan', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+            } catch (\Throwable $e) {
+                $this->test('A parent whose autoload fails does not abort the scan', false, $e->getMessage());
+            }
 
             // --- a plugin that sets $this->app itself owns the property ---
             $r = $this->classify('plugin_app_own', ['plugin.php' => <<<'PHP'
@@ -384,12 +430,13 @@ class Helper
     public $app;
     public function set($app) { $this->app = $app; }
 }
-class PlgSystemBroken extends CMSPlugin
+class PlgSystemOldStyle extends CMSPlugin
 {
+    protected $app;
     public function onAfterRoute() { return $this->app->getInput(); }
 }
 PHP]);
-            $this->test('An assignment in another class does not hide a broken plugin', $r['status'] === 'incompatible', $r['status'] . ': ' . self::details($r));
+            $this->test('An assignment in another class does not hide the deprecated $app of a plugin', $r['status'] === 'deprecated', $r['status'] . ': ' . self::details($r));
 
             // --- Class names are case-insensitive: one finding per class ---
             $r = $this->classify('j2store_case', ['a.php' => "<?php\n\$a = J2html::select();\n\$b = J2Html::select();\n"]);
