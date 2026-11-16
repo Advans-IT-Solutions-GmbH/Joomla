@@ -151,7 +151,20 @@ namespace Joomla\CMS\Table {
             return true;
         }
         public function rebuildPath($pk = null): bool { return true; }
-        public function load($pk): bool { return true; }
+        public function load($pk): bool {
+            $stored = $this->db->inserted['#__categories'] ?? null;
+            if (!$stored || (int) ($stored->id ?? 0) !== (int) $pk) { return false; }
+            $this->row = (array) $stored;
+            $this->id = (int) $stored->id;
+            return true;
+        }
+        public function __get(string $name): mixed { return $this->row[$name] ?? null; }
+        public function getFields(): array {
+            return array_fill_keys(['id', 'asset_id', 'parent_id', 'lft', 'rgt', 'level', 'path', 'extension', 'title', 'alias',
+                'note', 'description', 'published', 'checked_out', 'checked_out_time', 'access', 'params', 'metadesc',
+                'metakey', 'metadata', 'created_user_id', 'created_time', 'modified_user_id', 'modified_time', 'hits',
+                'language', 'version'], null);
+        }
         public function delete($pk = null, $children = true): bool {
             if (self::$failDelete) { return false; }
             $this->lockForStore();
@@ -1483,6 +1496,38 @@ namespace {
             check(str_contains($failure->getMessage(), 'COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_MENU_ITEM: 1')
                 && !in_array('#__menu', array_column($deletes(), 1), true),
                 'A new menu item whose ' . $column . ' changed after the row stored it is kept and reported');
+        }
+
+        // A new category that an editor changed after the row created it is kept and reported.
+        $authDb->resetAuthorizationScenario([]);
+        $authDb->tableResults = $nativeTables;
+        $failingModel->beforeFailure = function () use ($authDb): void {
+            $authDb->inserted['#__categories']->description = 'Edited by an editor';
+        };
+        try {
+            $failure = $runFailingRow();
+        } finally {
+            $failingModel->beforeFailure = null;
+        }
+        check(str_contains($failure->getMessage(), 'COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_CATEGORY: 42')
+            && !in_array('#__categories', array_column($deletes(), 1), true),
+            'A new category changed by an editor after the row created it is kept and reported');
+
+        // An alias that leaves nothing URL-safe would become a date alias that no re-import finds.
+        foreach ([
+            'An article' => [['title' => '***', 'alias' => '', 'catid' => 2], ['#__categories' => 2] + $nativeTables],
+            'A category' => [['category_title' => '***', 'category_alias' => ''] + $nativeRow, $nativeTables],
+        ] as $kind => [$invalidAlias, $tables]) {
+            $authDb->resetAuthorizationScenario([]);
+            $authDb->tableResults = $tables;
+            check((function () use ($authModel, $invalidAlias): bool {
+                try {
+                    $authModel->importProductFull($invalidAlias, ['update_existing' => true]);
+                } catch (\InvalidArgumentException $e) {
+                    return $e->getMessage() === 'COM_J2COMMERCE_IMPORTEXPORT_ERROR_ALIAS_NOT_URL_SAFE';
+                }
+                return false;
+            })() && $authDb->tableWrites === [], $kind . ' alias without URL-safe characters is refused before any write');
         }
 
         // A new article that an editor checked out after the row created it is kept and reported.

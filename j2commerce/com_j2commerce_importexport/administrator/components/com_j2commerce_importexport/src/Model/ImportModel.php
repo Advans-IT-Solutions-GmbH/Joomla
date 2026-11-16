@@ -235,17 +235,24 @@ class ImportModel extends BaseDatabaseModel
     }
 
     /**
-     * Deletes a category the failed row created, unless something else uses it by now:
-     * the category is committed before the row ends, so a concurrent import may already
-     * have placed an article or a subcategory in it. Such a category is kept and reported.
+     * Deletes a category the failed row created, unless it changed or is used by now: the
+     * category is committed before the row ends, so an editor may already have edited or
+     * checked it out, or a concurrent import placed an article or a subcategory in it.
+     * Such a category is kept and reported.
+     *
+     * @param   ?array  $written  Persisted values after the row's store; null if unknown
      */
-    private function deleteCategory(int $categoryId): bool
+    private function deleteCategory(int $categoryId, ?array $written): bool
     {
         $table = $this->newTable(CategoryTable::class);
 
         // Nothing left to remove.
         if (!$table->load($categoryId)) {
             return true;
+        }
+
+        if ($written === null || !$this->tableHolds($table, $written)) {
+            return false;
         }
 
         $db = $this->getDatabase();
@@ -496,8 +503,8 @@ class ImportModel extends BaseDatabaseModel
             // Joomla stores, and Joomla allows an alias only once per level. A root-level
             // Content category with that alias is the one this import creates for the path
             // (for example for an earlier row of the same file), so it is used again.
-            $alias = ApplicationHelper::stringURLSafe($alias !== null && trim($alias) !== '' ? $alias : $title);
-            $existingId = $alias !== '' ? $this->findRootContentCategory($alias) : 0;
+            $alias = $this->urlSafeAlias($alias !== null && trim($alias) !== '' ? $alias : $title, '*');
+            $existingId = $this->findRootContentCategory($alias);
 
             return $existingId > 0
                 ? $this->requireContentCategory($existingId)
@@ -512,6 +519,23 @@ class ImportModel extends BaseDatabaseModel
      * not imported into the trash, and Joomla then refuses the new category with its
      * "alias exists in the trash" error, which the row reports.
      */
+    /**
+     * The alias in the URL-safe form Joomla's tables store. Where nothing URL-safe is left
+     * (for example a title in a non-Latin script while Unicode aliases are off), Joomla
+     * would store the current date and time instead, which a later import of the same row
+     * could not find again, so the row is refused with a hint.
+     */
+    protected function urlSafeAlias(string $alias, string $language): string
+    {
+        $alias = ApplicationHelper::stringURLSafe($alias, $language);
+
+        if (trim(str_replace('-', '', $alias)) === '') {
+            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_ALIAS_NOT_URL_SAFE'));
+        }
+
+        return $alias;
+    }
+
     protected function findRootContentCategory(string $alias): int
     {
         $db = $this->getDatabase();
@@ -568,6 +592,7 @@ class ImportModel extends BaseDatabaseModel
         $table = $this->newTable(CategoryTable::class);
         $table->setLocation(1, 'last-child');
         $stored = false;
+        $pathBuilt = false;
 
         try {
             $stored = $table->bind([
@@ -586,6 +611,7 @@ class ImportModel extends BaseDatabaseModel
                 'metadata'        => '{}',
                 'created_user_id' => $this->getCurrentUserId(),
             ]) && $table->check() && $table->store();
+            $pathBuilt = $stored && $table->rebuildPath((int) $table->id);
         } finally {
             // Also when the store throws after the row was written.
             $categoryId = (int) $table->id;
@@ -593,14 +619,16 @@ class ImportModel extends BaseDatabaseModel
             Access::clearStatics();
 
             if ($categoryId > 0) {
+                // What the store left in the database, so the undo recognizes later edits.
+                $written = $this->tableSnapshot(CategoryTable::class, $categoryId);
                 $this->registerUndo(
                     Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_CATEGORY', $categoryId),
-                    fn (): bool => $this->deleteCategory($categoryId)
+                    fn (): bool => $this->deleteCategory($categoryId, $written)
                 );
             }
         }
 
-        if (!$stored || !$table->rebuildPath($categoryId)) {
+        if (!$stored || !$pathBuilt) {
             throw new \RuntimeException($table->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
         }
 
@@ -766,7 +794,7 @@ class ImportModel extends BaseDatabaseModel
         }
         // Joomla's content table stores the alias in this URL-safe form, so a re-import
         // matches the article it created. Like Joomla, an empty alias is derived from the title.
-        $alias = ApplicationHelper::stringURLSafe(trim($suppliedAlias) === '' ? $title : $suppliedAlias, $language);
+        $alias = $this->urlSafeAlias(trim($suppliedAlias) === '' ? $title : $suppliedAlias, $language);
         $existing = !empty($options['update_existing'])
             ? $this->findExistingArticle($data, $alias, $suppliedAlias)
             : null;
