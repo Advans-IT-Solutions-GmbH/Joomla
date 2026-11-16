@@ -308,6 +308,43 @@ PHP]);
             $this->test('An imported or qualified class named J2Store is no finding',
                 $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
 
+            // --- Imports are declarations, not references ---
+            $r = $this->classify('unused_import', ['a.php' => "<?php\nnamespace Acme;\nuse JSession as LegacySession;\n\$x = 1;\n"]);
+            $this->test('An unused import of a missing global class is no finding',
+                $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            $r = $this->classify('group_import', ['a.php' => "<?php\nnamespace Acme;\nuse Vendor\\{JSession};\n\$s = JSession::create();\n"]);
+            $this->test('A grouped import Vendor\\{JSession} is no finding',
+                $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            // --- Renamed imports of the global J2Store classes are found ---
+            $r = $this->classify('j2store_renamed', ['a.php' => "<?php\nuse J2Store as Shop;\n\$c = Shop::config();\n"]);
+            $this->test('use J2Store as Shop; Shop::config() is a missing J2Store class',
+                $r['status'] === 'incompatible' && array_column($r['issues'], 'detail') === ['J2Store'],
+                $r['status'] . ': ' . self::details($r));
+
+            $r = $this->classify('j2store_renamed_parent', ['a.php' => "<?php\nuse J2StoreAppPlugin as BasePlugin;\nclass PlgJ2StoreX extends BasePlugin\n{\n}\n"]);
+            $this->test('A J2Store base class imported under another name is found',
+                $r['status'] === 'incompatible' && array_column($r['issues'], 'detail') === ['J2StoreAppPlugin'],
+                $r['status'] . ': ' . self::details($r));
+
+            // --- Class names are case-insensitive: one finding per class ---
+            $r = $this->classify('j2store_case', ['a.php' => "<?php\n\$a = J2html::select();\n\$b = J2Html::select();\n"]);
+            $this->test('J2html and J2Html are one finding named J2Html',
+                array_column($r['issues'], 'detail') === ['J2Html'], self::details($r));
+
+            // --- A parent class that is not loaded here is unknown, not missing ---
+            $r = $this->classify('plugin_app_manual_parent', [
+                'base.php'   => "<?php\nclass AcmeBasePlugin extends \\Joomla\\CMS\\Plugin\\CMSPlugin\n{\n    protected \$app;\n}\n",
+                'plugin.php' => "<?php\nrequire_once __DIR__ . '/base.php';\nclass PlgSystemAcme extends AcmeBasePlugin\n{\n    public function onAfterRoute() { return \$this->app->getInput(); }\n}\n",
+            ]);
+            $this->test('$this->app with a parent the cleanup request has not loaded is not incompatible',
+                $r['status'] !== 'incompatible', $r['status'] . ': ' . self::details($r));
+
+            // --- Factory methods only on Joomla's Factory, not on any *Factory ---
+            $r = $this->classify('other_factory', ['a.php' => "<?php\nnamespace Acme;\nclass MyFactory { public static function getUser() {} }\n\$u = MyFactory::getUser();\n"]);
+            $this->test('MyFactory::getUser() is no finding', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
             // --- One unavailable API makes the extension incompatible ---
             $r = $this->classify('mixed', ['a.php' => "<?php\nJFactory::getApplication();\nnew JModelLegacy();\n"]);
             $this->test('Deprecated plus unavailable is incompatible', $r['status'] === 'incompatible', $r['status']);

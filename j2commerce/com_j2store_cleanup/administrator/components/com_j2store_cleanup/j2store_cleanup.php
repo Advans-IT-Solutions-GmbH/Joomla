@@ -502,44 +502,51 @@ function getExtensionCodePaths($ext): array
  * Legacy API patterns the scanner looks for.
  *
  * Each entry: pattern => [
- *   'api'        => name of the API (a capture group in the pattern, when
- *                   present, names the exact class found, e.g. JModelLegacy),
- *   'removedIn'  => Joomla major version that removes the API (0: not a
- *                   Joomla API, reported only when unavailable),
- *   'probe'      => how isIssueAvailable() checks the running site,
- *   'pluginOnly' => count the match only in a plugin class (optional),
+ *   'api'       => name of the API (a capture group in the pattern, when
+ *                  present, names the exact class found, e.g. JModelLegacy),
+ *   'removedIn' => Joomla major version that removes the API (0: not a
+ *                  Joomla API, reported only when unavailable),
+ *   'probe'     => how isIssueAvailable() checks the running site and what
+ *                  the pattern is matched against:
+ *                  class, j2store  the absolute name of a class reference,
+ *                  factory         "Class::method" of a static call,
+ *                  pluginApp       the code of a plugin class file,
  * ].
  *
- * Whether an API still works is decided on the running site, not from the
- * version number alone: Joomla 6 still ships every J-prefixed class alias
- * (backward-compatibility plugins, removal announced for 7.0) and still has
- * the Factory methods below (deprecated since 4.3, removal announced for 7.0).
- * The page builds the visible text from these values with a language key,
- * so the patterns carry no text of their own.
+ * Class references come from getClassReferences(), resolved the way PHP
+ * resolves them, so imported, renamed and qualified names are covered and an
+ * unused import is not. Whether an API still works is decided on the running
+ * site, not from the version number alone: Joomla 6 still ships every
+ * J-prefixed class alias (backward-compatibility plugins, removal announced
+ * for 7.0) and still has the Factory methods below (deprecated since 4.3,
+ * removal announced for 7.0). The page builds the visible text from these
+ * values with a language key, so the patterns carry no text of their own.
  *
  * @return array ['joomla' => [...], 'j2store' => [...]]
  */
 function getIssuePatterns() {
+    $factory = '(?:Joomla\\\\CMS\\\\Factory|JFactory)';
+
     $joomla = [
-        // Class aliases of J3 names; only the backward-compatibility plugin
-        // ("classes_aliases") registers them.
-        '/\b(JPlugin)\b/'                     => ['api' => 'JPlugin', 'removedIn' => 7, 'probe' => 'class'],
-        '/\b(JModel(?:Legacy)?)\b/'           => ['api' => 'JModel', 'removedIn' => 7, 'probe' => 'class'],
-        '/\b(JTable)\b/'                      => ['api' => 'JTable', 'removedIn' => 7, 'probe' => 'class'],
-        '/\b(JView(?:Legacy)?)\b/'            => ['api' => 'JView', 'removedIn' => 7, 'probe' => 'class'],
-        '/\b(JController(?:Legacy)?)\b/'      => ['api' => 'JController', 'removedIn' => 7, 'probe' => 'class'],
-        '/\b(JForm)\b/'                       => ['api' => 'JForm', 'removedIn' => 7, 'probe' => 'class'],
-        '/\b(JFactory)\b/'                    => ['api' => 'JFactory', 'removedIn' => 7, 'probe' => 'class'],
-        '/\b(JText)\b/'                       => ['api' => 'JText', 'removedIn' => 7, 'probe' => 'class'],
-        '/\b(JHtml)\b/'                       => ['api' => 'JHtml', 'removedIn' => 7, 'probe' => 'class'],
-        '/\b(JRoute)\b/'                      => ['api' => 'JRoute', 'removedIn' => 7, 'probe' => 'class'],
-        '/\b(JUri)\b/'                        => ['api' => 'JUri', 'removedIn' => 7, 'probe' => 'class'],
-        '/\b(JSession)\b/'                    => ['api' => 'JSession', 'removedIn' => 7, 'probe' => 'class'],
-        // Factory methods, deprecated since 4.3.
-        '/Factory::getUser\s*\(/'             => ['api' => 'Factory::getUser()', 'removedIn' => 7, 'probe' => 'factory'],
-        '/Factory::getDbo\s*\(/'              => ['api' => 'Factory::getDbo()', 'removedIn' => 7, 'probe' => 'factory'],
-        '/Factory::getSession\s*\(/'          => ['api' => 'Factory::getSession()', 'removedIn' => 7, 'probe' => 'factory'],
-        '/Factory::getDocument\s*\(/'         => ['api' => 'Factory::getDocument()', 'removedIn' => 7, 'probe' => 'factory'],
+        // Class aliases of J3 names in the global namespace; only the
+        // backward-compatibility plugin ("classes_aliases") registers them.
+        '/^(JPlugin)$/i'                      => ['api' => 'JPlugin', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JModel(?:Legacy)?)$/i'            => ['api' => 'JModel', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JTable)$/i'                       => ['api' => 'JTable', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JView(?:Legacy)?)$/i'             => ['api' => 'JView', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JController(?:Legacy)?)$/i'       => ['api' => 'JController', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JForm)$/i'                        => ['api' => 'JForm', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JFactory)$/i'                     => ['api' => 'JFactory', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JText)$/i'                        => ['api' => 'JText', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JHtml)$/i'                        => ['api' => 'JHtml', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JRoute)$/i'                       => ['api' => 'JRoute', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JUri)$/i'                         => ['api' => 'JUri', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JSession)$/i'                     => ['api' => 'JSession', 'removedIn' => 7, 'probe' => 'class'],
+        // Methods of Joomla's Factory, deprecated since 4.3.
+        '/^' . $factory . '::getUser$/i'      => ['api' => 'Factory::getUser()', 'removedIn' => 7, 'probe' => 'factory'],
+        '/^' . $factory . '::getDbo$/i'       => ['api' => 'Factory::getDbo()', 'removedIn' => 7, 'probe' => 'factory'],
+        '/^' . $factory . '::getSession$/i'   => ['api' => 'Factory::getSession()', 'removedIn' => 7, 'probe' => 'factory'],
+        '/^' . $factory . '::getDocument$/i'  => ['api' => 'Factory::getDocument()', 'removedIn' => 7, 'probe' => 'factory'],
         // CMSPlugin fills a declared $app property, deprecated since 4.3.
         // Other classes (module dispatchers, commands) own their $app.
         '/\$this->app\b(?!lication)/'         => ['api' => '$this->app', 'removedIn' => 7, 'probe' => 'pluginApp'],
@@ -548,9 +555,9 @@ function getIssuePatterns() {
     // J2Store classes exist only while com_j2store (J2Store / J2Commerce 4)
     // is installed. J2Commerce 6 (com_j2commerce) does not provide them.
     $j2store = [
-        '/\b(J2Store)::/'                     => ['api' => 'J2Store', 'removedIn' => 0, 'probe' => 'j2store'],
-        '/\b(J2Html)::/'                      => ['api' => 'J2Html', 'removedIn' => 0, 'probe' => 'j2store'],
-        '/\bextends\s+\\\\?(J2Store\w*Plugin)\b/' => ['api' => 'J2StoreAppPlugin', 'removedIn' => 0, 'probe' => 'j2store'],
+        '/^(J2Store)$/i'                      => ['api' => 'J2Store', 'removedIn' => 0, 'probe' => 'j2store'],
+        '/^(J2Html)$/i'                       => ['api' => 'J2Html', 'removedIn' => 0, 'probe' => 'j2store'],
+        '/^(J2Store\w*Plugin)$/i'             => ['api' => 'J2StoreAppPlugin', 'removedIn' => 0, 'probe' => 'j2store'],
     ];
 
     return ['joomla' => $joomla, 'j2store' => $j2store];
@@ -559,8 +566,7 @@ function getIssuePatterns() {
 /**
  * The executable code of a PHP file, with comments, string contents and
  * inline HTML blanked out, so only real API use is matched. Blanked parts
- * keep their length: an offset in the result is the same offset in the
- * source, which getNameContext() relies on.
+ * keep their length, so offsets in the result are offsets in the source.
  */
 function getScannableCode(string $source): string
 {
@@ -581,208 +587,214 @@ function getScannableCode(string $source): string
 }
 
 /**
- * Namespaces and `use` imports of a PHP file by source range, so a name in its
- * code can be resolved the way PHP resolves it at that place.
+ * The class references in a PHP file's code, each resolved to the absolute
+ * class name the way PHP resolves it: with the namespace block and the `use`
+ * imports in force at that place. A reference is a name before `::` (static
+ * call, constant or property, not `::class`), after `new`, `extends`,
+ * `implements` or `instanceof`. Import statements are declarations, not
+ * references: an unused import loads nothing. Comments and strings are no
+ * tokens of these kinds.
  *
- * @return array{blocks: array<int, array{start: int, namespace: string, imports: array<string, string>}>,
- *               uses: array<int, array{0: int, 1: int}>}
- *         blocks: one per namespace declaration, from its offset on; imports map
- *         a lower-case local name to the absolute class name.
- *         uses: offset ranges of the import statements.
+ * @return array<int, array{name: string, call: string, kind: string}>
+ *         name: absolute class name, call: "Class::method" for a static
+ *         method call, else '', kind: static|new|extends|instanceof
  */
-function getNameContext(string $source): array
+function getClassReferences(string $source): array
 {
-    $tokens = [];
-    $offset = 0;
+    $tokens = array_values(array_filter(
+        token_get_all($source),
+        static fn ($t): bool => !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
+    ));
+    $nameTypes = [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE];
+    $isName    = static fn ($t): bool => is_array($t) && in_array($t[0], $nameTypes, true);
+    $id        = static fn ($t) => is_array($t) ? $t[0] : $t;
+    $namespace = '';
+    $imports   = [];
+    $depth     = 0;
+    $useDepth  = 0;
+    $refs      = [];
+    $heritage  = false;
+    $count     = count($tokens);
 
-    foreach (token_get_all($source) as $token) {
-        $text = is_array($token) ? $token[1] : $token;
+    $resolve = static function (array $token) use (&$namespace, &$imports): ?string {
+        $text = $token[1];
 
-        if (!is_array($token) || !in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
-            $tokens[] = [$token, $offset];
+        if ($token[0] === T_NAME_FULLY_QUALIFIED) {
+            return ltrim($text, '\\');
         }
 
-        $offset += strlen($text);
-    }
+        if ($token[0] === T_NAME_RELATIVE) {
+            $rest = substr($text, strlen('namespace\\'));
 
-    $isName = static fn ($t): bool => is_array($t) && in_array($t[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true);
-    $blocks = [['start' => 0, 'namespace' => '', 'imports' => []]];
-    $uses   = [];
-    $count  = count($tokens);
+            return $namespace === '' ? $rest : $namespace . '\\' . $rest;
+        }
+
+        if (in_array(strtolower($text), ['self', 'static', 'parent'], true)) {
+            return null;
+        }
+
+        $first = strtolower(strtok($text, '\\'));
+        $rest  = (string) substr($text, strlen($first));
+
+        if (isset($imports[$first])) {
+            return $imports[$first] . $rest;
+        }
+
+        return $namespace === '' ? $text : $namespace . '\\' . $text;
+    };
 
     for ($i = 0; $i < $count; $i++) {
-        [$token, $start] = $tokens[$i];
-        $next            = $tokens[$i + 1][0] ?? null;
+        $token = $tokens[$i];
+        $kind  = $id($token);
 
-        if (is_array($token) && $token[0] === T_NAMESPACE && ($isName($next) || $next === '{')) {
-            $blocks[] = ['start' => $start, 'namespace' => $isName($next) ? ltrim($next[1], '\\') : '', 'imports' => []];
+        if ($token === '{' || $kind === T_CURLY_OPEN || $kind === T_DOLLAR_OPEN_CURLY_BRACES) {
+            $depth++;
+            $heritage = false;
             continue;
         }
 
-        // Imports only: a closure's "use (" and "use function/const" are skipped.
-        if (!is_array($token) || $token[0] !== T_USE || !$isName($next)) {
+        if ($token === '}') {
+            $depth--;
             continue;
         }
 
-        $current = count($blocks) - 1;
-        $j       = $i + 1;
+        // A namespace declaration starts a new block with its own imports.
+        if ($kind === T_NAMESPACE && ($isName($tokens[$i + 1] ?? null) || ($tokens[$i + 1] ?? null) === '{')) {
+            $namespace = $isName($tokens[$i + 1]) ? ltrim($tokens[$i + 1][1], '\\') : '';
+            $imports   = [];
+            $useDepth  = $depth + (($tokens[$i + 1] === '{' || ($tokens[$i + 2] ?? null) === '{') ? 1 : 0);
+            $i        += $isName($tokens[$i + 1]) ? 1 : 0;
+            continue;
+        }
 
-        while ($isName($tokens[$j][0] ?? null)) {
-            $name = ltrim($tokens[$j][0][1], '\\');
-            $j++;
+        if ($kind === T_USE) {
+            // A closure's "use (" or a trait use inside a class body: no import.
+            if (!$isName($tokens[$i + 1] ?? null) || $depth !== $useDepth) {
+                continue;
+            }
 
-            // Group import: use Prefix\{A, B as C};
-            if (is_array($tokens[$j][0] ?? null) && $tokens[$j][0][0] === T_NS_SEPARATOR && ($tokens[$j + 1][0] ?? null) === '{') {
-                $j += 2;
-                while ($isName($tokens[$j][0] ?? null)) {
-                    $member = $name . '\\' . ltrim($tokens[$j][0][1], '\\');
-                    $alias  = substr(strrchr('\\' . $member, '\\'), 1);
-                    $j++;
-                    if (is_array($tokens[$j][0] ?? null) && $tokens[$j][0][0] === T_AS && $isName($tokens[$j + 1][0] ?? null)) {
-                        $alias = $tokens[$j + 1][0][1];
-                        $j += 2;
+            $j = $i + 1;
+            while ($isName($tokens[$j] ?? null)) {
+                $name = ltrim($tokens[$j][1], '\\');
+                $j++;
+
+                // Group import: use Prefix\{A, B as C};
+                if ($id($tokens[$j] ?? null) === T_NS_SEPARATOR && ($tokens[$j + 1] ?? null) === '{') {
+                    $j += 2;
+                    while ($isName($tokens[$j] ?? null)) {
+                        $member = $name . '\\' . ltrim($tokens[$j][1], '\\');
+                        $alias  = substr(strrchr('\\' . $member, '\\'), 1);
+                        $j++;
+                        if ($id($tokens[$j] ?? null) === T_AS && $isName($tokens[$j + 1] ?? null)) {
+                            $alias = $tokens[$j + 1][1];
+                            $j += 2;
+                        }
+                        $imports[strtolower($alias)] = $member;
+                        if (($tokens[$j] ?? null) !== ',') {
+                            break;
+                        }
+                        $j++;
                     }
-                    $blocks[$current]['imports'][strtolower($alias)] = $member;
-                    if (($tokens[$j][0] ?? null) !== ',') {
-                        break;
-                    }
                     $j++;
+                    break;
                 }
-                break;
+
+                $alias = substr(strrchr('\\' . $name, '\\'), 1);
+                if ($id($tokens[$j] ?? null) === T_AS && $isName($tokens[$j + 1] ?? null)) {
+                    $alias = $tokens[$j + 1][1];
+                    $j += 2;
+                }
+                $imports[strtolower($alias)] = $name;
+
+                if (($tokens[$j] ?? null) !== ',') {
+                    break;
+                }
+                $j++;
             }
 
-            $alias = substr(strrchr('\\' . $name, '\\'), 1);
-            if (is_array($tokens[$j][0] ?? null) && $tokens[$j][0][0] === T_AS && $isName($tokens[$j + 1][0] ?? null)) {
-                $alias = $tokens[$j + 1][0][1];
-                $j += 2;
-            }
-            $blocks[$current]['imports'][strtolower($alias)] = $name;
-
-            if (($tokens[$j][0] ?? null) !== ',') {
-                break;
-            }
-            $j++;
+            // "use function" / "use const" end up here without names and are skipped.
+            $i = $j;
+            continue;
         }
 
-        $uses[] = [$start, $tokens[$j][1] ?? $offset];
-        $i      = $j;
-    }
-
-    return ['blocks' => $blocks, 'uses' => $uses];
-}
-
-/**
- * The namespace block (namespace and imports) that holds a source offset.
- *
- * @return array{start: int, namespace: string, imports: array<string, string>}
- */
-function getNameBlockAt(array $context, int $offset): array
-{
-    $found = ['start' => 0, 'namespace' => '', 'imports' => []];
-
-    foreach ($context['blocks'] ?? [] as $block) {
-        if ($block['start'] <= $offset) {
-            $found = $block;
+        // Names after extends/implements, up to the class body, are parents.
+        if ($kind === T_EXTENDS || $kind === T_IMPLEMENTS) {
+            $heritage = true;
+            continue;
         }
-    }
 
-    return $found;
-}
+        if (!$isName($token)) {
+            continue;
+        }
 
-/**
- * The absolute class a name stands for at one place in the code, or null when
- * the place is no reference to the global class of that name: a qualified
- * name of another class, a member, a variable, a declaration, the local name
- * of an import, a class imported under that name or an own class of that name
- * in the file's namespace.
- *
- * @param string $code     From getScannableCode()
- * @param int    $offset   Byte offset of the name in $code (same in the source)
- * @param string $name     The unqualified name, e.g. JSession
- * @param array  $context  From getNameContext()
- */
-function resolveLegacyClassReference(string $code, int $offset, string $name, array $context): ?string
-{
-    $start = $offset;
-    while ($start > 0 && preg_match('/[\w\\\\]/', $code[$start - 1]) === 1) {
-        $start--;
-    }
+        $prev = $id($tokens[$i - 1] ?? null);
+        $next = $id($tokens[$i + 1] ?? null);
 
-    $prefix = substr($code, $start, $offset - $start);
-    $before = rtrim(substr($code, max(0, $start - 30), $start - max(0, $start - 30)));
+        // Members ($x->Name, Name::$y on the right side) and declarations are no references.
+        if (in_array($prev, [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION, T_CONST, T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM, T_GOTO], true)) {
+            continue;
+        }
 
-    foreach ($context['uses'] ?? [] as [$from, $to]) {
-        if ($offset >= $from && $offset <= $to) {
-            // Import targets are absolute names. The name after "as" is a
-            // local alias, the class it imports is resolved where it is used.
-            if (preg_match('/\bas$/i', $before) === 1) {
-                return null;
+        $refKind = null;
+        $call    = '';
+
+        if ($next === T_DOUBLE_COLON) {
+            $member = $tokens[$i + 2] ?? null;
+
+            if ($id($member) === T_CLASS) {
+                continue;
             }
 
-            return ltrim($prefix, '\\') === '' ? $name : null;
+            $refKind = 'static';
+            if ($id($member) === T_STRING && ($tokens[$i + 3] ?? null) === '(') {
+                $call = $member[1];
+            }
+        } elseif ($prev === T_NEW) {
+            $refKind = 'new';
+        } elseif ($heritage) {
+            $refKind = 'extends';
+        } elseif ($prev === T_INSTANCEOF) {
+            $refKind = 'instanceof';
         }
+
+        if ($refKind === null) {
+            continue;
+        }
+
+        $name = $resolve($token);
+
+        if ($name === null) {
+            continue;
+        }
+
+        $refs[] = ['name' => $name, 'call' => $call === '' ? '' : $name . '::' . $call, 'kind' => $refKind];
     }
 
-    if ($prefix === '\\') {
-        return $name;
-    }
-
-    if ($prefix !== '' || preg_match('/(?:->|::|\$|\b(?:function|const|class|interface|trait|enum))$/', $before) === 1) {
-        return null;
-    }
-
-    $block = getNameBlockAt($context, $offset);
-    $local = strtolower($name);
-
-    if (isset($block['imports'][$local])) {
-        return strcasecmp($block['imports'][$local], $name) === 0 ? $name : null;
-    }
-
-    if ($block['namespace'] === '') {
-        return $name;
-    }
-
-    // Unqualified in a namespace: PHP looks up Namespace\Name, never the
-    // global class. An own class of that name is not the legacy class.
-    $class = $block['namespace'] . '\\' . $name;
-
-    return class_exists($class) ? null : $class;
+    return $refs;
 }
 
 /**
  * How a plugin class in one file deals with $this->app, or null when the file
- * declares no plugin class (a class that extends a ...Plugin class).
+ * declares no plugin class (a class whose parent's name ends in "Plugin").
  *
+ * @param string $code  From getScannableCode()
+ * @param array  $refs  From getClassReferences()
  * @return array{parent: string, declared: bool, private: bool, assigned: bool}|null
  */
-function getPluginAppInfo(string $code, array $context): ?array
+function getPluginAppInfo(string $code, array $refs): ?array
 {
-    if (preg_match('/\bclass\s+\w+\s+extends\s+(\\\\?[\w\\\\]*Plugin)\b/i', $code, $m, PREG_OFFSET_CAPTURE) !== 1) {
-        return null;
-    }
-
-    [$parent, $offset] = $m[1];
-    $block             = getNameBlockAt($context, $offset);
-
-    if ($parent[0] === '\\') {
-        $parent = substr($parent, 1);
-    } else {
-        $first = strtok($parent, '\\');
-        $rest  = (string) substr($parent, strlen($first));
-
-        if (isset($block['imports'][strtolower($first)])) {
-            $parent = $block['imports'][strtolower($first)] . $rest;
-        } elseif ($block['namespace'] !== '') {
-            $parent = $block['namespace'] . '\\' . $parent;
+    foreach ($refs as $ref) {
+        if ($ref['kind'] === 'extends' && preg_match('/Plugin$/i', $ref['name']) === 1 && preg_match('/\bclass\b/i', $code) === 1) {
+            return [
+                'parent'   => $ref['name'],
+                'declared' => preg_match('/\b(?:public|protected|var)\b[^;{}()=]*\$app\b/', $code) === 1,
+                'private'  => preg_match('/\bprivate\b[^;{}()=]*\$app\b/', $code) === 1,
+                'assigned' => preg_match('/\$this->app\s*=(?!=)/', $code) === 1,
+            ];
         }
     }
 
-    return [
-        'parent'   => $parent,
-        'declared' => preg_match('/\b(?:public|protected|var)\b[^;{}()=]*\$app\b/', $code) === 1,
-        'private'  => preg_match('/\bprivate\b[^;{}()=]*\$app\b/', $code) === 1,
-        'assigned' => preg_match('/\$this->app\s*=(?!=)/', $code) === 1,
-    ];
+    return null;
 }
 
 /**
@@ -810,9 +822,12 @@ function isIssueAvailable(array $issue): bool
                 return false;
             }
 
+            // Undeclared here: it depends on the parent class. A parent this
+            // request has not loaded (e.g. one the plugin includes itself) is
+            // unknown, and unknown is never reported as missing.
             $parent = (string) ($issue['parent'] ?? '');
 
-            return $parent !== '' && class_exists($parent) && property_exists($parent, 'app');
+            return $parent === '' || !class_exists($parent) || property_exists($parent, 'app');
 
         case 'factory':
             return preg_match('/^Factory::(\w+)\(\)$/', (string) $issue['detail'], $m) === 1
@@ -855,8 +870,8 @@ function scanForIssues($path, $patterns) {
         }
 
         $code      = getScannableCode($content);
-        $context   = getNameContext($content);
-        $pluginApp = getPluginAppInfo($code, $context);
+        $refs      = getClassReferences($content);
+        $pluginApp = getPluginAppInfo($code, $refs);
 
         // Files below a com_j2store folder (template overrides an extension
         // ships for J2Store sites) are loaded only by com_j2store itself.
@@ -878,15 +893,28 @@ function scanForIssues($path, $patterns) {
                     continue;
                 }
 
-                if (!preg_match_all($pattern, $code, $matches, PREG_OFFSET_CAPTURE)) {
-                    continue;
+                // What the pattern is matched against (see getIssuePatterns()).
+                $subjects = [];
+                if ($probe === 'pluginApp') {
+                    if (preg_match($pattern, $code) === 1) {
+                        $subjects[] = ['', ''];
+                    }
+                } else {
+                    foreach ($refs as $ref) {
+                        $subjects[] = [$probe === 'factory' ? $ref['call'] : $ref['name'], $ref['name']];
+                    }
                 }
 
-                // One finding per API and file. A name can resolve to different
-                // classes in one file; it counts as available only if all do.
+                // One finding per API and file; it counts as available only if
+                // every reference to it is.
                 $found = [];
-                foreach ($matches[1] ?? $matches[0] as [$text, $offset]) {
-                    $detail = isset($matches[1]) ? $text : $info['api'];
+                foreach ($subjects as [$subject, $class]) {
+                    if ($probe !== 'pluginApp' && ($subject === '' || preg_match($pattern, $subject, $m) !== 1)) {
+                        continue;
+                    }
+
+                    // Class names are case-insensitive: J2html is J2Html.
+                    $detail = $probe === 'pluginApp' || !isset($m[1]) || strcasecmp($m[1], $info['api']) === 0 ? $info['api'] : $m[1];
                     $issue  = [
                         'type'      => $type,
                         'detail'    => $detail,
@@ -894,23 +922,16 @@ function scanForIssues($path, $patterns) {
                         'probe'     => $probe,
                     ];
 
-                    if ($probe === 'class' || $probe === 'j2store') {
-                        // Only references to the global class of that name count.
-                        $class = resolveLegacyClassReference($code, $offset, $detail, $context);
-
-                        if ($class === null) {
-                            continue;
-                        }
-
-                        $issue['class'] = $class;
-                    } elseif ($probe === 'pluginApp') {
+                    if ($probe === 'pluginApp') {
                         $issue += ['parent' => $pluginApp['parent'], 'declared' => $pluginApp['declared'], 'private' => $pluginApp['private']];
+                    } else {
+                        $issue['class'] = $class;
                     }
 
                     $issue['available'] = isIssueAvailable($issue);
 
-                    if (!isset($found[$detail]) || !$issue['available']) {
-                        $found[$detail] = $issue;
+                    if (!isset($found[strtolower($detail)]) || !$issue['available']) {
+                        $found[strtolower($detail)] = $issue;
                     }
                 }
 
@@ -939,7 +960,7 @@ function uniqueIssues(array $issues): array
 {
     $unique = [];
     foreach ($issues as $issue) {
-        $key = $issue['type'] . ':' . $issue['detail'];
+        $key = $issue['type'] . ':' . strtolower($issue['detail']);
         if (!isset($unique[$key]) || (!empty($unique[$key]['available']) && empty($issue['available']))) {
             $unique[$key] = $issue;
         }
