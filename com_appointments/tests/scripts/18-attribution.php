@@ -13,8 +13,10 @@ require_once appointments_test_root() . '/administrator/components/com_appointme
 
 use Advans\Component\Appointments\Administrator\Helper\Attribution;
 
-// Joomla is booted before any output: its session cannot start once headers are sent.
 require __DIR__ . '/appointments-joomla.php';
+// The privacy plugin starts the Joomla session late: the report is held back until the end, so no
+// output is sent before it.
+ob_start();
 
 $fixture = new AppointmentsFixture('attribution');
 $db = $fixture->db;
@@ -171,7 +173,13 @@ try {
     $page = $admin->request('/administrator/index.php?option=com_appointments&view=booking&id=' . $id);
     $check($admin->status === 200 && str_contains($page, 'Origin of the booking') && str_contains($page, 'LI-CLICK-1'),
         'The booking page in the administrator shows the origin');
-    $check(!str_contains($page, $xss) && str_contains($page, htmlspecialchars($xss, ENT_QUOTES, 'UTF-8')), 'The booking page escapes the origin');
+    $escaped = htmlspecialchars($xss, ENT_QUOTES, 'UTF-8');
+    if (str_contains($page, $xss) || !str_contains($page, $escaped)) {
+        $at = strpos($page, 'onerror');
+        echo '    escape: raw ' . (str_contains($page, $xss) ? 'present' : 'absent') . ', escaped ' . (str_contains($page, $escaped) ? 'present' : 'absent')
+            . ', context ' . json_encode($at === false ? '' : substr($page, max(0, $at - 80), 160)) . "\n";
+    }
+    $check(!str_contains($page, $xss) && str_contains($page, $escaped), 'The booking page escapes the origin');
     [$header, $rows] = $csvRows($exportCsv($admin, 'exportCsv', $event));
     $row = array_values(array_filter($rows, static fn (array $row): bool => (int) $row['id'] === $id))[0] ?? [];
     $check(array_diff(['first_utm_source', 'first_utm_medium', 'first_utm_campaign', 'first_li_fat_id', 'first_gclid', 'last_utm_campaign',
