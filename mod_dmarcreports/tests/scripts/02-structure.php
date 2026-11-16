@@ -52,6 +52,18 @@ class StructureTest
                 return is_array($main) && is_array($system)
                     && !empty($main[$key]) && $main[$key] === ($system[$key] ?? null);
             });
+
+            // com_modules' editor loads only the main catalogue and prints the
+            // manifest <name> as the module type and in the toolbar title.
+            $this->test("$tag: module name is translated in the module editor", function () use ($lang, $tag) {
+                $main = parse_ini_file($lang . '/' . $tag . '/mod_dmarcreports.ini', false, INI_SCANNER_RAW);
+                $system = parse_ini_file($lang . '/' . $tag . '/mod_dmarcreports.sys.ini', false, INI_SCANNER_RAW);
+                $xml = @simplexml_load_file($this->base . '/mod_dmarcreports.xml');
+                $key = $xml === false ? '' : strtoupper((string) $xml->name);
+
+                return $key === 'MOD_DMARCREPORTS' && is_array($main) && is_array($system)
+                    && !empty($main[$key]) && $main[$key] === ($system[$key] ?? null);
+            });
         }
 
         $this->test('Manifest declares an administrator module element', function () {

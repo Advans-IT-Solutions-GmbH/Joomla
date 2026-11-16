@@ -21,9 +21,9 @@ When the component is not installed, disabled, or the current user is not allowe
 ## Features
 
 - Renders on the administrator control-panel (`cpanel`) position
-- Multi-domain summary: monitored domains, total messages, SPF/DKIM pass rate and would-be-rejected share
+- Multi-domain summary: monitored domains, total messages, DMARC pass rate and would-be-rejected share
 - Top Action Center items, each with a severity label and the owning domain, capped by a configurable limit
-- A "more actions" count and an **Open dashboard** button that links straight into the component
+- A "more actions" count and an **Open DMARC Reports** button that links straight into the component
 - Reuses the component's `Dashboard` model and `ActionPresenter` — data and wording from the same source, no duplicated queries (the would-be-rejected share is shown as a derived percentage)
 - ACL-aware: respects the `com_dmarcreports` `core.manage` permission
 - Graceful degradation: a translated notice when the component is absent, disabled or not authorised
@@ -42,16 +42,16 @@ The module contains no direct database access — it reads everything through th
 
 ## Installation
 
-**Availability:** No module release or `moddmarcreports-v*` tag has been published yet. The module remains individually buildable, but is intended to be delivered with the [DMARC Reports package](../pkg_dmarcreports), not as a second installation alongside it. Until releases exist, build the package from source, or build this module alone with `cd mod_dmarcreports` and `./build.sh` (Bash, rsync and zip required).
+**Availability:** Standalone module releases are published as `moddmarcreports-v*` GitHub releases (latest only). The module is intended to be delivered with the [DMARC Reports package](../pkg_dmarcreports), not as a second installation alongside it. To build it from source, run `cd mod_dmarcreports` and `./build.sh` (Bash, rsync and zip required).
 
-1. Use the generated `mod_dmarcreports_<version>.zip` for a standalone installation
+1. Use the released or generated `mod_dmarcreports_<version>.zip` for a standalone installation
 2. **System → Install → Extensions**
 3. Upload and install
-4. Publish the module under **Content → Site Modules** … **Administrator Modules** (**System → Manage → Administrator Modules**), set its position to `cpanel` and status to published
+4. Publish the module under **System → Manage → Administrator Modules**, set its position to `cpanel` and status to published
 
 ## Updating
 
-The standalone manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`). Published versions will appear under **System → Update → Extensions** once releases exist. A package installation uses only the package update channel. You can also install a newer built ZIP over the existing installation. Release retention is latest-only within each extension's tag family, not the monorepo's global latest release.
+The standalone manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`). Published versions appear under **System → Update → Extensions**. A package installation uses only the package update channel. You can also install a newer built ZIP over the existing installation. Release retention is latest-only within each extension's tag family, not the monorepo's global latest release.
 
 ## Uninstall
 
@@ -59,12 +59,12 @@ Uninstall via **System → Manage → Extensions**. Joomla removes the module fi
 
 ## Configuration
 
-Edit the module instance (**System → Manage → Administrator Modules → DMARC Reports Dashboard Module**):
+Edit the module instance (**System → Manage → Administrator Modules → DMARC Reports Dashboard**):
 
 | Option | Default | Purpose |
 |--------|---------|---------|
-| Show summary cards | `Yes` | Show the multi-domain summary (domains, messages, pass rate, would-be-rejected). Turn off to show only the Action Center items |
-| Action items to show | `5` | Maximum number of top Action Center items listed (0–20; `0` hides the list) |
+| Show summary | `Yes` | Show the multi-domain summary (domains, messages, pass rate, would-be-rejected). Turn off to show only the Action Center items |
+| Action items | `5` | Maximum number of top Action Center items listed (0–20; `0` hides the list) |
 
 The **Advanced** fieldset offers the standard Joomla module layout and module-class-suffix fields.
 
@@ -78,10 +78,10 @@ typography are changed. See the [real-pointer regression matrix](../shared/tests
 
 Once published to the `cpanel` position, the module appears on the backend home dashboard (`administrator/index.php`). It shows:
 
-1. The **summary cards** — monitored domains, total messages, SPF/DKIM pass rate and would-be-rejected share (if *Show summary cards* is on)
+1. The **summary cards** — monitored domains, total messages, DMARC pass rate and would-be-rejected share (if *Show summary* is on)
 2. The **top Action Center items** — the highest-severity recommendations across all domains, each with its severity label and domain
 3. A **more actions** count when there are more active items than the configured limit
-4. An **Open dashboard** button linking to **Components → DMARC Reports** for the full dashboard, drill-downs and the complete Action Center
+4. An **Open DMARC Reports** button linking to **Components → DMARC Reports** for the full dashboard, drill-downs and the complete Action Center
 
 All recommendations, thresholds and progress (done/snoozed/ignored status) come from the component, so what the module shows always agrees with the component dashboard.
 
@@ -200,11 +200,11 @@ The helper distinguishes a component/model error from an absent component or a p
 
 ### The summary cards are missing but actions are shown
 **Problem:** Only the Action Center list appears  
-**Solution:** *Show summary cards* is set to **No** on the module instance. Turn it back on to show the domain/message/pass-rate cards.
+**Solution:** *Show summary* is set to **No** on the module instance. Turn it back on to show the domain/message/pass-rate cards.
 
 ### No action items appear
 **Problem:** The Action Center list is empty  
-**Solution:** Either there are no outstanding recommendations (nothing to do), or *Action items to show* is set to `0`. Raise the limit, or open the component dashboard to confirm there are no active items.
+**Solution:** Either there are no outstanding recommendations (nothing to do), or *Action items* is set to `0`. Raise the limit, or open the component dashboard to confirm there are no active items.
 
 ## Multi-Language Support
 
