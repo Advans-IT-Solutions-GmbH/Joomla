@@ -1848,7 +1848,14 @@ of the booking row. Both remove the full, first and last name, email, phone, inv
 custom answers, cancellation text and conference metadata. A future appointment is cancelled
 first. Its host-only cancellation contains just the slot and calendar identifiers, not the former
 invitee details or the erasure reason. The provider is asked to release its room after the erasure
-transaction commits; teardown failures are reported without undoing erasure.
+transaction commits; teardown failures are reported without undoing erasure. This holds outside a
+web request too (a console script, the Scheduler's retention): when the component cannot be booted
+there, the native providers are used alone, and a failure after the commit is logged with the
+provider name and reported (`_conference_cleanup_error`), never thrown. The native providers
+(Jitsi, generic room, fixed room) have no remote room to release. A room of a provider registered by
+a plugin that cannot be released after a complete deletion is not retried, because the booking row is
+gone: keeping its room identifier for a retry would keep a value that opens the room. Formal privacy
+requests keep their own retry reference (`#__appointments_privacy_cleanup`).
 
 **Guests.** Every mail to an additional guest carries a signed link
 (`index.php?option=com_appointments&task=guest.confirm&id=…&signature=…`) with its own signing key.

@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Administrator\Service;
 
+use Advans\Component\Appointments\Administrator\Extension\AppointmentsComponent;
 use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceException;
 use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceManager;
 use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceUrl;
@@ -39,10 +40,36 @@ defined('_JEXEC') or die;
  */
 final class ConferenceService
 {
+    /**
+     * The service with the component's options and the shared provider registry of the booted
+     * component. Outside a web request (a console script, the Scheduler) booting the component can
+     * fail or yield Joomla's LegacyComponent without a registry (#351). The service then works with
+     * an empty registry of its own: the native providers (Jitsi, generic, fixed room) are built per
+     * call anyway, and a provider registered by a plugin that is not available reports a cleanup
+     * failure instead of throwing after a committed erasure.
+     */
     public static function forComponent(DatabaseInterface $db): self
     {
-        return new self($db, \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments'),
-            \Joomla\CMS\Factory::getApplication()->bootComponent('com_appointments')->getConferenceManager());
+        $params = \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments');
+
+        return new self($db, $params, self::componentManager($params));
+    }
+
+    private static function componentManager(Registry $params): ConferenceManager
+    {
+        try {
+            $component = Factory::getApplication()->bootComponent('com_appointments');
+
+            if ($component instanceof AppointmentsComponent) {
+                return $component->getConferenceManager();
+            }
+
+            Log::add('Appointments conference: the component is not booted in this context, native providers only.', Log::INFO, 'com_appointments');
+        } catch (\Throwable $error) {
+            Log::add('Appointments conference: the component could not be booted in this context, native providers only.', Log::INFO, 'com_appointments');
+        }
+
+        return new ConferenceManager([], (bool) $params->get('conference_allow_outbound', false));
     }
 
     private ?BookingData $bookingData = null;
