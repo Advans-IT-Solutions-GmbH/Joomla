@@ -734,6 +734,10 @@ if (!canAccessCleanup($app->getIdentity())) {
     throw new \Joomla\CMS\Access\Exception\NotAllowed(Text::_('JERROR_ALERTNOAUTHOR'), 403);
 }
 
+// The help page (view=help) needs exactly the access checked above and nothing
+// more. It renders tmpl/help/default.php in the same page and runs no scan.
+$showHelp = strtolower((string) $app->getInput()->getCmd('view', '')) === 'help';
+
 // Handle cleanup action
 if ($task === 'cleanup' && Session::checkToken()) {
     $user = $app->getIdentity();
@@ -765,19 +769,39 @@ if ($task === 'cleanup' && Session::checkToken()) {
     $app->redirect('index.php?option=com_j2store_cleanup');
 }
 
-// The same candidate predicate is used here and by the mutation path.
-$query = createDbQuery($db)
-    ->select($db->quoteName(['extension_id', 'name', 'type', 'element', 'folder', 'enabled', 'client_id', 'protected', 'locked', 'package_id', 'manifest_cache']))
-    ->from('#__extensions')
-    ->order('type, name');
+if ($showHelp) {
+    // No scan: the help page lists no extensions.
+    $extensions = [];
+    ToolbarHelper::title(Text::_('COM_J2STORE_CLEANUP_HELP_TITLE'), 'info-circle');
+    ToolbarHelper::link('index.php?option=com_j2store_cleanup', 'JTOOLBAR_BACK', 'arrow-left');
+} else {
+    // The same candidate predicate is used here and by the mutation path.
+    $query = createDbQuery($db)
+        ->select($db->quoteName(['extension_id', 'name', 'type', 'element', 'folder', 'enabled', 'client_id', 'protected', 'locked', 'package_id', 'manifest_cache']))
+        ->from('#__extensions')
+        ->order('type, name');
 
-$db->setQuery($query);
-$extensions = array_values(array_filter(
-    $db->loadObjectList(),
-    static fn ($ext) => isCleanupCandidate($ext) || isShopCoreExtension($ext)
-));
+    $db->setQuery($query);
+    $extensions = array_values(array_filter(
+        $db->loadObjectList(),
+        static fn ($ext) => isCleanupCandidate($ext) || isShopCoreExtension($ext)
+    ));
+}
 $canRemoveExtensions = canRemoveExtensions($app->getIdentity());
 addCleanupPreferences($app->getIdentity());
+
+if (!$showHelp) {
+    // The help button is offered to every user who can open the page.
+    ToolbarHelper::help('', false, 'index.php?option=com_j2store_cleanup&view=help&tmpl=component');
+}
+
+// Values the help layout reads: the Options link needs core.admin or
+// core.options, and in Joomla's help popup (tmpl=component) links that would
+// navigate the popup away are hidden.
+$helpCanOptions = is_object($app->getIdentity())
+    && ($app->getIdentity()->authorise('core.admin', 'com_j2store_cleanup')
+        || $app->getIdentity()->authorise('core.options', 'com_j2store_cleanup'));
+$helpIsPopup = $app->getInput()->getCmd('tmpl', '') === 'component';
 
 // Texts the page script needs (confirmation before removal) and the
 // version shown in the footer.
@@ -1003,8 +1027,12 @@ $cleanupVersion = getCleanupVersion($db);
 </head>
 <body>
 <div class="j2cleanup">
+<?php if ($showHelp): ?>
+    <?php require __DIR__ . '/tmpl/help/default.php'; ?>
+<?php else: ?>
     <h1><?php echo Text::_('COM_J2STORE_CLEANUP'); ?></h1>
     <p style="color: var(--secondary-color, var(--bs-secondary-color, #6c757d)); margin-bottom: 20px;"><?php echo Text::_('COM_J2STORE_CLEANUP_SUBTITLE'); ?></p>
+    <p><a href="index.php?option=com_j2store_cleanup&amp;view=help"><?php echo Text::_('COM_J2STORE_CLEANUP_HELP_LINK'); ?></a></p>
 
     <div class="detection-info">
         <h3><?php echo Text::sprintf('COM_J2STORE_CLEANUP_SCAN_TITLE', JVERSION); ?></h3>
@@ -1193,6 +1221,7 @@ $cleanupVersion = getCleanupVersion($db);
             <?php endif; ?>
         </form>
     <?php endif; ?>
+<?php endif; ?>
 
     <div class="j2cleanup-footer">
         <div class="logo">Advans IT Solutions GmbH</div>
