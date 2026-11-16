@@ -22,7 +22,9 @@
  *        <namespace path>/Field/HelppageField.php and is registered with
  *        addfieldprefix, and the first field of "basic" is a note that points
  *        to the tab;
- *     b) a link to the help view of the component it is delivered with: the
+ *     b) a link to the help view of the component it is delivered with
+ *        (bundled below the component's plugins/ folder, or listed in the
+ *        same package manifest as the component): the
  *        manifest's <help url="KEY"> names a language key whose en-GB value
  *        opens option=<component>&view=help, and the first field of "basic"
  *        is a note whose en-GB text links to the same help view.
@@ -40,15 +42,7 @@ $root = dirname(__DIR__, 2);
 // Extensions whose help is still being built in a separate pull request. Each
 // entry must name that pull request's branch, and that pull request removes the
 // entry, so the allowlist can only shrink.
-const HELP_ALLOWLIST = [
-    // feat/dmarcreports-help adds the dmarcreports help view and links its
-    // module and plugins to it; it removes these five entries.
-    'com_dmarcreports'      => 'feat/dmarcreports-help',
-    'mod_dmarcreports'      => 'feat/dmarcreports-help',
-    'plg_system_dmarcmtasts' => 'feat/dmarcreports-help',
-    'plg_task_dmarcreports' => 'feat/dmarcreports-help',
-    'pkg_dmarcreports'      => 'feat/dmarcreports-help',
-];
+const HELP_ALLOWLIST = [];
 
 const MIN_HELP_SECTIONS = 3;
 
@@ -329,9 +323,64 @@ function hl_check_addon(string $dir, SimpleXMLElement $xml, string $name, array 
     $fail($name, 'no reachable help: neither a «help» tab (first fieldset after "basic") nor <help url> to its component\'s help view');
 }
 
-$targets = array_slice($argv, 1);
-$targets = $targets ? array_map(static fn (string $t): string => rtrim($root . '/' . trim($t, '/\\'), '/'), $targets) : hl_all_extensions($root);
-$copies  = [];
+/**
+ * Components that a package of the repository delivers together with a module
+ * or plugin of its own folder: extension folder => (component element => has
+ * help view). A module or plugin shipped in such a package may link to the
+ * help view of that component like a plugin a component bundles.
+ *
+ * @return array<string, array<string, bool>>
+ */
+function hl_package_components(string $root): array
+{
+    $components = [];
+    $packages   = [];
+
+    foreach (hl_all_extensions($root) as $dir) {
+        $xml = simplexml_load_file(hl_manifest($dir));
+
+        if ((string) $xml['type'] === 'component') {
+            $element = strtolower(trim((string) $xml->element)) ?: basename($dir);
+            $folder  = (string) ($xml->administration->files['folder'] ?? '');
+            $admin   = $folder !== '' ? $dir . '/' . $folder : $dir;
+
+            $components[$element] = is_file($admin . '/tmpl/help/default.php');
+        } elseif ((string) $xml['type'] === 'package') {
+            $packages[] = $xml;
+        }
+    }
+
+    $delivered = [];
+
+    foreach ($packages as $xml) {
+        $shipped = [];
+        $members = [];
+
+        foreach ($xml->files->file ?? [] as $file) {
+            $type = (string) $file['type'];
+            $id   = strtolower(trim((string) $file['id']));
+
+            if ($type === 'component' && isset($components[$id])) {
+                $shipped[$id] = $components[$id];
+            } elseif ($type === 'module') {
+                $members[] = $id;
+            } elseif ($type === 'plugin') {
+                $members[] = 'plg_' . strtolower((string) $file['group']) . '_' . $id;
+            }
+        }
+
+        foreach ($members as $member) {
+            $delivered[$member] = ($delivered[$member] ?? []) + $shipped;
+        }
+    }
+
+    return $delivered;
+}
+
+$targets   = array_slice($argv, 1);
+$targets   = $targets ? array_map(static fn (string $t): string => rtrim($root . '/' . trim($t, '/\\'), '/'), $targets) : hl_all_extensions($root);
+$copies    = [];
+$delivered = hl_package_components($root);
 
 foreach ($targets as $dir) {
     $name     = basename($dir);
@@ -357,7 +406,7 @@ foreach ($targets as $dir) {
         $element              = strtolower(trim((string) $xml->element)) ?: $name;
         $components[$element] = hl_check_component($dir, $xml, $name, $fail);
     } elseif ($type === 'plugin' || $type === 'module') {
-        hl_check_addon($dir, $xml, $name, [], $fail, $copies);
+        hl_check_addon($dir, $xml, $name, $delivered[$name] ?? [], $fail, $copies);
     } elseif ($type === 'package') {
         $notes[] = "$name: package, its extensions are checked themselves";
     } else {
