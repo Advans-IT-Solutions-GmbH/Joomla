@@ -272,8 +272,8 @@ cannot satisfy a bundled plugin's own language requirement.
 locale, extra key, German `ß`, empty/unsupported locale directories including non-two-letter tags,
 missing named mail placeholders, empty bodies, omitted entire manifest file families,
 bundled-plugin files, an unlabelled Options or parameter fieldset, a fieldset key defined only in
-the `.sys.ini` or not at all, a missing Options title key and a foreign fieldset key). Shared Path
-Coverage runs these regressions on PHP 8.1.
+the `.sys.ini` or not at all, a missing Options title key, an undefined foreign fieldset key and
+the build-staged system-check fieldset). Shared Path Coverage runs these regressions on PHP 8.1.
 
 Mail coverage belongs in the sender's existing CI suites. Appointments checks all 25 purposes in
 all three languages (subject, text and generated HTML), actual booking MIME for separate invitee

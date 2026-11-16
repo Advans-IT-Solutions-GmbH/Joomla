@@ -250,9 +250,24 @@ with tempfile.TemporaryDirectory(prefix="joomla-options-") as directory:
     config.write_text(valid_config.replace(
         'label="COM_EXAMPLE_CONFIG_BASIC">', 'label="COM_CONFIG_BASIC_FIELDSET_LABEL">', 1
     ), encoding="utf-8")
-    check(command, ROOT, False, "COM_CONFIG_BASIC_FIELDSET_LABEL is neither an own key nor a known Joomla core key")
+    check(command, ROOT, False, "label COM_CONFIG_BASIC_FIELDSET_LABEL is not defined in the administrator en-GB/com_example.ini")
     config.write_text(valid_config.replace("JCONFIG_PERMISSIONS_DESC", "COM_EXAMPLE_CONFIG_PERMISSIONS_DESC"), encoding="utf-8")
     check(command, ROOT, False, "description COM_EXAMPLE_CONFIG_PERMISSIONS_DESC is not defined in the administrator de-DE/com_example.ini")
+
+    # The build adds a system-check fieldset with a shared key and appends its
+    # translation to every language file: a foreign key defined everywhere passes.
+    staged = valid_config.replace(
+        "</config>", '<fieldset name="advans_systemcheck" label="ADVANS_CHECK_TITLE"/>\n</config>'
+    )
+    config.write_text(staged, encoding="utf-8")
+    check(package_command, ROOT, False, "label ADVANS_CHECK_TITLE is not defined in the administrator fr-FR/com_example.ini")
+    for tag in TAGS:
+        (fixture / "administrator" / "language" / tag / "com_example.ini").write_text(
+            strings + 'ADVANS_CHECK_TITLE="Check"\n', encoding="utf-8"
+        )
+    check(package_command, ROOT, True, "Language files OK")
+    for tag in TAGS:
+        (fixture / "administrator" / "language" / tag / "com_example.ini").write_text(strings, encoding="utf-8")
     config.write_text(valid_config, encoding="utf-8")
 
     # A key that only the .sys.ini defines is not loaded by com_config.
@@ -303,4 +318,6 @@ with tempfile.TemporaryDirectory(prefix="joomla-params-") as directory:
         'label="PLG_EXAMPLE_FIELDSET_EXTRA"/>',
         'label="PLG_EXAMPLE_FIELDSET_EXTRA" description="COM_PLUGINS_EXTRA_FIELDSET_DESC"/>',
     ), encoding="utf-8")
-    check(command, ROOT, False, "description COM_PLUGINS_EXTRA_FIELDSET_DESC is neither an own key nor a known Joomla core key")
+    check(command, ROOT, False, "description COM_PLUGINS_EXTRA_FIELDSET_DESC is not defined in de-DE")
+    check(["php", str(LINT), "--package", str(fixture)], ROOT, False,
+          "description COM_PLUGINS_EXTRA_FIELDSET_DESC is not defined in fr-FR")

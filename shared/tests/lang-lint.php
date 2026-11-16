@@ -37,9 +37,9 @@
  *     fieldset description and the page title key <COMPONENT>_CONFIGURATION are
  *     defined in the component's administrator <component>.ini in every language
  *   - every parameter fieldset of a plugin or module manifest other than "basic"
- *     and "advanced" has a label
- *   - a fieldset label or description outside the extension's own prefixes is a
- *     known Joomla core key
+ *     and "advanced" has a label, and its label and description are defined in
+ *     every language
+ *   - a Joomla core key counts as defined only when listed in CORE_OPTIONS_KEYS
  *
  * Exits with 1 when any problem is found.
  */
@@ -550,33 +550,20 @@ function lint_xml_line(SimpleXMLElement $element): int
  * Plugin and module edit screens render their parameter fieldsets with the
  * layout joomla.edit.params. An unlabelled fieldset falls back to
  * JGLOBAL_FIELDSET_<name> and then <option>_<name>_FIELDSET_LABEL, which core
- * defines only for the names in UNLABELLED_PARAM_FIELDSETS. Their own keys are
- * checked by lint_usage().
+ * defines only for the names in UNLABELLED_PARAM_FIELDSETS. Their label and
+ * description must be defined in every shipped language of the extension.
  *
- * A fieldset label or description outside the extension's own prefixes must be
- * one of CORE_OPTIONS_KEYS, because nothing the extension ships defines it.
+ * A Joomla core key is accepted without a definition only from CORE_OPTIONS_KEYS.
+ * Any other key, own or not (the build appends the shared installer strings such
+ * as ADVANS_CHECK_TITLE to every language file), must be defined as above.
  *
- * @param string[] $prefixes  the extension's own key prefixes
+ * @param array<string, array<string, mixed>> $definedByTag  tag => key => definition
  *
  * @return string[] keys Joomla reads by convention, without the code naming them
  */
-function lint_options_screens(string $extensionDir, array $prefixes, callable $addError): array
+function lint_options_screens(string $extensionDir, array $definedByTag, callable $addError): array
 {
     $byConvention = [];
-
-    $checkForeignKey = static function (string $path, SimpleXMLElement $fieldset, string $context) use ($prefixes, $addError): void {
-        foreach (['label', 'description'] as $attribute) {
-            $key = (string) $fieldset[$attribute];
-
-            if ($key !== '' && !lint_is_own_key($key, $prefixes) && !in_array($key, CORE_OPTIONS_KEYS, true)) {
-                $addError(
-                    $path,
-                    lint_xml_line($fieldset),
-                    "$context fieldset \"{$fieldset['name']}\" $attribute $key is neither an own key nor a known Joomla core key (CORE_OPTIONS_KEYS)"
-                );
-            }
-        }
-    };
 
     foreach (lint_code_files($extensionDir) as $manifest) {
         if (!str_ends_with($manifest, '.xml')) {
@@ -612,7 +599,19 @@ function lint_options_screens(string $extensionDir, array $prefixes, callable $a
                     );
                 }
 
-                $checkForeignKey($manifest, $fieldset, 'parameter');
+                foreach (['label', 'description'] as $attribute) {
+                    $key = (string) $fieldset[$attribute];
+
+                    if ($key === '' || in_array($key, CORE_OPTIONS_KEYS, true)) {
+                        continue;
+                    }
+
+                    foreach (SUPPORTED_TAGS as $tag) {
+                        if (!isset($definedByTag[$tag][$key])) {
+                            $addError($manifest, lint_xml_line($fieldset), "parameter fieldset \"$name\" $attribute $key is not defined in $tag");
+                        }
+                    }
+                }
             }
 
             continue;
@@ -697,8 +696,6 @@ function lint_options_screens(string $extensionDir, array $prefixes, callable $a
                 if ((string) $fieldset['label'] === '') {
                     $addError($config, $line, "Options fieldset \"$name\" has no label (the tab shows the raw key COM_CONFIG_{$name}_FIELDSET_LABEL)");
                 }
-
-                $checkForeignKey($config, $fieldset, 'Options');
 
                 foreach (['label', 'description'] as $attribute) {
                     $key = (string) $fieldset[$attribute];
@@ -983,7 +980,7 @@ foreach ($directories as $extensionDir) {
         }
     }
 
-    $byConvention = lint_options_screens($extensionDir, lint_own_prefixes($fileNames), $addError);
+    $byConvention = lint_options_screens($extensionDir, $definedByTag, $addError);
 
     if (!$packageMode) {
         lint_usage($extensionDir, $definedByTag, array_unique($fileNames), $byConvention, $addError);
