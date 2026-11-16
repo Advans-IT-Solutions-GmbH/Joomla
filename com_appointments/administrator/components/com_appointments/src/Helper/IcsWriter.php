@@ -19,7 +19,8 @@ final class IcsWriter
      * Event: title, host_email, optional host_name, plain-text description,
      * location (rendered text) or location_text (stored text), location_type,
      * optional organizer_email/organizer_name (default: the host) and
-     * host_attendee (the host as attendee without a requested reply).
+     * host_attendee (the host as attendee without a requested reply), publish
+     * (METHOD:PUBLISH, see method()).
      * A privacy cancellation may omit all attendees. Caller strips markup from
      * rich event descriptions before handing them to this plain-text writer.
      *
@@ -29,7 +30,7 @@ final class IcsWriter
     public function attachment(array $booking, array $event, \DateTimeImmutable $now): string
     {
         return $this->calendar(
-            $this->method($booking),
+            $this->method($booking, $event),
             $this->event($booking, $event, $now)
         );
     }
@@ -100,12 +101,21 @@ final class IcsWriter
         return '"' . hash('sha256', json_encode($versions, JSON_THROW_ON_ERROR)) . '"';
     }
 
-    public function method(array $booking): string
+    /**
+     * REQUEST, or CANCEL for a cancelled booking. An event with `publish` set (the host's copy
+     * without an organiser distinct from the host, CalendarOrganizer) is PUBLISH in every state,
+     * its STATUS still says whether it is cancelled.
+     */
+    public function method(array $booking, array $event = []): string
     {
         $state = $booking['state'] ?? null;
 
         if (!in_array($state, [0, 1, 2, '0', '1', '2'], true)) {
             throw new \InvalidArgumentException('Invalid calendar booking state.');
+        }
+
+        if (!empty($event['publish'])) {
+            return 'PUBLISH';
         }
 
         return (int) $state === 2 ? 'CANCEL' : 'REQUEST';

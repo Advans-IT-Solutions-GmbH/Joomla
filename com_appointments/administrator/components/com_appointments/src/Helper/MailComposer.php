@@ -47,7 +47,7 @@ final class MailComposer
         }
 
         $content = $this->ics->attachment($booking, $event, $now);
-        $method = $this->ics->method($booking);
+        $method = $this->ics->method($booking, $event);
 
         // One invitation per mail, sent by the caller as the text/calendar alternative of the body
         // (CalendarPart): that is the part mail clients present as an invitation with its method.

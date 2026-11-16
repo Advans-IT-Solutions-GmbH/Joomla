@@ -207,12 +207,21 @@ try {
     [$concern, $company, $callBack] = [$firstField, $firstField + 1, $firstField + 2];
     $hostZone = (string) (json_decode((string) $db->query("SELECT params FROM {$prefix}users WHERE id={$host}")->fetch_row()[0], true)['timezone'] ?? '')
         ?: (string) ($config->offset ?? 'UTC');
+    // The organiser of the host's copy: the option, an address distinct from the host's own (the
+    // sender may be the host's own mailbox, then the copy would only be published, CalendarOrganizer).
+    $organiserParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode(['calendar_organizer_email' => 'calendar-organiser@example.test']
+        + (json_decode($organiserParams, true) ?: []))) . "' WHERE element='com_appointments' AND type='component'");
     $client = new AppointmentsHttp('http://localhost', 'mail-answers');
     [$browser, $path, $form] = $client->bookingForm($event, $day . ' 16:30:00', ['guests' => 'guest@example.test', 'timezone' => 'America/New_York',
         'fields' => [(string) $concern => "<b>Rückruf</b>\r\nBcc: other@example.test\nEND:VEVENT", (string) $company => '', (string) $callBack => '1']]);
     sleep(2);
     $before = $spool();
-    $browser->request($path, $form);
+    try {
+        $browser->request($path, $form);
+    } finally {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($organiserParams) . "' WHERE element='com_appointments' AND type='component'");
+    }
     $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 16:30:00'")->fetch_assoc();
     $check((bool) $booking, 'Fixture: the booking with answers and another zone is saved');
     $visitorStart = (new DateTimeImmutable($day . ' 16:30:00', $utc))->setTimezone(new DateTimeZone('America/New_York'));
@@ -243,9 +252,9 @@ try {
         && str_contains($hostIcs, "Visitor's time: " . $visitorStart->format('Y-m-d H:i') . ' (America/New_York)')
         && substr_count($hostIcs, "\r\nEND:VEVENT\r\n") === 1 && !preg_match('/^Bcc:/mi', $hostIcs),
         'The host invitation describes the booking completely, escaped so no answer becomes a content line');
-    $check((bool) preg_match('/^ORGANIZER[^:\r\n]*:mailto:' . preg_quote((string) $config->mailfrom, '/') . '\r?$/mi', $hostIcs)
+    $check((bool) preg_match('/^ORGANIZER[^:\r\n]*:mailto:calendar-organiser@example\.test\r?$/mi', $hostIcs)
         && (bool) preg_match('/^ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE[^:\r\n]*:mailto:/mi', $hostIcs),
-        'The host invitation is organised by the site sender with the host as attendee, so Outlook offers to add it');
+        'The host invitation is organised by the configured organiser with the host as attendee, so Outlook offers to add it');
     $inviteeMail = $mailsTo['invitee@example.test'] ?? '';
     $inviteeIcs = str_replace("\r\n ", '', AppointmentsMail::calendars($inviteeMail)[0] ?? '');
     $check(AppointmentsMail::isInvitation($inviteeMail, 'REQUEST') && !str_contains($inviteeIcs, 'Concern') && !str_contains($inviteeIcs, 'Rückruf')

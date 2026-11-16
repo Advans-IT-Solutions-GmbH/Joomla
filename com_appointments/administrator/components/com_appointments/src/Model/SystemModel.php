@@ -9,6 +9,7 @@
 namespace Advans\Component\Appointments\Administrator\Model;
 
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
+use Advans\Component\Appointments\Administrator\Helper\CalendarOrganizer;
 use Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl;
 use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Helper\Team\CipherSuite;
@@ -46,6 +47,8 @@ class SystemModel extends BaseDatabaseModel
                 'value' => (string) $app->get('mailer', 'mail')],
             self::siteUrlCheck((string) ComponentHelper::getParams('com_appointments')->get('public_site_url', ''),
                 (string) $app->get('live_site', '')),
+            self::organizerCheck($this->hostEmails(), (string) ComponentHelper::getParams('com_appointments')->get('calendar_organizer_email', ''),
+                (string) $app->get('mailfrom', '')),
         ];
         foreach (['task' => 'COM_APPOINTMENTS_SYSTEM_TASK', 'privacy' => 'COM_APPOINTMENTS_SYSTEM_PRIVACY'] as $group => $label) {
             $query = $this->query()->select($db->quoteName('enabled'))->from($db->quoteName('#__extensions'))
@@ -356,6 +359,34 @@ class SystemModel extends BaseDatabaseModel
             'value' => $configured === '' ? Text::_('COM_APPOINTMENTS_SYSTEM_SITE_URL_UNSET') : $configured,
             'remedy' => $configured === '' ? 'COM_APPOINTMENTS_SYSTEM_SITE_URL_FIX' : 'COM_APPOINTMENTS_SYSTEM_SITE_URL_INVALID',
             'severity' => 'error'];
+    }
+
+    /**
+     * The organiser of the hosts' own copies of an invitation (CalendarOrganizer): a warning when
+     * a host has no address distinct from their own, whose copy is then only published. The value
+     * is the number of such hosts, never an address.
+     *
+     * @param   list<string>  $hostEmails
+     *
+     * @return  array{label: string, ok: bool, value: string, remedy: string}
+     */
+    public static function organizerCheck(array $hostEmails, string $option, string $mailFrom): array
+    {
+        $without = CalendarOrganizer::hostsWithout($hostEmails, $option, $mailFrom);
+
+        return ['label' => 'COM_APPOINTMENTS_SYSTEM_ORGANIZER', 'ok' => $without === 0, 'value' => (string) $without,
+            'remedy' => 'COM_APPOINTMENTS_SYSTEM_ORGANIZER_FIX'];
+    }
+
+    /** @return list<string> The addresses of the hosts of the event types. */
+    private function hostEmails(): array
+    {
+        $db = $this->getDatabase();
+        $query = $this->query()->select('DISTINCT ' . $db->quoteName('u.email'))
+            ->from($db->quoteName('#__appointments_eventtypes', 'e'))
+            ->join('INNER', $db->quoteName('#__users', 'u'), $db->quoteName('u.id') . ' = ' . $db->quoteName('e.host_user_id'));
+
+        return array_map('strval', $db->setQuery($query)->loadColumn() ?: []);
     }
 
     /**

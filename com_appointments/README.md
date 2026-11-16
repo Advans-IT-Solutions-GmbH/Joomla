@@ -282,10 +282,14 @@ bookings after the update, until the setting is made (see section "Scheduler, re
   showed up in Outlook as a second `invite.ics` and a calendar attachment is only a file to open. The
   confirmation page keeps its `.ics` download. UTC calendar entries retain their UID and increase their
   sequence on changes, so an update replaces the entry and a cancellation removes it.
-  The invitee's invitation is organised by the host. The host's own copy is organised by the site's
-  sender (Joomla's «From email» and «From name») with the host as attendee without a requested
-  reply (`RSVP=FALSE`): a mail client shows an invitation from its own address as «you are the
-  organiser» and offers no way to add it. `METHOD:PUBLISH` was not chosen for that copy, because
+  The invitee's invitation is organised by the host. The host's own copy is organised by the address
+  of **Options → Organiser of the host's calendar entries** (`calendar_organizer_email`), else by
+  Joomla's «From email», with «From name», and names the host as attendee without a requested reply
+  (`RSVP=FALSE`): a mail client shows an invitation from its own address as «you are the organiser»
+  and offers no way to add it. An address equal to the host's own (case-insensitive) does not count.
+  When neither address differs from the host's, the host's copy is published (`METHOD:PUBLISH`)
+  instead, a cancellation then does not remove it in every calendar, and **System checks** warn with
+  the number of such hosts. `METHOD:PUBLISH` is only that fallback, because
   clients do not reliably remove a published entry on cancellation; with `REQUEST`/`CANCEL` and no
   requested reply, accepting adds the entry without a mail to the sender. The host's copy describes
   the booking completely: name, address, telephone, guests, the visitor's time and every answer.
