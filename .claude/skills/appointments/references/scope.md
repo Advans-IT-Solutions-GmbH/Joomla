@@ -129,7 +129,7 @@ all three in version 1:
   ended.
 
 IP addresses are stored only inside the encrypted origin record of a booking (`attribution`, since
-1.6.0, component option `attribution_capture`): the address of the first page view and of the
+1.6.0, component option `attribution_capture`, off by default): the address of the first page view and of the
 booking, erased with the booking. The anti-bot timing check persists nothing, and the rate limiter
 keeps only a keyed hash with a one-day retention.
 

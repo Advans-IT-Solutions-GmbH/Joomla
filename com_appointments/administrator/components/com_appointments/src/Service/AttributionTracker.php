@@ -26,7 +26,8 @@ defined('_JEXEC') or die;
  * view counts: a GET request of the site for an HTML page, not an Ajax or raw request.
  * Server side only: no cookie of its own, no script, nothing a visitor can edit in the form.
  *
- * The component option `attribution_capture` (default on) switches collecting and storing off.
+ * Off until the component option `attribution_capture` is switched on (default off): only a site
+ * whose privacy notice names this processing may collect and store it.
  *
  * @since  1.6.0
  */
@@ -36,7 +37,7 @@ final class AttributionTracker
 
     public static function enabled(): bool
     {
-        return (int) ComponentHelper::getParams('com_appointments')->get('attribution_capture', 1) === 1;
+        return (int) ComponentHelper::getParams('com_appointments')->get('attribution_capture', 0) === 1;
     }
 
     /** Records one page view of the site in the session; never breaks a page. */

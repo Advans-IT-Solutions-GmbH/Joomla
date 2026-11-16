@@ -1493,8 +1493,10 @@ encrypted origin record, see [Origin of bookings](#origin-of-bookings-campaign-a
 Every booking stores how the visitor reached the site, so a campaign can be evaluated per booking
 and as a whole at any time. A typical path: a landing page (any Joomla page, for example an article
 reached through `?utm_source=linkedin&utm_campaign=…`) whose button leads to the booking page. The
-component option **Origin of bookings** (`attribution_capture`, default on) switches recording and
-storing off; mention the processing in your site's privacy notice.
+component option **Origin of bookings** (`attribution_capture`) is **off by default**: switch it on
+only after your site's privacy notice names this processing (campaign parameters and click IDs,
+referrer, landing and booking page, device, browser and IP addresses). While it is off nothing is
+recorded, stored or counted.
 
 **How it is recorded.** The bundled plugin **System - Appointments origin of bookings** records every
 page view of the site in the visitor's Joomla session, the component's own pages also without it.

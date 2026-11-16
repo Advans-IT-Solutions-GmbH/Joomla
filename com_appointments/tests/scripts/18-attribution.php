@@ -59,6 +59,11 @@ $csvRows = static function (string $csv): array {
 };
 
 try {
+    // Off by default: nothing is recorded until the operator switches the option on.
+    $defaults = json_decode($originalParams, true) ?: [];
+    $check((int) ($defaults['attribution_capture'] ?? 0) === 0, 'The origin of bookings is off after the installation');
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode(['attribution_capture' => 1] + $defaults))
+        . "' WHERE element='com_appointments' AND type='component'");
     $event = $fixture->event();
     $hostEmail = strtolower((string) $db->query("SELECT email FROM {$prefix}users WHERE id={$fixture->host}")->fetch_assoc()['email']);
     $category = (int) $db->query("SELECT id FROM {$prefix}categories WHERE extension='com_content' AND published=1 ORDER BY id LIMIT 1")->fetch_assoc()['id'];
