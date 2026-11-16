@@ -27,7 +27,8 @@ defined('_JEXEC') or die;
  *
  * Written inside the booking's own transaction, under its host lock: the row and its state
  * always follow the booking in order. A failure is logged and does not fail the booking, except a
- * deadlock or lock wait timeout, which rolled back the whole transaction and is passed on. Bookings
+ * deadlock or lock wait timeout, which rolled back the whole transaction and is passed on, and a
+ * failure to remove the link to an erased booking, which fails the erasure so it stays retryable. Bookings
  * without a record of their origin (made before 1.6.0 or with the option `attribution_capture`
  * off) get no row.
  *
@@ -88,7 +89,9 @@ final class CampaignStats
                 . ' WHERE ' . $db->quoteName('booking_id') . ' = ' . $bookingId)->execute();
         } catch (\Throwable $e) {
             // A deadlock or lock wait rolled back the whole booking transaction: the caller must fail.
-            if (Team\AuditService::isLockConflict($e)) {
+            // An erasure fails as well, so the link to the booking goes in the same transaction or the
+            // erasure stays to be done (retryable); a plain state change remains best effort.
+            if ($unlink || Team\AuditService::isLockConflict($e)) {
                 throw $e;
             }
 
