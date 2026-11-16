@@ -23,7 +23,9 @@ class SourcesModel extends ListModel
     public function __construct($config = [], $factory = null)
     {
         if (empty($config['filter_fields'])) {
-            $config['filter_fields'] = ['id', 'name', 'host', 'published', 'last_status'];
+            // Prefixed: the list joins the domains table, which has its own id and
+            // published columns, so an unprefixed ORDER BY would be ambiguous.
+            $config['filter_fields'] = ['s.id', 's.name', 's.host', 's.published', 's.last_status'];
         }
 
         parent::__construct($config, $factory);

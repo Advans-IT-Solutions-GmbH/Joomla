@@ -5,7 +5,7 @@ Both feed `Ingestor`, which parses and stores idempotently.
 
 ## File upload
 
-`IngestController` accepts an uploaded `.xml`, `.gz` or `.zip`. `ReportArchive` detects the
+`IngestController` accepts an uploaded `.xml`, `.gz` or `.zip` (DMARC) or `.json`, `.json.gz` or `.zip` (TLS-RPT; `TlsReportArchive::looksLikeTlsRpt()` routes it). `ReportArchive` detects the
 container and yields the inner XML (gzip decode, zip entry extraction, or raw XML passthrough),
 then `DmarcParser` runs. Upload is CSRF-protected and works without the IMAP transport. A manual
 upload is deliberately **unbound**: the form offers no source selector, so `upload()` never reads a
@@ -80,6 +80,28 @@ Streaming design (do not revert to loading all messages into an array):
   messages. The returned stats carry the advanced `uidvalidity`/`last_uid` the controller persists;
   a failed run leaves the stored cursor intact so the next run re-examines the same range.
 - A `MAX_TOTAL_BYTES` (128 MiB) run budget caps memory for a single run.
+- Ingestion limits (`IngestLimits`, options `max_attachments_per_message`, `max_reports_per_message`,
+  `max_message_unpacked_mb`, `max_reports_per_run`, `max_run_unpacked_mb`): `SourcePoller` sets one
+  limits object per poll on the `Ingestor`. `ingestMessage()` measures a message first (pass 1) and
+  stores only afterwards (pass 2), so a message is never half imported. Over a per-message limit, or
+  with a document over the 8 MiB decoder limit (`stats['oversized']`/`bomb`), or cut by the MIME part/depth
+  ceiling (`MimeMessage::attachments($raw, $truncated)`), it returns
+  `RESULT_HELD`: the client advances the cursor, never marks it `\Seen` or deletes it, and flags it
+  `\Flagged` (best effort). Over a run limit it returns `RESULT_POSTPONE`: the client stops the run
+  like the byte budget, the next run starts with it. The first message of a run is always admitted.
+  Run size counts `stats['unpacked']` (every byte inflated or read, before the BOM is cut), also for held
+  messages and discarded gzip data; once a run limit
+  is spent (`runExhausted()`) further messages are postponed unread. A second extraction in pass 2 is
+  charged too. The retry set runs before the UID scan with at most half the messages and half the raw
+  budget of a run, and a postponement stops it with every unvisited retry UID kept. The retry set is
+  stored in round-robin order (unvisited first, retried last, not sorted), so the quota rotates. The
+  callback gets `'retry' => true`; the ingestor then allows only half of each run limit
+  (`checkRetry()`), and a postponed retry stops only the retry pass, not the scan. Retry and new-mail
+  usage are counted apart; retries count against the run only up to their half. Run limits are
+  clamped to at least twice the per-message reports and four times the per-message size. Admission
+  uses the full cost (bytes twice when pass 2 must extract again).
+  `IngestLog` writes UID, limit and counts to `com_dmarcreports.php`, never content or addresses.
+  Rationale and defaults: component `README.md`, "Mailbox ingestion limits".
 - `advance()` flags a processed message `\Seen` with `UID STORE +FLAGS.SILENT (\Seen)`. When
   `delete_after_import` is set it removes it instead: with the UIDPLUS capability (RFC 4315) it
   marks the message `\Deleted` and issues a **targeted `UID EXPUNGE`** so only the named messages
@@ -101,13 +123,14 @@ Streaming design (do not revert to loading all messages into an array):
   compressed container the host cannot decode) is **also advanced** — counted as `stats['blocked']`
   and surfaced to the operator — so it cannot pin the cursor and starve newer messages, but its UID
   is added to the durable retry set so a later run re-fetches it once the decoder is available. The
-  callback advances on everything except `RESULT_RETRY`.
+  callback advances on everything except `RESULT_RETRY` and `RESULT_POSTPONE`.
 - The cursor is scoped to one mailbox. `SourceModel::save()` resets it (via `SourceIdentity`) when
   any identity field (`protocol`, `host`, `port`, `security`, `username`, `folder`) changes, and
-  `IngestController::recordRun()` re-checks the identity under a `SourceLock` row lock before
+  `SourcePoller::recordRun()` re-checks the identity under a `SourceLock` row lock before
   advancing it, so a poll of the old mailbox cannot revive a stale high-water UID after an edit.
 
-IMAP is **not** integration-tested in CI (no IMAP server); correctness rests on review. Keep the
+IMAP is **not** integration-tested against a real IMAP server in CI. The unit tests and the
+`09-ingest-limits.php` suite drive `ImapClient` over a scripted in-memory server instead. Keep the
 streaming contract intact.
 
 ## MIME reader (`MimeMessage`)
@@ -195,8 +218,11 @@ ingest-only operator may import reports for already-configured domains but may n
 monitored-domain rows. When a report's policy domain is unknown and `allowAutoCreate` is false,
 `resolveDomain()` returns `0` and `store()` increments the `skipped` counter and writes nothing,
 rather than registering a domain the operator is not entitled to or storing an orphan report
-(`domain_id = 0`). IMAP import for a source bound to a domain passes that id as `forcedDomainId`, so
-auto-discovery only applies to unbound sources and uploads.
+(`domain_id = 0`). IMAP import for a source bound to a domain passes that id as `forcedDomainId`
+unless auto-creation is allowed for the run (`SourcePoller::forcedDomainId()` returns `0` then), so a
+bound aggregating mailbox can still register new domains. Without auto-creation, discovery only
+matches existing domains for unbound sources and uploads. The scheduled task polls only sources
+bound to a published domain (`SourcePoller::activeSources()`); unbound sources are imported manually.
 
 A forced binding only accepts a report whose policy domain is the bound domain or a subdomain of it
 (`DomainBinding::accepts()`, shared by the DMARC and TLS-RPT ingestors); a parent, sibling or unrelated

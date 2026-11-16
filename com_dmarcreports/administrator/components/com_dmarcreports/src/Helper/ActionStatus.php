@@ -23,7 +23,21 @@ defined('_JEXEC') or die;
  */
 final class ActionStatus
 {
+    /**
+     * The longest snooze accepted. The dashboard offers 7 days; a crafted
+     * request with a huge value would otherwise overflow the date calculation.
+     */
+    public const MAX_SNOOZE_DAYS = 365;
+
     private DatabaseInterface $db;
+
+    /**
+     * Clamp a requested snooze length to 1 .. MAX_SNOOZE_DAYS days.
+     */
+    public static function snoozeDays(int $requested): int
+    {
+        return min(self::MAX_SNOOZE_DAYS, max(1, $requested));
+    }
 
     /** @var array<string, array{status: string, snooze_until: int}>|null */
     private ?array $statuses = null;

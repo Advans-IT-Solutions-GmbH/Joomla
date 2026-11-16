@@ -91,4 +91,44 @@ class SourceIdentityTest extends TestCase
         // populated source: the absent fields differ from the stored values.
         $this->assertTrue(SourceIdentity::changed($this->source(), ['host' => 'mail.example.org']));
     }
+
+    public function testCredentialTargetChangesWithServerOrAccount(): void
+    {
+        // The stored password must not follow a source to another server, port,
+        // transport or account without being entered again.
+        foreach ([
+            ['host' => 'imap.attacker.example'],
+            ['port' => '143'],
+            ['security' => 'tls'],
+            ['username' => 'other@example.org'],
+        ] as $change) {
+            $this->assertTrue(
+                SourceIdentity::credentialTargetChanged($this->source(), $this->source($change)),
+                'Change not detected: ' . json_encode($change)
+            );
+        }
+    }
+
+    public function testSameCredentialNeedsTargetAndCiphertext(): void
+    {
+        // The snapshot a blank-password save keeps must match the row it writes:
+        // another target, or the same target with another password, means a
+        // concurrent save changed it.
+        $snapshot = $this->source();
+
+        $this->assertTrue(SourceIdentity::sameCredential($snapshot, (object) $this->source(['port' => '993', 'folder' => 'Archive'])));
+        $this->assertFalse(SourceIdentity::sameCredential($snapshot, $this->source(['host' => 'imap.other.example', 'password_enc' => 'other'])));
+        $this->assertFalse(SourceIdentity::sameCredential($snapshot, $this->source(['password_enc' => 'other'])));
+        $this->assertFalse(SourceIdentity::sameCredential($snapshot, $this->source(['host' => 'imap.other.example'])));
+    }
+
+    public function testFolderOrPasswordChangeKeepsTheCredentialTarget(): void
+    {
+        $this->assertFalse(
+            SourceIdentity::credentialTargetChanged($this->source(), $this->source(['folder' => 'Archive']))
+        );
+        $this->assertFalse(
+            SourceIdentity::credentialTargetChanged($this->source(['port' => 993]), (object) $this->source(['port' => '993', 'password_enc' => 'x']))
+        );
+    }
 }

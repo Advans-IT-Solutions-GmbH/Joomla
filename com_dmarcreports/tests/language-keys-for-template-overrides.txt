@@ -1,0 +1,2 @@
+# Joomla's com_config view assembles the component's Options heading.
+COM_DMARCREPORTS_CONFIGURATION

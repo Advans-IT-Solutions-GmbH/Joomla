@@ -57,6 +57,7 @@ $detailFor = static function (string $id, array $params): string {
         </div>
         <div class="card-body">
             <p class="text-muted"><?php echo Text::_('COM_DMARCREPORTS_SYSTEMCHECK_INTRO'); ?></p>
+            <div class="table-responsive">
             <table class="table table-striped">
                 <thead>
                     <tr>
@@ -85,6 +86,7 @@ $detailFor = static function (string $id, array $params): string {
                     <?php endforeach; ?>
                 </tbody>
             </table>
+            </div>
         </div>
     </div>
 

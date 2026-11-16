@@ -23,7 +23,7 @@ defined('_JEXEC') or die;
  *
  * @since  1.0.0
  *
- * @phpstan-type DmarcIngestSummary array{imported:int, duplicates:int, failed:int, skipped:int, blocked:int, records:int, dropped:int, reason:string}
+ * @phpstan-type DmarcIngestSummary array{imported:int, duplicates:int, failed:int, skipped:int, blocked:int, records:int, messages:string, dropped:int, held:int, held_uids:int[], postponed:int, reason:string}
  */
 final class Ingestor
 {
@@ -41,6 +41,35 @@ final class Ingestor
     public const RESULT_SKIP    = 'skip';
     public const RESULT_RETRY   = 'retry';
     public const RESULT_BLOCKED = 'blocked';
+
+    /**
+     * The message exceeds a per-message limit of {@see IngestLimits}. Nothing
+     * from it is stored; the caller advances past it without marking it read
+     * and flags it for manual review, so it neither blocks newer mail nor is
+     * lost.
+     */
+    public const RESULT_HELD = 'held';
+
+    /**
+     * The message fits its own limits, but the run limits are reached. Nothing
+     * from it is stored; the caller leaves it untouched and stops the cursor so
+     * the next run starts with it.
+     */
+    public const RESULT_POSTPONE = 'postpone';
+
+    /**
+     * Largest total of extracted documents kept in memory between measuring a
+     * message and storing it. Above this the documents are extracted a second
+     * time instead, so peak memory stays at the archive helper's own
+     * per-archive ceiling, as before the per-message limits.
+     */
+    private const CACHE_BYTES = 16777216; // 16 MiB
+
+    /**
+     * Highest number of held UIDs listed in one run summary; the log names
+     * every one of them.
+     */
+    private const MAX_LISTED_HELD = 10;
 
     /**
      * Upper bound on a manually uploaded report file before decompression. The
@@ -67,6 +96,13 @@ final class Ingestor
      */
     private ?TlsRptIngestor $tlsRpt = null;
 
+    /**
+     * Per-message and per-run limits for mailbox messages, or null for none.
+     * Only {@see ingestMessage()} applies them; a manual upload has its own
+     * size ceiling and is an operator action, not untrusted mail.
+     */
+    private ?IngestLimits $limits = null;
+
     public function __construct(?DatabaseInterface $db = null, bool $allowAutoCreate = true)
     {
         $this->db              = $db ?? Factory::getContainer()->get(DatabaseInterface::class);
@@ -84,6 +120,16 @@ final class Ingestor
     }
 
     /**
+     * Apply per-message and per-run limits to every following
+     * {@see ingestMessage()} call. One instance is used per run, so the run
+     * budget lives in the limits object.
+     */
+    public function setLimits(?IngestLimits $limits): void
+    {
+        $this->limits = $limits;
+    }
+
+    /**
      * Ingest the decoded attachments of raw IMAP messages.
      *
      * @param   array<int, array{uid?: int, raw: string}>  $messages
@@ -92,7 +138,7 @@ final class Ingestor
      *                                     instead of resolving it from the report XML
      *                                     (an operator binding a mailbox to one domain).
      *
-     * @return  DmarcIngestSummary  imported, duplicates, failed, skipped, blocked, records, dropped, reason
+     * @return  DmarcIngestSummary  imported, duplicates, failed, skipped, blocked, records, messages, dropped, held, held_uids, postponed, reason
      */
     public function ingestMessages(array $messages, ?int $sourceId = null, int $forcedDomainId = 0): array
     {
@@ -115,7 +161,11 @@ final class Ingestor
      * the PHP extension needed to decode the container) is a permanent condition
      * the caller advances past — retrying it forever would pin the cursor and
      * starve every newer message — while recording it in the summary so the
-     * operator is told to install the extension.
+     * operator is told to install the extension. With limits set
+     * ({@see setLimits()}), RESULT_HELD reports a message over a per-message
+     * limit (nothing stored, to be flagged for review and advanced past) and
+     * RESULT_POSTPONE a message the run limits leave for the next run (nothing
+     * stored, left untouched).
      *
      * @param   array{uid?: int, raw?: string}  $message
      * @param   DmarcIngestSummary              $summary  Mutated in place.
@@ -124,11 +174,51 @@ final class Ingestor
      */
     public function ingestMessage(array $message, ?int $sourceId, int $forcedDomainId, array &$summary): string
     {
-        $before  = (int) ($summary['imported'] ?? 0);
-        $retry   = false;
-        $blocked = false;
+        $before      = (int) ($summary['imported'] ?? 0);
+        $retry       = false;
+        $blocked     = false;
+        $uid         = (int) ($message['uid'] ?? 0);
 
-        foreach (MimeMessage::attachments((string) ($message['raw'] ?? '')) as $attachment) {
+        // A message from the retry set (reports that waited for a PHP
+        // extension) may only use the retry share of the run limits, so
+        // retries cannot use up the run and starve new mail.
+        $isRetry = !empty($message['retry']);
+
+        if ($this->limits !== null) {
+            // Once the run budget is spent (also by held messages and
+            // discarded bombs), do not even unpack the next message: postpone
+            // it and every later one to the next run.
+            $reason = $this->limits->runExhausted() ?? ($isRetry ? $this->limits->retryShareExhausted() : null);
+
+            if ($reason !== null) {
+                return $this->postpone($summary, $sourceId, $uid, $reason, 0, 0);
+            }
+        }
+
+        $attachments = MimeMessage::attachments((string) ($message['raw'] ?? ''), $truncated);
+
+        if ($this->limits !== null) {
+            // The MIME reader stops at its part and nesting ceilings. A message
+            // it could not read to the end is held as a whole rather than
+            // imported partly and then marked read or deleted.
+            $reason = $truncated
+                ? IngestLimits::REASON_PARTS
+                : $this->limits->checkAttachments(\count($attachments));
+
+            if ($reason !== null) {
+                return $this->hold($summary, $sourceId, $uid, $reason, \count($attachments), 0, 0);
+            }
+        }
+
+        // Pass 1: extract every attachment and measure the message before
+        // anything is stored, so a message over a limit is held as a whole and
+        // never half imported.
+        $prepared = [];
+        $reports  = 0;
+        $bytes    = 0; // every unpacked byte, also those an extractor threw away
+        $cache    = true;
+
+        foreach ($attachments as $index => $attachment) {
             $stats   = [];
             $content = (string) $attachment['content'];
             $name    = (string) $attachment['filename'];
@@ -140,9 +230,7 @@ final class Ingestor
             $isTlsRpt = TlsReportArchive::looksLikeTlsRpt($content, $name);
 
             try {
-                $documents = $isTlsRpt
-                    ? TlsReportArchive::extract($content, $name, $stats)
-                    : ReportArchive::extract($content, $name, $stats);
+                $documents = $this->extract($isTlsRpt, $content, $name, $stats);
             } catch (DecoderUnavailableException) {
                 // The host cannot decompress this container because the PHP zlib
                 // or zip extension is absent. This is a permanent configuration
@@ -151,7 +239,10 @@ final class Ingestor
                 // message behind it. Record it as blocked so the operator is
                 // told to install the extension, and let the caller advance past
                 // it. The report stays in the mailbox and ongoing reports keep
-                // importing once the extension is present.
+                // importing once the extension is present. The extractor throws
+                // before inflating anything, so this costs no run budget, while
+                // the other attachments of the message (for example a gzip whose
+                // decoder is installed now) are still processed.
                 $blocked = true;
                 continue;
             } catch (ArchiveExtractionException) {
@@ -162,12 +253,102 @@ final class Ingestor
                 continue;
             }
 
+            $dropped = (int) ($stats['dropped'] ?? 0);
+            $size    = 0;
+
+            foreach ($documents as $document) {
+                $size += \strlen($document);
+            }
+
+            // Count what the extractor unpacked, not only what it returned: a
+            // document can shrink when its byte order mark is cut, and a
+            // rejected gzip stream returns nothing although it was inflated.
+            $reports += \count($documents) + $dropped;
+            $bytes   += max($size, (int) ($stats['unpacked'] ?? 0));
+
+            if ($this->limits !== null) {
+                // A document over the archive helper's size ceiling would be
+                // skipped as a "bomb" and the message marked read. It may be a
+                // genuine, very large report, so hold the message for review
+                // instead of losing it.
+                $reason = ($stats['reason'] ?? '') === 'bomb' || (int) ($stats['oversized'] ?? 0) > 0
+                    ? IngestLimits::REASON_ARCHIVE_LIMIT
+                    : $this->limits->checkMessage($reports, $bytes);
+
+                if ($reason !== null) {
+                    $this->limits->chargeInspected($bytes, $isRetry);
+
+                    return $this->hold($summary, $sourceId, $uid, $reason, \count($attachments), $reports, $bytes);
+                }
+            }
+
+            if ($cache && $bytes > self::CACHE_BYTES) {
+                // Too much to keep in memory until pass 2: drop the cached
+                // documents and extract again while storing.
+                $cache = false;
+
+                foreach (array_keys($prepared) as $key) {
+                    $prepared[$key]['documents'] = null;
+                }
+            }
+
+            $prepared[] = [
+                'index'     => $index,
+                'tls'       => $isTlsRpt,
+                'documents' => $cache ? $documents : null,
+                'dropped'   => $dropped,
+            ];
+
+            unset($documents);
+        }
+
+        if ($this->limits !== null) {
+            // What storing costs: the bytes unpacked in pass 1, twice when pass 2
+            // must extract again because the documents were too large to keep
+            // in memory. The admission checks use the full cost, so a retry
+            // never takes more than its share of the run.
+            $cost   = $cache ? $bytes : 2 * $bytes;
+            $reason = ($isRetry ? $this->limits->checkRetry($reports, $cost) : null)
+                ?? $this->limits->checkRun($reports, $cost);
+
+            if ($reason !== null) {
+                // Unpacked already, so the work counts, although the message is
+                // left for the next run.
+                $this->limits->chargeInspected($bytes, $isRetry);
+
+                return $this->postpone($summary, $sourceId, $uid, $reason, $reports, $bytes);
+            }
+
+            $this->limits->charge($reports, $cost, $isRetry);
+        }
+
+        // Pass 2: store what pass 1 measured.
+        foreach ($prepared as $entry) {
+            $documents = $entry['documents'];
+
+            if ($documents === null) {
+                $attachment = $attachments[$entry['index']];
+                $stats      = [];
+
+                try {
+                    $documents = $this->extract($entry['tls'], (string) $attachment['content'], (string) $attachment['filename'], $stats);
+                } catch (DecoderUnavailableException) {
+                    $blocked = true;
+                    continue;
+                } catch (ArchiveExtractionException) {
+                    $retry = true;
+                    continue;
+                }
+            }
+
             // A zip that packs more than the per-archive document cap has its
             // surplus reports counted so the caller can note the dropped total
-            // in the run summary instead of discarding them silently.
-            $summary['dropped'] = (int) ($summary['dropped'] ?? 0) + (int) ($stats['dropped'] ?? 0);
+            // in the run summary instead of discarding them silently. With the
+            // mailbox limits in place such a message is held in pass 1, so this
+            // only counts for a caller without limits.
+            $summary['dropped'] = (int) ($summary['dropped'] ?? 0) + $entry['dropped'];
 
-            if ($isTlsRpt) {
+            if ($entry['tls']) {
                 $this->tlsRpt()->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
             } else {
                 $this->ingestDocuments($documents, $sourceId, $forcedDomainId, $summary, $retry);
@@ -192,6 +373,65 @@ final class Ingestor
         }
 
         return (int) ($summary['imported'] ?? 0) > $before ? self::RESULT_NEW : self::RESULT_SKIP;
+    }
+
+    /**
+     * Extract the documents of one attachment with the extractor for its
+     * format.
+     *
+     * @param   array|null  $stats  Diagnostics out-parameter of the extractor.
+     *
+     * @return  string[]
+     *
+     * @throws  DecoderUnavailableException
+     * @throws  ArchiveExtractionException
+     */
+    private function extract(bool $isTlsRpt, string $content, string $name, ?array &$stats): array
+    {
+        return $isTlsRpt
+            ? TlsReportArchive::extract($content, $name, $stats)
+            : ReportArchive::extract($content, $name, $stats);
+    }
+
+    /**
+     * Count and log a message the run limits leave for the next run.
+     *
+     * @param   DmarcIngestSummary  $summary
+     *
+     * @return  self::RESULT_POSTPONE
+     */
+    private function postpone(array &$summary, ?int $sourceId, int $uid, string $reason, int $reports, int $bytes): string
+    {
+        $summary['postponed'] = (int) ($summary['postponed'] ?? 0) + 1;
+        IngestLog::postponed((int) $sourceId, $uid, $reason, $reports, $bytes);
+
+        return self::RESULT_POSTPONE;
+    }
+
+    /**
+     * Count and log a message held for manual review. The log line and the
+     * summary carry only the UID, the limit and counts, never message content
+     * or sender data.
+     *
+     * @param   DmarcIngestSummary  $summary
+     *
+     * @return  self::RESULT_HELD
+     */
+    private function hold(array &$summary, ?int $sourceId, int $uid, string $reason, int $attachments, int $reports, int $bytes): string
+    {
+        $summary['held'] = (int) ($summary['held'] ?? 0) + 1;
+
+        $listed = \is_array($summary['held_uids'] ?? null) ? $summary['held_uids'] : [];
+
+        if ($uid > 0 && \count($listed) < self::MAX_LISTED_HELD) {
+            $listed[] = $uid;
+        }
+
+        $summary['held_uids'] = $listed;
+
+        IngestLog::held((int) $sourceId, $uid, $reason, $attachments, $reports, $bytes);
+
+        return self::RESULT_HELD;
     }
 
     /**
@@ -587,6 +827,6 @@ final class Ingestor
      */
     public function newSummary(): array
     {
-        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'blocked' => 0, 'records' => 0, 'messages' => '0', 'dropped' => 0, 'reason' => ''];
+        return ['imported' => 0, 'duplicates' => 0, 'failed' => 0, 'skipped' => 0, 'blocked' => 0, 'records' => 0, 'messages' => '0', 'dropped' => 0, 'held' => 0, 'held_uids' => [], 'postponed' => 0, 'reason' => ''];
     }
 }
