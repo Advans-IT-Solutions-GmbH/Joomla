@@ -163,6 +163,60 @@ class MtaStsDiagnosticsTest extends TestCase
         $this->assertContains('tlsrpt_publish', $codes);
     }
 
+    private function noNetworkResolver(): DnsResolverInterface
+    {
+        return new class implements DnsResolverInterface {
+            public function mx(string $host): ?array
+            {
+                throw new \LogicException('The dashboard guidance must not query DNS');
+            }
+
+            public function txt(string $host): ?array
+            {
+                throw new \LogicException('The dashboard guidance must not query DNS');
+            }
+        };
+    }
+
+    public function testDashboardKeepsPublishGuidanceWhenLiveChecksAreOff(): void
+    {
+        // Without live checks nothing else tells the administrator what to
+        // publish, so the dashboard keeps the copy-ready records.
+        $diagnostics = new MtaStsDiagnostics($this->noNetworkResolver(), $this->fetcher(null));
+        $codes       = array_map(
+            static fn (array $f): string => $f['code'],
+            $diagnostics->dashboardFindings($this->generated(), false)
+        );
+
+        $this->assertSame(['mtasts_publish', 'tlsrpt_publish'], $codes);
+    }
+
+    public function testDashboardDropsUnverifiedPublishGuidanceWhenLiveChecksAreOn(): void
+    {
+        // With live checks on, the domain view and the system check verify the
+        // published records. The network-free dashboard cannot, so repeating
+        // "publish this record" there contradicted a verified, published record.
+        $diagnostics = new MtaStsDiagnostics($this->noNetworkResolver(), $this->fetcher(null));
+
+        $this->assertSame([], $diagnostics->dashboardFindings($this->generated(), true));
+    }
+
+    public function testDashboardKeepsConfigurationErrorsWhenLiveChecksAreOn(): void
+    {
+        // A missing MX list or TLS-RPT address is a configuration error the
+        // dashboard can see without any lookup, so it stays visible.
+        $diagnostics = new MtaStsDiagnostics($this->noNetworkResolver(), $this->fetcher(null));
+        $codes       = array_map(
+            static fn (array $f): string => $f['code'],
+            $diagnostics->dashboardFindings(
+                $this->generated(['mx' => [], 'id' => '', 'tlsrpt_record' => '', 'tlsrpt_record_host' => '']),
+                true
+            )
+        );
+
+        $this->assertSame(['mtasts_no_mx', 'tlsrpt_missing_rua'], $codes);
+    }
+
     public function testMissingStsRecordIsReportedAsPublish(): void
     {
         $diagnostics = new MtaStsDiagnostics($this->resolver([
