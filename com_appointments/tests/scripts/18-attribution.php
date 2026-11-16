@@ -13,6 +13,9 @@ require_once appointments_test_root() . '/administrator/components/com_appointme
 
 use Advans\Component\Appointments\Administrator\Helper\Attribution;
 
+// Joomla is booted before any output: its session cannot start once headers are sent.
+require __DIR__ . '/appointments-joomla.php';
+
 $fixture = new AppointmentsFixture('attribution');
 $db = $fixture->db;
 $prefix = $fixture->prefix;
@@ -27,7 +30,8 @@ $article = 0;
 $event = 0;
 $agent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14.6; rv:132.0) Gecko/20100101 Firefox/132.0';
 $address = 'attribution-' . bin2hex(random_bytes(4)) . '@example.test';
-$xss = '<script>alert(1)</script>';
+// Not a <script> tag: Joomla's standard .htaccess refuses such a query string before Joomla runs.
+$xss = '"><img src=x onerror=alert(1)>';
 $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+2 days')->format('Y-m-d');
 $messageTo = static function (string $mime): string {
     return preg_match('/^To:\s*(.+)$/mi', $mime, $match) === 1 ? strtolower(trim($match[1])) : '';
@@ -82,6 +86,9 @@ try {
         'utm_source' => 'linkedin', 'utm_medium' => 'paid-social', 'utm_campaign' => 'first-campaign', 'utm_content' => $xss,
         'li_fat_id' => 'LI-CLICK-1', 'gclid' => 'G-CLICK-1', 'token' => 'NEVER-STORED']);
     $html = $visitor->request($landing);
+    if ($visitor->status !== 200 || !str_contains($html, 'ATTRIBUTION-LANDING-ARTICLE')) {
+        echo '    landing: HTTP ' . $visitor->status . ', redirects ' . json_encode($visitor->locations) . ', title ' . (preg_match('#<title>(.*?)</title>#s', $html, $m) ? trim($m[1]) : '-') . "\n";
+    }
     $check($visitor->status === 200 && str_contains($html, 'ATTRIBUTION-LANDING-ARTICLE'), 'The landing article with campaign parameters opens');
 
     // 2. Internal navigation: no new touch.
@@ -179,7 +186,6 @@ try {
         'The campaign statistics export counts the event type per campaign and state');
 
     // Privacy export of the invitee's address.
-    require __DIR__ . '/appointments-joomla.php';
     $application->bootComponent('com_privacy');
     $plugin = $application->bootPlugin('appointments', 'privacy');
     $request = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
