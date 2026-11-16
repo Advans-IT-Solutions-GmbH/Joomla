@@ -57,7 +57,7 @@ try {
         foreach (['CANARY-', 'canary-invitee@example.test', 'canary-guest@example.test', '+41000000000', 'Europe/Zurich'] as $canary) {
             $check(!str_contains($decoded, $canary), 'Host cancellation contains no former personal field: ' . $canary);
         }
-        $check(str_contains($decoded, 'METHOD:CANCEL') && str_contains($decoded, 'STATUS:CANCELLED')
+        $check(str_contains($decoded, 'METHOD:' . AppointmentsMail::expectedMethod($mime, 'CANCEL')) && str_contains($decoded, 'STATUS:CANCELLED')
             && str_contains($decoded, 'UID:' . $booking['uid']), 'Host receives the cancellation of the original calendar UID');
     }
     $audit = $db->query("SELECT * FROM {$prefix}appointments_audit WHERE booking_id={$id}")->fetch_assoc();

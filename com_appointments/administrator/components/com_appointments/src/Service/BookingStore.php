@@ -164,12 +164,20 @@ final class BookingStore
                 return $booking + ['_changed' => false];
             }
 
+            $change = [];
+
+            if ($state === 2) {
+                // The version the cancellation replaced: its signed reschedule and cancel links
+                // then report the cancellation instead of a bare refusal (Site ManageModel).
+                $booking['cancelled_version_utc'] = $change['cancelled_version_utc'] = $booking['modified_utc'];
+            }
+
             $booking['state'] = $state;
             $booking['sequence'] = (int) $booking['sequence'] + 1;
             $booking['modified_utc'] = ModifiedTime::next($booking['modified_utc'], $now);
             $booking['cancel_reason'] = $state === 2 && $reason !== '' ? $reason : null;
             $row = (object) $this->data()->sealChange($booking, ['id' => $bookingId, 'state' => $state,
-                'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'cancel_reason' => $booking['cancel_reason']]);
+                'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'cancel_reason' => $booking['cancel_reason']] + $change);
             $db->updateObject('#__appointments_bookings', $row, 'id');
             Close\Queue::changed($db, $booking);
             $db->transactionCommit();

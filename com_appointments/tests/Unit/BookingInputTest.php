@@ -364,6 +364,40 @@ final class BookingInputTest extends TestCase
         self::assertSame([], $error->fieldErrors);
     }
 
+    public function testMaxLengthOfAField(): void
+    {
+        self::assertSame(8000, BookingInput::maxLength(['type' => 'textarea']), 'Without an own maximum the type limit, as before');
+        self::assertSame(8000, BookingInput::maxLength(['type' => 'textarea', 'max_length' => 0]));
+        self::assertSame(500, BookingInput::maxLength(['type' => 'textarea', 'max_length' => '500']));
+        self::assertSame(255, BookingInput::maxLength(['type' => 'text', 'max_length' => 900]), 'Never above the storage limit');
+        self::assertSame(20, BookingInput::maxLength(['type' => 'text', 'max_length' => 20]));
+        self::assertSame(0, BookingInput::maxLength(['type' => 'email', 'max_length' => 20]), 'Only text fields have a length option');
+        self::assertSame(8000, BookingInput::maxLength(['type' => 'textarea', 'max_length' => 'x']));
+    }
+
+    /** An optional textarea of at most 500 characters, as on a live booking form. */
+    public function testOwnMaximumIsEnforcedWithItsOwnMessage(): void
+    {
+        $fields = [['id' => 4, 'type' => 'textarea', 'required' => 0, 'options' => '[]', 'max_length' => 500]];
+        $accepted = (new BookingInput())->validate($this->input() + ['fields' => [4 => str_repeat('ä', 500)]], $fields, 'de-DE');
+        self::assertSame(str_repeat('ä', 500), json_decode($accepted['custom_fields'], true)['4'], '500 characters, counted as characters, not bytes');
+
+        $error = $this->refusal($this->input() + ['fields' => [4 => str_repeat('a', 501)]], $fields);
+        self::assertSame(['field-4' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH'], $error->fieldErrors);
+
+        $error = $this->refusal($this->input() + ['fields' => [4 => str_repeat('a', 8001)]], $fields);
+        self::assertSame(['field-4' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_INVALID'], $error->fieldErrors, 'Beyond the storage limit as before');
+
+        // A form POST sends a textarea's line breaks as CRLF: one character each, as the field counts them.
+        $ten = [['id' => 4, 'type' => 'textarea', 'required' => 0, 'options' => '[]', 'max_length' => 10]];
+        $row = (new BookingInput())->validate($this->input() + ['fields' => [4 => "aaaa\r\nbbbbb"]], $ten, 'de-DE');
+        self::assertSame("aaaa\nbbbbb", json_decode($row['custom_fields'], true)['4']);
+
+        $default = [['id' => 4, 'type' => 'textarea', 'required' => 0, 'options' => '[]']];
+        $row = (new BookingInput())->validate($this->input() + ['fields' => [4 => str_repeat('a', 8000)]], $default, 'de-DE');
+        self::assertSame(8000, mb_strlen(json_decode($row['custom_fields'], true)['4']));
+    }
+
     private function refusal(array $input, array $fields, bool $phoneRequired = false, int $maxGuests = 10): BookingValidationException
     {
         try {

@@ -71,7 +71,7 @@ class EventtypeModel extends BaseDatabaseModel
         $this->getItem($eventId);
         $db = $this->getDatabase();
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['id', 'type', 'label', 'description', 'options', 'required']))
+        $query->select($db->quoteName(['id', 'type', 'label', 'description', 'options', 'required', 'max_length']))
             ->from($db->quoteName('#__appointments_fields'))
             ->where($db->quoteName('eventtype_id') . ' = :id')->bind(':id', $eventId, ParameterType::INTEGER)
             ->where($db->quoteName('published') . ' = 1')

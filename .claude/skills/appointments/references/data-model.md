@@ -152,6 +152,7 @@ Index `(user_id, start_utc, end_utc)`.
 | `conference_state` | `VARCHAR(16) NULL` | null = no conference, `ok`, `failed` |
 | `conference_error` | `VARCHAR(255) NULL` | the short diagnostic shown next to the retry action; never a credential, a token or a URL |
 | `cancel_reason` | `TEXT NULL` | |
+| `cancelled_version_utc` | `DATETIME NULL` | the `modified_utc` a cancellation replaced; reschedule and cancel links of that version report the cancellation instead of a 404. Added by `script.php` on update |
 | `reminder_sent_utc` | `JSON NULL` | which offsets already went out |
 | `anonymised_utc` | `DATETIME NULL` | set when the personal fields are erased |
 | `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
@@ -213,6 +214,7 @@ Custom booking form fields per event type.
 | `type` | `VARCHAR(32) NOT NULL` | `text`, `textarea`, `number`, `tel`, `email`, `url`, `radio`, `checkboxes`, `checkbox`, `date` |
 | `label`, `description` | `VARCHAR(255)` / `TEXT` | |
 | `options` | `JSON NULL` | for the choice types |
+| `max_length` | `SMALLINT UNSIGNED NOT NULL DEFAULT 0` | most characters of a `text`/`textarea` answer, 0 = the type limit (255/8000, `BookingInput::maxLength()`); added by `script.php` on update |
 | `required` | `TINYINT(1) NOT NULL DEFAULT 0` | |
 | `ordering` | `INT NOT NULL DEFAULT 0` | |
 | `published` | `TINYINT(1) NOT NULL DEFAULT 1` | |

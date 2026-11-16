@@ -265,6 +265,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
         // Also removes pages an earlier version answered that the strict menu views now refuse.
         $this->cleanPageCache();
         $this->ensureDeviceRemovalMode();
+        $this->ensureCancelledVersion();
+        $this->ensureFieldMaxLength();
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
@@ -843,6 +845,45 @@ class Com_appointmentsInstallerScript extends InstallerScript
     }
 
     /**
+     * The row version a cancellation replaced (`cancelled_version_utc`, see install.mysql.utf8.sql),
+     * also on an update from a version without it. Bookings cancelled before stay NULL: their old
+     * links keep answering with the refusal they got so far. Idempotent and independent of the
+     * schema version, like ensureDeviceRemovalMode().
+     */
+    private function ensureCancelledVersion(): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $table = $db->replacePrefix('#__appointments_bookings');
+
+        if (!\in_array($table, $db->getTableList(), true)
+            || \array_key_exists('cancelled_version_utc', $db->getTableColumns($table, false))) {
+            return;
+        }
+
+        $db->setQuery('ALTER TABLE ' . $db->quoteName($table) . ' ADD COLUMN ' . $db->quoteName('cancelled_version_utc')
+            . ' DATETIME DEFAULT NULL AFTER ' . $db->quoteName('cancel_reason'))->execute();
+    }
+
+    /**
+     * «Maximum characters» of a custom field (`max_length`, see install.mysql.utf8.sql), also on an
+     * update from a version without it. Every existing field gets 0, the limit of its type it had so
+     * far. Idempotent and independent of the schema version, like ensureDeviceRemovalMode().
+     */
+    private function ensureFieldMaxLength(): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $table = $db->replacePrefix('#__appointments_fields');
+
+        if (!\in_array($table, $db->getTableList(), true)
+            || \array_key_exists('max_length', $db->getTableColumns($table, false))) {
+            return;
+        }
+
+        $db->setQuery('ALTER TABLE ' . $db->quoteName($table) . ' ADD COLUMN ' . $db->quoteName('max_length')
+            . ' SMALLINT UNSIGNED NOT NULL DEFAULT 0 AFTER ' . $db->quoteName('options'))->execute();
+    }
+
+    /**
      * The user groups of the team calendars: one for team members, one for
      * external users, both below the registration group (normally «Registered»)
      * and without any further permission, plus a view level holding both for the
@@ -1152,6 +1193,10 @@ class Com_appointmentsInstallerScript extends InstallerScript
             $file = $source . '/administrator/language/' . $tag . '/com_appointments.ini';
             // Recipient languages must work even without the corresponding Joomla language pack.
             $localLanguage = JPATH_ADMINISTRATOR . '/components/com_appointments/language/' . $tag;
+            // The defaults of the installed version, before its copy is replaced: a site-wide template
+            // that still holds exactly them follows the new defaults below, an edited one stays.
+            $previous = is_file($localLanguage . '/com_appointments.ini')
+                ? parse_ini_file($localLanguage . '/com_appointments.ini', false, INI_SCANNER_RAW) : false;
             if (!Folder::create($localLanguage) || !File::copy($file, $localLanguage . '/com_appointments.ini')) {
                 throw new \RuntimeException('The appointment notification language could not be installed.');
             }
@@ -1172,6 +1217,12 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
                 $subject = $strings[$subjectKey];
                 $body = str_replace('\\n', "\n", $strings[$bodyKey]);
+
+                if (is_array($previous) && isset($previous[$subjectKey], $previous[$bodyKey])) {
+                    $this->followDefault($db, $purpose, $tag, (string) $previous[$subjectKey],
+                        str_replace('\\n', "\n", (string) $previous[$bodyKey]), $subject, $body);
+                }
+
                 $sql = 'INSERT INTO ' . $db->quoteName('#__appointments_templates')
                     . ' (' . implode(',', $db->quoteName(['eventtype_id', 'purpose', 'language', 'subject', 'body', 'published'])) . ')'
                     . ' VALUES (0,' . $db->quote($purpose) . ',' . $db->quote($tag) . ',' . $db->quote($subject) . ',' . $db->quote($body) . ',1)'
@@ -1179,6 +1230,39 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 $db->setQuery($sql)->execute();
             }
         }
+    }
+
+    /**
+     * A site-wide default template ($purpose, $tag) that still holds exactly the defaults of the
+     * installed version ($oldSubject, $oldBody) gets the defaults of this version. A template the
+     * operator changed, in the subject or the body, stays as it is. Compared in PHP, byte for byte:
+     * the table's collation would treat a change of case or trailing spaces as equal.
+     */
+    private function followDefault(DatabaseInterface $db, string $purpose, string $tag, string $oldSubject, string $oldBody,
+        string $subject, string $body): void
+    {
+        if ($oldSubject === $subject && $oldBody === $body) {
+            return;
+        }
+
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName(['id', 'subject', 'body']))
+            ->from($db->quoteName('#__appointments_templates'))
+            ->where($db->quoteName('eventtype_id') . ' = 0')
+            ->where($db->quoteName('purpose') . ' = ' . $db->quote($purpose))
+            ->where($db->quoteName('language') . ' = ' . $db->quote($tag));
+        $row = $db->setQuery($query)->loadAssoc();
+
+        if (!$row || (string) $row['subject'] !== $oldSubject || (string) $row['body'] !== $oldBody) {
+            return;
+        }
+
+        $update = $this->createDbQuery($db)
+            ->update($db->quoteName('#__appointments_templates'))
+            ->set($db->quoteName('subject') . ' = ' . $db->quote($subject))
+            ->set($db->quoteName('body') . ' = ' . $db->quote($body))
+            ->where($db->quoteName('id') . ' = ' . (int) $row['id']);
+        $db->setQuery($update)->execute();
     }
 
     /**

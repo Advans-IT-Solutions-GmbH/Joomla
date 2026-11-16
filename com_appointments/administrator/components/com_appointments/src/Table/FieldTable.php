@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Administrator\Table;
 
+use Advans\Component\Appointments\Administrator\Helper\BookingInput;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Table\Table;
 use Joomla\Database\DatabaseDriver;
@@ -31,6 +32,19 @@ class FieldTable extends Table
 
             return false;
         }
+
+        // «Maximum characters»: 0 keeps the type's limit, otherwise 1 up to that limit. Only text
+        // fields have one; for every other type the value is reset to 0.
+        $limit = BookingInput::TEXT_LENGTH[$this->type] ?? 0;
+        $maxLength = filter_var($this->max_length ?? 0, FILTER_VALIDATE_INT);
+
+        if ($limit > 0 && ($maxLength === false || $maxLength < 0 || $maxLength > $limit)) {
+            $this->setError(Text::sprintf('COM_APPOINTMENTS_FIELD_ERROR_MAX_LENGTH', $limit));
+
+            return false;
+        }
+
+        $this->max_length = $limit > 0 ? $maxLength : 0;
 
         $options = json_decode((string) $this->options, true);
 

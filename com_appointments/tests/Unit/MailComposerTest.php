@@ -102,7 +102,7 @@ final class MailComposerTest extends TestCase
         self::assertSame("Hello\n\nPrivate Invitee invited guest@example.test.\nhttps://example.test/?task=guest.confirm&signature=example\n", $mail['body']);
     }
 
-    public function testEveryStateAndRecipientReceivesBothIcsParts(): void
+    public function testEveryStateAndRecipientReceivesExactlyOneInvitation(): void
     {
         $composer = new MailComposer(new IcsWriter());
         $now = new \DateTimeImmutable('2026-10-14 10:00:00', new \DateTimeZone('UTC'));
@@ -114,15 +114,28 @@ final class MailComposerTest extends TestCase
                     ['subject' => "$purpose $recipient", 'body' => 'Translated body'],
                     array_replace($this->booking(), ['state' => $state]), $this->event(), [], $now
                 );
-                self::assertCount(2, $mail['attachments']);
-                self::assertSame('text/calendar; charset=UTF-8; method=' . ($state === 2 ? 'CANCEL' : 'REQUEST'), $mail['attachments'][0]['content_type']);
-                self::assertSame('application/ics', $mail['attachments'][1]['content_type']);
-                self::assertSame('invite.ics', $mail['attachments'][0]['filename']);
-                self::assertSame('invite.ics', $mail['attachments'][1]['filename']);
-                self::assertSame($mail['attachments'][0]['content'], $mail['attachments'][1]['content']);
-                self::assertStringContainsString('UID:stable-uid', $mail['attachments'][0]['content']);
+                // One calendar, sent as the text/calendar alternative of the mail; no attachment list,
+                // so no second copy (Outlook showed two «invite.ics»).
+                self::assertArrayNotHasKey('attachments', $mail);
+                self::assertSame($state === 2 ? 'CANCEL' : 'REQUEST', $mail['method']);
+                self::assertStringContainsString('METHOD:' . $mail['method'] . "\r\n", $mail['calendar']);
+                self::assertStringContainsString('UID:stable-uid', $mail['calendar']);
             }
         }
+    }
+
+    public function testExtraTokensAreReplacedInTheSamePassAndAnEmptyBlockLeavesNoLine(): void
+    {
+        $composer = new MailComposer(new IcsWriter());
+        $now = new \DateTimeImmutable('2026-10-14 10:00:00', new \DateTimeZone('UTC'));
+        $template = ['subject' => 'S', 'body' => "Von: 1\nZeit beim Besucher: {invitee_time}\nGäste: {guest_emails}\n{field_answers}\nOrt: x"];
+        $mail = $composer->compose($template, $this->booking(), $this->event(), [], $now,
+            ['{field_answers}' => "Frage: {invitee_email}\nWunsch: keine Angabe", '{invitee_time}' => '15.10.2026 06:00 (America/New_York)']);
+
+        self::assertSame("Von: 1\nZeit beim Besucher: 15.10.2026 06:00 (America/New_York)\nGäste: guest@example.test\n"
+            . "Frage: {invitee_email}\nWunsch: keine Angabe\nOrt: x", $mail['body'], 'An answer is never a directive');
+        self::assertSame("Von: 1\nGäste: guest@example.test\nOrt: x", $composer->compose($template, $this->booking(), $this->event(), [], $now)['body'],
+            'Without answers and without another zone both lines disappear');
     }
 
     public function testDeletionNotificationBodyAndBothAttachmentsContainNoFormerInviteeData(): void
@@ -138,8 +151,8 @@ final class MailComposerTest extends TestCase
         self::assertStringNotContainsString('invitee@example.test', json_encode($mail));
         self::assertStringNotContainsString('private-reason', json_encode($mail));
         self::assertStringNotContainsString('guest@example.test', json_encode($mail));
-        self::assertStringNotContainsString('ATTENDEE', $mail['attachments'][0]['content']);
-        self::assertStringContainsString('METHOD:CANCEL', $mail['attachments'][0]['content']);
+        self::assertStringNotContainsString('ATTENDEE', $mail['calendar']);
+        self::assertStringContainsString('METHOD:CANCEL', $mail['calendar']);
     }
 
     public function testSubjectInjectionIsRejected(): void

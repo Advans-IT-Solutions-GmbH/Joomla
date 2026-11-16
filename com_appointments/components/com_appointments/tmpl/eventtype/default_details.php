@@ -135,6 +135,11 @@ $textField = function (string $key, string $label, string $type, string $autocom
                 $fieldDescription = $field['description'] ? 'booking-desc-' . $fieldId : '';
                 $descriptionHtml = $fieldDescription !== '' ? '<div id="' . $fieldDescription . '" class="form-text com-appointments-field-description">' . $this->escape($field['description']) . '</div>' : '';
                 $labelText = $this->escape($field['label']) . ($required ? $mark : '');
+                // A text field's own maximum (BookingInput::maxLength()) is named below the field;
+                // the booking script turns the text into «N characters left» while typing.
+                $maxLength = BookingInput::maxLength($field);
+                $counter = (int) ($field['max_length'] ?? 0) > 0 && $maxLength > 0 ? 'booking-field-' . $fieldId . '-count' : '';
+                $describedBy = trim($fieldDescription . ' ' . $counter);
                 ?>
                 <?php if (in_array($field['type'], ['radio', 'checkboxes'], true)) : ?>
                     <fieldset class="com-appointments-field com-appointments-field-group" id="booking-field-<?php echo $fieldId; ?>"<?php echo trim($fieldDescription . (isset($errors[$key]) ? ' booking-' . $key . '-error' : '')) !== '' ? ' aria-describedby="' . trim($fieldDescription . (isset($errors[$key]) ? ' booking-' . $key . '-error' : '')) . '"' : ''; ?>>
@@ -161,7 +166,7 @@ $textField = function (string $key, string $label, string $type, string $autocom
                     <div class="com-appointments-field">
                         <label class="form-label" for="booking-field-<?php echo $fieldId; ?>"><?php echo $labelText; ?></label>
                         <?php if ($field['type'] === 'textarea') : ?>
-                            <textarea class="form-control<?php echo $invalid($key); ?>" id="booking-field-<?php echo $fieldId; ?>" name="<?php echo $name; ?>" maxlength="8000"<?php echo $required; ?><?php echo $aria($key, $fieldDescription); ?>><?php echo $textValue; ?></textarea>
+                            <textarea class="form-control<?php echo $invalid($key); ?>" id="booking-field-<?php echo $fieldId; ?>" name="<?php echo $name; ?>" maxlength="<?php echo $maxLength; ?>"<?php echo $required; ?><?php echo $aria($key, $describedBy); ?>><?php echo $textValue; ?></textarea>
                         <?php elseif ($field['type'] === 'tel') : ?>
                             <div class="input-group com-appointments-tel<?php echo $this->fixedDialCode !== '' ? ' com-appointments-tel-fixed' : ''; ?><?php echo $invalid($key); ?>">
                                 <?php echo $dialPrefix('booking-country-' . $fieldId, $name . '[country]', $dialCode($raw), $key, $fieldDescription); ?>
@@ -170,12 +175,15 @@ $textField = function (string $key, string $label, string $type, string $autocom
                             <?php echo $descriptionHtml; ?>
                         <?php else : ?>
                             <?php $type = in_array($field['type'], ['text', 'number', 'email', 'url', 'date'], true) ? $field['type'] : 'text'; ?>
-                            <input class="form-control<?php echo $invalid($key); ?>" id="booking-field-<?php echo $fieldId; ?>" type="<?php echo $type; ?>" name="<?php echo $name; ?>" maxlength="255" value="<?php echo $textValue; ?>"<?php echo $type === 'number' ? ' step="any"' : ''; ?><?php echo $required; ?><?php echo $aria($key, $fieldDescription); ?>>
+                            <input class="form-control<?php echo $invalid($key); ?>" id="booking-field-<?php echo $fieldId; ?>" type="<?php echo $type; ?>" name="<?php echo $name; ?>" maxlength="<?php echo $type === 'text' ? $maxLength : 255; ?>" value="<?php echo $textValue; ?>"<?php echo $type === 'number' ? ' step="any"' : ''; ?><?php echo $required; ?><?php echo $aria($key, $type === 'text' ? $describedBy : $fieldDescription); ?>>
                         <?php endif; ?>
                         <?php if ($field['type'] !== 'tel') : ?>
                             <?php echo $descriptionHtml; ?>
                         <?php endif; ?>
-                        <?php echo $error($key); ?>
+                        <?php if ($counter !== '') : ?>
+                            <p id="<?php echo $counter; ?>" class="form-text com-appointments-field-count" data-appointments-count="<?php echo $maxLength; ?>" data-left="<?php echo $this->escape(Text::_('COM_APPOINTMENTS_BOOKING_FIELD_LEFT')); ?>"><?php echo Text::sprintf('COM_APPOINTMENTS_BOOKING_FIELD_MAX', $maxLength); ?></p>
+                        <?php endif; ?>
+                        <?php echo $error($key, $maxLength); ?>
                     </div>
                 <?php endif; ?>
             <?php endforeach; ?>

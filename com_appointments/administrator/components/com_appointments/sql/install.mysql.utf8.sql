@@ -210,6 +210,11 @@ CREATE TABLE IF NOT EXISTS `#__appointments_blocked` (
 -- after a day. A column here would keep the raw address for the life of the
 -- booking, which the component's privacy contract rules out.
 --
+-- `cancelled_version_utc` is the `modified_utc` the cancellation replaced. The
+-- signed reschedule and cancel links of that version then show that the
+-- appointment is cancelled instead of a bare refusal. It is a row version, not
+-- data of the person. script.php adds it on an update.
+--
 -- `conference_state` is NULL for an event type without a conference, `ok` once
 -- a link exists and `failed` when the provider could not produce one.
 -- `conference_error` holds the short diagnostic the administrator sees next to
@@ -262,6 +267,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_bookings` (
     `conference_state` VARCHAR(16) DEFAULT NULL,
     `conference_error` VARCHAR(255) DEFAULT NULL,
     `cancel_reason` MEDIUMTEXT,
+    `cancelled_version_utc` DATETIME DEFAULT NULL,
     `reminder_sent_utc` JSON DEFAULT NULL,
     `anonymised_utc` DATETIME DEFAULT NULL,
     `created_utc` DATETIME NOT NULL,
@@ -280,6 +286,10 @@ CREATE TABLE IF NOT EXISTS `#__appointments_bookings` (
 -- content and are translated through Joomla's content language handling, not
 -- through the component's INI files.
 --
+-- `max_length` is the most characters an answer of a text or textarea field may
+-- have, 0 for the type's own limit (255 and 8000). script.php adds it on an
+-- update.
+--
 CREATE TABLE IF NOT EXISTS `#__appointments_fields` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
     `eventtype_id` INT UNSIGNED NOT NULL,
@@ -287,6 +297,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_fields` (
     `label` VARCHAR(255) NOT NULL DEFAULT '',
     `description` TEXT,
     `options` JSON DEFAULT NULL,
+    `max_length` SMALLINT UNSIGNED NOT NULL DEFAULT 0,
     `required` TINYINT(1) NOT NULL DEFAULT 0,
     `ordering` INT NOT NULL DEFAULT 0,
     `published` TINYINT(1) NOT NULL DEFAULT 1,

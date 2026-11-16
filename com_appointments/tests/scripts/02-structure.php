@@ -472,6 +472,7 @@ class StructureTest
         });
 
         $this->testDeviceRemovalMigration();
+        $this->testCancelledVersionMigration();
 
         echo "\n=== Structure Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
@@ -995,6 +996,109 @@ class StructureTest
 
                 if ($column() === null) {
                     $this->db->query("ALTER TABLE {$table} ADD COLUMN removal_mode VARCHAR(16) NOT NULL DEFAULT 'cleanup' AFTER client");
+                }
+            }
+        });
+    }
+
+    /**
+     * The row version a cancellation replaced (`cancelled_version_utc`): a nullable DATETIME on a
+     * new installation, added again by a real update through the Joomla CLI to an installation
+     * without it. The column is put back whatever happens.
+     */
+    private function testCancelledVersionMigration(): void
+    {
+        $table = "{$this->dbPrefix}appointments_bookings";
+        $column = function () use ($table): ?array {
+            $result = $this->db->query("SHOW COLUMNS FROM {$table} LIKE 'cancelled_version_utc'");
+
+            return $result ? ($result->fetch_assoc() ?: null) : null;
+        };
+        $nullableDatetime = static fn (?array $row): bool => $row !== null && strtolower((string) $row['Type']) === 'datetime'
+            && $row['Null'] === 'YES' && in_array($row['Default'], [null, 'NULL'], true);
+
+        $this->test('Bookings carry the nullable row version a cancellation replaced', fn () => $nullableDatetime($column()));
+        $fields = "{$this->dbPrefix}appointments_fields";
+        $maxLength = function () use ($fields): ?array {
+            $result = $this->db->query("SHOW COLUMNS FROM {$fields} LIKE 'max_length'");
+
+            return $result ? ($result->fetch_assoc() ?: null) : null;
+        };
+        $smallint = static fn (?array $row): bool => $row !== null && str_starts_with(strtolower((string) $row['Type']), 'smallint')
+            && str_contains(strtolower((string) $row['Type']), 'unsigned') && $row['Null'] === 'NO' && trim((string) $row['Default'], "'") === '0';
+        $this->test('Custom fields carry «Maximum characters» with 0 (the type limit) as the default', fn () => $smallint($maxLength()));
+
+        $package = getenv('INSTALL_MESSAGES_PACKAGE') ?: '/tmp/extension.zip';
+
+        // The same update refreshes a site-wide default template that still holds the defaults of the
+        // installed version, and keeps an edited one: the installed version is simulated by its private
+        // language copy with the 1.4.0 host notice, without {invitee_time} and {field_answers}.
+        $this->test('An update adds the cancelled row version and the maximum characters and refreshes only unmodified default templates', function () use ($table, $column, $nullableDatetime, $package, $fields, $maxLength, $smallint) {
+            if (!is_file($package)) {
+                echo "    update: package {$package} missing\n";
+
+                return false;
+            }
+
+            defined('JOOMLA_ROOT') or define('JOOMLA_ROOT', '/var/www/html');
+            require_once __DIR__ . '/shared-test-helpers.php';
+            $templates = "{$this->dbPrefix}appointments_templates";
+            $copy = static fn (string $tag): string => JOOMLA_ROOT . '/administrator/components/com_appointments/language/' . $tag . '/com_appointments.ini';
+            $saved = ['de-DE' => (string) file_get_contents($copy('de-DE')), 'en-GB' => (string) file_get_contents($copy('en-GB'))];
+            $body = function (string $tag): string {
+                $result = $this->db->query("SELECT body FROM {$this->dbPrefix}appointments_templates WHERE eventtype_id=0 AND purpose='host_notice' AND language='{$tag}'");
+
+                return (string) (($result ? $result->fetch_row() : null)[0] ?? '');
+            };
+            $rows = ['de-DE' => $body('de-DE'), 'en-GB' => $body('en-GB')];
+            $old = static fn (string $text): string => str_replace(['Zeit beim Besucher: {invitee_time}\n', "Visitor's time: {invitee_time}\\n", '{field_answers}\n'], '', $text);
+
+            try {
+                $this->db->query("ALTER TABLE {$table} DROP COLUMN cancelled_version_utc");
+                $this->db->query("ALTER TABLE {$fields} DROP COLUMN max_length");
+
+                if ($column() !== null || $maxLength() !== null) {
+                    return false;
+                }
+
+                foreach ($saved as $tag => $ini) {
+                    file_put_contents($copy($tag), $old($ini));
+                }
+                $oldDe = str_replace('\n', "\n", $old(str_replace("\n", '\n', $rows['de-DE'])));
+                $this->db->query("UPDATE {$templates} SET body='" . $this->db->real_escape_string($oldDe) . "' WHERE eventtype_id=0 AND purpose='host_notice' AND language='de-DE'");
+                $this->db->query("UPDATE {$templates} SET body='Edited by the operator' WHERE eventtype_id=0 AND purpose='host_notice' AND language='en-GB'");
+
+                [$code, $output] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, $package);
+
+                if ($code !== 0 || $column() === null) {
+                    echo '    update: exit ' . $code . "\n    " . str_replace("\n", "\n    ", substr(trim($output), -1500)) . "\n";
+                }
+
+                $refreshed = $body('de-DE');
+                $kept = $body('en-GB');
+
+                if ($refreshed !== $rows['de-DE'] || $kept !== 'Edited by the operator') {
+                    echo '    templates: de-DE ' . ($refreshed === $rows['de-DE'] ? 'refreshed' : 'not refreshed')
+                        . ', en-GB ' . ($kept === 'Edited by the operator' ? 'kept' : 'overwritten') . "\n";
+                }
+
+                return $code === 0 && $nullableDatetime($column()) && $smallint($maxLength()) && str_contains($refreshed, '{field_answers}')
+                    && $refreshed === $rows['de-DE'] && $kept === 'Edited by the operator';
+            } finally {
+                if ($column() === null) {
+                    $this->db->query("ALTER TABLE {$table} ADD COLUMN cancelled_version_utc DATETIME DEFAULT NULL AFTER cancel_reason");
+                }
+
+                if ($maxLength() === null) {
+                    $this->db->query("ALTER TABLE {$fields} ADD COLUMN max_length SMALLINT UNSIGNED NOT NULL DEFAULT 0 AFTER options");
+                }
+
+                foreach ($saved as $tag => $ini) {
+                    file_put_contents($copy($tag), $ini);
+                }
+
+                foreach ($rows as $tag => $text) {
+                    $this->db->query("UPDATE {$templates} SET body='" . $this->db->real_escape_string($text) . "' WHERE eventtype_id=0 AND purpose='host_notice' AND language='{$tag}'");
                 }
             }
         });

@@ -21,6 +21,7 @@ use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
+use Joomla\CMS\Uri\Uri;
 
 defined('_JEXEC') or die;
 
@@ -30,7 +31,7 @@ class ManageModel extends BaseDatabaseModel
     {
         $action = Factory::getApplication()->getInput()->getCmd('action');
         if (!in_array($action, ['reschedule', 'cancel', 'erase'], true)) {
-            throw new InvalidBookingLinkException();
+            throw $this->invalid();
         }
 
         return $action;
@@ -62,12 +63,91 @@ class ManageModel extends BaseDatabaseModel
         // Personal fields are encrypted at rest; one that cannot be decrypted is shown empty.
         $booking = $booking ? \Advans\Component\Appointments\Administrator\Helper\BookingData::fromApplication()->openObject($booking) : null;
 
-        if (!$booking || !$this->links()->verify($id, $this->action(), $booking->modified_utc, $this->signature())
-            || $booking->anonymised_utc !== null) {
-            throw new InvalidBookingLinkException();
+        if (!$booking || $booking->anonymised_utc !== null) {
+            throw $this->invalid();
         }
 
-        return $booking;
+        if ($this->links()->verify($id, $this->action(), $booking->modified_utc, $this->signature())) {
+            return $booking;
+        }
+
+        // The cancellation made every earlier link stale. A reschedule or cancel link of the
+        // version that was cancelled still identifies its holder, who already saw the appointment:
+        // it opens the notice that the appointment is cancelled (cancelled()), never a form. An
+        // older link, a tampered one and an unknown id stay one indistinguishable refusal.
+        $cancelledVersion = (string) ($booking->cancelled_version_utc ?? '');
+
+        if ($this->action() !== 'erase' && (int) $booking->state === 2 && $cancelledVersion !== ''
+            && $this->links()->verify($id, $this->action(), $cancelledVersion, $this->signature())) {
+            return $booking;
+        }
+
+        throw $this->invalid();
+    }
+
+    /**
+     * Whether the page of $booking only reports that the appointment is cancelled: a reschedule or
+     * cancel link of a cancelled appointment. Its erase link keeps working.
+     */
+    public function cancelled(object $booking): bool
+    {
+        return (int) $booking->state === 2 && $this->action() !== 'erase';
+    }
+
+    /**
+     * What the receipt of this browser session shows of the completed change: title, start and
+     * end in UTC, the zone they are shown in, the event type and whether the mails went out.
+     *
+     * The session keeps no detail of the appointment, only the row version this change produced
+     * and whether the mails went out. The details are read from the booking now, and only while
+     * it still exists, is not erased and is still that version. Otherwise (erased, deleted, changed
+     * since) and for an erasure the receipt is the generic outcome alone: empty.
+     *
+     * @return array{title?: string, start_utc?: string, end_utc?: string, timezone?: string, eventtype_id?: int, mailed?: bool}
+     */
+    public function receipt(): array
+    {
+        $app = Factory::getApplication();
+        $receipt = $app->getUserState($this->receiptKey(), false);
+
+        if ($this->action() === 'erase' || !is_array($receipt) || !is_string($receipt['modified_utc'] ?? null) || $receipt['modified_utc'] === '') {
+            return [];
+        }
+
+        $db = $this->getDatabase();
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName(['b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.invitee_timezone', 'b.modified_utc', 'b.anonymised_utc', 'e.title']))
+            ->from($db->quoteName('#__appointments_bookings', 'b'))
+            ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
+            ->where($db->quoteName('b.id') . ' = ' . $app->getInput()->getInt('id', 0));
+        $booking = $db->setQuery($query)->loadObject();
+
+        if (!$booking || $booking->anonymised_utc !== null || !hash_equals($receipt['modified_utc'], (string) $booking->modified_utc)) {
+            return [];
+        }
+
+        $zone = (string) $booking->invitee_timezone;
+
+        return [
+            'title' => (string) $booking->title,
+            'start_utc' => (string) $booking->start_utc,
+            'end_utc' => (string) $booking->end_utc,
+            'timezone' => in_array($zone, \DateTimeZone::listIdentifiers(), true) ? $zone : 'UTC',
+            'eventtype_id' => (int) $booking->eventtype_id,
+            'mailed' => !empty($receipt['mailed']),
+        ];
+    }
+
+    /**
+     * The refusal of a link: 404 with one message for an unknown id, a wrong signature and a stale
+     * link alike. The signature is taken out of the address Joomla's 404 handling sees (for example
+     * «System - Redirect» collecting URLs), as the dispatcher does for a refused request.
+     */
+    private function invalid(): InvalidBookingLinkException
+    {
+        Uri::getInstance()->delVar('signature');
+
+        return new InvalidBookingLinkException();
     }
 
     public function deleteMode(): bool
@@ -139,15 +219,31 @@ class ManageModel extends BaseDatabaseModel
         if (($messageBooking['conference_state'] ?? '') === 'failed') {
             Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'), 'warning');
         }
-        // The receipt belongs to this browser session. After a reschedule it also keeps the version
-        // this reschedule committed (not a later reread, which could already be someone else's
-        // change), for which receiptLinks() shows the new signed links.
-        Factory::getApplication()->setUserState($this->receiptKey(), $action === 'reschedule'
-            ? ['modified_utc' => (string) ($messageBooking['_rescheduled_version'] ?? '')] : true);
+        // The receipt belongs to this browser session. It keeps no detail of the appointment, only
+        // the version this change committed (not a later reread, which could already be someone
+        // else's change): receipt() and receiptLinks() read the booking again and show it only
+        // while it is still that version. An erasure keeps nothing, and turns every earlier
+        // receipt of this booking in this session into the generic outcome.
+        $receipt = true;
+
+        if ($action !== 'erase') {
+            $receipt = ['modified_utc' => (string) ($action === 'reschedule'
+                ? ($messageBooking['_rescheduled_version'] ?? '') : ($messageBooking['modified_utc'] ?? '')), 'mailed' => false];
+        } else {
+            $this->forgetReceipts((int) $booking->id);
+        }
+
+        $this->rememberReceipt((int) $booking->id);
+        Factory::getApplication()->setUserState($this->receiptKey(), $receipt);
 
         if ($messageBooking !== null && empty($messageBooking['_conference_missing']) && empty($messageBooking['_conference_error'])) {
             try {
                 $notification->send($messageBooking, $purpose, $now, $action === 'erase');
+
+                if (is_array($receipt)) {
+                    // Only now the receipt says that the confirmation is on its way.
+                    Factory::getApplication()->setUserState($this->receiptKey(), ['mailed' => true] + $receipt);
+                }
             } catch (NotificationException $e) {
                 // The change is saved: a warning like the other partial outcomes on this page.
                 Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_MAIL_FAILED'), 'warning');
@@ -201,6 +297,26 @@ class ManageModel extends BaseDatabaseModel
     private function links(): SignedLink
     {
         return new SignedLink(new KeyProvider((string) Factory::getApplication()->get('secret')));
+    }
+
+    /** The receipt keys of booking $id in this session, so an erasure can reach every one of them. */
+    private function rememberReceipt(int $id): void
+    {
+        $app = Factory::getApplication();
+        $index = 'com_appointments.receipts.' . $id;
+        $keys = array_filter((array) $app->getUserState($index, []), 'is_string');
+        $keys[] = $this->receiptKey();
+        $app->setUserState($index, array_values(array_unique($keys)));
+    }
+
+    /** Every earlier receipt of booking $id in this session becomes the generic outcome alone. */
+    private function forgetReceipts(int $id): void
+    {
+        $app = Factory::getApplication();
+
+        foreach (array_filter((array) $app->getUserState('com_appointments.receipts.' . $id, []), 'is_string') as $key) {
+            $app->setUserState($key, true);
+        }
     }
 
     private function receiptKey(): string

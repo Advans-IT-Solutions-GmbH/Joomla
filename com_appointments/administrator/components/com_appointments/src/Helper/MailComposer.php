@@ -27,16 +27,19 @@ final class MailComposer
      * @param array<string, mixed> $booking
      * @param array<string, mixed> $event IcsWriter event metadata.
      * @param array{reschedule_url?: string, cancel_url?: string, erase_url?: string, guest_email?: string, guest_remove_url?: string} $links
-     * @return array{subject: string, body: string, attachments: list<array{filename: string, content: string, content_type: string}>}
+     * @param array<string, string> $extra Further tokens ({field_answers}, {invitee_time}), replaced in the same
+     *                                     single pass, so an answer cannot become a directive either.
+     * @return array{subject: string, body: string, calendar: string, method: string}
      */
     public function compose(
         array $template,
         array $booking,
         array $event,
         array $links,
-        \DateTimeImmutable $now
+        \DateTimeImmutable $now,
+        array $extra = []
     ): array {
-        $placeholders = $this->placeholders($booking, $event, $links);
+        $placeholders = array_replace($this->placeholders($booking, $event, $links), $extra);
         $subject = strtr($template['subject'], $placeholders);
 
         if (preg_match('/[\x00-\x1f\x7f]/', $subject)) {
@@ -44,23 +47,15 @@ final class MailComposer
         }
 
         $content = $this->ics->attachment($booking, $event, $now);
-        $method = $this->ics->method($booking);
+        $method = $this->ics->method($booking, $event);
 
+        // One invitation per mail, sent by the caller as the text/calendar alternative of the body
+        // (CalendarPart): that is the part mail clients present as an invitation with its method.
         return [
             'subject' => $subject,
             'body' => strtr(self::withoutEmptyDetails($template['body'], $placeholders), $placeholders),
-            'attachments' => [
-                [
-                    'filename' => 'invite.ics',
-                    'content' => $content,
-                    'content_type' => 'text/calendar; charset=UTF-8; method=' . $method,
-                ],
-                [
-                    'filename' => 'invite.ics',
-                    'content' => $content,
-                    'content_type' => 'application/ics',
-                ],
-            ],
+            'calendar' => $content,
+            'method' => $method,
         ];
     }
 
@@ -74,12 +69,23 @@ final class MailComposer
      */
     public static function withoutEmptyDetails(string $body, array $placeholders): string
     {
-        return (string) preg_replace_callback(
+        $body = (string) preg_replace_callback(
             '/^[^\S\r\n]*[^{}:\r\n]{1,60}:[^\S\r\n]*(\{[a-z_.0-9]+\})[^\S\r\n]*(?:\r?\n|$)/mi',
             static fn (array $line): string => array_key_exists($line[1], $placeholders) && trim($placeholders[$line[1]]) === '' ? '' : $line[0],
             $body
         );
+
+        // A block of lines that is empty, such as {field_answers} of an event type without
+        // questions, leaves no blank line.
+        return (string) preg_replace_callback(
+            '/^[^\S\r\n]*(' . implode('|', array_map(static fn (string $token): string => preg_quote($token, '/'), self::BLOCKS)) . ')[^\S\r\n]*(?:\r?\n|$)/m',
+            static fn (array $line): string => array_key_exists($line[1], $placeholders) && trim($placeholders[$line[1]]) === '' ? '' : $line[0],
+            $body
+        );
     }
+
+    /** Tokens that stand for whole lines of their own. */
+    private const BLOCKS = ['{field_answers}'];
 
     /** All schema fields, including null/JSON fields, have a documented token. */
     public function placeholders(array $booking, array $event, array $links = []): array
@@ -103,6 +109,10 @@ final class MailComposer
         }
 
         $result['{location}'] = $this->value($event['location'] ?? $event['location_text'] ?? null);
+        // Filled by the caller per recipient (NotificationService), empty everywhere else, so the
+        // token never reaches a mail as text.
+        $result['{field_answers}'] = '';
+        $result['{invitee_time}'] = '';
 
         // {guest_email} and {guest_remove_url} are only filled in a mail to an additional guest:
         // the recipient's own address and the signed link that removes only that address.

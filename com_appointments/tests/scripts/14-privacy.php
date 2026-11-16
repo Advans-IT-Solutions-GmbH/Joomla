@@ -168,7 +168,7 @@ try {
     $check(count($messages) === 2, 'Formal future erasure sends one host-only cancellation per booking');
     foreach ($messages as $mime) {
         $decoded = AppointmentsMail::decoded($mime);
-        $check(str_contains($mime, 'Content-Type: text/calendar') && str_contains($decoded, 'METHOD:CANCEL')
+        $check(str_contains($mime, 'Content-Type: text/calendar') && str_contains($decoded, 'METHOD:' . AppointmentsMail::expectedMethod($mime, 'CANCEL'))
             && !str_contains($decoded, 'invitee@example.test') && !str_contains($decoded, 'PRIVATE-ANSWER'),
             'Privacy cancellation has a calendar and no former invitee data');
     }

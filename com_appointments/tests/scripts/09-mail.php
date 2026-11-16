@@ -43,18 +43,31 @@ $subjectFor = static function (array $before, string $address): string {
     return $subjects[0];
 };
 
-$inspect = static function (array $before, array $booking, string $method, string $status, int $expected, ?string $localizedSubject = null) use ($spool, $check): void {
+// The host's address, set once the fixture knows the host. When Joomla's From email is that
+// address and no organiser is configured (as in this test installation), the host's copy has no
+// organiser distinct from the host: it is published, never a self-invitation (CalendarOrganizer).
+$hostAddress = '';
+$inspect = static function (array $before, array $booking, string $method, string $status, int $expected, ?string $localizedSubject = null) use ($spool, $check, &$hostAddress): void {
     $messages = array_values(array_diff($spool(), $before));
     $check(count($messages) === $expected, 'Actual MIME delivered to invitee, guest and host');
     $localized = false;
     foreach ($messages as $file) {
         $mime = file_get_contents($file);
         $unfolded = preg_replace('/\r?\n[ \t]+/', ' ', $mime);
-        $check((bool) preg_match('/Content-Type:\s*text\/calendar;\s*charset=UTF-8;\s*method=' . $method . '/i', $unfolded)
-            && str_contains($unfolded, 'Content-Type: application/ics'), 'Both required calendar MIME parts attached');
-        preg_match('/Content-Type:\s*text\/calendar;.*?\r?\n\r?\n(.*?)(?=\r?\n--)/s', $mime, $part);
-        $ics = isset($part[1]) ? base64_decode(preg_replace('/\s+/', '', $part[1]), true) : false;
-        $check(is_string($ics) && str_contains($ics, 'METHOD:' . $method . "\r\n")
+        $toHost = $hostAddress !== '' && preg_match('/^To:.*' . preg_quote($hostAddress, '/') . '/mi', $unfolded) === 1;
+        $expectedMethod = AppointmentsMail::expectedMethod($mime, $method);
+        $published = $expectedMethod === 'PUBLISH';
+        // One invitation, as the text/calendar alternative mail clients present as an invitation,
+        // no copy as an attachment (Outlook showed two «invite.ics»).
+        $check(AppointmentsMail::isInvitation($mime, $expectedMethod), 'The invitation is the one text/calendar alternative with method ' . $expectedMethod);
+        $ics = AppointmentsMail::calendars($mime)[0] ?? false;
+        if ($toHost) {
+            $check(is_string($ics) && ($published ? !str_contains($ics, 'PARTSTAT=')
+                : str_contains($ics, 'ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE')),
+                $published ? 'Sender and host share one address: the host copy is published, no self-invitation'
+                    : 'The host copy names the host as attendee of another organiser');
+        }
+        $check(is_string($ics) && str_contains($ics, 'METHOD:' . $expectedMethod . "\r\n")
             && str_contains($ics, 'STATUS:' . $status . "\r\n")
             && str_contains($ics, 'UID:' . $booking['uid'] . "\r\n")
             && str_contains($ics, 'SEQUENCE:' . $booking['sequence'] . "\r\n"), 'Actual calendar carries stable UID, state and sequence');
@@ -96,6 +109,7 @@ try {
     $admin->login();
     $username = $db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin');
     $host = (int) $db->query("SELECT id FROM {$prefix}users WHERE username='{$username}'")->fetch_assoc()['id'];
+    $hostAddress = strtolower(trim((string) $db->query("SELECT email FROM {$prefix}users WHERE id={$host}")->fetch_row()[0]));
     $db->query("INSERT INTO {$prefix}users (name,username,email,password,block,sendEmail,registerDate,params) VALUES ('Mail fixture','{$tag}','invitee@example.test','',1,0,UTC_TIMESTAMP(),'{\"language\":\"en-GB\"}')");
     $inviteeUser = (int) $db->insert_id;
     $time = $now->format('Y-m-d H:i:s');
@@ -196,6 +210,72 @@ try {
     $check($htmlMails === 3, 'With com_mails HTML every notification is HTML in the mail layout with a plain-text alternative');
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string((string) $mailsParams) . "' WHERE element='com_mails' AND type='component'");
     $mailsParams = null;
+
+    // Owner's finding of 16.11.2026: the answers of the booking form were in no mail and in no
+    // calendar entry. The host's mail and the host's invitation carry all of them, in the order of
+    // the form, an empty one as «no answer»; the invitee's invitation only the event's own text;
+    // a guest none. A visitor in another zone: the host sees the visitor's time, the invitee ours.
+    $db->query("INSERT INTO {$prefix}appointments_fields (eventtype_id,type,label,ordering,published,required) VALUES"
+        . " ({$event},'textarea','Concern',2,1,0), ({$event},'text','Company',1,1,0), ({$event},'checkbox','Call back',3,1,0)");
+    $firstField = (int) $db->insert_id;
+    [$concern, $company, $callBack] = [$firstField, $firstField + 1, $firstField + 2];
+    $hostZone = (string) (json_decode((string) $db->query("SELECT params FROM {$prefix}users WHERE id={$host}")->fetch_row()[0], true)['timezone'] ?? '')
+        ?: (string) ($config->offset ?? 'UTC');
+    // The organiser of the host's copy: the option, an address distinct from the host's own (the
+    // sender may be the host's own mailbox, then the copy would only be published, CalendarOrganizer).
+    $organiserParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode(['calendar_organizer_email' => 'calendar-organiser@example.test']
+        + (json_decode($organiserParams, true) ?: []))) . "' WHERE element='com_appointments' AND type='component'");
+    $client = new AppointmentsHttp('http://localhost', 'mail-answers');
+    [$browser, $path, $form] = $client->bookingForm($event, $day . ' 16:30:00', ['guests' => 'guest@example.test', 'timezone' => 'America/New_York',
+        'fields' => [(string) $concern => "<b>Rückruf</b>\r\nBcc: other@example.test\nEND:VEVENT", (string) $company => '', (string) $callBack => '1']]);
+    sleep(2);
+    $before = $spool();
+    try {
+        $browser->request($path, $form);
+    } finally {
+        $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($organiserParams) . "' WHERE element='com_appointments' AND type='component'");
+    }
+    $booking = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$day} 16:30:00'")->fetch_assoc();
+    $check((bool) $booking, 'Fixture: the booking with answers and another zone is saved');
+    $visitorStart = (new DateTimeImmutable($day . ' 16:30:00', $utc))->setTimezone(new DateTimeZone('America/New_York'));
+    $hostStart = (new DateTimeImmutable($day . ' 16:30:00', $utc))->setTimezone(new DateTimeZone($hostZone));
+    $mailsTo = [];
+    foreach (AppointmentsMail::messagesSince($before) as $mime) {
+        preg_match('/^To:.*?([a-z0-9.+-]+@[a-z0-9.-]+)/mi', preg_replace('/\r?\n[ \t]+/', ' ', $mime), $to);
+        $mailsTo[strtolower($to[1] ?? '')] = $mime;
+    }
+    $hostMail = '';
+    foreach ($mailsTo as $address => $mime) {
+        if (!in_array($address, ['invitee@example.test', 'guest@example.test'], true)) {
+            $hostMail = $mime;
+        }
+    }
+    $hostText = str_replace("\r\n", "\n", implode("\n", AppointmentsMail::parts($hostMail, 'text/plain')));
+    $hostHtml = implode("\n", AppointmentsMail::parts($hostMail, 'text/html'));
+    $hostIcs = str_replace("\r\n ", '', AppointmentsMail::calendars($hostMail)[0] ?? '');
+    $check(str_contains($hostText, "Company: no answer\nConcern: <b>Rückruf</b>\nBcc: other@example.test\nEND:VEVENT\nCall back: Yes")
+        && str_contains($hostText, "Visitor's time: " . $visitorStart->format('Y-m-d H:i') . ' (America/New_York)')
+        && str_contains($hostText, 'From: ' . $hostStart->format('Y-m-d H:i') . "\n") && !str_contains($hostText, '{field_answers}'),
+        'The host mail lists every answer in form order, the empty one as «no answer», and the visitor\'s time');
+    $check(str_contains($hostHtml, '&lt;b&gt;Rückruf&lt;/b&gt;') && !str_contains($hostHtml, '<b>Rückruf'),
+        'An answer is escaped in the HTML part of the mail');
+    $check(AppointmentsMail::isInvitation($hostMail, 'REQUEST')
+        && str_contains($hostIcs, 'DESCRIPTION:') && str_contains($hostIcs, 'Concern: <b>Rückruf</b>\\nBcc: other@example.test\\nEND:VEVENT')
+        && str_contains($hostIcs, 'Company: no answer') && str_contains($hostIcs, 'Email: invitee@example.test')
+        && str_contains($hostIcs, "Visitor's time: " . $visitorStart->format('Y-m-d H:i') . ' (America/New_York)')
+        && substr_count($hostIcs, "\r\nEND:VEVENT\r\n") === 1 && !preg_match('/^Bcc:/mi', $hostIcs),
+        'The host invitation describes the booking completely, escaped so no answer becomes a content line');
+    $check((bool) preg_match('/^ORGANIZER[^:\r\n]*:mailto:calendar-organiser@example\.test\r?$/mi', $hostIcs)
+        && (bool) preg_match('/^ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE[^:\r\n]*:mailto:/mi', $hostIcs),
+        'The host invitation is organised by the configured organiser with the host as attendee, so Outlook offers to add it');
+    $inviteeMail = $mailsTo['invitee@example.test'] ?? '';
+    $inviteeIcs = str_replace("\r\n ", '', AppointmentsMail::calendars($inviteeMail)[0] ?? '');
+    $check(AppointmentsMail::isInvitation($inviteeMail, 'REQUEST') && !str_contains($inviteeIcs, 'Concern') && !str_contains($inviteeIcs, 'Rückruf')
+        && str_contains(AppointmentsMail::decoded($inviteeMail), $visitorStart->format('Y-m-d H:i') . ' (' . $hostStart->format('H:i') . ' ' . $hostZone . ')'),
+        'The invitee mail shows the visitor\'s time with ours beside it, its invitation carries no answers');
+    $check(!str_contains(AppointmentsMail::decoded($mailsTo['guest@example.test'] ?? ''), 'Rückruf'), 'A guest never receives the answers');
+    $db->query("DELETE FROM {$prefix}appointments_fields WHERE eventtype_id={$event}");
 
     $templateRows = $db->query("SELECT id FROM {$prefix}appointments_templates WHERE eventtype_id IN (0,{$event})"
         . " AND purpose='confirmation' AND language IN ('de-DE','fr-FR') AND published=1")->fetch_all(MYSQLI_ASSOC);

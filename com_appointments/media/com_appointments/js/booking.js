@@ -591,6 +591,41 @@
         let checkDetails = null;
         let commitGuests = null;
 
+        /*
+         * A text field with a maximum of its own names it below the field ("At most 500
+         * characters."). While the visitor types, the text says how many are left. Characters are
+         * counted like the server does (code points): the native maxlength counts UTF-16 units and
+         * would stop at half the maximum with emoji, so the script takes it over and cuts the text
+         * at the maximum instead. Without the script the native limit stays (stricter, never more).
+         * The server checks the length either way.
+         */
+        const counters = (form) => {
+            form.querySelectorAll('[data-appointments-count]').forEach((counter) => {
+                const field = form.querySelector('#' + counter.id.replace(/-count$/, ''));
+                const max = parseInt(counter.dataset.appointmentsCount, 10) || 0;
+
+                if (!field || max < 1 || field.appointmentsCounter) {
+                    return;
+                }
+
+                field.removeAttribute('maxlength');
+
+                const update = () => {
+                    const characters = Array.from(field.value);
+
+                    if (characters.length > max) {
+                        field.value = characters.slice(0, max).join('');
+                    }
+
+                    counter.textContent = (counter.dataset.left || '%s').replace('%s', String(Math.max(0, max - Math.min(characters.length, max))));
+                };
+
+                field.appointmentsCounter = true;
+                field.addEventListener('input', update);
+                update();
+            });
+        };
+
         const enhanceView = () => {
             const form = root.querySelector('#appointment-details-form');
 
@@ -601,6 +636,7 @@
             if (form) {
                 commitGuests = guestsView(form);
                 checkDetails = validation(form);
+                counters(form);
             }
         };
 
