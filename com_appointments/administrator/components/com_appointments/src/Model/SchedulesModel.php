@@ -10,6 +10,7 @@
 namespace Advans\Component\Appointments\Administrator\Model;
 
 use Joomla\CMS\MVC\Model\ListModel;
+use Joomla\Database\ParameterType;
 
 defined('_JEXEC') or die;
 
@@ -20,28 +21,39 @@ defined('_JEXEC') or die;
  */
 class SchedulesModel extends ListModel
 {
+    use ListFiltersTrait;
+
+    /** Columns the list may be sorted by: only columns of the select list. */
+    private const SORTABLE = ['s.id', 's.title', 's.timezone', 's.published', 'u.name'];
+
     public function __construct($config = [], $factory = null)
     {
         if (empty($config['filter_fields'])) {
-            $config['filter_fields'] = ['s.id', 'title', 's.title', 'timezone', 's.timezone', 'published', 's.published'];
+            $config['filter_fields'] = self::SORTABLE;
         }
 
         parent::__construct($config, $factory);
     }
 
+    protected function filterNames(): array
+    {
+        return ['search', 'published', 'owner_user_id'];
+    }
+
     protected function populateState($ordering = 's.title', $direction = 'ASC')
     {
-        $this->setState(
-            'filter.search',
-            $this->getUserStateFromRequest($this->context . '.filter.search', 'filter_search', '', 'string')
-        );
-
+        $this->adoptFlatFilters();
         parent::populateState($ordering, $direction);
+        $this->setState('filter.search', $this->textFilter('search'));
+        $this->setState('filter.published', $this->optionFilter('published', ['0', '1']));
+        $this->setState('filter.owner_user_id', $this->idFilter('owner_user_id'));
     }
 
     protected function getStoreId($id = '')
     {
-        $id .= ':' . $this->getState('filter.search');
+        foreach ($this->filterNames() as $name) {
+            $id .= ':' . $this->getState('filter.' . $name);
+        }
 
         return parent::getStoreId($id);
     }
@@ -82,7 +94,7 @@ class SchedulesModel extends ListModel
         $search = (string) $this->getState('filter.search');
 
         if ($search !== '') {
-            $like = '%' . $search . '%';
+            $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search) . '%';
             $query->where(
                 '(' . $db->quoteName('s.title') . ' LIKE :search OR '
                 . $db->quoteName('s.timezone') . ' LIKE :zone)'
@@ -91,16 +103,23 @@ class SchedulesModel extends ListModel
                 ->bind(':zone', $like);
         }
 
-        // Only a column of the select list may be ordered by, so a crafted
-        // request cannot turn the ordering into an injection point.
-        $ordering  = (string) $this->state->get('list.ordering', 's.title');
-        $direction = strtoupper((string) $this->state->get('list.direction', 'ASC')) === 'DESC' ? 'DESC' : 'ASC';
+        $published = (string) $this->getState('filter.published');
 
-        if (!\in_array($ordering, $this->filter_fields, true)) {
-            $ordering = 's.title';
+        if ($published !== '') {
+            $publishedFlag = (int) $published;
+            $query->where($db->quoteName('s.published') . ' = :published')->bind(':published', $publishedFlag, ParameterType::INTEGER);
         }
 
-        $query->order($db->quoteName($ordering) . ' ' . $direction);
+        $owner = (int) $this->getState('filter.owner_user_id');
+
+        if ($owner > 0) {
+            $query->where($db->quoteName('s.owner_user_id') . ' = :owner')->bind(':owner', $owner, ParameterType::INTEGER);
+        }
+
+        // Only a column of the select list may be ordered by, so a crafted
+        // request cannot turn the ordering into an injection point.
+        [$ordering, $direction] = $this->listOrdering(self::SORTABLE, 's.title', 'ASC');
+        $query->order($db->quoteName($ordering) . ' ' . $direction)->order($db->quoteName('s.id') . ' ' . $direction);
 
         return $query;
     }

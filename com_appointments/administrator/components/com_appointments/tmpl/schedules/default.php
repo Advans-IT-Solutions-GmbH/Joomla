@@ -10,22 +10,26 @@
 use Joomla\CMS\Factory;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Layout\LayoutHelper;
 use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 
 $canEdit = Factory::getApplication()->getIdentity()->authorise('core.edit', 'com_appointments');
+$listOrder = $this->escape((string) $this->state->get('list.ordering'));
+$listDirn = strtolower((string) $this->state->get('list.direction')) === 'desc' ? 'desc' : 'asc';
 ?>
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=schedules'); ?>" method="post"
       name="adminForm" id="adminForm">
     <div class="row">
         <div class="col-md-12">
             <div id="j-main-container" class="j-main-container">
+                <?php echo LayoutHelper::render('joomla.searchtools.default', ['view' => $this]); ?>
                 <?php if ($this->items === []) : ?>
                     <div class="alert alert-info">
                         <span class="icon-info-circle" aria-hidden="true"></span>
                         <span class="visually-hidden"><?php echo Text::_('INFO'); ?></span>
-                        <?php echo Text::_('COM_APPOINTMENTS_SCHEDULES_EMPTY'); ?>
+                        <?php echo Text::_($this->activeFilters ? 'JGLOBAL_NO_MATCHING_RESULTS' : 'COM_APPOINTMENTS_SCHEDULES_EMPTY'); ?>
                     </div>
                 <?php else : ?>
                     <div class="table-responsive">
@@ -38,13 +42,13 @@ $canEdit = Factory::getApplication()->getIdentity()->authorise('core.edit', 'com
                                 <td class="w-1 text-center">
                                     <?php echo HTMLHelper::_('grid.checkall'); ?>
                                 </td>
-                                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_SCHEDULE_FIELD_TITLE'); ?></th>
-                                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_SCHEDULE_FIELD_TIMEZONE'); ?></th>
-                                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_SCHEDULE_FIELD_OWNER'); ?></th>
+                                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_SCHEDULE_FIELD_TITLE', 's.title', $listDirn, $listOrder); ?></th>
+                                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_SCHEDULE_FIELD_TIMEZONE', 's.timezone', $listDirn, $listOrder); ?></th>
+                                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_SCHEDULE_FIELD_OWNER', 'u.name', $listDirn, $listOrder); ?></th>
                                 <th scope="col" class="text-center">
                                     <?php echo Text::_('COM_APPOINTMENTS_SCHEDULES_RULE_COUNT'); ?>
                                 </th>
-                                <th scope="col" class="text-center"><?php echo Text::_('JSTATUS'); ?></th>
+                                <th scope="col" class="text-center"><?php echo HTMLHelper::_('searchtools.sort', 'JSTATUS', 's.published', $listDirn, $listOrder); ?></th>
                             </tr>
                         </thead>
                         <tbody>

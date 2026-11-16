@@ -329,9 +329,9 @@ bookings after the update, until the setting is made (see section "Scheduler, re
   diagnostics and an administrator retry action preserve a saved booking even if provisioning fails.
 
 - **Booking administration.** Filter by event, status and UTC date range, search invitee full,
-  first or last name and email, sort by start or last name,
-  export a filtered CSV, inspect details and custom answers, and reschedule using the same locked
-  lifecycle. System checks report platform, mail configuration, Scheduler and audit health.
+  first or last name and email, sort by start, last name, event type or status, choose the number
+  per page and clear all filters in one step, export a filtered CSV, inspect details and custom
+  answers, and reschedule using the same locked lifecycle. System checks report platform, mail configuration, Scheduler and audit health.
 
 - **Joomla privacy integration.** The bundled privacy plugin exports readable booking records and
   removes matching records through Joomla's formal data-subject workflow. An address that is an
@@ -1904,6 +1904,35 @@ task and last run, invalid feed-credential counts and the oldest audit record. A
 check is not a delivery test or a remote connectivity probe. Configure and monitor both Scheduler
 routines; a never-run task is explicitly shown as needing attention.
 
+### List search tools
+
+Every administrator list uses Joomla's standard search tools: a search field, the filters under
+«Filter Options», sortable column headings, the sort and number-per-page selectors, paging and
+«Clear». A filter is kept for the next visit until it is cleared. Filters only narrow what the
+list's permission scope already shows, and a filter's choices list only values from that scope.
+
+| List | Search | Filters |
+|------|--------|---------|
+| Bookings | Invitee name and e-mail address | Event type, status, UTC start date from and to |
+| Event types | Title, `id:<number>` | Status, schedule |
+| Booking fields | Label, `id:<number>` | Event type, field type, required, status |
+| E-mail templates | Subject, `id:<number>` | Scope (event type or site-wide fallback), purpose, language, status |
+| Schedules | Name, time zone | Status, host |
+| Blocked periods | Note | Host, period (current and upcoming, past) |
+| Devices | Device, name, username | Status |
+| Internet calendar log | Reference under «Details» | Event, user ID, UTC date from and to |
+
+Booking fields sorted by their order are grouped by event type. Drag a row by its handle to change
+the order of the booking form: a row moves only within its own event type, also while the list is
+filtered, and the event type is then numbered 1, 2, 3 and so on again. Dragging needs the
+«Edit State» permission of the event type. Links of earlier releases with flat `filter_<name>`
+parameters keep working, including `filter_eventtype_id=-1` (every scope) on the template list.
+The booking list, the device list and the log refuse a forged filter value with HTTP 400 and clear
+the stored filters, so the list opens normally on the next visit.
+
+The schedule form has a «Hide past dates» switch above the date-specific times. It only hides rows
+in the browser; saving keeps every date, because the form always sends all rows.
+
 ### Event types
 
 | Setting | Purpose |
@@ -2135,6 +2164,7 @@ The authoritative list and order is [`tests/test.env`](tests/test.env):
 | Conference | Automatic links, JWT separation, explicit failure, retry and lifecycle teardown |
 | Privacy | Real typed Joomla privacy events, Unicode isolation, export/removal and legal blocking |
 | Administration | Filters, CSV safety, reschedule, system checks, restricted event ACL by exact list/CSV row identity across pagination, Close action POST/token/component-administrator guards, and scoped mobile queue layout |
+| List filters | Search tools of every administrator list: each filter narrows by exact row identity, permission scope of filters and their choices, paging and number per page, clearing, earlier flat links, refused forged values and the per-event-type drag order of booking fields |
 | Backend views | Shared HTTP rendering checks for every administrator view |
 | Installer messages | Shared install/update checks in en-GB, de-DE and fr-FR |
 | Uninstall | Component removal and table cleanup |

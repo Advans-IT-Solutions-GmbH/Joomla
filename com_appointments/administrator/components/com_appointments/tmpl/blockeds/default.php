@@ -10,6 +10,7 @@
 use Joomla\CMS\Factory;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Layout\LayoutHelper;
 use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
@@ -43,17 +44,20 @@ $noteOf = function ($title): string {
 
     return $title === '' ? Text::_('COM_APPOINTMENTS_BLOCKED_UNTITLED') : $this->escape($title);
 };
+$listOrder = $this->escape((string) $this->state->get('list.ordering'));
+$listDirn = strtolower((string) $this->state->get('list.direction')) === 'asc' ? 'asc' : 'desc';
 ?>
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=blockeds'); ?>" method="post"
       name="adminForm" id="adminForm">
     <div class="row">
         <div class="col-md-12">
             <div id="j-main-container" class="j-main-container">
+                <?php echo LayoutHelper::render('joomla.searchtools.default', ['view' => $this]); ?>
                 <?php if ($this->items === []) : ?>
                     <div class="alert alert-info">
                         <span class="icon-info-circle" aria-hidden="true"></span>
                         <span class="visually-hidden"><?php echo Text::_('INFO'); ?></span>
-                        <?php echo Text::_('COM_APPOINTMENTS_BLOCKEDS_EMPTY'); ?>
+                        <?php echo Text::_($this->activeFilters ? 'JGLOBAL_NO_MATCHING_RESULTS' : 'COM_APPOINTMENTS_BLOCKEDS_EMPTY'); ?>
                     </div>
                 <?php else : ?>
                     <div class="table-responsive">
@@ -66,10 +70,10 @@ $noteOf = function ($title): string {
                                 <td class="w-1 text-center">
                                     <?php echo HTMLHelper::_('grid.checkall'); ?>
                                 </td>
-                                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_BLOCKED_FIELD_TITLE'); ?></th>
-                                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_BLOCKED_FIELD_USER'); ?></th>
-                                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_BLOCKED_FIELD_START'); ?></th>
-                                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_BLOCKED_FIELD_END'); ?></th>
+                                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_BLOCKED_FIELD_TITLE', 'b.title', $listDirn, $listOrder); ?></th>
+                                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_BLOCKED_FIELD_USER', 'u.name', $listDirn, $listOrder); ?></th>
+                                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_BLOCKED_FIELD_START', 'b.start_utc', $listDirn, $listOrder); ?></th>
+                                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_BLOCKED_FIELD_END', 'b.end_utc', $listDirn, $listOrder); ?></th>
                             </tr>
                         </thead>
                         <tbody>

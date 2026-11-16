@@ -22,12 +22,20 @@ class HtmlView extends BaseHtmlView
     protected $pagination;
     protected $state;
 
+    /** @var \Joomla\CMS\Form\Form|null  Searchtools filter form (read by the core layout). */
+    public $filterForm;
+
+    /** @var array  Filters with a value (read by the core layout). */
+    public $activeFilters = [];
+
     public function display($tpl = null)
     {
         $model = $this->getModel();
         $this->items = $model->getItems();
         $this->pagination = $model->getPagination();
         $this->state = $model->getState();
+        $this->filterForm = $model->getFilterForm();
+        $this->activeFilters = $model->getActiveFilters();
 
         if ($model->getErrors()) {
             throw new \RuntimeException(implode("\n", $model->getErrors()), 500);

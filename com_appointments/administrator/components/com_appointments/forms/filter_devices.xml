@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
+<form>
+    <fields name="filter">
+        <field name="search" type="text" inputmode="search" label="COM_APPOINTMENTS_FILTER_SEARCH_LABEL" hint="COM_APPOINTMENTS_DEVICES_FILTER_SEARCH_HINT" maxlength="100" />
+        <field name="state" type="list" label="JSTATUS" onchange="this.form.submit();">
+            <option value="">JOPTION_SELECT_PUBLISHED</option>
+            <option value="1">COM_APPOINTMENTS_TEAM_F_DEVICE_ACTIVE</option>
+            <option value="2">COM_APPOINTMENTS_TEAM_F_DEVICE_CLEANUP_EMPTY</option>
+            <option value="3">COM_APPOINTMENTS_TEAM_F_DEVICE_CLEANUP_HIDDEN</option>
+            <option value="0">COM_APPOINTMENTS_TEAM_F_DEVICE_REVOKED</option>
+        </field>
+    </fields>
+    <fields name="list">
+        <field name="fullordering" type="list" label="JGLOBAL_SORT_BY" default="d.last_sync_utc DESC" onchange="this.form.submit();" validate="options">
+            <option value="">JGLOBAL_SORT_BY</option>
+            <option value="d.last_sync_utc DESC">COM_APPOINTMENTS_SORT_LAST_SYNC_DESC</option>
+            <option value="d.last_sync_utc ASC">COM_APPOINTMENTS_SORT_LAST_SYNC_ASC</option>
+            <option value="d.created_utc DESC">COM_APPOINTMENTS_SORT_CREATED_DESC</option>
+            <option value="d.created_utc ASC">COM_APPOINTMENTS_SORT_CREATED_ASC</option>
+            <option value="u.name ASC">COM_APPOINTMENTS_SORT_USER_ASC</option>
+            <option value="u.name DESC">COM_APPOINTMENTS_SORT_USER_DESC</option>
+            <option value="d.state ASC">JSTATUS_ASC</option>
+            <option value="d.state DESC">JSTATUS_DESC</option>
+            <option value="d.id ASC">JGRID_HEADING_ID_ASC</option>
+            <option value="d.id DESC">JGRID_HEADING_ID_DESC</option>
+        </field>
+        <field name="limit" type="limitbox" label="JGLOBAL_LIST_LIMIT" default="25" onchange="this.form.submit();" />
+    </fields>
+</form>

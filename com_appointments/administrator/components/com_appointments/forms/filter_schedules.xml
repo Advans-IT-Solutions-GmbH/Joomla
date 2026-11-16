@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
+<form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
+    <fields name="filter">
+        <field name="search" type="text" inputmode="search" label="COM_APPOINTMENTS_FILTER_SEARCH_LABEL" hint="COM_APPOINTMENTS_SCHEDULES_FILTER_SEARCH_HINT" maxlength="200" />
+        <field name="published" type="list" label="JSTATUS" onchange="this.form.submit();">
+            <option value="">JOPTION_SELECT_PUBLISHED</option>
+            <option value="1">JPUBLISHED</option>
+            <option value="0">JUNPUBLISHED</option>
+        </field>
+        <field name="owner_user_id" type="Hostfilter" source="schedules" label="COM_APPOINTMENTS_SCHEDULE_FIELD_OWNER" onchange="this.form.submit();">
+            <option value="">COM_APPOINTMENTS_FILTER_SELECT_HOST</option>
+        </field>
+    </fields>
+    <fields name="list">
+        <field name="fullordering" type="list" label="JGLOBAL_SORT_BY" default="s.title ASC" onchange="this.form.submit();" validate="options">
+            <option value="">JGLOBAL_SORT_BY</option>
+            <option value="s.title ASC">COM_APPOINTMENTS_SORT_NAME_ASC</option>
+            <option value="s.title DESC">COM_APPOINTMENTS_SORT_NAME_DESC</option>
+            <option value="s.timezone ASC">COM_APPOINTMENTS_SORT_TIMEZONE_ASC</option>
+            <option value="s.timezone DESC">COM_APPOINTMENTS_SORT_TIMEZONE_DESC</option>
+            <option value="u.name ASC">COM_APPOINTMENTS_SORT_HOST_ASC</option>
+            <option value="u.name DESC">COM_APPOINTMENTS_SORT_HOST_DESC</option>
+            <option value="s.published ASC">JSTATUS_ASC</option>
+            <option value="s.published DESC">JSTATUS_DESC</option>
+            <option value="s.id ASC">JGRID_HEADING_ID_ASC</option>
+            <option value="s.id DESC">JGRID_HEADING_ID_DESC</option>
+        </field>
+        <field name="limit" type="limitbox" label="JGLOBAL_LIST_LIMIT" default="25" onchange="this.form.submit();" />
+    </fields>
+</form>

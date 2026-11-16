@@ -41,6 +41,12 @@ class HtmlView extends BaseHtmlView
 
     protected $state;
 
+    /** @var \Joomla\CMS\Form\Form|null  Searchtools filter form (read by the core layout). */
+    public $filterForm;
+
+    /** @var array  Filters with a value (read by the core layout). */
+    public $activeFilters = [];
+
     public function display($tpl = null)
     {
         $app = Factory::getApplication();
@@ -60,6 +66,8 @@ class HtmlView extends BaseHtmlView
             $this->items = $model->getItems();
             $this->pagination = $model->getPagination();
             $this->state = $model->getState();
+            $this->filterForm = $model->getFilterForm();
+            $this->activeFilters = $model->getActiveFilters();
             $toolbar->standardButton('lock')->text(Text::_('COM_APPOINTMENTS_TEAM_F_DEVICES_BLOCK'))->task('devices.block')->listCheck(true);
             $toolbar->standardButton('unpublish')->text(Text::_('COM_APPOINTMENTS_TEAM_F_DEVICES_BLOCK_USER'))->task('devices.blockUser')->listCheck(true);
             $toolbar->standardButton('delete')->text(Text::_('COM_APPOINTMENTS_TEAM_F_DEVICES_REVOKE'))->task('devices.revoke')->listCheck(true);

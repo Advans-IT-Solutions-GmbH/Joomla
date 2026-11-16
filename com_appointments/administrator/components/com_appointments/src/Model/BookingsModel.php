@@ -22,6 +22,8 @@ defined('_JEXEC') or die;
 
 class BookingsModel extends ListModel
 {
+    use ListFiltersTrait;
+
     /** @var array<string, int[]|null> Ids found in memory for a search or a name order, per state. */
     private array $matched = [];
 
@@ -140,30 +142,37 @@ class BookingsModel extends ListModel
         return $items;
     }
 
+    protected function filterNames(): array
+    {
+        return ['search', 'eventtype_id', 'state', 'from', 'to'];
+    }
+
     protected function populateState($ordering = 'b.start_utc', $direction = 'DESC')
     {
+        // Searchtools send filter[...]; links of earlier releases the flat filter_<name>.
+        $this->adoptFlatFilters();
         parent::populateState($ordering, $direction);
-        $app = Factory::getApplication();
-        foreach (['eventtype_id', 'state', 'from', 'to', 'search'] as $key) {
-            $value = trim((string) $app->getUserStateFromRequest($this->context . '.filter.' . $key, 'filter_' . $key, '', 'string'));
-            if (($key === 'eventtype_id' && $value !== '' && (!ctype_digit($value) || (int) $value < 1 || strlen($value) > 10))
+        foreach ($this->filterNames() as $key) {
+            $value = $this->rawFilter($key);
+            if ($value === null
+                || ($key === 'eventtype_id' && $value !== '' && (!ctype_digit($value) || (int) $value < 1 || strlen($value) > 10))
                 || ($key === 'state' && !in_array($value, ['', '0', '1', '2'], true))
                 || (in_array($key, ['from', 'to'], true) && $value !== '' && !UtcTimestamp::isDate($value))
                 || ($key === 'search' && (preg_match('//u', $value) !== 1 || mb_strlen($value) > 200))) {
-                throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKINGS_FILTER_INVALID'), 400);
+                $this->rejectFilters('COM_APPOINTMENTS_BOOKINGS_FILTER_INVALID');
             }
             $this->setState('filter.' . $key, $value);
         }
         $from = $this->state->get('filter.from', '');
         $to = $this->state->get('filter.to', '');
         if ($from !== '' && $to !== '' && $from > $to) {
-            throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKINGS_FILTER_INVALID'), 400);
+            $this->rejectFilters('COM_APPOINTMENTS_BOOKINGS_FILTER_INVALID');
         }
     }
 
     protected function getStoreId($id = '')
     {
-        foreach (['eventtype_id', 'state', 'from', 'to', 'search'] as $key) {
+        foreach ($this->filterNames() as $key) {
             $id .= ':' . $this->getState('filter.' . $key);
         }
 
