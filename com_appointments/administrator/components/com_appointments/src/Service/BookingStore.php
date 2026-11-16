@@ -192,7 +192,7 @@ final class BookingStore
         }
 
         $this->mirror($state === 2 ? 'cancelled' : 'saved', $booking);
-        $cleanup = $state === 2 ? $this->conference()->destroy($booking) : $booking;
+        $cleanup = $state === 2 ? $this->releaseRoom($booking) : $booking;
 
         return $cleanup + ['_changed' => true];
     }
@@ -366,7 +366,7 @@ final class BookingStore
         }
 
         $mirrored = $this->mirror('erased', ['id' => $bookingId]);
-        $cleanup = $this->conference()->destroy($booking);
+        $cleanup = $this->releaseRoom($booking);
         $conferenceFailed = !empty($cleanup['_conference_cleanup_error']) || !empty($cleanup['_conference_error']);
         if ($privacyCleanup !== null && $cleanupKey !== null && $mirrored && !$conferenceFailed) {
             $privacyCleanup->forget($bookingId, $cleanupKey);
@@ -543,6 +543,27 @@ final class BookingStore
     private function conference(): ConferenceService
     {
         return ConferenceService::forComponent($this->db);
+    }
+
+    /**
+     * Releases the room of a committed erasure or cancellation. The change is already committed,
+     * so a failure is reported (`_conference_cleanup_error`), never thrown (#351). Only the
+     * provider name is logged: the room identifier opens the room.
+     */
+    private function releaseRoom(array $booking): array
+    {
+        try {
+            return $this->conference()->destroy($booking);
+        } catch (\Throwable $error) {
+            // Best effort: a failing log must not turn the reported failure into an exception.
+            try {
+                Log::add('Appointment conference room release failed after the commit (provider '
+                    . preg_replace('/[^a-z0-9_.-]/i', '', (string) ($booking['conference_provider'] ?? '')) . ').', Log::WARNING, 'com_appointments');
+            } catch (\Throwable $logError) {
+            }
+
+            return $booking + ['_conference_cleanup_error' => 'Conference room cleanup failed. Please retry.'];
+        }
     }
 
     private function lockedBooking(int $bookingId): ?array
