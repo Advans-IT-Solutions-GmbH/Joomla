@@ -31,6 +31,16 @@
  *   - no "ß" in text the code hard-codes, so the Swiss spelling holds outside
  *     the language files too (marker `lang-lint-allow-eszett` exempts a line)
  *
+ * And the Options screens, so none of them shows a raw language key (also in
+ * --package mode, see lint_options_screens()):
+ *   - every fieldset of a component's config.xml has a label, and that label, a
+ *     fieldset description and the page title key <COMPONENT>_CONFIGURATION are
+ *     defined in the component's administrator <component>.ini in every language
+ *   - every parameter fieldset of a plugin or module manifest other than "basic"
+ *     and "advanced" has a label
+ *   - a fieldset label or description outside the extension's own prefixes is a
+ *     known Joomla core key
+ *
  * Exits with 1 when any problem is found.
  */
 
@@ -71,6 +81,15 @@ const FRENCH_UNACCENTED_WORDS = [
     'element', 'elements', 'generale', 'precedent', 'cree', 'creee', 'reussi', 'reussie',
     'problemes', 'probleme', 'acces',
 ];
+
+// Joomla core keys an Options screen may name. Add a key only after checking that
+// the administrator en-GB language of Joomla 5.4 and 6 defines it.
+const CORE_OPTIONS_KEYS = ['JCONFIG_PERMISSIONS_LABEL', 'JCONFIG_PERMISSIONS_DESC'];
+
+// Parameter fieldsets of plugin and module manifests that need no label: the
+// edit screens show "basic" on their main tab and title "advanced" with the core
+// key JGLOBAL_FIELDSET_ADVANCED.
+const UNLABELLED_PARAM_FIELDSETS = ['basic', 'advanced'];
 
 $errors = [];
 
@@ -321,28 +340,49 @@ function lint_code_lines_without_comments(string $path, string $content): array
 }
 
 
-function lint_usage(string $extensionDir, array $definedByTag, array $fileNames, callable $addError): void
+/**
+ * Own prefixes from the language file names: plg_privacy_j2commerce(.sys).ini
+ * -> PLG_PRIVACY_J2COMMERCE. Keys of these prefixes must be defined when named.
+ *
+ * @param string[] $fileNames
+ *
+ * @return string[]
+ */
+function lint_own_prefixes(array $fileNames): array
+{
+    $prefixes = [];
+    foreach ($fileNames as $name) {
+        $prefixes[strtoupper(preg_replace('/(\.sys)?\.ini$/', '', $name))] = true;
+    }
+
+    return array_keys($prefixes);
+}
+
+function lint_is_own_key(string $key, array $prefixes): bool
+{
+    foreach ($prefixes as $prefix) {
+        if ($key === $prefix || str_starts_with($key, $prefix . '_')) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * @param string[] $byConvention  keys Joomla reads without the code naming them
+ *                                (see lint_options_screens())
+ */
+function lint_usage(string $extensionDir, array $definedByTag, array $fileNames, array $byConvention, callable $addError): void
 {
     if ($definedByTag === []) {
         return;
     }
 
-    // Own prefixes from the language file names: plg_privacy_j2commerce(.sys).ini
-    // -> PLG_PRIVACY_J2COMMERCE. Keys of these prefixes must be defined when named.
-    $prefixes = [];
-    foreach ($fileNames as $name) {
-        $prefixes[strtoupper(preg_replace('/(\.sys)?\.ini$/', '', $name))] = true;
-    }
-    $prefixes = array_keys($prefixes);
+    $prefixes = lint_own_prefixes($fileNames);
 
     $isOwn = static function (string $key) use ($prefixes): bool {
-        foreach ($prefixes as $prefix) {
-            if ($key === $prefix || str_starts_with($key, $prefix . '_')) {
-                return true;
-            }
-        }
-
-        return false;
+        return lint_is_own_key($key, $prefixes);
     };
 
     $tokens   = [];   // key-shaped token => [path, line] of first use
@@ -456,7 +496,9 @@ function lint_usage(string $extensionDir, array $definedByTag, array $fileNames,
 
     // Defined but used nowhere.
     foreach ($allDefined as $key => $where) {
-        if (isset($tokens[$key]) || isset($derived[$key]) || isset($forOverrides[$key])) {
+        if (isset($tokens[$key]) || isset($derived[$key]) || isset($forOverrides[$key])
+            || in_array($key, $byConvention, true)
+        ) {
             continue;
         }
 
@@ -468,6 +510,214 @@ function lint_usage(string $extensionDir, array $definedByTag, array $fileNames,
             $addError($listFile, 0, "$key is listed for template overrides but not defined");
         }
     }
+}
+
+/**
+ * Keys of a language file as Joomla loads them, without reporting anything
+ * (lint_parse_file() reports the problems of the file itself).
+ *
+ * @return array<string, string>
+ */
+function lint_ini_keys(string $path): array
+{
+    $content = (string) file_get_contents($path);
+
+    if (str_starts_with($content, "\xEF\xBB\xBF")) {
+        $content = substr($content, 3);
+    }
+
+    $parsed = @parse_ini_string(str_replace('_QQ_', '"\""', $content), false, INI_SCANNER_RAW);
+
+    return is_array($parsed) ? $parsed : [];
+}
+
+function lint_xml_line(SimpleXMLElement $element): int
+{
+    return (int) dom_import_simplexml($element)->getLineNo();
+}
+
+/**
+ * Options screens never show a raw language key.
+ *
+ * com_config titles every tab of a component's Options screen with the label of
+ * a config.xml fieldset. Without a label it prints COM_CONFIG_<name>_FIELDSET_LABEL,
+ * which Joomla does not define, so the tab shows that raw key. The page title is
+ * <component>_CONFIGURATION. com_config translates both with the component's
+ * administrator <component>.ini (not the .sys.ini and not the site file), so each
+ * fieldset needs a label, and the label, a fieldset description and the title
+ * key must be defined in that file in every shipped language.
+ *
+ * Plugin and module edit screens render their parameter fieldsets with the
+ * layout joomla.edit.params. An unlabelled fieldset falls back to
+ * JGLOBAL_FIELDSET_<name> and then <option>_<name>_FIELDSET_LABEL, which core
+ * defines only for the names in UNLABELLED_PARAM_FIELDSETS. Their own keys are
+ * checked by lint_usage().
+ *
+ * A fieldset label or description outside the extension's own prefixes must be
+ * one of CORE_OPTIONS_KEYS, because nothing the extension ships defines it.
+ *
+ * @param string[] $prefixes  the extension's own key prefixes
+ *
+ * @return string[] keys Joomla reads by convention, without the code naming them
+ */
+function lint_options_screens(string $extensionDir, array $prefixes, callable $addError): array
+{
+    $byConvention = [];
+
+    $checkForeignKey = static function (string $path, SimpleXMLElement $fieldset, string $context) use ($prefixes, $addError): void {
+        foreach (['label', 'description'] as $attribute) {
+            $key = (string) $fieldset[$attribute];
+
+            if ($key !== '' && !lint_is_own_key($key, $prefixes) && !in_array($key, CORE_OPTIONS_KEYS, true)) {
+                $addError(
+                    $path,
+                    lint_xml_line($fieldset),
+                    "$context fieldset \"{$fieldset['name']}\" $attribute $key is neither an own key nor a known Joomla core key (CORE_OPTIONS_KEYS)"
+                );
+            }
+        }
+    };
+
+    foreach (lint_code_files($extensionDir) as $manifest) {
+        if (!str_ends_with($manifest, '.xml')) {
+            continue;
+        }
+
+        $content = (string) file_get_contents($manifest);
+
+        if (!str_contains($content, '<extension')) {
+            continue;
+        }
+
+        $xml = @simplexml_load_string($content);
+
+        // An unreadable manifest is reported by the manifest checks.
+        if ($xml === false || $xml->getName() !== 'extension') {
+            continue;
+        }
+
+        $type = (string) $xml['type'];
+        $base = dirname($manifest);
+
+        if ($type === 'plugin' || $type === 'module') {
+            foreach ($xml->xpath('/extension/config//fieldset') as $fieldset) {
+                $name = (string) $fieldset['name'];
+
+                if ((string) $fieldset['label'] === '' && !in_array($name, UNLABELLED_PARAM_FIELDSETS, true)) {
+                    $addError(
+                        $manifest,
+                        lint_xml_line($fieldset),
+                        "parameter fieldset \"$name\" has no label (the edit screen shows the raw key ..._"
+                            . strtoupper($name) . '_FIELDSET_LABEL)'
+                    );
+                }
+
+                $checkForeignKey($manifest, $fieldset, 'parameter');
+            }
+
+            continue;
+        }
+
+        if ($type !== 'component') {
+            continue;
+        }
+
+        $element = strtolower((string) $xml->element ?: (string) $xml->name);
+
+        if (!str_starts_with($element, 'com_')) {
+            $element = 'com_' . $element;
+        }
+
+        foreach ($xml->xpath('/extension/administration/files') as $files) {
+            $folder = $base . ((string) $files['folder'] !== '' ? '/' . $files['folder'] : '');
+            $config = $folder . '/config.xml';
+            $listed = false;
+
+            foreach ($files->filename as $filename) {
+                $listed = $listed || (string) $filename === 'config.xml';
+            }
+
+            if (!$listed || !is_file($config)) {
+                continue;
+            }
+
+            // The administrator <component>.ini per language: declared in the
+            // manifest, or installed inside the component folder.
+            $strings = [];
+
+            foreach ($xml->xpath('/extension/administration/languages') as $block) {
+                $languageFolder = $base . ((string) $block['folder'] !== '' ? '/' . $block['folder'] : '');
+
+                foreach ($block->language as $language) {
+                    $tag  = (string) $language['tag'];
+                    $file = $languageFolder . '/' . $language;
+
+                    if (preg_match('/^(?:' . preg_quote($tag, '/') . '\.)?' . preg_quote($element, '/') . '\.ini$/', basename($file))
+                        && is_file($file)
+                    ) {
+                        $strings[$tag] = ($strings[$tag] ?? []) + lint_ini_keys($file);
+                    }
+                }
+            }
+
+            foreach (SUPPORTED_TAGS as $tag) {
+                foreach (["$folder/language/$tag/$element.ini", "$folder/language/$tag/$tag.$element.ini"] as $file) {
+                    if (is_file($file)) {
+                        $strings[$tag] = ($strings[$tag] ?? []) + lint_ini_keys($file);
+                    }
+                }
+            }
+
+            foreach (SUPPORTED_TAGS as $tag) {
+                if (!isset($strings[$tag])) {
+                    $addError($manifest, 0, "no administrator $tag/$element.ini installed, so the Options screen of $element cannot be translated in $tag");
+                }
+            }
+
+            $title          = strtoupper($element) . '_CONFIGURATION';
+            $byConvention[] = $title;
+
+            foreach ($strings as $tag => $keys) {
+                if (!isset($keys[$title])) {
+                    $addError($config, 0, "$title (title of the Options screen) is not defined in the administrator $tag/$element.ini");
+                }
+            }
+
+            $form = @simplexml_load_file($config);
+
+            if ($form === false) {
+                $addError($config, 0, 'cannot parse config.xml');
+                continue;
+            }
+
+            foreach ($form->xpath('//fieldset') as $fieldset) {
+                $name = (string) $fieldset['name'];
+                $line = lint_xml_line($fieldset);
+
+                if ((string) $fieldset['label'] === '') {
+                    $addError($config, $line, "Options fieldset \"$name\" has no label (the tab shows the raw key COM_CONFIG_{$name}_FIELDSET_LABEL)");
+                }
+
+                $checkForeignKey($config, $fieldset, 'Options');
+
+                foreach (['label', 'description'] as $attribute) {
+                    $key = (string) $fieldset[$attribute];
+
+                    if ($key === '' || in_array($key, CORE_OPTIONS_KEYS, true)) {
+                        continue;
+                    }
+
+                    foreach ($strings as $tag => $keys) {
+                        if (!isset($keys[$key])) {
+                            $addError($config, $line, "Options fieldset \"$name\" $attribute $key is not defined in the administrator $tag/$element.ini");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return $byConvention;
 }
 
 function lint_placeholders(string $value): array
@@ -733,8 +983,10 @@ foreach ($directories as $extensionDir) {
         }
     }
 
+    $byConvention = lint_options_screens($extensionDir, lint_own_prefixes($fileNames), $addError);
+
     if (!$packageMode) {
-        lint_usage($extensionDir, $definedByTag, array_unique($fileNames), $addError);
+        lint_usage($extensionDir, $definedByTag, array_unique($fileNames), $byConvention, $addError);
     }
     lint_swiss_spelling($extensionDir, $addError);
 }

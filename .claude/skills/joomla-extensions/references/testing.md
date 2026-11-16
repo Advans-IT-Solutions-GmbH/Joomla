@@ -270,8 +270,10 @@ checks are omitted because their template allowlists are not shipped. Installer-
 cannot satisfy a bundled plugin's own language requirement.
 `.github/scripts/test-language-delivery.py` exercises valid delivery and negative cases (missing
 locale, extra key, German `ß`, empty/unsupported locale directories including non-two-letter tags,
-missing named mail placeholders, empty bodies, omitted entire manifest file families and
-bundled-plugin files). Shared Path Coverage runs these regressions on PHP 8.1.
+missing named mail placeholders, empty bodies, omitted entire manifest file families,
+bundled-plugin files, an unlabelled Options or parameter fieldset, a fieldset key defined only in
+the `.sys.ini` or not at all, a missing Options title key and a foreign fieldset key). Shared Path
+Coverage runs these regressions on PHP 8.1.
 
 Mail coverage belongs in the sender's existing CI suites. Appointments checks all 25 purposes in
 all three languages (subject, text and generated HTML), actual booking MIME for separate invitee
@@ -359,8 +361,9 @@ BLOCKED, never PASS. A source lint, a package check or an HTTP render is not a s
   de-DE without `ß`, without ae/oe/ue spellings and with `z.B.`,
   fr-FR without missing accents; every own-prefix key the code uses is defined in every language,
   every defined key is used by the code, derived from a `langConstPrefix` or listed in
-  `tests/language-keys-for-template-overrides.txt`, no key is assembled at runtime, and no `ß` in
-  text the shipped PHP/JS/XML hard-codes) followed by
+  `tests/language-keys-for-template-overrides.txt`, no key is assembled at runtime, no `ß` in
+  text the shipped PHP/JS/XML hard-codes, and every Options and parameter fieldset has a label
+  translated in every language, see conventions "Language Files") followed by
   `php shared/tests/requirements-check.php <extension dir>`
   (`minimumJoomla '5.4'`/`minimumPhp '8.1'` in `script.php`, `preflight()` calls the parent, every
   manifest and `update.xml` `targetplatform`/`php_minimum`, the release workflow `targetplatform`, and

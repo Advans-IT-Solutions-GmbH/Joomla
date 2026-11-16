@@ -196,3 +196,111 @@ with tempfile.TemporaryDirectory(prefix="joomla-language-") as directory:
             "missing en-GB counterpart" if kind == "nested" else
             "missing fr-FR counterpart",
         )
+
+
+# Options screens: com_config titles each tab with the label of a config.xml
+# fieldset and falls back to the undefined COM_CONFIG_<name>_FIELDSET_LABEL, and
+# titles the page with <COMPONENT>_CONFIGURATION from the administrator
+# <component>.ini.
+with tempfile.TemporaryDirectory(prefix="joomla-options-") as directory:
+    fixture = Path(directory)
+    strings = (
+        'COM_EXAMPLE="Example"\n'
+        'COM_EXAMPLE_CONFIGURATION="Example: Options"\n'
+        'COM_EXAMPLE_CONFIG_BASIC="General"\n'
+    )
+    for tag in TAGS:
+        folder = fixture / "administrator" / "language" / tag
+        folder.mkdir(parents=True)
+        (folder / "com_example.ini").write_text(strings, encoding="utf-8")
+        (folder / "com_example.sys.ini").write_text('COM_EXAMPLE="Example"\n', encoding="utf-8")
+
+    declarations = "".join(
+        f'<language tag="{tag}">{tag}/com_example{suffix}.ini</language>'
+        for tag in TAGS for suffix in ("", ".sys")
+    )
+    (fixture / "example.xml").write_text(
+        '<extension type="component"><name>COM_EXAMPLE</name><element>com_example</element>'
+        '<administration><files folder="administrator/components/com_example">'
+        '<filename>config.xml</filename></files>'
+        f'<languages folder="administrator/language">{declarations}</languages>'
+        '</administration></extension>',
+        encoding="utf-8",
+    )
+    component = fixture / "administrator" / "components" / "com_example"
+    component.mkdir(parents=True)
+    config = component / "config.xml"
+    valid_config = (
+        '<config>\n'
+        '<fieldset name="basic" label="COM_EXAMPLE_CONFIG_BASIC">'
+        '<field name="mode" type="text" label="COM_EXAMPLE_CONFIG_BASIC"/></fieldset>\n'
+        '<fieldset name="permissions" label="JCONFIG_PERMISSIONS_LABEL" description="JCONFIG_PERMISSIONS_DESC">'
+        '<field name="rules" type="rules" label="JCONFIG_PERMISSIONS_LABEL" component="com_example" section="component"/>'
+        '</fieldset>\n</config>\n'
+    )
+    config.write_text(valid_config, encoding="utf-8")
+    command = ["php", str(LINT), str(fixture)]
+    package_command = ["php", str(LINT), "--package", str(fixture)]
+    check(command, ROOT, True, "Language files OK")
+    check(package_command, ROOT, True, "Language files OK")
+
+    config.write_text(valid_config.replace(' label="COM_EXAMPLE_CONFIG_BASIC">', ">", 1), encoding="utf-8")
+    check(command, ROOT, False, "the tab shows the raw key COM_CONFIG_basic_FIELDSET_LABEL")
+    check(package_command, ROOT, False, 'Options fieldset "basic" has no label')
+    config.write_text(valid_config.replace(
+        'label="COM_EXAMPLE_CONFIG_BASIC">', 'label="COM_CONFIG_BASIC_FIELDSET_LABEL">', 1
+    ), encoding="utf-8")
+    check(command, ROOT, False, "COM_CONFIG_BASIC_FIELDSET_LABEL is neither an own key nor a known Joomla core key")
+    config.write_text(valid_config.replace("JCONFIG_PERMISSIONS_DESC", "COM_EXAMPLE_CONFIG_PERMISSIONS_DESC"), encoding="utf-8")
+    check(command, ROOT, False, "description COM_EXAMPLE_CONFIG_PERMISSIONS_DESC is not defined in the administrator de-DE/com_example.ini")
+    config.write_text(valid_config, encoding="utf-8")
+
+    # A key that only the .sys.ini defines is not loaded by com_config.
+    for tag in TAGS:
+        folder = fixture / "administrator" / "language" / tag
+        (folder / "com_example.ini").write_text(strings.replace('COM_EXAMPLE_CONFIG_BASIC="General"\n', ""), encoding="utf-8")
+        (folder / "com_example.sys.ini").write_text('COM_EXAMPLE="Example"\nCOM_EXAMPLE_CONFIG_BASIC="General"\n', encoding="utf-8")
+    check(command, ROOT, False, "label COM_EXAMPLE_CONFIG_BASIC is not defined in the administrator fr-FR/com_example.ini")
+    for tag in TAGS:
+        folder = fixture / "administrator" / "language" / tag
+        (folder / "com_example.ini").write_text(strings.replace('COM_EXAMPLE_CONFIGURATION="Example: Options"\n', ""), encoding="utf-8")
+        (folder / "com_example.sys.ini").write_text('COM_EXAMPLE="Example"\n', encoding="utf-8")
+    check(command, ROOT, False, "COM_EXAMPLE_CONFIGURATION (title of the Options screen) is not defined in the administrator en-GB/com_example.ini")
+    for tag in TAGS:
+        (fixture / "administrator" / "language" / tag / "com_example.ini").write_text(strings, encoding="utf-8")
+    check(command, ROOT, True, "Language files OK")
+
+
+# Plugin and module parameter fieldsets: core titles only "basic" and "advanced"
+# when the label is missing.
+with tempfile.TemporaryDirectory(prefix="joomla-params-") as directory:
+    fixture = Path(directory)
+    for tag in TAGS:
+        folder = fixture / "language" / tag
+        folder.mkdir(parents=True)
+        (folder / "plg_example.ini").write_text(
+            'PLG_EXAMPLE="Example"\nPLG_EXAMPLE_FIELDSET_EXTRA="Extra"\n', encoding="utf-8"
+        )
+    declarations = "".join(
+        f'<language tag="{tag}">{tag}/plg_example.ini</language>' for tag in TAGS
+    )
+    manifest = fixture / "example.xml"
+    valid_manifest = (
+        '<extension type="plugin" group="system"><name>PLG_EXAMPLE</name>'
+        f'<languages folder="language">{declarations}</languages>'
+        '<config><fields name="params"><fieldset name="basic"/><fieldset name="advanced"/>'
+        '<fieldset name="extra" label="PLG_EXAMPLE_FIELDSET_EXTRA"/></fields></config></extension>'
+    )
+    manifest.write_text(valid_manifest, encoding="utf-8")
+    command = ["php", str(LINT), str(fixture)]
+    check(command, ROOT, True, "Language files OK")
+    manifest.write_text(valid_manifest.replace(
+        '<fieldset name="extra" label="PLG_EXAMPLE_FIELDSET_EXTRA"/>',
+        '<fieldset name="extra"/><fieldset name="other" label="PLG_EXAMPLE_FIELDSET_EXTRA"/>',
+    ), encoding="utf-8")
+    check(command, ROOT, False, 'parameter fieldset "extra" has no label')
+    manifest.write_text(valid_manifest.replace(
+        'label="PLG_EXAMPLE_FIELDSET_EXTRA"/>',
+        'label="PLG_EXAMPLE_FIELDSET_EXTRA" description="COM_PLUGINS_EXTRA_FIELDSET_DESC"/>',
+    ), encoding="utf-8")
+    check(command, ROOT, False, "description COM_PLUGINS_EXTRA_FIELDSET_DESC is neither an own key nor a known Joomla core key")

@@ -85,6 +85,13 @@ bodies.
   uses but a language does not define, on a defined key no code uses, and on assembled keys. Keys a
   plugin ships only for site template overrides go into
   `tests/language-keys-for-template-overrides.txt` of the extension.
+- Options screens never show a raw key. Every `<fieldset>` of a component's `config.xml` has a
+  `label` (otherwise com_config titles the tab `COM_CONFIG_<name>_FIELDSET_LABEL`), and that label,
+  a fieldset `description` and the page title `<COMPONENT>_CONFIGURATION` are defined in the
+  administrator `<component>.ini` (not only the `.sys.ini`) of every language. Plugin and module
+  parameter fieldsets other than `basic` and `advanced` have a label. A label or description
+  outside the extension's own prefixes must be a core key listed in `CORE_OPTIONS_KEYS` of the
+  lint. The lint enforces this in source and `--package` mode.
 
 ### Checklist: add a language
 
