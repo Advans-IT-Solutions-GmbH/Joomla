@@ -308,14 +308,18 @@ return static function (TeamSuite $suite): void {
             static function () use ($book, $eventRow, $send, $to, $address, $expect, $db, $p, $event) {
                 $db->query("INSERT INTO {$p}appointments_fields (eventtype_id,type,label,ordering,published,required) VALUES ({$event},'text','Topic',1,1,0)");
                 $field = (int) $db->insert_id;
+                // A telephone appointment without location text names the kind of call in this mail too.
+                $locationType = (string) $db->query("SELECT location_type FROM {$p}appointments_eventtypes WHERE id={$event}")->fetch_row()[0];
+                $db->query("UPDATE {$p}appointments_eventtypes SET location_type='phone_host_calls', location_text='' WHERE id={$event}");
 
                 try {
                     $mails = $send($book($eventRow, '16:00:00', ['custom_fields' => json_encode([(string) $field => 'Network renewal']),
                         'invitee_timezone' => 'America/New_York']), 'confirmation');
                     [$hostMail] = $to($mails, $address('host'));
                     $expect(str_contains($hostMail['body'], 'Topic: Network renewal') && str_contains($hostMail['body'], "Visitor's time: ")
-                        && str_contains($hostMail['body'], '(America/New_York)') && !str_contains($hostMail['body'], '{field_answers}'),
-                        'Host calendar mail: ' . $hostMail['body']);
+                        && str_contains($hostMail['body'], '(America/New_York)') && !str_contains($hostMail['body'], '{field_answers}')
+                        && str_contains($hostMail['body'], 'Location: Telephone: host calls invitee'),
+                        'Host calendar mail: ' . substr((string) strstr($hostMail['body'], 'A new appointment'), 0, 900));
 
                     foreach (['reader', 'external', 'freebusy'] as $name) {
                         foreach ($to($mails, $address($name)) as $mail) {
@@ -325,6 +329,7 @@ return static function (TeamSuite $suite): void {
                     }
                 } finally {
                     $db->query("DELETE FROM {$p}appointments_fields WHERE id={$field}");
+                    $db->query("UPDATE {$p}appointments_eventtypes SET location_type='" . $db->real_escape_string($locationType) . "' WHERE id={$event}");
                 }
 
                 return true;

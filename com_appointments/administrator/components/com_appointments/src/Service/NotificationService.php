@@ -476,7 +476,13 @@ final class NotificationService
                 $extra['{invitee_time}'] = (new MailPresentation())->inviteeTime($booking, $tag, $timezone);
             }
 
-            $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $event, [], $now, $extra);
+            // {location} of a telephone appointment without its own text: the neutral label, as in
+            // the host_* mails (EventLocation). This mail carries no invitation, the synchronised
+            // calendar entry is written elsewhere and stays as it is.
+            $mailEvent = $event;
+            $mailEvent['location'] = EventLocation::text((string) $event['location_type'], (string) ($event['location_text'] ?? ''),
+                EventLocation::NEUTRAL, static fn (string $key): string => $language->_($key));
+            $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $mailEvent, [], $now, $extra);
             $message = ['subject' => $message['subject'], 'body' => $message['body']];
             $conference = (string) ($recipientBooking['conference_url'] ?? '');
 

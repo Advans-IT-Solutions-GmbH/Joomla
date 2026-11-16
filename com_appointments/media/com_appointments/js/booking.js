@@ -593,9 +593,11 @@
 
         /*
          * A text field with a maximum of its own names it below the field ("At most 500
-         * characters."). While the visitor types, the text says how many are left. The field's
-         * maxlength already stops the input; the server checks the length either way. Characters
-         * are counted like the server does (code points, not UTF-16 units).
+         * characters."). While the visitor types, the text says how many are left. Characters are
+         * counted like the server does (code points): the native maxlength counts UTF-16 units and
+         * would stop at half the maximum with emoji, so the script takes it over and cuts the text
+         * at the maximum instead. Without the script the native limit stays (stricter, never more).
+         * The server checks the length either way.
          */
         const counters = (form) => {
             form.querySelectorAll('[data-appointments-count]').forEach((counter) => {
@@ -606,8 +608,16 @@
                     return;
                 }
 
+                field.removeAttribute('maxlength');
+
                 const update = () => {
-                    counter.textContent = (counter.dataset.left || '%s').replace('%s', String(Math.max(0, max - Array.from(field.value).length)));
+                    const characters = Array.from(field.value);
+
+                    if (characters.length > max) {
+                        field.value = characters.slice(0, max).join('');
+                    }
+
+                    counter.textContent = (counter.dataset.left || '%s').replace('%s', String(Math.max(0, max - Math.min(characters.length, max))));
                 };
 
                 field.appointmentsCounter = true;

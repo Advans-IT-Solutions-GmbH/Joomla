@@ -388,6 +388,11 @@ final class BookingInputTest extends TestCase
         $error = $this->refusal($this->input() + ['fields' => [4 => str_repeat('a', 8001)]], $fields);
         self::assertSame(['field-4' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_INVALID'], $error->fieldErrors, 'Beyond the storage limit as before');
 
+        // A form POST sends a textarea's line breaks as CRLF: one character each, as the field counts them.
+        $ten = [['id' => 4, 'type' => 'textarea', 'required' => 0, 'options' => '[]', 'max_length' => 10]];
+        $row = (new BookingInput())->validate($this->input() + ['fields' => [4 => "aaaa\r\nbbbbb"]], $ten, 'de-DE');
+        self::assertSame("aaaa\nbbbbb", json_decode($row['custom_fields'], true)['4']);
+
         $default = [['id' => 4, 'type' => 'textarea', 'required' => 0, 'options' => '[]']];
         $row = (new BookingInput())->validate($this->input() + ['fields' => [4 => str_repeat('a', 8000)]], $default, 'de-DE');
         self::assertSame(8000, mb_strlen(json_decode($row['custom_fields'], true)['4']));

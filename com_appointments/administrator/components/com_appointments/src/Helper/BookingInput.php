@@ -322,6 +322,12 @@ final class BookingInput
             $phone = $this->phone($raw === '' ? [] : $raw);
             $value = $phone ?? '';
         } else {
+            // A form POST sends the line breaks of a textarea as CRLF, while the field and its counter
+            // count one character per break: both limits count the answer as it is shown.
+            if ($type === 'textarea' && is_string($raw)) {
+                $raw = str_replace(["\r\n", "\r"], "\n", $raw);
+            }
+
             $value = $this->text($raw, $type === 'textarea' ? 8000 : 255);
             $limit = self::maxLength($field);
 
