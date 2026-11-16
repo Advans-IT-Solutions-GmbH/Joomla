@@ -97,15 +97,45 @@ class ManageModel extends BaseDatabaseModel
     /**
      * What the receipt of this browser session shows of the completed change: title, start and
      * end in UTC, the zone they are shown in, the event type and whether the mails went out.
-     * Empty for an erasure, which keeps nothing of the appointment.
+     *
+     * The session keeps no detail of the appointment, only the row version this change produced
+     * and whether the mails went out. The details are read from the booking now, and only while
+     * it still exists, is not erased and is still that version. Otherwise (erased, deleted, changed
+     * since) and for an erasure the receipt is the generic outcome alone: empty.
      *
      * @return array{title?: string, start_utc?: string, end_utc?: string, timezone?: string, eventtype_id?: int, mailed?: bool}
      */
     public function receipt(): array
     {
-        $receipt = Factory::getApplication()->getUserState($this->receiptKey(), false);
+        $app = Factory::getApplication();
+        $receipt = $app->getUserState($this->receiptKey(), false);
 
-        return is_array($receipt) ? array_intersect_key($receipt, array_flip(['title', 'start_utc', 'end_utc', 'timezone', 'eventtype_id', 'mailed'])) : [];
+        if ($this->action() === 'erase' || !is_array($receipt) || !is_string($receipt['modified_utc'] ?? null) || $receipt['modified_utc'] === '') {
+            return [];
+        }
+
+        $db = $this->getDatabase();
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName(['b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.invitee_timezone', 'b.modified_utc', 'b.anonymised_utc', 'e.title']))
+            ->from($db->quoteName('#__appointments_bookings', 'b'))
+            ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e'), $db->quoteName('e.id') . ' = ' . $db->quoteName('b.eventtype_id'))
+            ->where($db->quoteName('b.id') . ' = ' . $app->getInput()->getInt('id', 0));
+        $booking = $db->setQuery($query)->loadObject();
+
+        if (!$booking || $booking->anonymised_utc !== null || !hash_equals($receipt['modified_utc'], (string) $booking->modified_utc)) {
+            return [];
+        }
+
+        $zone = (string) $booking->invitee_timezone;
+
+        return [
+            'title' => (string) $booking->title,
+            'start_utc' => (string) $booking->start_utc,
+            'end_utc' => (string) $booking->end_utc,
+            'timezone' => in_array($zone, \DateTimeZone::listIdentifiers(), true) ? $zone : 'UTC',
+            'eventtype_id' => (int) $booking->eventtype_id,
+            'mailed' => !empty($receipt['mailed']),
+        ];
     }
 
     /**
@@ -189,29 +219,21 @@ class ManageModel extends BaseDatabaseModel
         if (($messageBooking['conference_state'] ?? '') === 'failed') {
             Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'), 'warning');
         }
-        // The receipt belongs to this browser session. After a reschedule it also keeps the version
-        // this reschedule committed (not a later reread, which could already be someone else's
-        // change), for which receiptLinks() shows the new signed links. A cancellation and a
-        // reschedule keep what the receipt shows of the appointment (receipt()): the times as
-        // they are now and the zone the page showed them in. An erasure keeps nothing.
+        // The receipt belongs to this browser session. It keeps no detail of the appointment, only
+        // the version this change committed (not a later reread, which could already be someone
+        // else's change): receipt() and receiptLinks() read the booking again and show it only
+        // while it is still that version. An erasure keeps nothing, and turns every earlier
+        // receipt of this booking in this session into the generic outcome.
         $receipt = true;
 
         if ($action !== 'erase') {
-            $zone = (string) ($messageBooking['invitee_timezone'] ?? $booking->invitee_timezone);
-            $receipt = [
-                'title' => (string) $booking->title,
-                'start_utc' => (string) ($messageBooking['start_utc'] ?? $booking->start_utc),
-                'end_utc' => (string) ($messageBooking['end_utc'] ?? $booking->end_utc),
-                'timezone' => in_array($zone, \DateTimeZone::listIdentifiers(), true) ? $zone : 'UTC',
-                'eventtype_id' => (int) $booking->eventtype_id,
-                'mailed' => false,
-            ];
-
-            if ($action === 'reschedule') {
-                $receipt['modified_utc'] = (string) ($messageBooking['_rescheduled_version'] ?? '');
-            }
+            $receipt = ['modified_utc' => (string) ($action === 'reschedule'
+                ? ($messageBooking['_rescheduled_version'] ?? '') : ($messageBooking['modified_utc'] ?? '')), 'mailed' => false];
+        } else {
+            $this->forgetReceipts((int) $booking->id);
         }
 
+        $this->rememberReceipt((int) $booking->id);
         Factory::getApplication()->setUserState($this->receiptKey(), $receipt);
 
         if ($messageBooking !== null && empty($messageBooking['_conference_missing']) && empty($messageBooking['_conference_error'])) {
@@ -275,6 +297,26 @@ class ManageModel extends BaseDatabaseModel
     private function links(): SignedLink
     {
         return new SignedLink(new KeyProvider((string) Factory::getApplication()->get('secret')));
+    }
+
+    /** The receipt keys of booking $id in this session, so an erasure can reach every one of them. */
+    private function rememberReceipt(int $id): void
+    {
+        $app = Factory::getApplication();
+        $index = 'com_appointments.receipts.' . $id;
+        $keys = array_filter((array) $app->getUserState($index, []), 'is_string');
+        $keys[] = $this->receiptKey();
+        $app->setUserState($index, array_values(array_unique($keys)));
+    }
+
+    /** Every earlier receipt of booking $id in this session becomes the generic outcome alone. */
+    private function forgetReceipts(int $id): void
+    {
+        $app = Factory::getApplication();
+
+        foreach (array_filter((array) $app->getUserState('com_appointments.receipts.' . $id, []), 'is_string') as $key) {
+            $app->setUserState($key, true);
+        }
     }
 
     private function receiptKey(): string
