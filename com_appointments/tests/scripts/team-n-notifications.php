@@ -302,6 +302,34 @@ return static function (TeamSuite $suite): void {
             return true;
         });
 
+        // The host's calendar user mail carries the answers and the visitor's time like a host_* mail
+        // ({field_answers}, {invitee_time}); every other calendar user gets neither.
+        $suite->test('N: with a target calendar only the host gets the answers and the visitor\'s time',
+            static function () use ($book, $eventRow, $send, $to, $address, $expect, $db, $p, $event) {
+                $db->query("INSERT INTO {$p}appointments_fields (eventtype_id,type,label,ordering,published,required) VALUES ({$event},'text','Topic',1,1,0)");
+                $field = (int) $db->insert_id;
+
+                try {
+                    $mails = $send($book($eventRow, '16:00:00', ['custom_fields' => json_encode([(string) $field => 'Network renewal']),
+                        'invitee_timezone' => 'America/New_York']), 'confirmation');
+                    [$hostMail] = $to($mails, $address('host'));
+                    $expect(str_contains($hostMail['body'], 'Topic: Network renewal') && str_contains($hostMail['body'], "Visitor's time: ")
+                        && str_contains($hostMail['body'], '(America/New_York)') && !str_contains($hostMail['body'], '{field_answers}'),
+                        'Host calendar mail: ' . $hostMail['body']);
+
+                    foreach (['reader', 'external', 'freebusy'] as $name) {
+                        foreach ($to($mails, $address($name)) as $mail) {
+                            $expect(!str_contains($mail['body'], 'Network renewal') && !str_contains($mail['body'], 'America/New_York')
+                                && !preg_match('/\{(?:field_answers|invitee_time)\}/', $mail['body']), 'No answers for ' . $name);
+                        }
+                    }
+                } finally {
+                    $db->query("DELETE FROM {$p}appointments_fields WHERE id={$field}");
+                }
+
+                return true;
+            });
+
         $suite->test($names[2], static function () use ($confirmed, $to, $address, $expect, $title, $tag, $book, $eventRow, $send, $db, $p, $event, &$state) {
             [$mail] = $to($confirmed, $address('freebusy'));
             $leak = static fn (array $mail): bool => preg_match('/Notify|notify-|555 01 01|' . preg_quote($title, '/') . '|' . preg_quote($tag . 'host', '/') . '/i', $mail['subject'] . $mail['body']) === 1;

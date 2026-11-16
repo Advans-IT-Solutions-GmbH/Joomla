@@ -10,6 +10,7 @@ namespace Advans\Component\Appointments\Administrator\Service;
 
 use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\BookingDetails;
+use Advans\Component\Appointments\Administrator\Helper\CalendarOrganizer;
 use Advans\Component\Appointments\Administrator\Helper\CalendarNotice;
 use Advans\Component\Appointments\Administrator\Helper\DefaultTemplates;
 use Advans\Component\Appointments\Administrator\Helper\EventLocation;
@@ -201,30 +202,24 @@ final class NotificationService
                     $inviteeTime = $erased ? '' : (new MailPresentation())->inviteeTime($booking, $tag, $hostZone);
 
                     if ($isHost) {
-                        // The host's copy: the site as organiser and the host as attendee, so a mail client
-                        // offers to put it into the calendar (IcsWriter), and everything the invitee entered
-                        // in its description, so the calendar entry is complete on its own.
-                        $recipientEvent['organizer_email'] = (string) $app->get('mailfrom');
-                        $recipientEvent['organizer_name'] = (string) $app->get('fromname');
-                        $recipientEvent['host_attendee'] = true;
+                        // The host's copy: another address as organiser and the host as attendee, so a mail
+                        // client offers to put it into the calendar (CalendarOrganizer). Without an address
+                        // distinct from the host's own, the copy is published instead (the system checks warn).
+                        $organizer = CalendarOrganizer::forHost((string) $event['host_email'],
+                            (string) ComponentHelper::getParams('com_appointments')->get('calendar_organizer_email', ''),
+                            (string) $app->get('mailfrom'), (string) $app->get('fromname'));
 
+                        if ($organizer !== null) {
+                            $recipientEvent['organizer_email'] = $organizer['email'];
+                            $recipientEvent['organizer_name'] = $organizer['name'];
+                            $recipientEvent['host_attendee'] = true;
+                        } else {
+                            $recipientEvent['publish'] = true;
+                        }
+
+                        // Everything the invitee entered in its description, so the entry is complete on its own.
                         if (!$erased) {
-                            // Name and address always, telephone, guests and the invitee's time when there are any.
-                            $rows = [
-                                $language->_('COM_APPOINTMENTS_MAIL_DETAIL_NAME') => (string) ($booking['invitee_name'] ?? ''),
-                                $language->_('COM_APPOINTMENTS_MAIL_DETAIL_EMAIL') => (string) ($booking['invitee_email'] ?? ''),
-                            ];
-                            foreach ([
-                                'COM_APPOINTMENTS_MAIL_DETAIL_PHONE' => (string) ($booking['invitee_phone'] ?? ''),
-                                'COM_APPOINTMENTS_MAIL_DETAIL_GUESTS' => implode(', ', PrivacyAddress::guestList($booking['guest_emails'] ?? null)),
-                                'COM_APPOINTMENTS_MAIL_DETAIL_INVITEE_TIME' => $inviteeTime,
-                            ] as $key => $value) {
-                                if ($value !== '') {
-                                    $rows[$language->_($key)] = $value;
-                                }
-                            }
-                            $details = BookingDetails::host($rows, $answers, $translate, $labelFormat);
-                            $recipientEvent['description'] = trim(BookingDetails::clean((string) ($event['description'] ?? '')) . "\n\n" . $details);
+                            $recipientEvent['description'] = $this->hostDescription($booking, $event, $answers, $inviteeTime, $language, $translate, $labelFormat);
                         }
                     }
 
@@ -465,8 +460,18 @@ final class NotificationService
                 $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
             }
 
-            $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $event, [], $now);
-            $message = ['subject' => strtr($message['subject'], ['{calendar_title}' => $title]), 'body' => strtr($message['body'], ['{calendar_title}' => $title])];
+            // One pass with the calendar title, so no answer can become a placeholder. The host, and
+            // only the host, also gets the answers and the visitor's time, like the host_* mails.
+            $extra = ['{calendar_title}' => $title];
+
+            if ($entry['host'] && empty($booking['anonymised_utc'])) {
+                $extra['{field_answers}'] = BookingDetails::answers($this->fields((int) $booking['eventtype_id']), $booking['custom_fields'] ?? null,
+                    static fn (string $key): string => $language->_($key), $labelFormat);
+                $extra['{invitee_time}'] = (new MailPresentation())->inviteeTime($booking, $tag, $timezone);
+            }
+
+            $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $event, [], $now, $extra);
+            $message = ['subject' => $message['subject'], 'body' => $message['body']];
             $conference = (string) ($recipientBooking['conference_url'] ?? '');
 
             if ($conference !== '' && (int) $booking['state'] !== 2) {
@@ -601,6 +606,32 @@ final class NotificationService
         $mailer->setBody($html);
         $mailer->AltBody = $text;
         $mailer->Ical = $calendar;
+    }
+
+    /**
+     * DESCRIPTION of the host's copy: the event's description, then name and address always,
+     * telephone, guests and the invitee's time when there are any, then every answer.
+     */
+    private function hostDescription(array $booking, array $event, string $answers, string $inviteeTime, Language $language,
+        callable $translate, string $labelFormat): string
+    {
+        $rows = [
+            $language->_('COM_APPOINTMENTS_MAIL_DETAIL_NAME') => (string) ($booking['invitee_name'] ?? ''),
+            $language->_('COM_APPOINTMENTS_MAIL_DETAIL_EMAIL') => (string) ($booking['invitee_email'] ?? ''),
+        ];
+
+        foreach ([
+            'COM_APPOINTMENTS_MAIL_DETAIL_PHONE' => (string) ($booking['invitee_phone'] ?? ''),
+            'COM_APPOINTMENTS_MAIL_DETAIL_GUESTS' => implode(', ', PrivacyAddress::guestList($booking['guest_emails'] ?? null)),
+            'COM_APPOINTMENTS_MAIL_DETAIL_INVITEE_TIME' => $inviteeTime,
+        ] as $key => $value) {
+            if ($value !== '') {
+                $rows[$language->_($key)] = $value;
+            }
+        }
+
+        return trim(BookingDetails::clean((string) ($event['description'] ?? '')) . "\n\n"
+            . BookingDetails::host($rows, $answers, $translate, $labelFormat));
     }
 
     /**
