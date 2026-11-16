@@ -32,11 +32,35 @@ spl_autoload_register(function (string $class): void {
 });
 
 use Advans\Component\J2CommerceImportExport\Administrator\Model\ImportModel;
+use Joomla\CMS\Access\Access;
+use Joomla\CMS\Table\Category as CategoryTable;
+use Joomla\CMS\Table\Content as ContentTable;
+use Joomla\CMS\Table\Menu as MenuTable;
+
+// A row that fails right after its menu item was stored through Joomla's menu table.
+class ImportModelFailingAfterMenu extends ImportModel
+{
+    protected function importMenuItem(array $menuData, int $articleId, array $options): void
+    {
+        parent::importMenuItem($menuData, $articleId, $options);
+        throw new \RuntimeException('Forced failure after the menu item was stored');
+    }
+}
+
+// A row that fails in a later step of its database transaction.
+class ImportModelFailingInRowTransaction extends ImportModel
+{
+    protected function importProductFiles(array $files, int $productId): void
+    {
+        throw new \RuntimeException('Forced failure in a later row step');
+    }
+}
 
 class ImportModelTest
 {
     private int $passed = 0;
     private int $failed = 0;
+    private string $shop = 'j2store';
 
     private function test(string $name, callable $fn): void
     {
@@ -120,6 +144,7 @@ class ImportModelTest
             if (!$isJ6 && !$hasJ4) {
                 $this->test('J2Commerce tables are present', fn () => false);
             } else {
+                $this->shop = $isJ6 ? 'j2commerce' : 'j2store';
                 $data = [
                     'title'          => 'Import Test Product ' . uniqid(),
                     'alias'          => 'import-test-' . uniqid(),
@@ -174,6 +199,8 @@ class ImportModelTest
                 });
 
                 $this->testRestrictedAuthor($model, $db, $context, $data, $adminArticleId);
+                $this->testNativeItemsAndRowUndo($db, $context, $data);
+                $this->testMovedAssetPermissionsInBatch($model, $db, $context, $data);
             }
 
             $this->testTranslatedRowErrors($model);
@@ -272,6 +299,44 @@ class ImportModelTest
             $this->test('A restricted author cannot feature an imported article; the row is rolled back',
                 fn () => $denied($featured, []));
 
+            // A new category is stored before its article is authorized, so a denial must remove it again.
+            $inNewCategory = function (string $label) use ($row): array {
+                $item = $row($label);
+                unset($item['catid']);
+                $suffix = bin2hex(random_bytes(4));
+
+                return $item + [
+                    'category_path'  => 'restricted-category-' . $suffix,
+                    'category_title' => 'Restricted category ' . $suffix,
+                    'category_alias' => 'restricted-category-' . $suffix,
+                ];
+            };
+            $publishInNewCategory = $inNewCategory('new category publish');
+            $publishInNewCategory['article_state'] = 1;
+            try {
+                $this->test('A restricted author denied publication in a new category leaves no category behind',
+                    fn () => $denied($publishInNewCategory, [])
+                        && $this->countRows($db, '#__categories', 'alias', $publishInNewCategory['category_alias']) === 0);
+            } finally {
+                $this->removeImportedRow($db, $publishInNewCategory);
+            }
+
+            $draftInNewCategory = $inNewCategory('new category draft');
+            try {
+                $this->test('A restricted author creates a new category unpublished, with its own asset', function () use ($model, $db, $draftInNewCategory) {
+                    $result = $model->importProductFull($draftInNewCategory, []);
+                    $db->setQuery('SELECT ' . implode(', ', $db->quoteName(['published', 'asset_id'])) . ' FROM ' . $db->quoteName('#__categories')
+                        . ' WHERE ' . $db->quoteName('extension') . ' = ' . $db->quote('com_content')
+                        . ' AND ' . $db->quoteName('alias') . ' = ' . $db->quote($draftInNewCategory['category_alias']));
+                    $category = $db->loadAssoc();
+
+                    return ($result['success'] ?? false) === true && $category
+                        && (int) $category['published'] === 0 && (int) $category['asset_id'] > 0;
+                });
+            } finally {
+                $this->removeImportedRow($db, $draftInNewCategory);
+            }
+
             $this->test('A restricted author cannot update an article created by another user', function () use ($model, $db, $data, $adminArticleId) {
                 if ($adminArticleId < 1) {
                     return false;
@@ -311,6 +376,372 @@ class ImportModelTest
         } finally {
             $context['application']->loadIdentity($context['identity']);
             importExportRemoveTestAdministrator($authorId);
+        }
+    }
+
+    /**
+     * Issue 319: categories and articles created by an import are complete Joomla items, and a
+     * row that fails after one of Joomla's nested-set stores (whose table lock commits an open
+     * MySQL transaction) leaves none of its writes behind.
+     */
+    private function testNativeItemsAndRowUndo(object $db, array $context, array $data): void
+    {
+        $context['application']->loadIdentity($context['identity']);
+        $newModel = function (string $class) use ($db): ImportModel {
+            $model = (new ReflectionClass($class))->newInstanceWithoutConstructor();
+            $model->setDatabase($db);
+
+            return $model;
+        };
+        $rowFor = function (string $label) use ($data): array {
+            $suffix = bin2hex(random_bytes(4));
+
+            return array_replace($data, [
+                'title'          => 'Native ' . $label . ' ' . $suffix,
+                'alias'          => 'native-' . $label . '-' . $suffix,
+                'category_path'  => 'native-parent-' . $suffix . '/native-category-' . $suffix,
+                'category_title' => 'Native category ' . $suffix,
+                'category_alias' => 'native-category-' . $suffix,
+                'variants'       => [['sku' => 'NATIVE-' . strtoupper($suffix), 'price' => 5, 'quantity' => 1]],
+            ]);
+        };
+        $assoc = function (string $sql) use ($db): ?array {
+            $db->setQuery($sql);
+
+            return $db->loadAssoc() ?: null;
+        };
+        $db->setQuery('SELECT ' . $db->quoteName('menutype') . ' FROM ' . $db->quoteName('#__menu_types')
+            . ' WHERE ' . $db->quoteName('client_id') . ' = 0 ORDER BY ' . $db->quoteName('id'), 0, 1);
+        $menutype = (string) $db->loadResult();
+        $menuOptions = ['create_menu' => true, 'menu_published' => false, 'default_menutype' => $menutype];
+
+        $first = $rowFor('category');
+        $second = array_replace($rowFor('reuse'), array_intersect_key($first, array_flip(['category_path', 'category_title', 'category_alias'])));
+        $afterMenu = array_replace($rowFor('after-menu'), ['catid' => 2]);
+        $afterMenu['menu_item'] = ['title' => $afterMenu['title'], 'alias' => $afterMenu['alias']];
+        $inTransaction = $rowFor('in-transaction');
+        $inTransaction['menu_item'] = ['title' => $inTransaction['title'], 'alias' => $inTransaction['alias']];
+
+        try {
+            try {
+                $result = $newModel(ImportModel::class)->importProductFull($first, []);
+            } catch (\Throwable $e) {
+                echo '  [diag] import with a missing category path failed: ' . $e->getMessage() . "\n";
+                $result = [];
+            }
+            $articleId = (int) ($result['article_id'] ?? 0);
+            $category = $assoc('SELECT * FROM ' . $db->quoteName('#__categories')
+                . ' WHERE ' . $db->quoteName('extension') . ' = ' . $db->quote('com_content')
+                . ' AND ' . $db->quoteName('alias') . ' = ' . $db->quote($first['category_alias']));
+            $categoryId = (int) ($category['id'] ?? 0);
+            $assetQuery = 'SELECT ' . implode(', ', $db->quoteName(['id', 'parent_id', 'name', 'rules'])) . ' FROM ' . $db->quoteName('#__assets') . ' WHERE ';
+            $categoryAsset = $assoc($assetQuery . $db->quoteName('id') . ' = ' . (int) ($category['asset_id'] ?? 0));
+            $componentAsset = $assoc($assetQuery . $db->quoteName('name') . ' = ' . $db->quote('com_content'));
+            $article = $assoc('SELECT ' . implode(', ', $db->quoteName(['asset_id', 'catid'])) . ' FROM ' . $db->quoteName('#__content')
+                . ' WHERE ' . $db->quoteName('id') . ' = ' . $articleId);
+            $articleAsset = $assoc($assetQuery . $db->quoteName('id') . ' = ' . (int) ($article['asset_id'] ?? 0));
+
+            $this->test('A row with a missing category path imports', fn () => ($result['success'] ?? false) === true
+                && $categoryId > 0 && (int) ($article['catid'] ?? 0) === $categoryId);
+            $this->test('The new category has its own asset below the Content component, without own rules',
+                fn () => $categoryAsset !== null && $componentAsset !== null
+                    && $categoryAsset['name'] === 'com_content.category.' . $categoryId
+                    && (int) $categoryAsset['parent_id'] === (int) $componentAsset['id']
+                    && $categoryAsset['rules'] === '{}');
+            $this->test('The new category has a valid nested-set position and path at the root level',
+                fn () => $category !== null && (int) $category['parent_id'] === 1 && (int) $category['level'] === 1
+                    && $category['path'] === $first['category_alias'] && (int) $category['lft'] > 0
+                    && (int) $category['rgt'] === (int) $category['lft'] + 1);
+            $this->test('The new category stores JSON objects for params and metadata',
+                fn () => $category !== null && json_decode((string) $category['params']) instanceof \stdClass
+                    && json_decode((string) $category['metadata']) instanceof \stdClass);
+            $this->test('The new article has its own asset below the category asset, without own rules',
+                fn () => $articleAsset !== null && $categoryAsset !== null
+                    && $articleAsset['name'] === 'com_content.article.' . $articleId
+                    && (int) $articleAsset['parent_id'] === (int) $categoryAsset['id']
+                    && $articleAsset['rules'] === '{}');
+
+            Access::clearStatics();
+            $this->test('The new category and article inherit the Content permissions of every core group', function () use ($categoryId, $articleId) {
+                if ($categoryId < 1 || $articleId < 1) {
+                    return false;
+                }
+                foreach ([2, 3, 4, 5, 6, 7] as $group) {
+                    foreach (['core.create', 'core.edit', 'core.edit.own', 'core.edit.state', 'core.delete'] as $action) {
+                        $component = Access::checkGroup($group, $action, 'com_content');
+                        if (Access::checkGroup($group, $action, 'com_content.category.' . $categoryId) !== $component
+                            || Access::checkGroup($group, $action, 'com_content.article.' . $articleId) !== $component) {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            });
+
+            $this->test('A second row with the same missing path reuses the created category', function () use ($newModel, $second, $categoryId, $db, $assoc) {
+                $result = $newModel(ImportModel::class)->importProductFull($second, []);
+                $article = $assoc('SELECT ' . $db->quoteName('catid') . ' FROM ' . $db->quoteName('#__content')
+                    . ' WHERE ' . $db->quoteName('id') . ' = ' . (int) ($result['article_id'] ?? 0));
+
+                return ($result['success'] ?? false) === true && $categoryId > 0
+                    && (int) ($article['catid'] ?? 0) === $categoryId
+                    && $this->countRows($db, '#__categories', 'alias', $second['category_alias']) === 1;
+            });
+
+            $this->test('A failure after the menu item was stored leaves no article, product or menu item behind',
+                function () use ($newModel, $afterMenu, $menuOptions, $db) {
+                    $orphans = $this->orphanProducts($db);
+                    try {
+                        $newModel(ImportModelFailingAfterMenu::class)->importProductFull($afterMenu, $menuOptions);
+                    } catch (\RuntimeException $e) {
+                        return str_contains($e->getMessage(), 'Forced failure after the menu item was stored')
+                            && $this->rowLeftovers($db, $afterMenu) === [] && $this->orphanProducts($db) === $orphans;
+                    }
+
+                    return false;
+                });
+
+            $this->test('A failure in a later row step leaves no category, article, asset, product or menu item behind',
+                function () use ($newModel, $inTransaction, $menuOptions, $db) {
+                    $orphans = $this->orphanProducts($db);
+                    try {
+                        $newModel(ImportModelFailingInRowTransaction::class)->importProductFull($inTransaction, $menuOptions);
+                    } catch (\RuntimeException $e) {
+                        return str_contains($e->getMessage(), 'Forced failure in a later row step')
+                            && $this->rowLeftovers($db, $inTransaction) === [] && $this->orphanProducts($db) === $orphans;
+                    }
+
+                    return false;
+                });
+
+            $this->test('Moving an imported article to another category moves its asset below that category', function () use ($newModel, $first, $articleId, $db, $assoc, $assetQuery) {
+                $result = $newModel(ImportModel::class)->importProductFull(array_replace($first, ['catid' => 2]), ['update_existing' => true]);
+                $article = $assoc('SELECT ' . implode(', ', $db->quoteName(['asset_id', 'catid'])) . ' FROM ' . $db->quoteName('#__content')
+                    . ' WHERE ' . $db->quoteName('id') . ' = ' . $articleId);
+                $asset = $assoc($assetQuery . $db->quoteName('id') . ' = ' . (int) ($article['asset_id'] ?? 0));
+                $category = $assoc('SELECT ' . $db->quoteName('asset_id') . ' FROM ' . $db->quoteName('#__categories')
+                    . ' WHERE ' . $db->quoteName('id') . ' = 2');
+
+                return $articleId > 0 && (int) ($result['article_id'] ?? 0) === $articleId && (int) ($article['catid'] ?? 0) === 2
+                    && $asset !== null && (int) $asset['parent_id'] === (int) ($category['asset_id'] ?? -1);
+            });
+
+            // A failed re-import of a nested menu item gives it its previous values back.
+            $parentRow = array_replace($rowFor('menu-parent'), ['catid' => 2]);
+            $parentRow['menu_item'] = ['title' => $parentRow['title'], 'alias' => $parentRow['alias']];
+            $childRow = array_replace($rowFor('menu-child'), ['catid' => 2]);
+            $this->test('A failed re-import of a nested menu item restores it completely', function () use ($newModel, $parentRow, &$childRow, $menuOptions, $db, $assoc) {
+                $newModel(ImportModel::class)->importProductFull($parentRow, $menuOptions);
+                $parentMenu = $assoc('SELECT ' . $db->quoteName('id') . ' FROM ' . $db->quoteName('#__menu')
+                    . ' WHERE ' . $db->quoteName('client_id') . ' = 0 AND ' . $db->quoteName('alias') . ' = ' . $db->quote($parentRow['alias']));
+                $childRow['menu_item'] = ['title' => $childRow['title'], 'alias' => $childRow['alias'], 'parent_id' => (int) ($parentMenu['id'] ?? 0)];
+                $newModel(ImportModel::class)->importProductFull($childRow, $menuOptions);
+                $menuQuery = 'SELECT ' . implode(', ', $db->quoteName(['id', 'title', 'path', 'parent_id'])) . ' FROM ' . $db->quoteName('#__menu')
+                    . ' WHERE ' . $db->quoteName('client_id') . ' = 0 AND ' . $db->quoteName('alias') . ' = ' . $db->quote($childRow['alias']);
+                $before = $assoc($menuQuery);
+
+                $changed = $childRow;
+                $changed['menu_item']['title'] = 'Changed ' . $childRow['title'];
+                try {
+                    $newModel(ImportModelFailingInRowTransaction::class)->importProductFull($changed, ['update_existing' => true] + $menuOptions);
+                    return false;
+                } catch (\RuntimeException $e) {
+                    return $e->getMessage() === 'Forced failure in a later row step'
+                        && $before !== null && (int) $before['parent_id'] === (int) ($parentMenu['id'] ?? -1)
+                        && $assoc($menuQuery) === $before;
+                }
+            });
+
+            // Joomla stores the alias URL-safe; a re-import with the alias as written updates that article.
+            $mixedSuffix = bin2hex(random_bytes(4));
+            $mixedAlias = array_replace($data, [
+                'title' => 'Native mixed alias ' . $mixedSuffix,
+                'alias' => 'Native Mixed Alias ' . $mixedSuffix,
+                'catid' => 2,
+            ]);
+            $mixedCleanup = array_replace($mixedAlias, ['alias' => 'native-mixed-alias-' . $mixedSuffix]);
+            $this->test('A re-import with an alias Joomla stored URL-safe updates the same article', function () use ($newModel, $mixedAlias, $mixedCleanup, $db) {
+                $created = $newModel(ImportModel::class)->importProductFull($mixedAlias, []);
+                $updated = $newModel(ImportModel::class)->importProductFull($mixedAlias, ['update_existing' => true]);
+
+                return (int) ($created['article_id'] ?? 0) > 0
+                    && (int) ($updated['article_id'] ?? 0) === (int) $created['article_id']
+                    && $this->countRows($db, '#__content', 'alias', $mixedCleanup['alias']) === 1;
+            });
+        } finally {
+            if (isset($mixedCleanup)) {
+                $this->removeImportedRow($db, $mixedCleanup);
+            }
+            foreach ([$childRow ?? null, $parentRow ?? null, $second, $first, $afterMenu, $inTransaction] as $row) {
+                if ($row === null) {
+                    continue;
+                }
+                $this->removeImportedRow($db, $row);
+            }
+        }
+    }
+
+    /**
+     * A row that moves an article into a category with stricter permissions must govern
+     * the next row of the same import: Joomla caches permissions, and the asset move
+     * changes what the article inherits.
+     */
+    private function testMovedAssetPermissionsInBatch(ImportModel $model, object $db, array $context, array $data): void
+    {
+        $context['application']->loadIdentity($context['identity']);
+        $suffix = bin2hex(random_bytes(4));
+        $publisherId = 0;
+        $strictId = 0;
+        $row = array_replace($data, ['title' => 'Batch move ' . $suffix, 'alias' => 'batch-move-' . $suffix, 'catid' => 2, 'article_state' => 0]);
+        $file = sys_get_temp_dir() . '/import-batch-move-' . $suffix . '.json';
+
+        try {
+            // A category in which the Publisher group may not change the publication state.
+            $category = new CategoryTable($db);
+            $category->setCurrentUser($context['identity']);
+            $category->setLocation(1, 'last-child');
+            $stored = $category->bind([
+                'parent_id' => 1, 'extension' => 'com_content', 'title' => 'Strict category ' . $suffix,
+                'alias' => 'strict-category-' . $suffix, 'published' => 1, 'language' => '*', 'description' => '',
+                'note' => '', 'params' => '{}', 'metadata' => '{}', 'metadesc' => '', 'metakey' => '',
+                'rules' => ['core.edit.state' => ['5' => 0]],
+            ]) && $category->check() && $category->store() && $category->rebuildPath($category->id);
+            $strictId = (int) $category->id;
+
+            $publisher = importExportCreateTestUser(5, 'Synthetic Import Test Publisher', $publisherId);
+            $context['application']->loadIdentity($publisher);
+            Access::clearStatics();
+
+            $this->test('Precondition: the Publisher group may publish in category 2 but not in the strict category',
+                fn () => $stored && $strictId > 0
+                    && $publisher->authorise('core.edit.state', 'com_content.category.2')
+                    && !$publisher->authorise('core.edit.state', 'com_content.category.' . $strictId));
+
+            $created = $model->importProductFull($row, []);
+            $articleId = (int) ($created['article_id'] ?? 0);
+            $moveRow = array_replace($row, ['catid' => $strictId]);
+            $publishRow = array_replace($moveRow, ['article_state' => 1]);
+            file_put_contents($file, json_encode([$moveRow, $publishRow]));
+            $result = $model->importData($file, 'products_full', [], ['update_existing' => true]);
+
+            $db->setQuery('SELECT ' . implode(', ', $db->quoteName(['state', 'catid'])) . ' FROM ' . $db->quoteName('#__content')
+                . ' WHERE ' . $db->quoteName('id') . ' = ' . $articleId);
+            $article = $db->loadAssoc();
+            $this->test('After a row moves an article into a stricter category, the next row of the batch cannot publish it',
+                fn () => $articleId > 0 && ($result['imported'] ?? 0) === 1 && ($result['failed'] ?? 0) === 1
+                    && (int) ($article['catid'] ?? 0) === $strictId && (int) ($article['state'] ?? -1) === 0);
+        } finally {
+            $context['application']->loadIdentity($context['identity']);
+            @unlink($file);
+            $this->removeImportedRow($db, $row);
+            if ($strictId > 0) {
+                $table = new CategoryTable($db);
+                $table->setCurrentUser($context['identity']);
+                $table->load($strictId) && $table->delete($strictId);
+            }
+            importExportRemoveTestAdministrator($publisherId);
+            Access::clearStatics();
+        }
+    }
+
+    /**
+     * Shop products whose article no longer exists, so a removed article's product is
+     * noticed even though it can no longer be found by the article's alias.
+     */
+    private function orphanProducts(object $db): int
+    {
+        $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName('#__' . $this->shop . '_products', 'p')
+            . ' LEFT JOIN ' . $db->quoteName('#__content', 'c') . ' ON ' . $db->quoteName('c.id') . ' = ' . $db->quoteName('p.product_source_id')
+            . ' WHERE ' . $db->quoteName('p.product_source') . ' = ' . $db->quote('com_content')
+            . ' AND ' . $db->quoteName('c.id') . ' IS NULL');
+
+        return (int) $db->loadResult();
+    }
+
+    private function countRows(object $db, string $table, string $column, string $value, string $extra = ''): int
+    {
+        $db->setQuery('SELECT COUNT(*) FROM ' . $db->quoteName($table)
+            . ' WHERE ' . $db->quoteName($column) . ' = ' . $db->quote($value) . $extra);
+
+        return (int) $db->loadResult();
+    }
+
+    /**
+     * Every item a row may have written that still exists, by kind.
+     */
+    private function rowLeftovers(object $db, array $row): array
+    {
+        $articleJoin = 'SELECT COUNT(*) FROM ' . $db->quoteName('#__' . $this->shop . '_products', 'p')
+            . ' INNER JOIN ' . $db->quoteName('#__content', 'c') . ' ON ' . $db->quoteName('c.id') . ' = ' . $db->quoteName('p.product_source_id')
+            . ' WHERE ' . $db->quoteName('p.product_source') . ' = ' . $db->quote('com_content')
+            . ' AND ' . $db->quoteName('c.alias') . ' = ' . $db->quote($row['alias']);
+        $db->setQuery($articleJoin);
+        $products = (int) $db->loadResult();
+        $counts = [
+            'category'       => isset($row['catid']) ? 0 : $this->countRows($db, '#__categories', 'alias', $row['category_alias'],
+                ' AND ' . $db->quoteName('extension') . ' = ' . $db->quote('com_content')),
+            'category asset' => isset($row['catid']) ? 0 : $this->countRows($db, '#__assets', 'title', $row['category_title']),
+            'product'        => $products,
+            'article'        => $this->countRows($db, '#__content', 'alias', $row['alias']),
+            'article asset'  => $this->countRows($db, '#__assets', 'title', $row['title']),
+            'menu item'      => $this->countRows($db, '#__menu', 'alias', $row['alias'], ' AND ' . $db->quoteName('client_id') . ' = 0'),
+            'variant'        => $this->countRows($db, '#__' . $this->shop . '_variants', 'sku', $row['variants'][0]['sku']),
+        ];
+
+        return array_filter($counts);
+    }
+
+    /**
+     * Test cleanup: removes what a row left behind through Joomla's own tables, so the
+     * nested sets stay valid, and falls back to plain deletes for items without an asset.
+     */
+    private function removeImportedRow(object $db, array $row): void
+    {
+        $ids = function (string $sql) use ($db): array {
+            $db->setQuery($sql);
+
+            return array_map('intval', $db->loadColumn() ?: []);
+        };
+        $delete = function (string $table, string $column, int $id) use ($db): void {
+            $db->setQuery('DELETE FROM ' . $db->quoteName($table) . ' WHERE ' . $db->quoteName($column) . ' = ' . $id)->execute();
+        };
+        $productKey = $this->shop . '_product_id';
+        $variantKey = $this->shop . '_variant_id';
+
+        foreach ($ids('SELECT id FROM ' . $db->quoteName('#__menu') . ' WHERE ' . $db->quoteName('client_id') . ' = 0 AND '
+            . $db->quoteName('alias') . ' = ' . $db->quote($row['alias'])) as $menuId) {
+            (new MenuTable($db))->delete($menuId);
+        }
+
+        foreach ($ids('SELECT id FROM ' . $db->quoteName('#__content') . ' WHERE ' . $db->quoteName('alias') . ' = ' . $db->quote($row['alias'])) as $articleId) {
+            foreach ($ids('SELECT ' . $db->quoteName($productKey) . ' FROM ' . $db->quoteName('#__' . $this->shop . '_products')
+                . ' WHERE ' . $db->quoteName('product_source') . ' = ' . $db->quote('com_content')
+                . ' AND ' . $db->quoteName('product_source_id') . ' = ' . $articleId) as $productId) {
+                foreach ($ids('SELECT ' . $db->quoteName($variantKey) . ' FROM ' . $db->quoteName('#__' . $this->shop . '_variants')
+                    . ' WHERE ' . $db->quoteName('product_id') . ' = ' . $productId) as $variantId) {
+                    $delete('#__' . $this->shop . '_productquantities', 'variant_id', $variantId);
+                }
+                $delete('#__' . $this->shop . '_variants', 'product_id', $productId);
+                $delete('#__' . $this->shop . '_products', $productKey, $productId);
+            }
+            if (!(new ContentTable($db))->delete($articleId)) {
+                $delete('#__content', 'id', $articleId);
+            }
+        }
+
+        if (isset($row['catid']) || empty($row['category_alias'])) {
+            return;
+        }
+
+        foreach ($ids('SELECT id FROM ' . $db->quoteName('#__categories') . ' WHERE ' . $db->quoteName('extension') . ' = '
+            . $db->quote('com_content') . ' AND ' . $db->quoteName('alias') . ' = ' . $db->quote($row['category_alias'])) as $categoryId) {
+            $table = new CategoryTable($db);
+            if (!$table->load($categoryId) || !$table->delete($categoryId)) {
+                // A category stored without an asset cannot be deleted through the table.
+                $delete('#__categories', 'id', $categoryId);
+                (new CategoryTable($db))->rebuild();
+            }
         }
     }
 
