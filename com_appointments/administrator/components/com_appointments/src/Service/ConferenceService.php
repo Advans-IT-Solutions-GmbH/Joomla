@@ -243,7 +243,10 @@ final class ConferenceService
                     || (int) ($booking['sequence'] ?? -1) !== (int) $current['sequence']
                     || ($booking['modified_utc'] ?? null) !== $current['modified_utc']);
 
-            if ($room !== '' && $name !== '' && !$reusedByNewerActive) {
+            // The native providers keep no room to release (their destroyMeeting() does nothing):
+            // nothing is built for them, so a configuration changed since the booking (a removed
+            // fixed URL, a context without the component's registry, #351) cannot fail a release.
+            if ($room !== '' && $name !== '' && !$reusedByNewerActive && !$this->nothingToRelease($name)) {
                 try {
                     $event = $this->event((int) ($booking['eventtype_id'] ?? 0)) ?? [];
                     $this->providerManager($name, $event)->destroyMeeting($name, $room);
@@ -370,6 +373,12 @@ final class ConferenceService
     private function registered(string $name): bool
     {
         return $this->manager !== null && in_array($name, $this->manager->getProviderNames(), true);
+    }
+
+    /** A native provider not overridden by a registered one: it has no room to release. */
+    private function nothingToRelease(string $name): bool
+    {
+        return in_array($name, ['jitsi', 'generic', 'fixed'], true) && !$this->registered($name);
     }
 
     private function jitsiConfig(array $event): array
