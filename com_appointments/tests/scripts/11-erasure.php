@@ -193,9 +193,10 @@ try {
     // with a room. None may throw after the commit; the room is released (the fixed provider has
     // nothing to tear down) or the failure is reported, never thrown.
     $consoleEvent = $fixture->event();
-    $plain = $fixture->booking($consoleEvent, $day . ' 13:00:00')['booking'];
-    $withRoom = $fixture->booking($consoleEvent, $day . ' 14:00:00')['booking'];
-    $old = $fixture->booking($consoleEvent, $day . ' 15:00:00')['booking'];
+    // The host already has 10:00 to 13:00 booked above.
+    $plain = $fixture->booking($consoleEvent, $day . ' 14:00:00')['booking'];
+    $withRoom = $fixture->booking($consoleEvent, $day . ' 15:00:00')['booking'];
+    $old = $fixture->booking($consoleEvent, $day . ' 16:00:00')['booking'];
     $erasedIds = array_merge($erasedIds, [(int) $plain['id'], (int) $withRoom['id'], (int) $old['id']]);
     $room = ['conference_provider' => 'fixed', 'conference_url' => 'https://example.test/console-room', 'conference_room' => 'console-room',
         'conference_state' => 'ok', 'conference_error' => null];
