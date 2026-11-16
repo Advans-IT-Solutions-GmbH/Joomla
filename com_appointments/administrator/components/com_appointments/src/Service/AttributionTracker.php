@@ -64,13 +64,16 @@ final class AttributionTracker
             }
 
             $uri = Uri::getInstance();
+            // The query as sent, parsed from the address: Joomla 6's input has no raw default filter for a
+            // whole array and would strip markup from a value. Attribution cleans every value itself.
+            parse_str((string) $uri->getQuery(), $query);
             $session = $app->getSession();
             $state = $session->get(Attribution::SESSION_KEY);
             $session->set(Attribution::SESSION_KEY, Attribution::visit(\is_array($state) ? $state : null, [
                 'uri' => $uri->toString(['path', 'query']),
                 'referrer' => (string) $input->server->get('HTTP_REFERER', '', 'raw'),
                 'host' => $uri->getHost(),
-                'query' => $input->get->getArray([], null, 'raw'),
+                'query' => $query,
                 'ip' => (string) $input->server->getString('REMOTE_ADDR', ''),
             ], new \DateTimeImmutable('now', new \DateTimeZone('UTC'))));
         } catch (\Throwable $e) {
