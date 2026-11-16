@@ -58,7 +58,9 @@ final class AttributionTracker
             $format = strtolower((string) $input->get->getCmd('format', 'html'));
             $option = strtolower((string) $input->get->getCmd('option', ''));
 
+            // A request with a task (a calendar download, a signed link's confirmation) is no page view.
             if (strtoupper((string) $input->server->getString('REQUEST_METHOD', 'GET')) !== 'GET' || $format !== 'html' || $option === 'com_ajax'
+                || (string) $input->get->getCmd('task', '') !== ''
                 || strtolower((string) $input->server->getString('HTTP_X_REQUESTED_WITH', '')) === 'xmlhttprequest') {
                 return;
             }

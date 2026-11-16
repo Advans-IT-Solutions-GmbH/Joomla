@@ -49,7 +49,8 @@ final class PrivacyService
 
         $normalised = PrivacyAddress::normalise($address);
 
-        foreach (array_chunk($ids, 200) as $chunk) {
+        // Small batches: each row carries its whole origin (at most 64 KiB, Attribution::MAX_RECORD_BYTES).
+        foreach (array_chunk($ids, 50) as $chunk) {
             foreach ($this->rows($chunk, ['b.*']) as $row) {
                 // Checked again on the row that is returned: it is read a second time.
                 if (is_string($row['invitee_email']) && PrivacyAddress::matches($row['invitee_email'], $normalised)) {
