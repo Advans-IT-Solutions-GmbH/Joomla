@@ -58,14 +58,22 @@ class InstallationTest
                 && is_file('/var/www/html/plugins/task/appointments/LICENSE.txt');
         });
 
-        $this->test('The origin plugin is installed and enabled, with its license and three languages', function () {
+        $this->test('The origin plugin is installed and enabled, with its license and language', function () {
             $result = $this->db->query("SELECT enabled FROM {$this->dbPrefix}extensions WHERE element='appointmentsattribution' AND type='plugin' AND folder='system'");
             $row = $result ? $result->fetch_assoc() : null;
+            // Joomla copies a language only when the site has it: the test site has en-GB only.
+            $files = [
+                '/var/www/html/plugins/system/appointmentsattribution/services/provider.php',
+                '/var/www/html/plugins/system/appointmentsattribution/LICENSE.txt',
+                '/var/www/html/administrator/language/en-GB/plg_system_appointmentsattribution.sys.ini',
+            ];
+            $missing = array_values(array_filter($files, static fn (string $file): bool => !is_file($file)));
 
-            return $row && (int) $row['enabled'] === 1
-                && is_file('/var/www/html/plugins/system/appointmentsattribution/services/provider.php')
-                && is_file('/var/www/html/plugins/system/appointmentsattribution/LICENSE.txt')
-                && is_file('/var/www/html/administrator/language/de-DE/plg_system_appointmentsattribution.sys.ini');
+            if (!$row || (int) $row['enabled'] !== 1 || $missing !== []) {
+                echo '    origin plugin: enabled=' . ($row['enabled'] ?? 'missing') . ', missing files: ' . implode(', ', $missing) . "\n";
+            }
+
+            return $row && (int) $row['enabled'] === 1 && $missing === [];
         });
 
         $this->test('Bookings have the encrypted origin column and the campaign aggregate exists', function () {
