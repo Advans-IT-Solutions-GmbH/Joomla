@@ -643,23 +643,59 @@ class ImportModel extends BaseDatabaseModel
     }
 
     /**
-     * Places the permission asset of an imported article below the asset of the category
-     * the article is in now, as Joomla does when an article is saved in another category,
-     * so it inherits that category's permissions.
+     * Places the permission asset of an article below the asset of the category the
+     * article is in now, as Joomla does when an article is saved in another category, so
+     * it inherits that category's permissions.
      *
-     * It runs after the row transaction has committed and reads the committed category:
-     * an asset is a nested set, so moving it inside the transaction would commit it early,
-     * and a concurrent import that moved the same article meanwhile is followed, not undone.
+     * It runs outside the row transaction and reads the committed category: an asset is a
+     * nested set, so moving it inside the transaction would commit it early. It runs
+     * before an existing article is authorized, so a stale asset (for example after a
+     * failed move) never decides a permission, and after the row has committed. After
+     * each move the category is read again, so an import that moved the same article
+     * concurrently is followed instead of overwritten.
      */
     protected function syncArticleAsset(int $articleId): void
     {
-        $asset = $this->newTable(AssetTable::class);
+        // Each round follows one concurrent move; more than that in a row is reported.
+        for ($round = 0; $round < 3; $round++) {
+            $asset = $this->newTable(AssetTable::class);
 
-        // An article without its own asset is checked against its category anyway.
-        if (!$asset->loadByName('com_content.article.' . $articleId)) {
-            return;
+            // An article without its own asset is checked against its category anyway.
+            if (!$asset->loadByName('com_content.article.' . $articleId)) {
+                return;
+            }
+
+            $parentId = $this->articleCategoryAssetId($articleId);
+
+            if ($parentId === (int) $asset->parent_id) {
+                return;
+            }
+
+            $asset->setLocation($parentId, 'last-child');
+            $asset->parent_id = $parentId;
+
+            try {
+                $stored = $asset->store();
+            } finally {
+                // Permission checks must see the moved asset.
+                Access::clearStatics();
+            }
+
+            if (!$stored) {
+                throw new \RuntimeException($asset->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
+            }
         }
 
+        throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
+    }
+
+    /**
+     * The asset ID an article's asset belongs below: its committed category's asset, or
+     * for a category without its own asset (for example from earlier imports) the Content
+     * component's asset, whose permissions Joomla applies to such a category.
+     */
+    private function articleCategoryAssetId(int $articleId): int
+    {
         $db    = $this->getDatabase();
         $query = $this->createDbQuery($db)
             ->select($db->quoteName('c.asset_id'))
@@ -670,8 +706,6 @@ class ImportModel extends BaseDatabaseModel
         $db->setQuery($query);
         $parentId = (int) $db->loadResult();
 
-        // A category without its own asset (for example from earlier imports) is checked
-        // with the Content component's permissions, so the article inherits from there.
         if ($parentId < 1) {
             $query = $this->createDbQuery($db)
                 ->select($db->quoteName('id'))
@@ -685,23 +719,7 @@ class ImportModel extends BaseDatabaseModel
             throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
         }
 
-        if ($parentId === (int) $asset->parent_id) {
-            return;
-        }
-
-        $asset->setLocation($parentId, 'last-child');
-        $asset->parent_id = $parentId;
-
-        try {
-            $stored = $asset->store();
-        } finally {
-            // Permission checks of later rows must see the moved asset.
-            Access::clearStatics();
-        }
-
-        if (!$stored) {
-            throw new \RuntimeException($asset->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
-        }
+        return $parentId;
     }
 
     /**
@@ -749,6 +767,12 @@ class ImportModel extends BaseDatabaseModel
         $existing = !empty($options['update_existing'])
             ? $this->findExistingArticle($data, $alias, $suppliedAlias)
             : null;
+
+        // An existing article is authorized against an asset that matches its category.
+        if ($existing) {
+            $this->syncArticleAsset((int) $existing->id);
+        }
+
         $permissions = $this->authorizeArticleImport($existing, $catId, $data);
         $schedule = $this->authorizeArticleSchedule($existing, $catId, $data, $now);
 

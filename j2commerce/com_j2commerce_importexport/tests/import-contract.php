@@ -185,6 +185,12 @@ namespace Joomla\CMS\Table {
                 if ($asset['id'] === $this->id) { $this->db->assets[$name]['parent_id'] = $this->parent_id; }
             }
             $this->db->assetMoves[] = [$this->id, $this->location];
+            $this->db->assetMoveStarts[] = $this->db->transactionsStarted;
+            if ($this->db->afterAssetStore) {
+                $hook = $this->db->afterAssetStore;
+                $this->db->afterAssetStore = null;
+                $hook();
+            }
             return true;
         }
         public function getError(): string { return 'Asset fixture failed'; }
@@ -297,7 +303,15 @@ namespace {
         public int $menuInsertions = 0;
         private ?object $query = null;
         public function transactionStart(): void { $this->transactionsStarted++; $this->transactionDepth++; }
-        public function transactionCommit(): void { $this->transactionsCommitted++; $this->transactionDepth = max(0, $this->transactionDepth - 1); }
+        public function transactionCommit(): void {
+            $this->transactionsCommitted++;
+            $this->transactionDepth = max(0, $this->transactionDepth - 1);
+            if ($this->afterCommit) { ($this->afterCommit)(); }
+        }
+        // Simulate what the database answers after the commit, or after an asset store (once).
+        public ?\Closure $afterCommit = null;
+        public ?\Closure $afterAssetStore = null;
+        public array $assetMoveStarts = [];
         public function transactionRollback(): void { $this->transactionsRolledBack++; $this->transactionDepth = max(0, $this->transactionDepth - 1); }
         // MySQL commits an open transaction when LOCK TABLES runs.
         public function lockTable(string $table): void { if ($this->transactionDepth > 0) { $this->implicitCommits++; } }
@@ -368,6 +382,9 @@ namespace {
             $this->assocLists = [];
             $this->assets = [];
             $this->assetMoves = [];
+            $this->assetMoveStarts = [];
+            $this->afterCommit = null;
+            $this->afterAssetStore = null;
         }
     }
     class AuthorizationModel extends ImportModel
@@ -1343,13 +1360,17 @@ namespace {
         $movedArticle = (object) ['id' => 81, 'asset_id' => 501, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1];
         $moveRow = ['title' => 'Moved article', 'alias' => 'moved-article', 'article_id' => 81, 'catid' => 3];
         $user->permissions = ['core.edit.own:com_content.article.81' => true, 'core.create:com_content.category.3' => true];
-        // '#__content' answers the committed category's asset ID.
-        $moveTables = ['#__categories' => 3, '#__content' => 33, '#__j2commerce_products' => 1];
+        // '#__content' answers the asset ID of the committed category: 22 before the commit, 33 after it.
+        $moveTables = ['#__categories' => 3, '#__content' => 22, '#__j2commerce_products' => 1];
+        $commitMove = function (int $assetId) use ($authDb): void {
+            $authDb->afterCommit = function () use ($authDb, $assetId): void { $authDb->tableResults['#__content'] = $assetId; };
+        };
         $authDb->resetAuthorizationScenario([], [$movedArticle]);
         $authDb->tableResults = $moveTables;
         $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
+        $commitMove(33);
         $moved = $authModel->importProductFull($moveRow, ['update_existing' => true]);
-        check(($moved['article_id'] ?? 0) === 81 && $authDb->assetMoves === [[501, 33]]
+        check(($moved['article_id'] ?? 0) === 81 && $authDb->assetMoves === [[501, 33]] && $authDb->assetMoveStarts === [1]
             && $authDb->assets['com_content.article.81']['parent_id'] === 33 && $authDb->implicitCommits === 0
             && $authDb->transactionsCommitted === 1,
             'An article moved to another category gets its asset moved below the committed category after the transaction');
@@ -1372,6 +1393,7 @@ namespace {
             $authDb->resetAuthorizationScenario([], [$movedArticle]);
             $authDb->tableResults = $moveTables;
             $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
+            $commitMove(33);
             $syncFailure = null;
             try {
                 $authModel->importProductFull($moveRow, ['update_existing' => true]);
@@ -1385,14 +1407,51 @@ namespace {
             && str_starts_with($syncFailure->getMessage(), 'COM_J2COMMERCE_IMPORTEXPORT_ERROR_ASSET_SYNC: 81, ')
             && $authDb->transactionsCommitted === 1 && $deletes() === [],
             'A committed row whose article asset cannot follow its category reports that instead of undoing the row');
+
+        // The next row for that article must not be authorized against the stale asset.
+        \Joomla\CMS\Table\Asset::$failStore = true;
+        try {
+            $authDb->resetAuthorizationScenario([], [$movedArticle]);
+            $authDb->tableResults = ['#__content' => 33] + $moveTables;
+            $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
+            $staleFailure = null;
+            try {
+                $authModel->importProductFull(['article_state' => 0] + $moveRow, ['update_existing' => true]);
+            } catch (\RuntimeException $e) {
+                $staleFailure = $e;
+            }
+        } finally {
+            \Joomla\CMS\Table\Asset::$failStore = false;
+        }
+        check($staleFailure !== null && $staleFailure->getMessage() === 'Asset fixture failed'
+            && $authDb->transactionsStarted === 0 && $authDb->updated === [],
+            'An article whose asset cannot be placed below its committed category is not authorized or updated');
+
+        // A stale asset is placed below the committed category before the article is authorized.
+        $authDb->resetAuthorizationScenario([], [$movedArticle]);
+        $authDb->tableResults = ['#__content' => 33] + $moveTables;
+        $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
+        $authModel->importProductFull($moveRow, ['update_existing' => true]);
+        check($authDb->assetMoves === [[501, 33]] && $authDb->assetMoveStarts === [0],
+            'A stale article asset is placed below the committed category before the article is authorized');
+
+        // A concurrent move between reading the category and storing the asset is followed.
+        $authDb->resetAuthorizationScenario([], [$movedArticle]);
+        $authDb->tableResults = ['#__content' => 33] + $moveTables;
+        $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
+        $authDb->afterAssetStore = function () use ($authDb): void { $authDb->tableResults['#__content'] = 44; };
+        $authModel->importProductFull($moveRow, ['update_existing' => true]);
+        check($authDb->assetMoves === [[501, 33], [501, 44]] && $authDb->assets['com_content.article.81']['parent_id'] === 44,
+            'An asset sync reads the category again after each move and follows a concurrent move');
         $user->permissions = $nativePermissions;
 
         // A destination category without its own asset: the article inherits from the Content component.
         $clearedBefore = \Joomla\CMS\Access\Access::$cleared;
         $user->permissions = ['core.edit.own:com_content.article.81' => true, 'core.create:com_content.category.3' => true];
         $authDb->resetAuthorizationScenario([3], [$movedArticle]);
-        $authDb->tableResults = ['#__content' => 0, '#__j2commerce_products' => 1, '#__assets' => 7];
+        $authDb->tableResults = ['#__content' => 22, '#__j2commerce_products' => 1, '#__assets' => 7];
         $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
+        $commitMove(0);
         $authModel->importProductFull($moveRow, ['update_existing' => true]);
         check($authDb->assetMoves === [[501, 7]] && \Joomla\CMS\Access\Access::$cleared > $clearedBefore,
             'An article moved into a category without asset is placed below the Content component and the permission cache is cleared');
