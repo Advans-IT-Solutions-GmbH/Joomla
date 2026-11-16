@@ -1446,8 +1446,11 @@ bookings already have `invitee_phone` filled from the custom field, so no data h
 
 Invalid input is reported at the field it concerns, all fields in one round trip: the control gets
 `aria-invalid="true"` and `aria-describedby` pointing to its message, and the first invalid control
-receives the focus. A missing consent and a missing confirmation on the reschedule, cancel and
-erase pages each have their own message. Only problems the visitor cannot fix in a field (an
+receives the focus. An answer longer than its field allows (first and last name 127 characters,
+e-mail address and text field 255, textarea 8000, or the field's own «Maximum characters») gets
+the length message with that number, not the message of a missing or invalid value. A missing
+telephone number marks the number field only, not the preselected calling code. A missing consent
+and a missing confirmation on the reschedule, cancel and erase pages each have their own message. Only problems the visitor cannot fix in a field (an
 expired or tampered form, too many attempts, a time just taken) appear as a message above the form.
 
 Dates and times follow the site language: the month and the day are written in words with the
@@ -1704,6 +1707,10 @@ result's `aria-describedby` without removing existing descriptions. This is the 
 ordinary result-focus rule above: standard result layouts keep their notices inside the result
 and never request this fallback. Invalid fields, modals, other focused controls and prior pointer
 or keyboard interaction still prevent the fallback from taking focus.
+Only a rendered modal or invalid control counts: a closed dialog a template keeps in every page
+(`role="dialog" aria-modal="true"`, hidden with `display:none` or `visibility:hidden`) does not
+keep the outcome or the message from the focus. `shared/tests/browser/booking-focus.spec.cjs`
+checks this in Chromium and Firefox with the keyboard.
 Initial result/message focus runs once at `pageshow`, after native fragment navigation
 instead of during DOMContentLoaded; progressive form enhancement still starts at
 DOMContentLoaded. Back-forward cache restores do not refocus the outcome. A script loaded

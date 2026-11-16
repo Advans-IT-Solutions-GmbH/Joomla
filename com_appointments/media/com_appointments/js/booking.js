@@ -1042,11 +1042,20 @@
      * running the autofocus of the page; without the fragment autofocus already did it.
      * Wait for pageshow: fragment navigation can clear focus after DOMContentLoaded.
      */
+    /*
+     * Whether something on the page needs the focus more than the outcome: another autofocus, an
+     * invalid control or an open dialog. Only what is rendered counts: a template may keep a closed
+     * dialog (role="dialog" aria-modal="true", hidden with visibility:hidden or display:none) in
+     * every page, and that dialog must not keep the outcome from the focus.
+     */
+    const focusBlocked = () => Array.from(document.querySelectorAll('[autofocus]:not([data-appointments-result]), [aria-invalid="true"], [aria-modal="true"], dialog[open]'))
+        .some((element) => element.getClientRects().length > 0 && window.getComputedStyle(element).visibility !== 'hidden');
+
     const focusResult = () => {
         const result = document.querySelector('[data-appointments-result]');
 
         if (result && !userInteracted && !hasSystemMessageFocusRequest()
-            && !document.querySelector('[autofocus]:not([data-appointments-result]), [aria-invalid="true"], [aria-modal="true"], dialog[open]')
+            && !focusBlocked()
             && (!document.activeElement || document.activeElement === document.body)) {
             // The fragment already scrolled to the container with its heading; keep that view.
             result.focus({ preventScroll: window.location.hash !== '' });
@@ -1069,7 +1078,7 @@
         if (!hasSystemMessageFocusRequest() || userInteracted
             || (active && active !== document.body && active !== document.documentElement && active !== result)
             || document.visibilityState !== 'visible'
-            || document.querySelector('[autofocus]:not([data-appointments-result]), [aria-invalid="true"], [aria-modal="true"], dialog[open]')
+            || focusBlocked()
             || !message || container.getClientRects().length === 0) {
             return;
         }

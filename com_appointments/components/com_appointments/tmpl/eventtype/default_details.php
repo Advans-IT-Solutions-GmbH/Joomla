@@ -80,9 +80,13 @@ $dialPrefix = function (string $country, string $name, string $selected, string 
             . '<input type="hidden" name="' . $name . '" value="' . $this->escape($this->fixedDialCode) . '">';
     }
 
+    // A missing number is an error of the number alone: the (preselected) calling code stays unmarked.
+    // An invalid number or one that does not fit its calling code marks both.
+    $codeError = isset($errors[$key]) && $errors[$key] !== 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED';
+
     return '<label class="visually-hidden" for="' . $country . '">' . Text::_('COM_APPOINTMENTS_BOOKING_COUNTRY') . '</label>'
-        . '<select class="form-select com-appointments-tel-country' . $invalid($key) . '" id="' . $country . '" name="' . $name . '" autocomplete="tel-country-code"'
-        . (isset($errors[$key]) ? ' aria-invalid="true" aria-describedby="' . trim($describedBy . ' booking-' . $key . '-error') . '"' : '') . '>'
+        . '<select class="form-select com-appointments-tel-country' . ($codeError ? $invalid($key) : '') . '" id="' . $country . '" name="' . $name . '" autocomplete="tel-country-code"'
+        . ($codeError ? ' aria-invalid="true" aria-describedby="' . trim($describedBy . ' booking-' . $key . '-error') . '"' : '') . '>'
         . $dialOptions($selected) . '</select>';
 };
 $phone = is_array($values['phone'] ?? null) ? $values['phone'] : [];
@@ -100,15 +104,16 @@ $textField = function (string $key, string $label, string $type, string $autocom
     return '<div class="com-appointments-field com-appointments-field-' . str_replace('_', '-', $key) . '">'
         . '<label class="form-label" for="booking-' . $key . '">' . Text::_($label) . $mark . '</label>'
         . '<input class="form-control' . $invalid($key) . '" id="booking-' . $key . '" type="' . $type . '" name="booking[' . $key . ']" maxlength="' . $maxlength . '" required autocomplete="' . $autocomplete . '" value="' . $value($key) . '"' . $aria($key) . '>'
-        . $error($key)
+        // The length message names the maximum of the field (BookingInput::NAME_PART_LENGTH, 255).
+        . $error($key, $maxlength)
         . '</div>';
 };
 ?>
 <form id="appointment-details-form" method="post" action="<?php echo Route::_('index.php?option=com_appointments&task=booking.submit&id=' . $id); ?>" class="com-appointments-form com-appointments-booking" data-message-required="<?php echo $this->escape(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED')); ?>" data-message-email="<?php echo $this->escape(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_EMAIL')); ?>">
     <section id="appointment-details" class="com-appointments-step com-appointments-step-details" aria-labelledby="appointment-step-title">
         <div class="com-appointments-fields">
-            <?php echo $textField('first_name', 'COM_APPOINTMENTS_BOOKING_FIRST_NAME', 'text', 'given-name', 127); ?>
-            <?php echo $textField('last_name', 'COM_APPOINTMENTS_BOOKING_LAST_NAME', 'text', 'family-name', 127); ?>
+            <?php echo $textField('first_name', 'COM_APPOINTMENTS_BOOKING_FIRST_NAME', 'text', 'given-name', BookingInput::NAME_PART_LENGTH); ?>
+            <?php echo $textField('last_name', 'COM_APPOINTMENTS_BOOKING_LAST_NAME', 'text', 'family-name', BookingInput::NAME_PART_LENGTH); ?>
             <?php echo $textField('email', 'COM_APPOINTMENTS_BOOKING_EMAIL', 'email', 'email', 255); ?>
             <?php if ($this->phoneRequired) : ?>
                 <div class="com-appointments-field com-appointments-field-phone">

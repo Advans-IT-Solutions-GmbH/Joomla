@@ -102,6 +102,12 @@ final class BookingInput
     public const TEXT_LENGTH = ['text' => 255, 'textarea' => 8000];
 
     /**
+     * Longest input of a limited field that is still answered with the length message; anything
+     * longer did not come from the form (its controls carry maxlength) and is a tampered form.
+     */
+    private const MAX_BOUNDED_INPUT = 65535;
+
+    /**
      * The maximum number of characters of a custom field's answer: its own `max_length` when set
      * (1 up to the type's limit), otherwise the type's limit; 0 for a type without a length.
      * The form (maxlength, counter) and validate() both read it here, so they cannot differ.
@@ -164,7 +170,7 @@ final class BookingInput
         $this->fixedDialCode = in_array($fixedDialCode, self::DIAL_CODES, true) ? $fixedDialCode : '';
         $maxGuests = self::maxGuests($maxGuests);
         $namePart = function (string $field, string $message) use ($input): string {
-            $value = $this->text($input[$field] ?? '', self::NAME_PART_LENGTH);
+            $value = $this->bounded($input[$field] ?? '', self::NAME_PART_LENGTH);
 
             if ($value === '' || preg_match('/[\x00-\x1f\x7f]/', $value)) {
                 throw new BookingValidationException($message);
@@ -177,7 +183,7 @@ final class BookingInput
         $lastName = $this->collect($errors, 'last_name', 'COM_APPOINTMENTS_BOOKING_ERROR_LAST_NAME',
             fn (): string => $namePart('last_name', 'COM_APPOINTMENTS_BOOKING_ERROR_LAST_NAME'));
         $email = $this->collect($errors, 'email', 'COM_APPOINTMENTS_BOOKING_ERROR_EMAIL', function () use ($input): string {
-            $email = $this->text($input['email'] ?? '', 255);
+            $email = $this->bounded($input['email'] ?? '', 255);
 
             if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
                 throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_EMAIL');
@@ -279,9 +285,9 @@ final class BookingInput
 
     /**
      * Runs the check of one field. A refusal becomes the message of that field: the
-     * required-field message when the field is empty, the length message when a telephone
-     * number has too few or too many digits for its calling code, otherwise the field's own
-     * message.
+     * required-field message when the field is empty, the length messages when a telephone
+     * number has too few or too many digits for its calling code or an answer is longer than
+     * its field allows, otherwise the field's own message.
      */
     private function collect(array &$errors, string $field, string $message, callable $check): mixed
     {
@@ -328,13 +334,10 @@ final class BookingInput
                 $raw = str_replace(["\r\n", "\r"], "\n", $raw);
             }
 
-            $value = $this->text($raw, $type === 'textarea' ? 8000 : 255);
             $limit = self::maxLength($field);
-
-            // A field's own maximum has a message that names it (the form shows the number).
-            if ($limit > 0 && mb_strlen($value, 'UTF-8') > $limit) {
-                throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH');
-            }
+            // A text answer above its maximum (the field's own or the type's storage limit) has a
+            // message that names it: the form shows the same number. The other types keep 255.
+            $value = $limit > 0 ? $this->bounded($raw, $limit) : $this->text($raw, 255);
 
             if ($value !== '') {
                 $valid = match ($type) {
@@ -447,6 +450,22 @@ final class BookingInput
         }
 
         return $length >= self::MIN_NATIONAL_LENGTH && strlen($code) + $length <= self::MAX_E164_LENGTH;
+    }
+
+    /**
+     * A text of at most $max characters, like text(), but a longer one is refused with the length
+     * message (COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH, which the form renders with $max), not
+     * as an invalid or missing value. Input beyond any sensible size stays a tampered form.
+     */
+    private function bounded($value, int $max): string
+    {
+        $value = $this->text($value, max($max, self::MAX_BOUNDED_INPUT));
+
+        if (mb_strlen($value, 'UTF-8') > $max) {
+            throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH');
+        }
+
+        return $value;
     }
 
     private function text($value, int $max): string
