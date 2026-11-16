@@ -293,6 +293,41 @@ try {
             && !str_contains($html, 'already been cancelled') && !str_contains($html, '/var/www') && stripos($html, 'stack trace') === false,
             'The refusal of ' . $label . ' is a friendly 404 without technical details');
     }
+    // Privacy (review finding): once a booking is erased, an earlier receipt of the same browser
+    // shows only the generic outcome, nothing of the appointment or the person: neither date, time,
+    // zone nor event title. Self-service erasure with the link of the cancellation mail here, the
+    // administrator's erasure of a rescheduled booking below.
+    $eventTitle = (string) $fixture->db->query("SELECT title FROM {$fixture->prefix}appointments_eventtypes WHERE id={$event}")->fetch_row()[0];
+    $receiptLeaks = static fn (string $html, string $title, DateTimeImmutable $start): array => array_keys(array_filter([
+        'date' => str_contains($html, $start->format('l, j F Y')),
+        'time' => str_contains($html, $start->format('H:i') . ' – '),
+        'zone' => str_contains($html, 'Europe/Zurich'),
+        'title' => str_contains($html, $title),
+        'summary' => str_contains($html, 'com-appointments-summary'),
+    ]));
+    $html = $fixture->apply($client, $fixture->link($fixture->row((int) $booking['id']), 'erase'));
+    $check($fixture->row((int) $booking['id'])['anonymised_utc'] !== null, 'Fixture: the cancelled booking is erased through its signed link');
+    $html = $client->request($freshCancel);
+    $leaks = $receiptLeaks($html, $eventTitle, $cancelledStart);
+    $check($client->status === 200 && str_contains($html, 'Your appointment has been cancelled') && $leaks === [],
+        'After a self-service erasure the earlier cancellation receipt shows only the generic outcome: ' . implode(', ', $leaks));
+    $adminEvent = $fixture->event();
+    $adminTitle = (string) $fixture->db->query("SELECT title FROM {$fixture->prefix}appointments_eventtypes WHERE id={$adminEvent}")->fetch_row()[0];
+    $adminCase = $fixture->booking($adminEvent, $laterDay . ' 13:00:00');
+    $adminLink = $fixture->link($adminCase['booking'], 'reschedule');
+    $html = $fixture->apply($adminCase['browser'], $adminLink, ['start' => $laterDay . ' 14:00:00', 'month' => substr($laterDay, 0, 7), 'timezone' => 'Europe/Zurich']);
+    $movedStart = (new DateTimeImmutable($laterDay . ' 14:00:00', new DateTimeZone('UTC')))->setTimezone($zurich);
+    $check($receiptLeaks($html, $adminTitle, $movedStart) !== [], 'Fixture: the reschedule receipt names the appointment before the erasure');
+    $operator = new AppointmentsHttp('http://localhost', 'lifecycle-admin');
+    $operator->login();
+    $operator->request('/administrator/index.php?option=com_appointments&task=bookings.erase', [
+        'cid' => [(int) $adminCase['booking']['id']], $operator->token($operator->request('/administrator/index.php?option=com_appointments&view=bookings')) => 1,
+    ]);
+    $check($fixture->row((int) $adminCase['booking']['id'])['anonymised_utc'] !== null, 'Fixture: the administrator erases the rescheduled booking');
+    $html = $adminCase['browser']->request($adminLink);
+    $leaks = $receiptLeaks($html, $adminTitle, $movedStart);
+    $check($adminCase['browser']->status === 200 && str_contains($html, 'Your appointment has been rescheduled') && $leaks === [],
+        'After an administrator erasure the earlier reschedule receipt shows only the generic outcome: ' . implode(', ', $leaks));
     $replacement = $fixture->booking($event, $day . ' 11:00:00')['booking'];
     $check((int) $replacement['id'] !== (int) $booking['id'], 'Cancellation releases the exact slot');
     // Both an older override and a copy of the current result layout keep queued notices.
