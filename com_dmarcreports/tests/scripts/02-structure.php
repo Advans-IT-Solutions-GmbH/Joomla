@@ -93,6 +93,11 @@ class StructureTest
                 'reject_pass_threshold',
                 'imap_timeout',
                 'max_messages_per_run',
+                'max_reports_per_run',
+                'max_run_unpacked_mb',
+                'max_attachments_per_message',
+                'max_reports_per_message',
+                'max_message_unpacked_mb',
                 'csv_delimiter',
                 'dns_diagnostics',
                 'rules',
@@ -139,7 +144,7 @@ class StructureTest
             return strpos($contents, 'addruleprefix="Advans\\Component\\DmarcReports\\Administrator\\Rule"') !== false;
         });
 
-        foreach (['quarantine_pass_threshold', 'reject_pass_threshold', 'imap_timeout', 'max_messages_per_run'] as $numeric) {
+        foreach (['quarantine_pass_threshold', 'reject_pass_threshold', 'imap_timeout', 'max_messages_per_run', 'max_reports_per_run', 'max_run_unpacked_mb', 'max_attachments_per_message', 'max_reports_per_message', 'max_message_unpacked_mb'] as $numeric) {
             $this->test("config option {$numeric} validates server-side", function () use ($numeric) {
                 $xml = @simplexml_load_file($this->base . '/config.xml');
 

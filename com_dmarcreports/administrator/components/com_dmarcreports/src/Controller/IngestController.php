@@ -64,6 +64,7 @@ class IngestController extends BaseController
         $flashType = match ($result['status']) {
             SourcePoller::STATUS_ERROR   => 'error',
             SourcePoller::STATUS_BLOCKED => 'warning',
+            SourcePoller::STATUS_HELD    => 'warning',
             default                      => 'message',
         };
 

@@ -754,7 +754,8 @@ function ajaxforms_test_captcha_dir(): string
  * installed makes the captcha field drop out of the form. The test plugin
  * registers a provider through onCaptchaSetup that accepts exactly the answer
  * "ajaxforms-ok", so the captcha rule of the registration can be tested with
- * a refused and an accepted answer and without an external service.
+ * a refused and an accepted answer and without an external service. A second
+ * provider, "ajaxformsbroken", fails while its field is set up.
  */
 function ajaxforms_install_test_captcha(): void
 {
@@ -806,6 +807,30 @@ return new class () implements ServiceProviderInterface {
 
                         public function setupField(FormField $field, \SimpleXMLElement $element): void
                         {
+                        }
+                    });
+
+                    // A provider whose field cannot be set up, as with a broken
+                    // or misconfigured captcha: CaptchaField::setup() fails.
+                    $event->getCaptchaRegistry()->add(new class () implements CaptchaProviderInterface {
+                        public function getName(): string
+                        {
+                            return 'ajaxformsbroken';
+                        }
+
+                        public function display(string $name = '', array $attributes = []): string
+                        {
+                            return '';
+                        }
+
+                        public function checkAnswer(?string $code = null): bool
+                        {
+                            return true;
+                        }
+
+                        public function setupField(FormField $field, \SimpleXMLElement $element): void
+                        {
+                            throw new \RuntimeException('The test captcha cannot be set up.');
                         }
                     });
                 }
