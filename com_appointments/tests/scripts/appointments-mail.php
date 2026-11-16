@@ -54,7 +54,9 @@ final class AppointmentsMail
             if (!is_string($content)) {
                 throw new RuntimeException('A captured ' . $type . ' part cannot be decoded.');
             }
-            $calendars[] = rtrim($content, "\r\n") . "\r\n";
+            // PHPMailer ends lines of an unencoded part with the local line end for sendmail (the MTA
+            // writes CRLF on the wire). The calendar is compared in its RFC 5545 form, CRLF.
+            $calendars[] = preg_replace('/\r?\n/', "\r\n", rtrim($content, "\r\n")) . "\r\n";
         }
 
         return $calendars;
@@ -94,6 +96,14 @@ final class AppointmentsMail
                 $decoded .= "\n" . $content;
             } elseif (preg_match('/Content-Transfer-Encoding:\s*quoted-printable/i', $pieces[0])) {
                 $decoded .= "\n" . quoted_printable_decode($pieces[1]);
+            }
+        }
+
+        // An unencoded invitation (the text/calendar alternative) once more in its CRLF form, so
+        // content-line checks hold whatever line end the transport used (calendars()).
+        foreach (self::calendars($mime) as $calendar) {
+            if (!str_contains($decoded, $calendar)) {
+                $decoded .= "\n" . $calendar;
             }
         }
 
