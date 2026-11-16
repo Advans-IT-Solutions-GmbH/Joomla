@@ -288,6 +288,30 @@ try {
     $check($plainRecord !== null && $plainRecord['first_touch'] === null && $plainRecord['browser'] === 'Firefox',
         'A direct booking stores its origin without a campaign touch');
 
+    // Joomla's page cache answers the landing page from its cache: the visit is recorded all the same,
+    // because the plugin runs at onAfterInitialise, before the page cache (onAfterRoute) can answer.
+    $cacheState = (int) $db->query("SELECT enabled FROM {$prefix}extensions WHERE type='plugin' AND folder='system' AND element='cache'")->fetch_row()[0];
+    $db->query("UPDATE {$prefix}extensions SET enabled=1 WHERE type='plugin' AND folder='system' AND element='cache'");
+    try {
+        $cachedLanding = '/index.php?option=com_content&view=article&id=' . $article . '&catid=' . $category . '&utm_source=cached&utm_campaign=cached-campaign';
+        (new AppointmentsHttp($base, 'attribution-cache-fill'))->request($cachedLanding);
+        $cached = new AppointmentsHttp($base, 'attribution-cache-visitor');
+        $cached->headers = ['Referer: https://www.linkedin.com/', 'User-Agent: ' . $agent];
+        $cachedHtml = $cached->request($cachedLanding);
+    } finally {
+        $db->query("UPDATE {$prefix}extensions SET enabled={$cacheState} WHERE type='plugin' AND folder='system' AND element='cache'");
+    }
+    [$browser, $path, $form] = $cached->bookingForm($event, $day . ' 13:00:00', ['email' => $address]);
+    sleep(2);
+    $browser->request($path, $form);
+    $time = $db->real_escape_string($day . ' 13:00:00');
+    $cachedRecord = Attribution::decode(appointments_open_booking($db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event}"
+        . " AND start_utc='{$time}'")->fetch_assoc())['attribution'] ?? null);
+    $check($cached->status === 200 && str_contains($cachedHtml, 'ATTRIBUTION-LANDING-ARTICLE')
+        && ($cachedRecord['first_touch']['parameters']['utm_campaign'] ?? '') === 'cached-campaign'
+        && ($cachedRecord['first_touch']['referrer_host'] ?? '') === 'www.linkedin.com',
+        'A landing page answered from the page cache is recorded as the first touch');
+
     // The option off: nothing is recorded or counted.
     $params = json_decode($originalParams, true) ?: [];
     $params['attribution_capture'] = 0;
