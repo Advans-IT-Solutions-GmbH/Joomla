@@ -63,10 +63,14 @@ final class ConferenceService
             if ($component instanceof AppointmentsComponent) {
                 return $component->getConferenceManager();
             }
-
-            Log::add('Appointments conference: the component is not booted in this context, native providers only.', Log::INFO, 'com_appointments');
         } catch (\Throwable $error) {
-            Log::add('Appointments conference: the component could not be booted in this context, native providers only.', Log::INFO, 'com_appointments');
+            // Below: the registry of its own.
+        }
+
+        // Best effort: the note must not fail the caller.
+        try {
+            Log::add('Appointments conference: the component is not booted in this context, native providers only.', Log::INFO, 'com_appointments');
+        } catch (\Throwable $logError) {
         }
 
         return new ConferenceManager([], (bool) $params->get('conference_allow_outbound', false));

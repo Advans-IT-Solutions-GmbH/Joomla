@@ -549,8 +549,12 @@ final class BookingStore
         try {
             return $this->conference()->destroy($booking);
         } catch (\Throwable $error) {
-            Log::add('Appointment conference room release failed after the commit (provider '
-                . preg_replace('/[^a-z0-9_.-]/i', '', (string) ($booking['conference_provider'] ?? '')) . ').', Log::WARNING, 'com_appointments');
+            // Best effort: a failing log must not turn the reported failure into an exception.
+            try {
+                Log::add('Appointment conference room release failed after the commit (provider '
+                    . preg_replace('/[^a-z0-9_.-]/i', '', (string) ($booking['conference_provider'] ?? '')) . ').', Log::WARNING, 'com_appointments');
+            } catch (\Throwable $logError) {
+            }
 
             return $booking + ['_conference_cleanup_error' => 'Conference room cleanup failed. Please retry.'];
         }
