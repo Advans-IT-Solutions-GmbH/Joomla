@@ -1018,13 +1018,22 @@ class StructureTest
             && $row['Null'] === 'YES' && in_array($row['Default'], [null, 'NULL'], true);
 
         $this->test('Bookings carry the nullable row version a cancellation replaced', fn () => $nullableDatetime($column()));
+        $fields = "{$this->dbPrefix}appointments_fields";
+        $maxLength = function () use ($fields): ?array {
+            $result = $this->db->query("SHOW COLUMNS FROM {$fields} LIKE 'max_length'");
+
+            return $result ? ($result->fetch_assoc() ?: null) : null;
+        };
+        $smallint = static fn (?array $row): bool => $row !== null && str_starts_with(strtolower((string) $row['Type']), 'smallint')
+            && str_contains(strtolower((string) $row['Type']), 'unsigned') && $row['Null'] === 'NO' && trim((string) $row['Default'], "'") === '0';
+        $this->test('Custom fields carry «Maximum characters» with 0 (the type limit) as the default', fn () => $smallint($maxLength()));
 
         $package = getenv('INSTALL_MESSAGES_PACKAGE') ?: '/tmp/extension.zip';
 
         // The same update refreshes a site-wide default template that still holds the defaults of the
         // installed version, and keeps an edited one: the installed version is simulated by its private
         // language copy with the 1.4.0 host notice, without {invitee_time} and {field_answers}.
-        $this->test('An update adds the cancelled row version and refreshes only unmodified default templates', function () use ($table, $column, $nullableDatetime, $package) {
+        $this->test('An update adds the cancelled row version and the maximum characters and refreshes only unmodified default templates', function () use ($table, $column, $nullableDatetime, $package, $fields, $maxLength, $smallint) {
             if (!is_file($package)) {
                 echo "    update: package {$package} missing\n";
 
@@ -1046,8 +1055,9 @@ class StructureTest
 
             try {
                 $this->db->query("ALTER TABLE {$table} DROP COLUMN cancelled_version_utc");
+                $this->db->query("ALTER TABLE {$fields} DROP COLUMN max_length");
 
-                if ($column() !== null) {
+                if ($column() !== null || $maxLength() !== null) {
                     return false;
                 }
 
@@ -1072,11 +1082,15 @@ class StructureTest
                         . ', en-GB ' . ($kept === 'Edited by the operator' ? 'kept' : 'overwritten') . "\n";
                 }
 
-                return $code === 0 && $nullableDatetime($column()) && str_contains($refreshed, '{field_answers}')
+                return $code === 0 && $nullableDatetime($column()) && $smallint($maxLength()) && str_contains($refreshed, '{field_answers}')
                     && $refreshed === $rows['de-DE'] && $kept === 'Edited by the operator';
             } finally {
                 if ($column() === null) {
                     $this->db->query("ALTER TABLE {$table} ADD COLUMN cancelled_version_utc DATETIME DEFAULT NULL AFTER cancel_reason");
+                }
+
+                if ($maxLength() === null) {
+                    $this->db->query("ALTER TABLE {$fields} ADD COLUMN max_length SMALLINT UNSIGNED NOT NULL DEFAULT 0 AFTER options");
                 }
 
                 foreach ($saved as $tag => $ini) {

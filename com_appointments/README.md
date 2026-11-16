@@ -243,7 +243,10 @@ bookings after the update, until the setting is made (see section "Scheduler, re
   why all of that is covered by unit tests.
 - **Event types and custom fields.** Configure the duration, slot grid, buffers, notice, horizon,
   limits, location, host, schedule, publication, access, content language, ordering and retention
-  through the administrator. Custom fields support every form type listed below. Each event type
+  through the administrator. Custom fields support every form type listed below. A text or
+  textarea field can have its own **Maximum characters** (0 keeps 255 for text and 8000 for a
+  textarea): the booking form limits the field, names the maximum below it and counts down the
+  characters left while typing, and the server refuses a longer answer at the field. Each event type
   has its own Joomla permission asset and independently generated feed credential. An event type's
   host cannot change while any booking is retained; create a new event type for a different host.
 - **Menu item types.** Publish the list of event types or one event type through Joomla's menu

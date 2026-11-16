@@ -286,6 +286,10 @@ CREATE TABLE IF NOT EXISTS `#__appointments_bookings` (
 -- content and are translated through Joomla's content language handling, not
 -- through the component's INI files.
 --
+-- `max_length` is the most characters an answer of a text or textarea field may
+-- have, 0 for the type's own limit (255 and 8000). script.php adds it on an
+-- update.
+--
 CREATE TABLE IF NOT EXISTS `#__appointments_fields` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
     `eventtype_id` INT UNSIGNED NOT NULL,
@@ -293,6 +297,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_fields` (
     `label` VARCHAR(255) NOT NULL DEFAULT '',
     `description` TEXT,
     `options` JSON DEFAULT NULL,
+    `max_length` SMALLINT UNSIGNED NOT NULL DEFAULT 0,
     `required` TINYINT(1) NOT NULL DEFAULT 0,
     `ordering` INT NOT NULL DEFAULT 0,
     `published` TINYINT(1) NOT NULL DEFAULT 1,

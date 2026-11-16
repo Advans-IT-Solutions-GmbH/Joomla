@@ -266,6 +266,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->cleanPageCache();
         $this->ensureDeviceRemovalMode();
         $this->ensureCancelledVersion();
+        $this->ensureFieldMaxLength();
 
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
@@ -861,6 +862,25 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
         $db->setQuery('ALTER TABLE ' . $db->quoteName($table) . ' ADD COLUMN ' . $db->quoteName('cancelled_version_utc')
             . ' DATETIME DEFAULT NULL AFTER ' . $db->quoteName('cancel_reason'))->execute();
+    }
+
+    /**
+     * «Maximum characters» of a custom field (`max_length`, see install.mysql.utf8.sql), also on an
+     * update from a version without it. Every existing field gets 0, the limit of its type it had so
+     * far. Idempotent and independent of the schema version, like ensureDeviceRemovalMode().
+     */
+    private function ensureFieldMaxLength(): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $table = $db->replacePrefix('#__appointments_fields');
+
+        if (!\in_array($table, $db->getTableList(), true)
+            || \array_key_exists('max_length', $db->getTableColumns($table, false))) {
+            return;
+        }
+
+        $db->setQuery('ALTER TABLE ' . $db->quoteName($table) . ' ADD COLUMN ' . $db->quoteName('max_length')
+            . ' SMALLINT UNSIGNED NOT NULL DEFAULT 0 AFTER ' . $db->quoteName('options'))->execute();
     }
 
     /**

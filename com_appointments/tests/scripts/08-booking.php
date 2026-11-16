@@ -592,6 +592,38 @@ try {
         $detail = $admin->request('/administrator/index.php?option=com_appointments&view=booking&id=' . (int) ($stored['id'] ?? 0));
         $check($admin->status === 200 && str_contains($detail, $expected), $location . ': the administrator detail shows the telephone number');
     }
+
+    // «Maximum characters» of a custom field: set in the administrator form, shown and counted on
+    // the booking form, enforced by the server with its own message. A value above the type's
+    // limit is refused in the form, a field without one keeps the type's limit (8000).
+    $fieldTitle = $tag . '-length';
+    $admin->submit('field', ['eventtype_id' => $eventIds[1], 'label' => $fieldTitle, 'type' => 'textarea', 'max_length' => '10',
+        'options' => '', 'required' => '0', 'published' => '1', 'ordering' => '0']);
+    $lengthField = $db->query("SELECT id, max_length FROM {$prefix}appointments_fields WHERE label='" . $db->real_escape_string($fieldTitle) . "'")->fetch_assoc();
+    $check($lengthField !== null && (int) $lengthField['max_length'] === 10, 'The field form stores the maximum characters of a textarea');
+    $admin->submit('field', ['eventtype_id' => $eventIds[1], 'label' => $fieldTitle . '-too-long', 'type' => 'textarea', 'max_length' => '9000',
+        'options' => '', 'required' => '0', 'published' => '1', 'ordering' => '0']);
+    $check((int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_fields WHERE label='" . $db->real_escape_string($fieldTitle . '-too-long') . "'")->fetch_row()[0] === 0,
+        'A maximum above the type limit is refused');
+    try {
+        $lengthId = (int) ($lengthField['id'] ?? 0);
+        $xpath = $show($eventIds[1], $freeSlot);
+        $area = $xpath->query('//textarea[@id="booking-field-' . $lengthId . '"]')->item(0);
+        $count = $xpath->query('//*[@id="booking-field-' . $lengthId . '-count"]')->item(0);
+        $check($area instanceof DOMElement && $area->getAttribute('maxlength') === '10' && $count instanceof DOMElement
+            && trim($count->textContent) === 'At most 10 characters.' && $count->getAttribute('data-appointments-count') === '10'
+            && in_array('booking-field-' . $lengthId . '-count', preg_split('/\s+/', $area->getAttribute('aria-describedby')), true),
+            'The booking form limits the textarea to its maximum and names it below the field');
+        $request = $prepare($eventIds[1], $freeSlot);
+        $request[2]['booking']['fields'] = [$lengthId => str_repeat('a', 11)];
+        $booked = $bookings($eventIds[1]);
+        sleep(2);
+        $body = $request[0]->request($request[1], $request[2]);
+        $check($fieldError($dom($body), 'booking-field-' . $lengthId, 'Please shorten your entry to at most 10 characters.') && $bookings($eventIds[1]) === $booked,
+            'A longer answer is refused at the field with the number of characters allowed');
+    } finally {
+        $db->query("DELETE FROM {$prefix}appointments_fields WHERE label LIKE '" . $db->real_escape_string($fieldTitle) . "%'");
+    }
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failures++;

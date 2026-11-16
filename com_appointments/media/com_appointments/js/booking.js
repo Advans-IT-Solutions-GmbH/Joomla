@@ -591,6 +591,31 @@
         let checkDetails = null;
         let commitGuests = null;
 
+        /*
+         * A text field with a maximum of its own names it below the field ("At most 500
+         * characters."). While the visitor types, the text says how many are left. The field's
+         * maxlength already stops the input; the server checks the length either way. Characters
+         * are counted like the server does (code points, not UTF-16 units).
+         */
+        const counters = (form) => {
+            form.querySelectorAll('[data-appointments-count]').forEach((counter) => {
+                const field = form.querySelector('#' + counter.id.replace(/-count$/, ''));
+                const max = parseInt(counter.dataset.appointmentsCount, 10) || 0;
+
+                if (!field || max < 1 || field.appointmentsCounter) {
+                    return;
+                }
+
+                const update = () => {
+                    counter.textContent = (counter.dataset.left || '%s').replace('%s', String(Math.max(0, max - Array.from(field.value).length)));
+                };
+
+                field.appointmentsCounter = true;
+                field.addEventListener('input', update);
+                update();
+            });
+        };
+
         const enhanceView = () => {
             const form = root.querySelector('#appointment-details-form');
 
@@ -601,6 +626,7 @@
             if (form) {
                 commitGuests = guestsView(form);
                 checkDetails = validation(form);
+                counters(form);
             }
         };
 

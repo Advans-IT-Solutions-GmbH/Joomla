@@ -214,6 +214,7 @@ Custom booking form fields per event type.
 | `type` | `VARCHAR(32) NOT NULL` | `text`, `textarea`, `number`, `tel`, `email`, `url`, `radio`, `checkboxes`, `checkbox`, `date` |
 | `label`, `description` | `VARCHAR(255)` / `TEXT` | |
 | `options` | `JSON NULL` | for the choice types |
+| `max_length` | `SMALLINT UNSIGNED NOT NULL DEFAULT 0` | most characters of a `text`/`textarea` answer, 0 = the type limit (255/8000, `BookingInput::maxLength()`); added by `script.php` on update |
 | `required` | `TINYINT(1) NOT NULL DEFAULT 0` | |
 | `ordering` | `INT NOT NULL DEFAULT 0` | |
 | `published` | `TINYINT(1) NOT NULL DEFAULT 1` | |

@@ -95,6 +95,27 @@ final class BookingInput
         return (string) $get('phone_country_choice', '1') === '0' && in_array($code, self::DIAL_CODES, true) ? $code : '';
     }
 
+    /**
+     * Longest answer of each text field type: the storage limit, and the maximum a field's own
+     * «Maximum characters» (`max_length`) may set. Other types have no length option.
+     */
+    public const TEXT_LENGTH = ['text' => 255, 'textarea' => 8000];
+
+    /**
+     * The maximum number of characters of a custom field's answer: its own `max_length` when set
+     * (1 up to the type's limit), otherwise the type's limit; 0 for a type without a length.
+     * The form (maxlength, counter) and validate() both read it here, so they cannot differ.
+     *
+     * @param   array{type?: string, max_length?: mixed}  $field
+     */
+    public static function maxLength(array $field): int
+    {
+        $limit = self::TEXT_LENGTH[(string) ($field['type'] ?? '')] ?? 0;
+        $own = filter_var($field['max_length'] ?? 0, FILTER_VALIDATE_INT);
+
+        return $limit > 0 && is_int($own) && $own > 0 ? min($own, $limit) : $limit;
+    }
+
     /** Whether an event type with this location type asks for the invitee's telephone number. */
     public static function requiresPhone(string $locationType): bool
     {
@@ -267,7 +288,8 @@ final class BookingInput
         try {
             return $check();
         } catch (BookingValidationException $e) {
-            $errors[$field] = in_array($e->languageKey, ['COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED', 'COM_APPOINTMENTS_BOOKING_ERROR_PHONE_LENGTH'], true)
+            $errors[$field] = in_array($e->languageKey, ['COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED', 'COM_APPOINTMENTS_BOOKING_ERROR_PHONE_LENGTH',
+                'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH'], true)
                 ? $e->languageKey : $message;
 
             return null;
@@ -301,6 +323,12 @@ final class BookingInput
             $value = $phone ?? '';
         } else {
             $value = $this->text($raw, $type === 'textarea' ? 8000 : 255);
+            $limit = self::maxLength($field);
+
+            // A field's own maximum has a message that names it (the form shows the number).
+            if ($limit > 0 && mb_strlen($value, 'UTF-8') > $limit) {
+                throw new BookingValidationException('COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH');
+            }
 
             if ($value !== '') {
                 $valid = match ($type) {
