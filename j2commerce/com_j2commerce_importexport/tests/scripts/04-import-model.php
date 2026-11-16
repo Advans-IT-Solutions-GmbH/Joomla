@@ -324,7 +324,7 @@ class ImportModelTest
             try {
                 $this->test('A restricted author creates a new category unpublished, with its own asset', function () use ($model, $db, $draftInNewCategory) {
                     $result = $model->importProductFull($draftInNewCategory, []);
-                    $db->setQuery('SELECT ' . $db->quoteName(['published', 'asset_id']) . ' FROM ' . $db->quoteName('#__categories')
+                    $db->setQuery('SELECT ' . implode(', ', $db->quoteName(['published', 'asset_id'])) . ' FROM ' . $db->quoteName('#__categories')
                         . ' WHERE ' . $db->quoteName('extension') . ' = ' . $db->quote('com_content')
                         . ' AND ' . $db->quoteName('alias') . ' = ' . $db->quote($draftInNewCategory['category_alias']));
                     $category = $db->loadAssoc();
@@ -433,10 +433,10 @@ class ImportModelTest
                 . ' WHERE ' . $db->quoteName('extension') . ' = ' . $db->quote('com_content')
                 . ' AND ' . $db->quoteName('alias') . ' = ' . $db->quote($first['category_alias']));
             $categoryId = (int) ($category['id'] ?? 0);
-            $assetQuery = 'SELECT ' . $db->quoteName(['id', 'parent_id', 'name', 'rules']) . ' FROM ' . $db->quoteName('#__assets') . ' WHERE ';
+            $assetQuery = 'SELECT ' . implode(', ', $db->quoteName(['id', 'parent_id', 'name', 'rules'])) . ' FROM ' . $db->quoteName('#__assets') . ' WHERE ';
             $categoryAsset = $assoc($assetQuery . $db->quoteName('id') . ' = ' . (int) ($category['asset_id'] ?? 0));
             $componentAsset = $assoc($assetQuery . $db->quoteName('name') . ' = ' . $db->quote('com_content'));
-            $article = $assoc('SELECT ' . $db->quoteName(['asset_id', 'catid']) . ' FROM ' . $db->quoteName('#__content')
+            $article = $assoc('SELECT ' . implode(', ', $db->quoteName(['asset_id', 'catid'])) . ' FROM ' . $db->quoteName('#__content')
                 . ' WHERE ' . $db->quoteName('id') . ' = ' . $articleId);
             $articleAsset = $assoc($assetQuery . $db->quoteName('id') . ' = ' . (int) ($article['asset_id'] ?? 0));
 
