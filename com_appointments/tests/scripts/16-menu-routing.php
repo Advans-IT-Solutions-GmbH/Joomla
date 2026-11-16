@@ -669,12 +669,23 @@ try {
         $landing = preg_replace('#^https?://[^/]+#', '', (string) end($guest->locations));
         $check($guest->landedAt($html, 'appointment-result') && str_contains($landing, '/' . $tag . '-all?')
             && !str_contains($landing, 'component/appointments') && $links($html, 'com-appointments-cancel') === []
-            && preg_match($bookingPage, $first($links($html, 'com-appointments-return'))) === 1,
+            && preg_match($bookingPage, $first($links($html, 'com-appointments-book-again'))) === 1
+            && $links($html, 'com-appointments-return') === [],
             'The cancellation receipt stands at the booking page, without links to the cancelled appointment: ' . $landing);
-        // Another browser: the acting session is shown its completion notice instead.
+        // Live finding 16.11.2026 (the receipt was framed by the home page and showed nothing of the
+        // outcome): the receipt names the appointment, says that the confirmation mail follows and
+        // offers a new booking on the booking page of the event type.
+        $check(str_contains($html, 'Your appointment has been cancelled.') && str_contains($html, 'com-appointments-summary')
+            && str_contains($html, 'You will receive a confirmation by email.')
+            && preg_match('#<h1[^>]*>\s*Appointment cancelled\s*</h1>#', $html) === 1,
+            'The cancellation receipt shows the appointment, the coming confirmation mail and a new booking');
+        // Another browser with the same link: the cancellation, in the same frame, with the way to a new booking.
         $outsider = new AppointmentsHttp('http://localhost', 'menu-used-link');
-        $outsider->request($path);
-        $check($outsider->status === 404, 'The used cancel link is rejected afterwards');
+        $html = $outsider->request($path);
+        $check($outsider->status === 200 && str_contains($html, 'This appointment has already been cancelled.')
+            && !str_contains($html, 'booking.manage') && preg_match($bookingPage, $first($links($html, 'com-appointments-book-again'))) === 1,
+            'The used cancel link reports the cancellation without a form and offers a new booking: '
+            . $first($links($html, 'com-appointments-book-again')));
     }
 
     // The back button of a booking page: hidden on a menu item of one event type, so the list of

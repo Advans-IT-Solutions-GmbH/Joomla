@@ -17,7 +17,9 @@ final class IcsWriter
      * Booking: uid, sequence, state (0/1/2), start_utc, end_utc, optional
      * invitee_name/email, guest_emails (newline separated), conference_url.
      * Event: title, host_email, optional host_name, plain-text description,
-     * location (rendered text) or location_text (stored text), location_type.
+     * location (rendered text) or location_text (stored text), location_type,
+     * optional organizer_email/organizer_name (default: the host) and
+     * host_attendee (the host as attendee without a requested reply).
      * A privacy cancellation may omit all attendees. Caller strips markup from
      * rich event descriptions before handing them to this plain-text writer.
      *
@@ -196,8 +198,18 @@ final class IcsWriter
             'DTEND:' . $end->format('Ymd\THis\Z'),
             'SUMMARY:' . self::escapeText((string) ($event['title'] ?? '')),
             'DESCRIPTION:' . self::escapeText($description),
-            $this->address('ORGANIZER', (string) ($event['host_email'] ?? ''), (string) ($event['host_name'] ?? '')),
+            // The host's own copy names the site as organiser and the host as attendee: a mail client
+            // shows an invitation to its organiser as «you are the organiser» and offers no way to
+            // put it into the calendar (NotificationService, host copy).
+            $this->address('ORGANIZER', (string) ($event['organizer_email'] ?? $event['host_email'] ?? ''),
+                (string) ($event['organizer_name'] ?? $event['host_name'] ?? '')),
         ];
+
+        if (!empty($event['host_attendee'])) {
+            // Response not requested: accepting puts the entry into the calendar without a reply mail.
+            $lines[] = $this->address('ATTENDEE', (string) ($event['host_email'] ?? ''), (string) ($event['host_name'] ?? ''),
+                ';ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE');
+        }
 
         $invitee = (string) ($booking['invitee_email'] ?? '');
 
@@ -208,7 +220,7 @@ final class IcsWriter
         $guests = preg_split('/\r\n|\r|\n/', (string) ($booking['guest_emails'] ?? ''), -1, PREG_SPLIT_NO_EMPTY);
 
         foreach (array_unique($guests) as $guest) {
-            if ($guest !== $invitee) {
+            if ($guest !== $invitee && (empty($event['host_attendee']) || $guest !== ($event['host_email'] ?? ''))) {
                 $lines[] = $this->address('ATTENDEE', $guest, '');
             }
         }
@@ -221,7 +233,8 @@ final class IcsWriter
         ]);
     }
 
-    private function address(string $property, string $email, string $name): string
+    /** $parameters: fixed, trusted parameters of this writer (never input), with their leading «;». */
+    private function address(string $property, string $email, string $name, string $parameters = ''): string
     {
         // URI values are not TEXT. Never allow delimiters to introduce parameters
         // or additional recipients; quoted display names use RFC 6868 encoding.
@@ -232,7 +245,7 @@ final class IcsWriter
         self::validateText($name);
         $name = str_replace(["\r\n", "\r"], "\n", $name);
         $name = str_replace(['^', '"', "\n"], ['^^', "^'", '^n'], $name);
-        $parameter = $name === '' ? '' : ';CN="' . $name . '"';
+        $parameter = $parameters . ($name === '' ? '' : ';CN="' . $name . '"');
 
         return $property . $parameter . ':mailto:' . $email;
     }

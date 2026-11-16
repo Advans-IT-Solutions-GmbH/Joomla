@@ -120,9 +120,9 @@ try {
     $check(count($messages) === 3, 'Reschedule sends actual mail to invitee, guest and host');
     foreach ($messages as $mime) {
         $decoded = AppointmentsMail::decoded($mime);
-        $check(str_contains($mime, 'Content-Type: text/calendar;') && str_contains($mime, 'Content-Type: application/ics')
+        $check(AppointmentsMail::isInvitation($mime, 'REQUEST')
             && str_contains($decoded, 'UID:' . $booking['uid']) && str_contains($decoded, "SEQUENCE:1\r\n")
-            && str_contains($decoded, "METHOD:REQUEST\r\n"), 'Every reschedule recipient receives both MIME calendar parts with the updated original UID');
+            && str_contains($decoded, "METHOD:REQUEST\r\n"), 'Every reschedule recipient receives one invitation with the updated original UID');
     }
     $outsider = new AppointmentsHttp('http://localhost', 'lifecycle-used-link');
     $outsider->request($reschedule);
@@ -250,9 +250,49 @@ try {
     $check(str_contains($html, 'Your appointment has been cancelled') && (int) $cancelled['state'] === 2
         && (int) $cancelled['sequence'] === 2 && $cancelled['uid'] === $booking['uid'] && $cancelled['cancel_reason'] === 'Fixture reason',
         'Signed cancellation stores the optional reason and updates the stable calendar entry');
+    // Live finding 16.11.2026: the receipt names the cancelled appointment in the invitee's zone. It
+    // promises the confirmation mail only when the mails went out (here the host mail failed).
+    $zurich = new DateTimeZone('Europe/Zurich');
+    $cancelledStart = (new DateTimeImmutable($cancelled['start_utc'], new DateTimeZone('UTC')))->setTimezone($zurich);
+    $cancelledEnd = (new DateTimeImmutable($cancelled['end_utc'], new DateTimeZone('UTC')))->setTimezone($zurich);
+    $cancelledWhen = static fn (string $html): bool => str_contains($html, $cancelledStart->format('l, j F Y'))
+        && str_contains($html, $cancelledStart->format('H:i') . ' – ' . $cancelledEnd->format('H:i'))
+        && str_contains($html, '<dd>Europe/Zurich</dd>');
+    $check($cancelledWhen($html) && preg_match('#<h1[^>]*>\s*Appointment cancelled\s*</h1>#', $html) === 1
+        && !str_contains($html, 'You will receive a confirmation by email.'),
+        'The cancellation receipt names the appointment with date, time and zone, without promising a mail that failed');
     $check(str_contains($client->request($freshCancel), 'Your appointment has been cancelled'), 'Repeated same-browser completion is an idempotent receipt');
-    $outsider->request($freshCancel);
-    $check($outsider->status === 404, 'Used cancellation signature is rejected in another browser');
+    // Another browser with the same link: the appointment is cancelled, with its date and time,
+    // and no form. The reschedule link of the same version says the same.
+    $html = $outsider->request($freshCancel);
+    $check($outsider->status === 200 && str_contains($html, 'This appointment has already been cancelled.') && $cancelledWhen($html)
+        && !str_contains($html, 'booking.manage') && !str_contains($html, 'manage-confirm'),
+        'The used cancellation link reports the cancelled appointment in another browser, without a form');
+    $html = $outsider->request($fixture->link($moved, 'reschedule'));
+    $check($outsider->status === 200 && str_contains($html, 'This appointment has already been cancelled.')
+        && !str_contains($html, 'new-start') && !str_contains($html, 'booking.manage'),
+        'The reschedule link of the cancelled version reports the cancellation instead of offering times');
+    // A form still open in another tab changes nothing and lands on the same notice.
+    parse_str((string) parse_url($freshCancel, PHP_URL_QUERY), $staleQuery);
+    $staleForm = $outsider->request($freshCancel);
+    $html = $outsider->request('/index.php?option=com_appointments&task=booking.manage', array_replace($staleQuery, [
+        $outsider->token($staleForm) => 1, 'confirm' => 1,
+    ]));
+    $check($outsider->status === 200 && str_contains($html, 'This appointment has already been cancelled.')
+        && (int) $fixture->row((int) $booking['id'])['sequence'] === 2,
+        'Submitting a cancellation for a cancelled appointment changes nothing and shows the notice');
+    // Older links, the erase link of the cancelled version and tampered or unknown links stay one
+    // indistinguishable refusal: 404, a message for the person and nothing technical.
+    $erasePrevious = $fixture->link($moved, 'erase');
+    $tampered = preg_replace('/signature=[0-9a-f]{4}/', 'signature=0000', $freshCancel);
+    $unknown = $fixture->link(['id' => 2147483000, 'modified_utc' => $moved['modified_utc']], 'cancel');
+    foreach (['an older cancel link' => $cancel, 'the erase link of the cancelled version' => $erasePrevious,
+        'a tampered link' => $tampered, 'an unknown appointment' => $unknown] as $label => $link) {
+        $html = $outsider->request($link);
+        $check($outsider->status === 404 && str_contains($html, 'This link is not valid.')
+            && !str_contains($html, 'already been cancelled') && !str_contains($html, '/var/www') && stripos($html, 'stack trace') === false,
+            'The refusal of ' . $label . ' is a friendly 404 without technical details');
+    }
     $replacement = $fixture->booking($event, $day . ' 11:00:00')['booking'];
     $check((int) $replacement['id'] !== (int) $booking['id'], 'Cancellation releases the exact slot');
     // Both an older override and a copy of the current result layout keep queued notices.

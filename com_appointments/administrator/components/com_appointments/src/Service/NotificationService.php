@@ -9,8 +9,10 @@
 namespace Advans\Component\Appointments\Administrator\Service;
 
 use Advans\Component\Appointments\Administrator\Helper\BookingData;
+use Advans\Component\Appointments\Administrator\Helper\BookingDetails;
 use Advans\Component\Appointments\Administrator\Helper\CalendarNotice;
 use Advans\Component\Appointments\Administrator\Helper\DefaultTemplates;
+use Advans\Component\Appointments\Administrator\Helper\EventLocation;
 use Advans\Component\Appointments\Administrator\Helper\IcsWriter;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\MailComposer;
@@ -43,6 +45,9 @@ final class NotificationService
 
     /** Address of «My calendars» per language and set of view levels (myCalendarsLink()). */
     private array $myCalendarsLinks = [];
+
+    /** Custom fields per event type (fields()). */
+    private array $fieldCache = [];
 
     /**
      * @param   TeamServices|null  $team  The internet calendars; null reads them from the application when needed.
@@ -162,9 +167,12 @@ final class NotificationService
                     // «Label:» before a link on its own line, «Label :» in French.
                     $labelFormat = $language->_('COM_APPOINTMENTS_MAIL_LINK_LABEL');
                     $labelFormat = str_contains($labelFormat, '%s') ? $labelFormat : '%s:';
-                    $timezone = $isHost ? (string) (!empty($hostParams['timezone']) ? $hostParams['timezone'] : $app->get('offset', 'UTC'))
-                        : (string) $booking['invitee_timezone'];
-                    $presentation = (new MailPresentation())->placeholders($booking, $tag, $timezone);
+                    // The host reads the time in the host's zone, the invitee and the guests in the invitee's
+                    // zone with the host's time added when it differs. The host mail names the invitee's
+                    // time on a line of its own ({invitee_time}).
+                    $hostZone = (string) (!empty($hostParams['timezone']) ? $hostParams['timezone'] : $app->get('offset', 'UTC'));
+                    $timezone = $isHost ? $hostZone : (string) $booking['invitee_timezone'];
+                    $presentation = (new MailPresentation())->placeholders($booking, $tag, $timezone, $isHost ? '' : $hostZone);
                     $stateKey = match ((int) $booking['state']) {
                         0 => 'COM_APPOINTMENTS_MAIL_STATE_PENDING',
                         1 => 'COM_APPOINTMENTS_MAIL_STATE_CONFIRMED',
@@ -179,7 +187,49 @@ final class NotificationService
                     if ($isHost && !empty($booking['conference_url'])) {
                         $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
                     }
-                    $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $event, $links, $now);
+                    // A telephone appointment without its own location text names its type in the
+                    // invitation and in {location}, in the recipient's language (EventLocation).
+                    $translate = static fn (string $key): string => $language->_($key);
+                    $recipientEvent = $event;
+                    $recipientEvent['location'] = EventLocation::text((string) $event['location_type'], (string) ($event['location_text'] ?? ''),
+                        $canManage ? EventLocation::INVITEE_MAIL : EventLocation::NEUTRAL, $translate);
+                    // What the invitee entered: the answers for the invitee and the host, never for a guest,
+                    // and nothing of an erased booking.
+                    $erased = !empty($booking['anonymised_utc']);
+                    $answers = $isGuest || $erased ? ''
+                        : BookingDetails::answers($this->fields((int) $booking['eventtype_id']), $booking['custom_fields'] ?? null, $translate, $labelFormat);
+                    $inviteeTime = $erased ? '' : (new MailPresentation())->inviteeTime($booking, $tag, $hostZone);
+
+                    if ($isHost) {
+                        // The host's copy: the site as organiser and the host as attendee, so a mail client
+                        // offers to put it into the calendar (IcsWriter), and everything the invitee entered
+                        // in its description, so the calendar entry is complete on its own.
+                        $recipientEvent['organizer_email'] = (string) $app->get('mailfrom');
+                        $recipientEvent['organizer_name'] = (string) $app->get('fromname');
+                        $recipientEvent['host_attendee'] = true;
+
+                        if (!$erased) {
+                            // Name and address always, telephone, guests and the invitee's time when there are any.
+                            $rows = [
+                                $language->_('COM_APPOINTMENTS_MAIL_DETAIL_NAME') => (string) ($booking['invitee_name'] ?? ''),
+                                $language->_('COM_APPOINTMENTS_MAIL_DETAIL_EMAIL') => (string) ($booking['invitee_email'] ?? ''),
+                            ];
+                            foreach ([
+                                'COM_APPOINTMENTS_MAIL_DETAIL_PHONE' => (string) ($booking['invitee_phone'] ?? ''),
+                                'COM_APPOINTMENTS_MAIL_DETAIL_GUESTS' => implode(', ', PrivacyAddress::guestList($booking['guest_emails'] ?? null)),
+                                'COM_APPOINTMENTS_MAIL_DETAIL_INVITEE_TIME' => $inviteeTime,
+                            ] as $key => $value) {
+                                if ($value !== '') {
+                                    $rows[$language->_($key)] = $value;
+                                }
+                            }
+                            $details = BookingDetails::host($rows, $answers, $translate, $labelFormat);
+                            $recipientEvent['description'] = trim(BookingDetails::clean((string) ($event['description'] ?? '')) . "\n\n" . $details);
+                        }
+                    }
+
+                    $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $recipientEvent, $links, $now,
+                        ['{field_answers}' => $answers, '{invitee_time}' => $inviteeTime]);
                     // Each URL on a line of its own: a signed URL is long and has no break opportunity. The HTML
                     // part shows the label as link text instead (MailHtml), the text part keeps the full URL.
                     if (!empty($recipientBooking['conference_url']) && !str_contains($message['body'], $recipientBooking['conference_url'])) {
@@ -213,20 +263,10 @@ final class NotificationService
                             $known[(string) $links[$field]] = $language->_($key);
                         }
                     }
-                    $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'), null, $mailer, $known, $this->publicBase());
-
-                    if ($html !== null) {
-                        $mailer->isHtml(true);
-                        $mailer->setBody($html);
-                        $mailer->AltBody = $message['body'];
-                    } else {
-                        $mailer->setBody($message['body']);
-                        $mailer->isHtml(false);
-                    }
-
-                    foreach ($message['attachments'] as $attachment) {
-                        $mailer->addStringAttachment($attachment['content'], $attachment['filename'], 'base64', $attachment['content_type']);
-                    }
+                    // No mailer for the layout: its logo would be an inline part (multipart/related), and
+                    // PHPMailer then leaves out the invitation. See invitation().
+                    $html = MailHtml::render($message['body'], $tag, (string) $app->get('sitename'), null, null, $known, $this->publicBase());
+                    self::invitation($mailer, $message['body'], $html ?? MailHtml::textToHtml($message['body'], $known), $message['calendar']);
 
                     if (!$mailer->send()) {
                         throw new NotificationException('Mail delivery was rejected.');
@@ -542,6 +582,45 @@ final class NotificationService
         $strings->load('com_appointments', JPATH_ADMINISTRATOR . '/components/com_appointments', $language, true);
 
         return ['subject' => $strings->_($subject), 'body' => str_replace('\n', "\n", $strings->_($body))];
+    }
+
+    /**
+     * Text, HTML and the invitation of a mail as one multipart/alternative: text/plain, text/html
+     * and text/calendar with the method of the calendar (REQUEST or CANCEL). That alternative is
+     * the part Outlook, Gmail and Apple Mail present as an invitation with «Accept» or «Add to
+     * calendar»; an .ics attachment is only a file to open. One calendar part, no copy as an
+     * attachment, so no client shows the entry twice.
+     *
+     * PHPMailer writes $Ical only into a message of type «alt» (or «alt_attach»): the mail always
+     * has an HTML part (on a site with plain-text mails the same text as escaped paragraphs) and no
+     * inline part, which is why the layout's logo is not embedded in these mails.
+     */
+    public static function invitation(object $mailer, string $text, string $html, string $calendar): void
+    {
+        $mailer->isHtml(true);
+        $mailer->setBody($html);
+        $mailer->AltBody = $text;
+        $mailer->Ical = $calendar;
+    }
+
+    /**
+     * The custom fields of an event type in the order of the booking form, for the answers in a
+     * mail (BookingDetails). Unpublished fields too: an answer given before stays labelled.
+     *
+     * @return list<array{id: int, label: string, type: string}>
+     */
+    private function fields(int $eventId): array
+    {
+        if (!isset($this->fieldCache[$eventId])) {
+            $db = $this->db;
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select($db->quoteName(['id', 'label', 'type']))->from($db->quoteName('#__appointments_fields'))
+                ->where($db->quoteName('eventtype_id') . ' = ' . $eventId)
+                ->order([$db->quoteName('ordering'), $db->quoteName('id')]);
+            $this->fieldCache[$eventId] = $db->setQuery($query)->loadAssocList() ?: [];
+        }
+
+        return $this->fieldCache[$eventId];
     }
 
     /**

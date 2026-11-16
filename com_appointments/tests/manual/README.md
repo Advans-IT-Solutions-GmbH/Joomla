@@ -385,8 +385,10 @@ Trigger every event below. Inspect content and **raw message source** for each r
 For **every message actually sent**, check:
 
 - Expected recipients, no unrelated addresses.
-- `text/calendar` with the appropriate `method`.
-- The additional intended `application/ics` attachment.
+- Exactly one `text/calendar` part with the appropriate `method`, inside `multipart/alternative`,
+  and no `.ics` attachment. Outlook (also POP3/IMAP), Gmail and Apple Mail show it as an invitation.
+- The host's copy: the site sender as organiser, the host as attendee, accepting adds the entry
+  without a reply, and the description lists every answer.
 - Correct start/end, duration, location, UID, sequence and status.
 - No feed credentials.
 - No internal diagnostics or conference secrets.

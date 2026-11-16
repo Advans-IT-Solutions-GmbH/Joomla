@@ -147,6 +147,33 @@ final class IcsWriterTest extends TestCase
         self::assertStringContainsString('LOCATION:Stored address', $unfolded);
     }
 
+    /**
+     * The host's copy: the site organises, the host attends without a requested reply. As organiser
+     * of their own invitation the host got «no response needed» and no way to add the entry.
+     */
+    public function testHostCopyNamesTheSiteAsOrganiserAndTheHostAsAttendee(): void
+    {
+        $writer = new IcsWriter();
+        $event = $this->event(['organizer_email' => 'bookings@example.test', 'organizer_name' => 'Example "Site"', 'host_attendee' => true]);
+        $booking = $this->booking(['guest_emails' => "guest@example.test\nhost@example.test"]);
+        $ics = $this->unfold($writer->attachment($booking, $event, $this->now()));
+
+        self::assertStringContainsString("\r\nORGANIZER;CN=\"Example ^'Site^'\":mailto:bookings@example.test\r\n", $ics);
+        self::assertStringContainsString("\r\nATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE;CN=\"Host\":mailto:host@example.test\r\n", $ics);
+        self::assertSame(1, substr_count($ics, 'mailto:host@example.test'), 'The host is listed once, also when also named as a guest');
+        self::assertStringContainsString("\r\nATTENDEE;CN=\"Invitee\":mailto:invitee@example.test\r\n", $ics);
+
+        // The cancellation of the copy keeps organiser, UID and a higher sequence, so the entry goes.
+        $cancel = $this->unfold($writer->attachment(array_replace($booking, ['state' => 2, 'sequence' => 1]), $event, $this->now()));
+        self::assertStringContainsString("METHOD:CANCEL\r\n", $cancel);
+        self::assertStringContainsString("UID:stable-uid\r\n", $cancel);
+        self::assertStringContainsString("SEQUENCE:1\r\n", $cancel);
+        self::assertStringContainsString('ORGANIZER;CN="Example ^\'Site^\'":mailto:bookings@example.test', $cancel);
+
+        // The invitee's copy is unchanged: the host organises.
+        self::assertStringContainsString("\r\nORGANIZER;CN=\"Host\":mailto:host@example.test\r\n", $this->unfold($writer->attachment($booking, $this->event(), $this->now())));
+    }
+
     public function testRawContentLineInjectionIsRefused(): void
     {
         $this->expectException(\InvalidArgumentException::class);

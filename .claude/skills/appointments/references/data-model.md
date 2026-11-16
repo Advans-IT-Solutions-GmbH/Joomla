@@ -152,6 +152,7 @@ Index `(user_id, start_utc, end_utc)`.
 | `conference_state` | `VARCHAR(16) NULL` | null = no conference, `ok`, `failed` |
 | `conference_error` | `VARCHAR(255) NULL` | the short diagnostic shown next to the retry action; never a credential, a token or a URL |
 | `cancel_reason` | `TEXT NULL` | |
+| `cancelled_version_utc` | `DATETIME NULL` | the `modified_utc` a cancellation replaced; reschedule and cancel links of that version report the cancellation instead of a 404. Added by `script.php` on update |
 | `reminder_sent_utc` | `JSON NULL` | which offsets already went out |
 | `anonymised_utc` | `DATETIME NULL` | set when the personal fields are erased |
 | `created_utc`, `modified_utc` | `DATETIME NOT NULL` | |
