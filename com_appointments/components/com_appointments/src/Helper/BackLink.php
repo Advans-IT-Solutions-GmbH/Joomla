@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Site\Helper;
 
+use Advans\Component\Appointments\Administrator\Helper\ManageMenuItem;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Router\Route;
 use Joomla\Database\DatabaseInterface;
@@ -124,6 +125,40 @@ final class BackLink
     }
 
     /**
+     * The booking page of event type $eventtypeId, HTML-escaped by Route, or '' when the visitor
+     * cannot book it: through its own «Book an appointment» menu item, else below an «Event types»
+     * list item (ManageMenuItem::pick(), the visitor's language first, then «All»). The «Book a new
+     * appointment» button after a cancellation; it never leads to a page that answers 404.
+     */
+    public static function booking(int $eventtypeId): string
+    {
+        $app = Factory::getApplication();
+        $menu = $app->getMenu();
+        $rows = [];
+        $items = [];
+
+        // getItems() of the site menu only returns items of the visitor's access levels and language.
+        foreach ($menu->getItems('component', 'com_appointments') as $item) {
+            if (($item->type ?? '') === 'component') {
+                $rows[] = ['id' => (int) $item->id, 'link' => (string) $item->link, 'language' => (string) $item->language];
+                $items[(int) $item->id] = $item;
+            }
+        }
+
+        $itemId = ManageMenuItem::pick($rows, $eventtypeId, $app->getLanguage()->getTag());
+
+        if ($itemId < 1 || !self::bookable($eventtypeId)) {
+            return '';
+        }
+
+        $query = is_array($items[$itemId]->query ?? null) ? $items[$itemId]->query : [];
+
+        return ($query['view'] ?? '') === 'eventtype'
+            ? Route::_('index.php?Itemid=' . $itemId)
+            : Route::_('index.php?option=com_appointments&view=eventtype&id=' . $eventtypeId . '&Itemid=' . $itemId);
+    }
+
+    /**
      * Whether the visitor can open the page of $item. A booking page of this component answers 404
      * once its event type or schedule is unpublished, or for another access level or language,
      * although its menu item is still published (EventtypeModel::getItem); the signed pages of an
@@ -137,9 +172,14 @@ final class BackLink
             return true;
         }
 
+        return self::bookable((int) ($query['id'] ?? 0));
+    }
+
+    /** Whether the visitor can open the booking page of event type $id (published, access, language). */
+    private static function bookable(int $id): bool
+    {
         $app = Factory::getApplication();
         $levels = array_values(array_unique(array_map('intval', $app->getIdentity()->getAuthorisedViewLevels())));
-        $id = (int) ($query['id'] ?? 0);
 
         if ($id < 1 || $levels === []) {
             return false;

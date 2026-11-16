@@ -214,8 +214,14 @@ final class FeedService
         return (int) $db->setQuery($query)->loadResult();
     }
 
-    /** Caller authorises the booking's event before fetching its personal fields. */
-    public function export(int $id): array
+    /**
+     * Caller authorises the booking's event before fetching its personal fields.
+     *
+     * @param   callable(string, string): string|null  $location  The LOCATION text from location type and stored
+     *                                                           text, for a reader-specific wording (EventLocation);
+     *                                                           null keeps the stored text.
+     */
+    public function export(int $id, ?callable $location = null): array
     {
         $db = $this->db;
         $query = $this->bookingQuery()->where($db->quoteName('b.id') . ' = ' . $id);
@@ -229,6 +235,9 @@ final class FeedService
             throw new \DomainException('COM_APPOINTMENTS_FEEDS_ERROR_NOT_FOUND', 404);
         }
         $event['description'] = $this->plainDescription((string) $event['description']);
+        if ($location !== null) {
+            $event['location'] = $location((string) $event['location_type'], (string) $event['location_text']);
+        }
         $writer = new IcsWriter();
         $stamp = \Advans\Component\Appointments\Administrator\Helper\UtcTimestamp::parse($row['modified_utc']);
         if ($stamp === null) {

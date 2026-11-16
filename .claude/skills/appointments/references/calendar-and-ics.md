@@ -194,11 +194,18 @@ Required properties: `DTSTAMP`, `DTSTART`, `DTEND`, `SUMMARY`, `DESCRIPTION`, `O
 `ATTENDEE` for the invitee and each guest, `LOCATION`, `SEQUENCE`, `STATUS`, `UID`. `DTSTART` and
 `DTEND` are written in UTC with the `Z` suffix, which removes any need to ship a `VTIMEZONE`.
 
-The attachment is sent as `text/calendar; charset=UTF-8; method=REQUEST` with the file name
-`invite.ics`, **and** as a second attachment part of type `application/ics` where the mail client
-needs it. Joomla's `Mail` class takes both. Attach it to **every** e-mail to the invitee and the
-guests, without exception, and to the host's mail while the event type has no target calendar in
-use. With a target calendar in use (internet calendars on, calendar active), the host (while it
+The invitation is sent once, as the `text/calendar; method=REQUEST` (or `CANCEL`) part of a
+`multipart/alternative` next to text and HTML (PHPMailer's `$Ical`, `NotificationService::invitation()`),
+which is what Outlook, Gmail and Apple Mail present as an invitation. No `.ics` attachment beside it
+(maintainer's decision of 16.11.2026: Outlook showed two `invite.ics` attachments and no invitation).
+PHPMailer writes `$Ical` only into a message of type `alt`/`alt_attach`: these mails always have an
+HTML alternative and never an inline part (no embedded layout logo). The host's copy has the site
+sender as `ORGANIZER` and the host as `ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE`
+(an organiser cannot add their own invitation in Outlook), and its `DESCRIPTION` lists every detail
+and answer (`BookingDetails`). `DTSTART`/`DTEND` stay in UTC: no recurrence, so `TZID` plus
+`VTIMEZONE` would add a source of error without a benefit. Send it with **every** e-mail to the
+invitee and the guests, without exception, and with the host's mail while the event type has no
+target calendar in use. With a target calendar in use (internet calendars on, calendar active), the host (while it
 holds effective write access, else it keeps the mail with ICS) and every other user of that calendar get their mail **without** an
 attachment: the entry arrives through the synchronisation, and an accepted invitation would show it
 twice (maintainer's decision, `team-calendars.md`, section 12).

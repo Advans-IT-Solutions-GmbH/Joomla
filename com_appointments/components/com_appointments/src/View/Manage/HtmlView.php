@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Site\View\Manage;
 
+use Advans\Component\Appointments\Site\Helper\BackLink;
 use Advans\Component\Appointments\Site\Helper\NoPageCache;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Site\View\AssetsTrait;
@@ -39,6 +40,12 @@ class HtmlView extends BaseHtmlView
     protected array $manageLinks = [];
     /** Itemid of the page frame, kept by the GET form of the reschedule page; 0 for none. */
     protected int $itemId = 0;
+    /** What the receipt shows of the changed appointment (ManageModel::receipt()); empty for none. */
+    protected array $receipt = [];
+    /** Whether the link only reports that the appointment is cancelled (ManageModel::cancelled()), without a form. */
+    protected bool $cancelled = false;
+    /** Booking page of the event type after a cancellation (BackLink::booking()), '' for none. */
+    protected string $bookAgain = '';
 
     public function display($tpl = null)
     {
@@ -50,9 +57,16 @@ class HtmlView extends BaseHtmlView
         NoPageCache::apply($app);
         $model = $this->getModel();
         $this->action = $model->action();
-        $this->applyPageTitle('manage', Text::_(['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL', 'erase' => 'COM_APPOINTMENTS_MANAGE_ERASE'][$this->action]));
         $this->signature = $model->signature();
         $this->completed = $model->completed();
+        // The item first: an invalid link ends here with the refusal (404), before anything else.
+        $this->item = $model->getItem();
+        $this->cancelled = !$this->completed && $model->cancelled($this->item);
+        // A page that reports a cancellation (its receipt, or a link of a cancelled appointment)
+        // says so in its heading; every other page names the action of its link.
+        $this->applyPageTitle('manage', Text::_($this->cancelled || ($this->completed && $this->action === 'cancel')
+            ? 'COM_APPOINTMENTS_BOOKING_CANCELLED_TITLE'
+            : ['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL', 'erase' => 'COM_APPOINTMENTS_MANAGE_ERASE'][$this->action]));
         $focusKey = 'com_appointments.manage_focus_message.' . $app->getInput()->getInt('id') . '.' . $this->action;
         $focusMessage = !$this->completed && (bool) $app->getUserState($focusKey, false);
         $app->setUserState($focusKey, null);
@@ -66,25 +80,28 @@ class HtmlView extends BaseHtmlView
         if ($this->completed) {
             $this->takeResultNotices();
             $this->manageLinks = $model->receiptLinks();
+            $this->receipt = $model->receipt();
         }
+
+        // After a cancellation the way on is a new booking of the same event type.
+        $eventtypeId = $this->cancelled ? (int) $this->item->eventtype_id
+            : ($this->completed && $this->action === 'cancel' ? (int) ($this->receipt['eventtype_id'] ?? 0) : 0);
+        $this->bookAgain = $eventtypeId > 0 ? BackLink::booking($eventtypeId) : '';
 
         $active = $app->getMenu()->getActive();
         $this->itemId = $active !== null && ($active->query['option'] ?? '') === 'com_appointments' ? (int) $active->id : 0;
-        $this->item = $model->getItem();
         $this->deleteMode = $model->deleteMode();
         $this->reason = (string) $app->getUserState('com_appointments.cancel_reason', '');
         // Field messages of the last refused submission of this action. They stay until the
         // next submission, so a reload keeps them at their fields.
         $this->errors = array_filter((array) $app->getUserState('com_appointments.manage_errors.' . $app->getInput()->getInt('id') . '.' . $this->action, []), 'is_string');
 
-        if (!$this->completed) {
-            // Times are shown in the invitee's zone, like on the booking page. On the
-            // reschedule page the zone the visitor selects applies to all times.
-            $invitee = (string) $this->item->invitee_timezone;
-            $this->zone = new \DateTimeZone(in_array($invitee, \DateTimeZone::listIdentifiers(), true) ? $invitee : 'UTC');
-        }
+        // Times are shown in the invitee's zone, like on the booking page; a receipt in the zone the
+        // change was made in. On the reschedule page the zone the visitor selects applies to all times.
+        $invitee = $this->completed ? (string) ($this->receipt['timezone'] ?? '') : (string) $this->item->invitee_timezone;
+        $this->zone = new \DateTimeZone(in_array($invitee, \DateTimeZone::listIdentifiers(), true) ? $invitee : 'UTC');
 
-        if (!$this->completed && $this->action === 'reschedule') {
+        if (!$this->completed && !$this->cancelled && $this->action === 'reschedule') {
             $zone = $app->getInput()->getString('timezone', $this->zone->getName());
             if (!in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
                 throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_ZONE'), 400);

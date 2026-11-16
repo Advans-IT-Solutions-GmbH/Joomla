@@ -32,6 +32,28 @@ $aria = static function (string $key) use ($errors, $firstError): string {
 $error = fn (string $key): string => isset($errors[$key])
     ? '<div id="manage-' . $key . '-error" class="invalid-feedback com-appointments-field-error">' . $this->escape(Text::_($errors[$key])) . '</div>'
     : '';
+// Title, date, time and zone of the appointment, on the receipt of a change and on the notice of a
+// cancelled appointment; the form pages add the email address.
+$summary = function (string $title, string $startUtc, string $endUtc, string $email = '') use ($dates, $dayFormat, $timeFormat, $withOffset): string {
+    $start = UtcTimestamp::parse($startUtc);
+    $end = UtcTimestamp::parse($endUtc);
+
+    if ($start === null || $end === null) {
+        return '';
+    }
+
+    $start = $start->setTimezone($this->zone);
+    $end = $end->setTimezone($this->zone);
+
+    return '<h2 class="com-appointments-title">' . $this->escape($title) . '</h2>'
+        . '<dl class="com-appointments-summary">'
+        . '<dt>' . Text::_('COM_APPOINTMENTS_SUMMARY_DATE') . '</dt><dd>' . $this->escape($dates->format($start, $dayFormat)) . '</dd>'
+        . '<dt>' . Text::_('COM_APPOINTMENTS_SUMMARY_TIME') . '</dt><dd>' . $this->escape($dates->range($start, $end, $timeFormat, $dayFormat,
+            $withOffset, Text::_('COM_APPOINTMENTS_SUMMARY_TIME_RANGE'), Text::_('COM_APPOINTMENTS_DATE_TIME'))) . '</dd>'
+        . '<dt>' . Text::_('COM_APPOINTMENTS_SUMMARY_ZONE') . '</dt><dd>' . $this->escape($this->zone->getName()) . '</dd>'
+        . ($email !== '' ? '<dt>' . Text::_('COM_APPOINTMENTS_SUMMARY_EMAIL') . '</dt><dd>' . $this->escape($email) . '</dd>' : '')
+        . '</dl>';
+};
 ?>
 <?php
 /*
@@ -54,6 +76,11 @@ $error = fn (string $key): string => isset($errors[$key])
                     <?php endforeach; ?>
                 </div>
             <?php endif; ?>
+            <?php // The appointment as changed: cancelled, or at its new time. ?>
+            <?php echo $summary((string) ($this->receipt['title'] ?? ''), (string) ($this->receipt['start_utc'] ?? ''), (string) ($this->receipt['end_utc'] ?? '')); ?>
+            <?php if (!empty($this->receipt['mailed'])) : ?>
+                <p class="com-appointments-mail-note"><?php echo Text::_('COM_APPOINTMENTS_MANAGE_MAIL_FOLLOWS'); ?></p>
+            <?php endif; ?>
             <?php if ($this->manageLinks !== []) : ?>
                 <?php // After a reschedule the earlier links no longer apply: the new ones, as on the confirmation of a booking. ?>
                 <div class="com-appointments-actions com-appointments-confirmation-actions">
@@ -66,22 +93,12 @@ $error = fn (string $key): string => isset($errors[$key])
                 </div>
                 <p class="form-text com-appointments-confirmation-note"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_CONFIRMATION_NOTE'); ?></p>
             <?php endif; ?>
+        <?php elseif ($this->cancelled) : ?>
+            <?php // A link of a cancelled appointment: what was cancelled, no form. ?>
+            <p class="com-appointments-status" role="status" tabindex="-1" autofocus><?php echo Text::_('COM_APPOINTMENTS_MANAGE_ALREADY_CANCELLED'); ?></p>
+            <?php echo $summary((string) $this->item->title, (string) $this->item->start_utc, (string) $this->item->end_utc); ?>
         <?php else : ?>
-            <?php
-            $start = UtcTimestamp::parse($this->item->start_utc)->setTimezone($this->zone);
-            $end = UtcTimestamp::parse($this->item->end_utc)->setTimezone($this->zone);
-            ?>
-            <h2 class="com-appointments-title"><?php echo $this->escape($this->item->title); ?></h2>
-            <dl class="com-appointments-summary">
-                <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_DATE'); ?></dt>
-                <dd><?php echo $this->escape($dates->format($start, $dayFormat)); ?></dd>
-                <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_TIME'); ?></dt>
-                <dd><?php echo $this->escape($dates->range($start, $end, $timeFormat, $dayFormat, $withOffset, Text::_('COM_APPOINTMENTS_SUMMARY_TIME_RANGE'), Text::_('COM_APPOINTMENTS_DATE_TIME'))); ?></dd>
-                <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_ZONE'); ?></dt>
-                <dd><?php echo $this->escape($this->zone->getName()); ?></dd>
-                <dt><?php echo Text::_('COM_APPOINTMENTS_SUMMARY_EMAIL'); ?></dt>
-                <dd><?php echo $this->escape((string) $this->item->invitee_email); ?></dd>
-            </dl>
+            <?php echo $summary((string) $this->item->title, (string) $this->item->start_utc, (string) $this->item->end_utc, (string) $this->item->invitee_email); ?>
             <?php if ($this->action === 'erase') : ?>
                 <div class="com-appointments-notice">
                     <p><?php echo Text::_('COM_APPOINTMENTS_MANAGE_ERASURE_DATA'); ?></p>
@@ -157,6 +174,11 @@ $error = fn (string $key): string => isset($errors[$key])
                 <p class="com-appointments-empty"><?php echo Text::_('COM_APPOINTMENTS_BOOKING_NO_SLOTS'); ?></p>
             <?php endif; ?>
         <?php endif; ?>
-        <p><a class="btn btn-secondary com-appointments-return" href="<?php echo BackLink::resolve(false); ?>"><?php echo Text::_($this->completed ? 'COM_APPOINTMENTS_BACK_TO_OVERVIEW' : 'JCANCEL'); ?></a></p>
+        <?php if ($this->bookAgain !== '') : ?>
+            <?php // After a cancellation: a new booking of the same event type, in place of the way back to that page. ?>
+            <p><a class="btn btn-primary com-appointments-book-again" href="<?php echo $this->bookAgain; ?>"><?php echo Text::_('COM_APPOINTMENTS_MANAGE_BOOK_AGAIN'); ?></a></p>
+        <?php else : ?>
+            <p><a class="btn btn-secondary com-appointments-return" href="<?php echo BackLink::resolve(false); ?>"><?php echo Text::_($this->completed || $this->cancelled ? 'COM_APPOINTMENTS_BACK_TO_OVERVIEW' : 'JCANCEL'); ?></a></p>
+        <?php endif; ?>
     </div>
 </div>

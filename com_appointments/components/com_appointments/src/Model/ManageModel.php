@@ -21,6 +21,7 @@ use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
+use Joomla\CMS\Uri\Uri;
 
 defined('_JEXEC') or die;
 
@@ -30,7 +31,7 @@ class ManageModel extends BaseDatabaseModel
     {
         $action = Factory::getApplication()->getInput()->getCmd('action');
         if (!in_array($action, ['reschedule', 'cancel', 'erase'], true)) {
-            throw new InvalidBookingLinkException();
+            throw $this->invalid();
         }
 
         return $action;
@@ -62,12 +63,61 @@ class ManageModel extends BaseDatabaseModel
         // Personal fields are encrypted at rest; one that cannot be decrypted is shown empty.
         $booking = $booking ? \Advans\Component\Appointments\Administrator\Helper\BookingData::fromApplication()->openObject($booking) : null;
 
-        if (!$booking || !$this->links()->verify($id, $this->action(), $booking->modified_utc, $this->signature())
-            || $booking->anonymised_utc !== null) {
-            throw new InvalidBookingLinkException();
+        if (!$booking || $booking->anonymised_utc !== null) {
+            throw $this->invalid();
         }
 
-        return $booking;
+        if ($this->links()->verify($id, $this->action(), $booking->modified_utc, $this->signature())) {
+            return $booking;
+        }
+
+        // The cancellation made every earlier link stale. A reschedule or cancel link of the
+        // version that was cancelled still identifies its holder, who already saw the appointment:
+        // it opens the notice that the appointment is cancelled (cancelled()), never a form. An
+        // older link, a tampered one and an unknown id stay one indistinguishable refusal.
+        $cancelledVersion = (string) ($booking->cancelled_version_utc ?? '');
+
+        if ($this->action() !== 'erase' && (int) $booking->state === 2 && $cancelledVersion !== ''
+            && $this->links()->verify($id, $this->action(), $cancelledVersion, $this->signature())) {
+            return $booking;
+        }
+
+        throw $this->invalid();
+    }
+
+    /**
+     * Whether the page of $booking only reports that the appointment is cancelled: a reschedule or
+     * cancel link of a cancelled appointment. Its erase link keeps working.
+     */
+    public function cancelled(object $booking): bool
+    {
+        return (int) $booking->state === 2 && $this->action() !== 'erase';
+    }
+
+    /**
+     * What the receipt of this browser session shows of the completed change: title, start and
+     * end in UTC, the zone they are shown in, the event type and whether the mails went out.
+     * Empty for an erasure, which keeps nothing of the appointment.
+     *
+     * @return array{title?: string, start_utc?: string, end_utc?: string, timezone?: string, eventtype_id?: int, mailed?: bool}
+     */
+    public function receipt(): array
+    {
+        $receipt = Factory::getApplication()->getUserState($this->receiptKey(), false);
+
+        return is_array($receipt) ? array_intersect_key($receipt, array_flip(['title', 'start_utc', 'end_utc', 'timezone', 'eventtype_id', 'mailed'])) : [];
+    }
+
+    /**
+     * The refusal of a link: 404 with one message for an unknown id, a wrong signature and a stale
+     * link alike. The signature is taken out of the address Joomla's 404 handling sees (for example
+     * «System - Redirect» collecting URLs), as the dispatcher does for a refused request.
+     */
+    private function invalid(): InvalidBookingLinkException
+    {
+        Uri::getInstance()->delVar('signature');
+
+        return new InvalidBookingLinkException();
     }
 
     public function deleteMode(): bool
@@ -141,13 +191,37 @@ class ManageModel extends BaseDatabaseModel
         }
         // The receipt belongs to this browser session. After a reschedule it also keeps the version
         // this reschedule committed (not a later reread, which could already be someone else's
-        // change), for which receiptLinks() shows the new signed links.
-        Factory::getApplication()->setUserState($this->receiptKey(), $action === 'reschedule'
-            ? ['modified_utc' => (string) ($messageBooking['_rescheduled_version'] ?? '')] : true);
+        // change), for which receiptLinks() shows the new signed links. A cancellation and a
+        // reschedule keep what the receipt shows of the appointment (receipt()): the times as
+        // they are now and the zone the page showed them in. An erasure keeps nothing.
+        $receipt = true;
+
+        if ($action !== 'erase') {
+            $zone = (string) ($messageBooking['invitee_timezone'] ?? $booking->invitee_timezone);
+            $receipt = [
+                'title' => (string) $booking->title,
+                'start_utc' => (string) ($messageBooking['start_utc'] ?? $booking->start_utc),
+                'end_utc' => (string) ($messageBooking['end_utc'] ?? $booking->end_utc),
+                'timezone' => in_array($zone, \DateTimeZone::listIdentifiers(), true) ? $zone : 'UTC',
+                'eventtype_id' => (int) $booking->eventtype_id,
+                'mailed' => false,
+            ];
+
+            if ($action === 'reschedule') {
+                $receipt['modified_utc'] = (string) ($messageBooking['_rescheduled_version'] ?? '');
+            }
+        }
+
+        Factory::getApplication()->setUserState($this->receiptKey(), $receipt);
 
         if ($messageBooking !== null && empty($messageBooking['_conference_missing']) && empty($messageBooking['_conference_error'])) {
             try {
                 $notification->send($messageBooking, $purpose, $now, $action === 'erase');
+
+                if (is_array($receipt)) {
+                    // Only now the receipt says that the confirmation is on its way.
+                    Factory::getApplication()->setUserState($this->receiptKey(), ['mailed' => true] + $receipt);
+                }
             } catch (NotificationException $e) {
                 // The change is saved: a warning like the other partial outcomes on this page.
                 Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_MAIL_FAILED'), 'warning');

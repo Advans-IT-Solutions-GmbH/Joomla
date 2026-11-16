@@ -49,11 +49,10 @@ $calendarMail = static function (array $before, array $booking, int $count, ?str
 
     foreach ($messages as $mime) {
         $decoded = preg_replace("/\r\n[ \t]/", '', AppointmentsMail::decoded($mime));
-        $check(str_contains($mime, 'Content-Type: text/calendar;')
-            && str_contains($mime, 'Content-Type: application/ics')
+        $check((AppointmentsMail::isInvitation($mime, 'REQUEST') || AppointmentsMail::isInvitation($mime, 'CANCEL'))
             && str_contains($decoded, 'UID:' . $booking['uid'])
             && str_contains($decoded, 'SEQUENCE:' . $booking['sequence']),
-            'Conference notification contains both calendar MIME parts with stable UID and current sequence');
+            'Conference notification contains one invitation with stable UID and current sequence');
 
         if ($url !== null) {
             $check(str_contains($decoded, $url), 'Conference URL is present in the actual notification/calendar');

@@ -579,6 +579,16 @@ try {
             && $stored['custom_fields'] === '[]', $location . ': the number is stored in invitee_phone in international form');
         $mailed = array_filter(AppointmentsMail::messagesSince($before), static fn (string $mime): bool => str_contains(AppointmentsMail::decoded($mime), $expected));
         $check($mailed !== [], $location . ': the notification mail states the telephone number');
+        // Without a location text the invitation names the kind of call: for the invitee in their
+        // words, for the host neutrally (EventLocation), never an empty LOCATION.
+        $calendars = implode("\n", array_map(static fn (string $mime): string => str_replace("\r\n ", '', AppointmentsMail::decoded($mime)),
+            AppointmentsMail::messagesSince($before)));
+        [$inviteeLocation, $hostLocation] = $location === 'phone_host_calls'
+            ? ['LOCATION:Phone call\\, you will be called', 'LOCATION:Telephone: host calls invitee']
+            : ['LOCATION:Phone call\\, you call', 'LOCATION:Telephone: invitee calls host'];
+        $check(str_contains($calendars, $inviteeLocation) && str_contains($calendars, $hostLocation)
+            && preg_match('/^LOCATION:\r?$/m', $calendars) !== 1,
+            $location . ': the invitations of invitee and host name the kind of call as LOCATION');
         $detail = $admin->request('/administrator/index.php?option=com_appointments&view=booking&id=' . (int) ($stored['id'] ?? 0));
         $check($admin->status === 200 && str_contains($detail, $expected), $location . ': the administrator detail shows the telephone number');
     }

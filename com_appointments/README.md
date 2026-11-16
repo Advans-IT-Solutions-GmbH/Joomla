@@ -272,8 +272,21 @@ bookings after the update, until the setting is made (see section "Scheduler, re
 - **Email and calendar invitations.** Confirmations, pending notices, approval and cancellation
   notifications are sent to the invitee, each additional guest and the host through Joomla's
   configured mail transport. Each additional guest receives a guest template of its own with a
-  neutral salutation, never one addressed to the booking person. Every message carries both the
-  `text/calendar` and `application/ics` attachments. UTC calendar entries retain their UID and increase their sequence on changes.
+  neutral salutation, never one addressed to the booking person. Every message carries exactly one
+  invitation: a `text/calendar; method=REQUEST` (or `CANCEL`) part inside `multipart/alternative`,
+  next to the text and the HTML part, which is the form Outlook, Gmail and Apple Mail present as an
+  invitation ("Accept", "Add to calendar"). There is no `.ics` attachment besides it: a second copy
+  showed up in Outlook as a second `invite.ics` and a calendar attachment is only a file to open. The
+  confirmation page keeps its `.ics` download. UTC calendar entries retain their UID and increase their
+  sequence on changes, so an update replaces the entry and a cancellation removes it.
+  The invitee's invitation is organised by the host. The host's own copy is organised by the site's
+  sender (Joomla's «From email» and «From name») with the host as attendee without a requested
+  reply (`RSVP=FALSE`): a mail client shows an invitation from its own address as «you are the
+  organiser» and offers no way to add it. `METHOD:PUBLISH` was not chosen for that copy, because
+  clients do not reliably remove a published entry on cancellation; with `REQUEST`/`CANCEL` and no
+  requested reply, accepting adds the entry without a mail to the sender. The host's copy describes
+  the booking completely: name, address, telephone, guests, the visitor's time and every answer.
+  The invitee's invitation carries the event's own description only.
   Notification failure never discards a saved booking: the page explicitly reports the mail problem.
   The mails follow the site's mail templates setting (com_mails): with «Mail Format» set to HTML or
   «HTML and plain text», the text is sent as HTML in the site's mail layout, including a template
@@ -281,7 +294,9 @@ bookings after the update, until the setting is made (see section "Scheduler, re
   The reschedule, cancel, erase and meeting links show their label as link text in the HTML part, so a
   long signed URL cannot widen the mail. In the plain-text part the links the component adds itself stand
   as full URLs, each on a line of its own.
-  A site with plain-text mails keeps plain-text appointment mails.
+  On a site with plain-text mails the HTML alternative is the same text as escaped paragraphs without
+  a layout, because PHPMailer writes the invitation only into a message with an HTML alternative. For
+  the same reason these mails do not embed the logo of the mail layout as an inline part.
 
 - **Signed appointment management and erasure.** Only the primary invitee receives the no-login
   reschedule, cancellation and erasure capabilities, including in reminders. The host receives
@@ -1754,7 +1769,9 @@ account language wins, otherwise the default **site** language applies. The book
 each additional guest are looked up separately by their address; guests without an account do
 not inherit the booking person's or request's language. Hosts use their own account preference.
 An unsupported account preference uses the site default; an unsupported site language uses en-GB.
-Updating the component preserves existing templates rather than overwriting operator changes.
+Updating the component preserves existing templates rather than overwriting operator changes. A
+site-wide default template that still holds exactly the defaults of the installed version follows
+the defaults of the new version, an edited one stays as it is.
 Notification labels are installed privately from the same shipped language files, so rendering
 does not require that Joomla core language pack to be installed. The website can remain German-only.
 Configured HTML layouts render the same translated text and retain the plain-text alternative.
@@ -1765,7 +1782,10 @@ empty, so a telephone appointment shows no empty location:
 
 | Placeholder | Value |
 |---|---|
-| `{event_title}`, `{description}`, `{location}`, `{location_text}`, `{location_type}` | The event type |
+| `{event_title}`, `{description}`, `{location_text}`, `{location_type}` | The event type |
+| `{location}` | The location text of the event type; a telephone appointment without one names the kind of call («Phone call, you will be called» for the invitee, «Telephone: host calls invitee» for host and guests). The same text is the `LOCATION` of the invitation |
+| `{field_answers}` | Every answer to the custom fields as «Field: answer» lines in the order of the form, an empty answer as «no answer»; in mails to the booking person and the host, empty for guests. A line holding only this placeholder disappears when there are no answers |
+| `{invitee_time}` | The start in the booking person's zone with the zone, «2026-11-24 08:00 (America/New_York)», when it differs from the host's zone (used by the `host_*` defaults), otherwise empty |
 | `{host_name}`, `{host_email}` | The host |
 | `{invitee_name}` | Full name of the booking person ("first last"), unchanged since earlier versions |
 | `{invitee_first_name}`, `{invitee_last_name}` | First and last name of the booking person |
@@ -1773,7 +1793,7 @@ empty, so a telephone appointment shows no empty location:
 | `{guest_emails}` | All additional guests, one per line |
 | `{conference_url}` | The joining link (the host's moderator link in the host's mail) |
 | `{custom_fields.ID}` | One answer, ID being the custom field ID; `{custom_fields}` all answers as JSON |
-| `{start}`, `{end}`, `{timezone}` | The appointment in the invitee's stored zone or the host's profile zone, formatted in the recipient's account language, otherwise the site default |
+| `{start}`, `{end}`, `{timezone}` | The appointment in the invitee's stored zone or the host's profile zone, formatted in the recipient's account language, otherwise the site default. In mails to the booking person and the guests, `{start}` and `{end}` add the host's time when the zones differ: «24.11.2026 08:00 (14:00 Europe/Zurich)» |
 | `{state_label}` | The translated status |
 | `{consent_utc}`, `{consent_version}` | The consent proof (UTC time and label version) with **Privacy notice on the booking form** *Consent checkbox*, otherwise empty |
 | `{start_utc}`, `{end_utc}`, `{state}`, `{id}`, `{uid}`, `{sequence}` and the other booking columns | Raw booking values |
@@ -1793,8 +1813,23 @@ never receives the invitee's. Feed credentials are never included in mail.
 Every invitee message contains separate, action-specific signed reschedule, cancellation and
 erasure links. A link is invalidated when the booking changes. The confirmation requires the
 browser's normal Joomla CSRF token and one explicit confirmation, never a login or another email
-round trip. A completed action has a generic same-browser receipt; repeating it does not repeat
-notifications or audit entries.
+round trip. A completed action has a same-browser receipt; repeating it does not repeat
+notifications or audit entries. The receipt of a cancellation or a reschedule names the event type,
+the date, the time range and the zone, says that a confirmation mail follows once the mails went out,
+and after a cancellation offers **Book a new appointment** on the booking page of the event type.
+
+The links carry the `Itemid` of the event type's **Book an appointment** menu item (else of an
+**Event types** list), and the redirect after the confirmation keeps it, so every signed page and
+its receipt stand in that menu item's frame. Without it Joomla's router falls back to the language's
+default menu item, the home page, whose modules then wrap the receipt.
+
+A reschedule or cancel link of the version that was cancelled (by the invitee, in another tab or by
+the host) opens a notice that the appointment is already cancelled, with its date and time, a way to
+a new booking and no form. The bookings table keeps that version for this purpose
+(`cancelled_version_utc`). Every other link that opens nothing (an older version, a tampered
+signature, an unknown id, an erased booking) answers 404 with one message in the site's error page,
+«This link is not valid. After every change to an appointment, only the links in the latest email
+about it apply.», so the answer does not reveal which of these cases applies.
 
 Rescheduling keeps the booking ID and calendar UID, advances `SEQUENCE`, checks the new slot under
 the same host lock as creation, excludes the current booking from its availability/cap checks and

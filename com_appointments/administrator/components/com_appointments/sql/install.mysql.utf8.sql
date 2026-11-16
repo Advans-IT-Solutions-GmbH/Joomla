@@ -210,6 +210,11 @@ CREATE TABLE IF NOT EXISTS `#__appointments_blocked` (
 -- after a day. A column here would keep the raw address for the life of the
 -- booking, which the component's privacy contract rules out.
 --
+-- `cancelled_version_utc` is the `modified_utc` the cancellation replaced. The
+-- signed reschedule and cancel links of that version then show that the
+-- appointment is cancelled instead of a bare refusal. It is a row version, not
+-- data of the person. script.php adds it on an update.
+--
 -- `conference_state` is NULL for an event type without a conference, `ok` once
 -- a link exists and `failed` when the provider could not produce one.
 -- `conference_error` holds the short diagnostic the administrator sees next to
@@ -262,6 +267,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_bookings` (
     `conference_state` VARCHAR(16) DEFAULT NULL,
     `conference_error` VARCHAR(255) DEFAULT NULL,
     `cancel_reason` MEDIUMTEXT,
+    `cancelled_version_utc` DATETIME DEFAULT NULL,
     `reminder_sent_utc` JSON DEFAULT NULL,
     `anonymised_utc` DATETIME DEFAULT NULL,
     `created_utc` DATETIME NOT NULL,

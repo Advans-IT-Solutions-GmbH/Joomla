@@ -11,6 +11,7 @@ namespace Advans\Component\Appointments\Site\Controller;
 use Advans\Component\Appointments\Administrator\Helper\BookingInput;
 use Advans\Component\Appointments\Administrator\Helper\BookingValidationException;
 use Advans\Component\Appointments\Administrator\Helper\ConsentMode;
+use Advans\Component\Appointments\Administrator\Helper\EventLocation;
 use Advans\Component\Appointments\Administrator\Helper\FormGuard;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\ManageMenuItem;
@@ -155,7 +156,10 @@ class BookingController extends BaseController
         }
 
         try {
-            $calendar = (new FeedService(Factory::getContainer()->get(DatabaseInterface::class)))->export((int) $booking->id);
+            // The location as the booking page names it for the invitee (EventLocation).
+            $calendar = (new FeedService(Factory::getContainer()->get(DatabaseInterface::class)))->export((int) $booking->id,
+                static fn (string $type, string $text): string => EventLocation::text($type, $text, EventLocation::INVITEE_SITE,
+                    static fn (string $key): string => Text::_($key)));
         } catch (\DomainException | \InvalidArgumentException $e) {
             throw new \RuntimeException(Text::_('COM_APPOINTMENTS_FEEDS_ERROR_DATA'), 500, $e);
         }
@@ -203,6 +207,12 @@ class BookingController extends BaseController
         $this->setRedirect(Route::_($url, false));
         $focusKey = 'com_appointments.manage_focus_message.' . $this->input->getInt('id') . '.' . $model->action();
         $this->app->setUserState($focusKey, null);
+
+        // Cancelled in the meantime (in another tab, by the host): nothing to change, the page
+        // shows the cancelled appointment instead of a form.
+        if ($booking !== null && $model->cancelled($booking)) {
+            return false;
+        }
 
         if (!(new RateLimiter($db, $keys))->allow('manage', $this->input->server->getString('REMOTE_ADDR'), $now, 60, 900)) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_RATE'), 'error');
