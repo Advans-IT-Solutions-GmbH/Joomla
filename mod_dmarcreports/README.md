@@ -59,6 +59,8 @@ Uninstall via **System → Manage → Extensions**. Joomla removes the module fi
 
 ## Configuration
 
+Help: the Help button of the module edit screen and the note at the top of its options open the **Help & tips** page of the DMARC Reports component (`index.php?option=com_dmarcreports&view=help`), which explains the terms, the Action Center entries and the typical tasks.
+
 Edit the module instance (**System → Manage → Administrator Modules → DMARC Reports Dashboard**):
 
 | Option | Default | Purpose |

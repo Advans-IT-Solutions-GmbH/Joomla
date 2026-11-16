@@ -445,7 +445,12 @@ final class Metrics
      * report id; otherwise a source first seen in a contemporaneous report from
      * another reporter would be missed.
      *
-     * @return array<int, array<string, mixed>>
+     * Each source carries its failing (unaligned) volume, and sources with
+     * failing mail rank first, then by volume, then by address. The address
+     * tiebreak keeps the top 10 identical to newSourcesAll(), so the drill-down
+     * and the dashboard list the same sources.
+     *
+     * @return array<int, array{ip: string, count: int, fail: int}>
      */
     private function newSources(int $domainId): array
     {
@@ -474,6 +479,7 @@ final class Metrics
                 [
                     $this->db->quoteName('cur.source_ip'),
                     'COALESCE(SUM(' . $this->db->quoteName('cur.count') . '), 0) AS total',
+                    $this->failSum('cur') . ' AS fail',
                 ]
             )
             ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
@@ -492,15 +498,30 @@ final class Metrics
             ->bind(':windowStartPrev', $windowStart, ParameterType::INTEGER)
             ->bind(':anchor', $anchor, ParameterType::INTEGER)
             ->group($this->db->quoteName('cur.source_ip'))
-            ->order('total DESC');
+            ->order('fail DESC, total DESC, ' . $this->db->quoteName('cur.source_ip') . ' ASC');
 
         $query->setLimit(10);
         $rows = $this->db->setQuery($query)->loadAssocList() ?: [];
 
         return array_map(
-            static fn (array $r): array => ['ip' => $r['source_ip'], 'count' => (int) $r['total']],
+            static fn (array $r): array => [
+                'ip'    => $r['source_ip'],
+                'count' => (int) $r['total'],
+                'fail'  => (int) $r['fail'],
+            ],
             $rows
         );
+    }
+
+    /**
+     * SQL for the failing (neither DKIM- nor SPF-aligned) message volume of the
+     * records aliased $alias, as the per-domain totals count it.
+     */
+    private function failSum(string $alias): string
+    {
+        return 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName($alias . '.dkim_aligned') . ' = 0 AND '
+            . $this->db->quoteName($alias . '.spf_aligned') . ' = 0 THEN ' . $this->db->quoteName($alias . '.count')
+            . ' ELSE 0 END), 0)';
     }
 
     /**
@@ -947,7 +968,9 @@ final class Metrics
      *
      * @param   array<int, int>  $domainIds
      *
-     * @return  array<int, array<int, array{ip: string, count: int}>>
+     * Sources with failing mail rank first, as in newSources().
+     *
+     * @return  array<int, array<int, array{ip: string, count: int, fail: int}>>
      */
     private function newSourcesAll(array $domainIds, int $limit = 10): array
     {
@@ -988,6 +1011,7 @@ final class Metrics
                     $this->db->quoteName('rep.domain_id', 'domain_id'),
                     $this->db->quoteName('cur.source_ip', 'source_ip'),
                     'COALESCE(SUM(' . $this->db->quoteName('cur.count') . '), 0) AS total',
+                    $this->failSum('cur') . ' AS fail',
                 ]
             )
             ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
@@ -1007,7 +1031,7 @@ final class Metrics
             ->where('NOT EXISTS (' . $prior . ')')
             ->group($this->db->quoteName('rep.domain_id') . ', ' . $this->db->quoteName('cur.source_ip'));
 
-        // Rank each domain's new sources by volume so the outer query keeps only
+        // Rank each domain's new sources, failing mail first, then by volume, so the outer query keeps only
         // the top $limit per domain. Ranking and slicing in the database bounds
         // both the result transfer and PHP memory to $limit rows per domain,
         // instead of materialising every distinct source seen in the window; the
@@ -1018,8 +1042,9 @@ final class Metrics
                     $this->db->quoteName('domain_id'),
                     $this->db->quoteName('source_ip'),
                     $this->db->quoteName('total'),
+                    $this->db->quoteName('fail'),
                     'ROW_NUMBER() OVER (PARTITION BY ' . $this->db->quoteName('domain_id')
-                        . ' ORDER BY ' . $this->db->quoteName('total') . ' DESC, '
+                        . ' ORDER BY ' . $this->db->quoteName('fail') . ' DESC, ' . $this->db->quoteName('total') . ' DESC, '
                         . $this->db->quoteName('source_ip') . ' ASC) AS rn',
                 ]
             )
@@ -1031,18 +1056,19 @@ final class Metrics
                     $this->db->quoteName('domain_id'),
                     $this->db->quoteName('source_ip'),
                     $this->db->quoteName('total'),
+                    $this->db->quoteName('fail'),
                 ]
             )
             ->from('(' . $ranked . ') AS ' . $this->db->quoteName('r'))
             ->where($this->db->quoteName('rn') . ' <= ' . (int) max(1, $limit))
-            ->order($this->db->quoteName('domain_id') . ' ASC, ' . $this->db->quoteName('total') . ' DESC');
+            ->order($this->db->quoteName('domain_id') . ' ASC, ' . $this->db->quoteName('rn') . ' ASC');
 
         $map = [];
 
         foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
             $domainId = (int) $row['domain_id'];
 
-            $map[$domainId][] = ['ip' => $row['source_ip'], 'count' => (int) $row['total']];
+            $map[$domainId][] = ['ip' => $row['source_ip'], 'count' => (int) $row['total'], 'fail' => (int) $row['fail']];
         }
 
         return $map;

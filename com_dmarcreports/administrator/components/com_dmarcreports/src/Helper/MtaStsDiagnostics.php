@@ -82,6 +82,36 @@ final class MtaStsDiagnostics
     }
 
     /**
+     * The MTA-STS/TLS-RPT findings for the network-free dashboard and the
+     * dashboard module. Without live checks this is the copy-ready publish
+     * guidance, the only place that tells the administrator what to publish.
+     * With live checks enabled the domain view and the System Check verify the
+     * published records instead, and the dashboard, which never performs a
+     * lookup, cannot tell whether a record is already published. Repeating the
+     * unverified "publish this record" reminders there contradicted a verified
+     * record, so they are left out. Configuration errors that need no lookup
+     * (no MX host, no TLS-RPT address) stay visible either way.
+     *
+     * @param   array<string, mixed>  $generated          The output of {@see MtaStsPolicy::generate()}.
+     * @param   bool                  $liveChecksEnabled  Whether the dns_diagnostics option is on.
+     *
+     * @return  array<int, array{code:string, severity:int, category:string, params:array<int,mixed>}>
+     */
+    public function dashboardFindings(array $generated, bool $liveChecksEnabled): array
+    {
+        $findings = $this->inspect($generated, false)['findings'];
+
+        if (!$liveChecksEnabled) {
+            return $findings;
+        }
+
+        return array_values(array_filter(
+            $findings,
+            static fn (array $finding): bool => !\in_array($finding['code'], ['mtasts_publish', 'tlsrpt_publish'], true)
+        ));
+    }
+
+    /**
      * Roll several monitored domains up into the System Check view's MTA-STS /
      * TLS-RPT section. This is pure aggregation over {@see inspect()}: the
      * caller supplies each domain's generated artifacts (built from the

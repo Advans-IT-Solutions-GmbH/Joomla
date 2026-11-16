@@ -9,6 +9,7 @@
 
 namespace Advans\Component\DmarcReports\Administrator\View\Domain;
 
+use Advans\Component\DmarcReports\Administrator\Helper\HelpTopics;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
@@ -56,5 +57,6 @@ class HtmlView extends BaseHtmlView
         $toolbar->apply('domain.apply');
         $toolbar->save('domain.save');
         $toolbar->cancel('domain.cancel');
+        HelpTopics::addToolbarButton($toolbar);
     }
 }

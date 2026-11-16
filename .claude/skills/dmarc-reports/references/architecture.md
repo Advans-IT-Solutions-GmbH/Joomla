@@ -33,6 +33,7 @@ Standard Joomla 5/6 administrator MVC component, namespace `Advans\Component\Dma
 | `Domains` / `Domain` | List + edit of monitored domains |
 | `Sources` / `Source` | List + edit of mailbox report sources |
 | `Systemcheck` | Whether the IMAP transport is available (`EnvironmentCheck`) |
+| `Help` | Help & tips for administrators: terms, how the extension works, every Action Center entry (`HelpTopics::ACTION_GROUPS`), typical tasks, where the settings are. No model. Reached from the manifest submenu and the toolbar Help button every other view adds with `HelpTopics::addToolbarButton()` (opens `view=help&tmpl=component`); the module and both plugins name the same address in their `<help>` element and in a note at the top of their options |
 
 Each view has a model in `src/Model/` and a layout folder in `tmpl/`. `DashboardModel` and
 `DetailModel` aggregate via `Metrics`; `SourceModel` handles the encrypted password field.

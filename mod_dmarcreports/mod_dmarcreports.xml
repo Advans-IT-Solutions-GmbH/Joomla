@@ -43,6 +43,13 @@
         <fields name="params" addfieldprefix="Advans\Module\DmarcReports\Administrator\Field">
             <fieldset name="basic">
                 <field
+                    name="help_note"
+                    type="note"
+                    description="MOD_DMARCREPORTS_HELP_NOTE"
+                    class="alert alert-info"
+                    filter="unset"
+                />
+                <field
                     name="show_summary"
                     type="summary"
                     layout="joomla.form.field.radio.switcher"
@@ -80,6 +87,8 @@
             </fieldset>
         </fields>
     </config>
+
+    <help key="DMARC_Reports_Help" url="index.php?option=com_dmarcreports&amp;view=help&amp;tmpl=component" />
 
     <updateservers>
         <server type="extension" priority="1" name="DMARC Reports Dashboard Module Updates">

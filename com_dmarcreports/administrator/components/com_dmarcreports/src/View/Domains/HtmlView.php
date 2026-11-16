@@ -9,6 +9,7 @@
 
 namespace Advans\Component\DmarcReports\Administrator\View\Domains;
 
+use Advans\Component\DmarcReports\Administrator\Helper\HelpTopics;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
@@ -68,5 +69,7 @@ class HtmlView extends BaseHtmlView
             ->url('index.php?option=com_dmarcreports&view=dashboard')
             ->icon('icon-arrow-left')
             ->text(Text::_('COM_DMARCREPORTS_TOOLBAR_DASHBOARD'));
+
+        HelpTopics::addToolbarButton($toolbar);
     }
 }
