@@ -328,6 +328,69 @@ PHP]);
                 $r['status'] === 'incompatible' && array_column($r['issues'], 'detail') === ['J2StoreAppPlugin'],
                 $r['status'] . ': ' . self::details($r));
 
+            // --- Mixed group imports with function and const entries ---
+            $r = $this->classify('mixed_group_import', ['a.php' => "<?php\nuse Joomla\\CMS\\{function unused, const X, Session\\Session as JSession};\nclass Helper\n{\n    public function check() { return JSession::checkToken(); }\n}\n"]);
+            $this->test('A class imported after function/const entries of a group is resolved',
+                $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            // --- instanceof a missing class is false, not an error ---
+            $r = $this->classify('instanceof_check', ['a.php' => "<?php\n\$ok = (new \\stdClass()) instanceof \\JSession;\n\$j2 = \$ok instanceof J2Store;\n"]);
+            $this->test('instanceof checks are no finding', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            // --- Other ways a plugin sets $app itself ---
+            $r = $this->classify('plugin_app_coalesce', ['plugin.php' => <<<'PHP'
+<?php
+use Joomla\CMS\Factory;
+use Joomla\CMS\Plugin\CMSPlugin;
+class PlgSystemCoalesce extends CMSPlugin
+{
+    private $app = null;
+    public function onAfterRoute() { $this->app ??= Factory::getApplication(); return $this->app->getInput(); }
+}
+PHP]);
+            $this->test('$this->app set with ??= is no finding', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            $r = $this->classify('plugin_app_promoted', ['plugin.php' => <<<'PHP'
+<?php
+use Joomla\CMS\Plugin\CMSPlugin;
+class PlgSystemPromoted extends CMSPlugin
+{
+    public function __construct(private object $app) {}
+    public function onAfterRoute() { return $this->app->getInput(); }
+}
+PHP]);
+            $this->test('$this->app from a promoted constructor parameter is no finding', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            // --- $app is judged per class ---
+            $r = $this->classify('plugin_app_other_class', ['a.php' => <<<'PHP'
+<?php
+use Joomla\CMS\Dispatcher\AbstractModuleDispatcher;
+use Joomla\CMS\Plugin\CMSPlugin;
+class PlgSystemEmpty extends CMSPlugin
+{
+}
+class Dispatcher extends AbstractModuleDispatcher
+{
+    protected function getLayoutData(): array { return [$this->app->getLanguage()]; }
+}
+PHP]);
+            $this->test('$this->app of another class next to an empty plugin is no finding', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            $r = $this->classify('plugin_app_helper_assigns', ['a.php' => <<<'PHP'
+<?php
+use Joomla\CMS\Plugin\CMSPlugin;
+class Helper
+{
+    public $app;
+    public function set($app) { $this->app = $app; }
+}
+class PlgSystemBroken extends CMSPlugin
+{
+    public function onAfterRoute() { return $this->app->getInput(); }
+}
+PHP]);
+            $this->test('An assignment in another class does not hide a broken plugin', $r['status'] === 'incompatible', $r['status'] . ': ' . self::details($r));
+
             // --- Class names are case-insensitive: one finding per class ---
             $r = $this->classify('j2store_case', ['a.php' => "<?php\n\$a = J2html::select();\n\$b = J2Html::select();\n"]);
             $this->test('J2html and J2Html are one finding named J2Html',

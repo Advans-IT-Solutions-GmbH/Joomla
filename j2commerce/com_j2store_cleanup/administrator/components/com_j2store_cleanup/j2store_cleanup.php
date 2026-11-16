@@ -510,10 +510,11 @@ function getExtensionCodePaths($ext): array
  *                  the pattern is matched against:
  *                  class, j2store  the absolute name of a class reference,
  *                  factory         "Class::method" of a static call,
- *                  pluginApp       the code of a plugin class file,
+ *                  pluginApp       each plugin class of a file that reads
+ *                                  $this->app without setting it,
  * ].
  *
- * Class references come from getClassReferences(), resolved the way PHP
+ * Class references come from getClassStructure(), resolved the way PHP
  * resolves them, so imported, renamed and qualified names are covered and an
  * unused import is not. Whether an API still works is decided on the running
  * site, not from the version number alone: Joomla 6 still ships every
@@ -564,42 +565,28 @@ function getIssuePatterns() {
 }
 
 /**
- * The executable code of a PHP file, with comments, string contents and
- * inline HTML blanked out, so only real API use is matched. Blanked parts
- * keep their length, so offsets in the result are offsets in the source.
- */
-function getScannableCode(string $source): string
-{
-    $skip = [T_COMMENT, T_DOC_COMMENT, T_INLINE_HTML, T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE];
-    $code = '';
-
-    foreach (token_get_all($source) as $token) {
-        if (!is_array($token)) {
-            $code .= $token;
-        } elseif (in_array($token[0], $skip, true)) {
-            $code .= str_repeat(' ', strlen($token[1]));
-        } else {
-            $code .= $token[1];
-        }
-    }
-
-    return $code;
-}
-
-/**
- * The class references in a PHP file's code, each resolved to the absolute
- * class name the way PHP resolves it: with the namespace block and the `use`
- * imports in force at that place. A reference is a name before `::` (static
- * call, constant or property, not `::class`), after `new`, `extends`,
- * `implements` or `instanceof`. Import statements are declarations, not
- * references: an unused import loads nothing. Comments and strings are no
- * tokens of these kinds.
+ * Read the class structure of a PHP file from its tokens.
  *
- * @return array<int, array{name: string, call: string, kind: string}>
- *         name: absolute class name, call: "Class::method" for a static
- *         method call, else '', kind: static|new|extends|instanceof
+ * refs: the class references PHP resolves when the code runs: a name before
+ * `::` (static call, constant or property, not `::class`), after `new`,
+ * `extends` or `implements`. Each is resolved to the absolute class name the
+ * way PHP resolves it, with the namespace block and the `use` imports in force
+ * at that place (renamed and grouped imports included). Import statements are
+ * declarations (an unused import loads nothing), `instanceof` against a
+ * missing class is just false, and type hints load nothing: none of them is a
+ * reference here. Comments and strings are no tokens of these kinds.
+ *
+ * classes: per class declaration (named or anonymous) its parent and how it
+ * deals with `$this->app`: whether its own methods read it, declare it as a
+ * property (and whether private), or initialize it themselves (assignment,
+ * `??=` or a promoted constructor parameter).
+ *
+ * @return array{refs: array<int, array{name: string, call: string}>,
+ *               classes: array<int, array{parent: string, uses: bool, declared: bool, private: bool, initialized: bool}>}
+ *         ref name: absolute class name, call: "Class::method" for a static
+ *         method call, else ''
  */
-function getClassReferences(string $source): array
+function getClassStructure(string $source): array
 {
     $tokens = array_values(array_filter(
         token_get_all($source),
@@ -611,9 +598,13 @@ function getClassReferences(string $source): array
     $namespace = '';
     $imports   = [];
     $depth     = 0;
+    $parens    = 0;
     $useDepth  = 0;
+    $heritage  = '';
+    $pending   = null;
+    $stack     = [];
     $refs      = [];
-    $heritage  = false;
+    $classes   = [];
     $count     = count($tokens);
 
     $resolve = static function (array $token) use (&$namespace, &$imports): ?string {
@@ -643,83 +634,171 @@ function getClassReferences(string $source): array
         return $namespace === '' ? $text : $namespace . '\\' . $text;
     };
 
+    // One import entry: Name [as Alias]. Returns [absolute name, local alias].
+    $importEntry = static function (array $slice, string $prefix) use ($isName, $id): ?array {
+        if (!$isName($slice[0] ?? null)) {
+            return null;
+        }
+
+        $name  = ($prefix === '' ? '' : $prefix . '\\') . ltrim($slice[0][1], '\\');
+        $alias = substr(strrchr('\\' . $name, '\\'), 1);
+
+        if ($id($slice[1] ?? null) === T_AS && $isName($slice[2] ?? null)) {
+            $alias = $slice[2][1];
+        }
+
+        return [$name, $alias];
+    };
+
     for ($i = 0; $i < $count; $i++) {
         $token = $tokens[$i];
         $kind  = $id($token);
 
+        if ($token === '(') {
+            $parens++;
+            continue;
+        }
+
+        if ($token === ')') {
+            $parens--;
+            continue;
+        }
+
         if ($token === '{' || $kind === T_CURLY_OPEN || $kind === T_DOLLAR_OPEN_CURLY_BRACES) {
             $depth++;
-            $heritage = false;
+            $heritage = '';
+
+            if ($pending !== null && $token === '{') {
+                $pending['body'] = $depth;
+                $stack[]         = $pending;
+                $pending         = null;
+            }
             continue;
         }
 
         if ($token === '}') {
+            if ($stack !== [] && end($stack)['body'] === $depth) {
+                $done = array_pop($stack);
+                unset($done['body']);
+                $classes[] = $done;
+            }
             $depth--;
             continue;
         }
 
         // A namespace declaration starts a new block with its own imports.
         if ($kind === T_NAMESPACE && ($isName($tokens[$i + 1] ?? null) || ($tokens[$i + 1] ?? null) === '{')) {
-            $namespace = $isName($tokens[$i + 1]) ? ltrim($tokens[$i + 1][1], '\\') : '';
+            $named     = $isName($tokens[$i + 1]);
+            $namespace = $named ? ltrim($tokens[$i + 1][1], '\\') : '';
             $imports   = [];
-            $useDepth  = $depth + (($tokens[$i + 1] === '{' || ($tokens[$i + 2] ?? null) === '{') ? 1 : 0);
-            $i        += $isName($tokens[$i + 1]) ? 1 : 0;
+            $useDepth  = $depth + (($tokens[$i + ($named ? 2 : 1)] ?? null) === '{' ? 1 : 0);
+            $i        += $named ? 1 : 0;
             continue;
         }
 
-        if ($kind === T_USE) {
-            // A closure's "use (" or a trait use inside a class body: no import.
-            if (!$isName($tokens[$i + 1] ?? null) || $depth !== $useDepth) {
+        // Import statement: read it up to its ";" as a whole, so braces of a
+        // group import never count as code blocks. A trait use inside a class
+        // body and a closure's "use (" are no imports.
+        if ($kind === T_USE && $depth === $useDepth && $stack === [] && ($tokens[$i + 1] ?? null) !== '(') {
+            $end = $i + 1;
+            while ($end < $count && $tokens[$end] !== ';') {
+                $end++;
+            }
+
+            $slice = array_slice($tokens, $i + 1, $end - $i - 1);
+            $i     = $end;
+
+            // "use function ..." / "use const ...": no classes.
+            if (in_array($id($slice[0] ?? null), [T_FUNCTION, T_CONST], true)) {
                 continue;
             }
 
-            $j = $i + 1;
-            while ($isName($tokens[$j] ?? null)) {
-                $name = ltrim($tokens[$j][1], '\\');
-                $j++;
+            $open = array_search('{', $slice, true);
 
-                // Group import: use Prefix\{A, B as C};
-                if ($id($tokens[$j] ?? null) === T_NS_SEPARATOR && ($tokens[$j + 1] ?? null) === '{') {
-                    $j += 2;
-                    while ($isName($tokens[$j] ?? null)) {
-                        $member = $name . '\\' . ltrim($tokens[$j][1], '\\');
-                        $alias  = substr(strrchr('\\' . $member, '\\'), 1);
-                        $j++;
-                        if ($id($tokens[$j] ?? null) === T_AS && $isName($tokens[$j + 1] ?? null)) {
-                            $alias = $tokens[$j + 1][1];
-                            $j += 2;
-                        }
-                        $imports[strtolower($alias)] = $member;
-                        if (($tokens[$j] ?? null) !== ',') {
-                            break;
-                        }
-                        $j++;
+            if ($open !== false) {
+                // Group: Prefix\{A, function f, const C, B\C as D}
+                $prefix = ltrim((string) ($slice[0][1] ?? ''), '\\');
+                $inner  = array_slice($slice, $open + 1, (int) array_search('}', $slice, true) - $open - 1);
+                $entry  = [];
+
+                foreach (array_merge($inner, [',']) as $part) {
+                    if ($part !== ',') {
+                        $entry[] = $part;
+                        continue;
                     }
-                    $j++;
-                    break;
-                }
 
-                $alias = substr(strrchr('\\' . $name, '\\'), 1);
-                if ($id($tokens[$j] ?? null) === T_AS && $isName($tokens[$j + 1] ?? null)) {
-                    $alias = $tokens[$j + 1][1];
-                    $j += 2;
+                    if (!in_array($id($entry[0] ?? null), [T_FUNCTION, T_CONST], true) && ($pair = $importEntry($entry, $prefix)) !== null) {
+                        $imports[strtolower($pair[1])] = $pair[0];
+                    }
+                    $entry = [];
                 }
-                $imports[strtolower($alias)] = $name;
-
-                if (($tokens[$j] ?? null) !== ',') {
-                    break;
-                }
-                $j++;
+                continue;
             }
 
-            // "use function" / "use const" end up here without names and are skipped.
-            $i = $j;
+            $entry = [];
+            foreach (array_merge($slice, [',']) as $part) {
+                if ($part !== ',') {
+                    $entry[] = $part;
+                    continue;
+                }
+
+                if (($pair = $importEntry($entry, '')) !== null) {
+                    $imports[strtolower($pair[1])] = $pair[0];
+                }
+                $entry = [];
+            }
             continue;
         }
 
-        // Names after extends/implements, up to the class body, are parents.
+        // A class declaration (named or anonymous): its body starts at the next "{".
+        if ($kind === T_CLASS && $id($tokens[$i - 1] ?? null) !== T_DOUBLE_COLON) {
+            $pending = ['parent' => '', 'uses' => false, 'declared' => false, 'private' => false, 'initialized' => false];
+            continue;
+        }
+
         if ($kind === T_EXTENDS || $kind === T_IMPLEMENTS) {
-            $heritage = true;
+            $heritage = $kind === T_EXTENDS ? 'extends' : 'implements';
+            continue;
+        }
+
+        // $this->app inside a class: read, assigned (= or ??=) or neither.
+        if ($kind === T_VARIABLE && $token[1] === '$this' && $stack !== []
+            && in_array($id($tokens[$i + 1] ?? null), [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR], true)
+            && $id($tokens[$i + 2] ?? null) === T_STRING && $tokens[$i + 2][1] === 'app') {
+            $current = count($stack) - 1;
+            $after   = $tokens[$i + 3] ?? null;
+
+            if ($after === '=' || $id($after) === T_COALESCE_EQUAL) {
+                $stack[$current]['initialized'] = true;
+            } else {
+                $stack[$current]['uses'] = true;
+            }
+            $i += 2;
+            continue;
+        }
+
+        // The property $app, declared in the class body or promoted in a
+        // constructor parameter list.
+        if ($kind === T_VARIABLE && $token[1] === '$app' && $stack !== [] && $depth === end($stack)['body']) {
+            $modifiers = [];
+            for ($k = $i - 1; $k >= 0; $k--) {
+                $before = $tokens[$k];
+                if (in_array($before, [';', '{', '}', '(', ','], true)) {
+                    break;
+                }
+                $modifiers[] = $id($before);
+            }
+
+            $visibility = array_intersect($modifiers, [T_PUBLIC, T_PROTECTED, T_PRIVATE, T_VAR, T_READONLY]);
+            $current    = count($stack) - 1;
+
+            if ($parens === 0) {
+                $stack[$current]['declared'] = true;
+                $stack[$current]['private']  = in_array(T_PRIVATE, $modifiers, true);
+            } elseif ($visibility !== []) {
+                $stack[$current]['declared']    = true;
+                $stack[$current]['initialized'] = true;
+            }
             continue;
         }
 
@@ -730,13 +809,12 @@ function getClassReferences(string $source): array
         $prev = $id($tokens[$i - 1] ?? null);
         $next = $id($tokens[$i + 1] ?? null);
 
-        // Members ($x->Name, Name::$y on the right side) and declarations are no references.
-        if (in_array($prev, [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION, T_CONST, T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM, T_GOTO], true)) {
+        // Members, declarations and type checks are no references.
+        if (in_array($prev, [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION, T_CONST, T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM, T_GOTO, T_INSTANCEOF], true)) {
             continue;
         }
 
-        $refKind = null;
-        $call    = '';
+        $call = '';
 
         if ($next === T_DOUBLE_COLON) {
             $member = $tokens[$i + 2] ?? null;
@@ -745,19 +823,10 @@ function getClassReferences(string $source): array
                 continue;
             }
 
-            $refKind = 'static';
             if ($id($member) === T_STRING && ($tokens[$i + 3] ?? null) === '(') {
                 $call = $member[1];
             }
-        } elseif ($prev === T_NEW) {
-            $refKind = 'new';
-        } elseif ($heritage) {
-            $refKind = 'extends';
-        } elseif ($prev === T_INSTANCEOF) {
-            $refKind = 'instanceof';
-        }
-
-        if ($refKind === null) {
+        } elseif ($prev !== T_NEW && $heritage === '') {
             continue;
         }
 
@@ -767,34 +836,20 @@ function getClassReferences(string $source): array
             continue;
         }
 
-        $refs[] = ['name' => $name, 'call' => $call === '' ? '' : $name . '::' . $call, 'kind' => $refKind];
-    }
-
-    return $refs;
-}
-
-/**
- * How a plugin class in one file deals with $this->app, or null when the file
- * declares no plugin class (a class whose parent's name ends in "Plugin").
- *
- * @param string $code  From getScannableCode()
- * @param array  $refs  From getClassReferences()
- * @return array{parent: string, declared: bool, private: bool, assigned: bool}|null
- */
-function getPluginAppInfo(string $code, array $refs): ?array
-{
-    foreach ($refs as $ref) {
-        if ($ref['kind'] === 'extends' && preg_match('/Plugin$/i', $ref['name']) === 1 && preg_match('/\bclass\b/i', $code) === 1) {
-            return [
-                'parent'   => $ref['name'],
-                'declared' => preg_match('/\b(?:public|protected|var)\b[^;{}()=]*\$app\b/', $code) === 1,
-                'private'  => preg_match('/\bprivate\b[^;{}()=]*\$app\b/', $code) === 1,
-                'assigned' => preg_match('/\$this->app\s*=(?!=)/', $code) === 1,
-            ];
+        if ($heritage === 'extends' && $pending !== null && $pending['parent'] === '') {
+            $pending['parent'] = $name;
         }
+
+        $refs[] = ['name' => $name, 'call' => $call === '' ? '' : $name . '::' . $call];
     }
 
-    return null;
+    // An unbalanced file: keep what was read.
+    foreach ($stack as $open) {
+        unset($open['body']);
+        $classes[] = $open;
+    }
+
+    return ['refs' => $refs, 'classes' => $classes];
 }
 
 /**
@@ -814,12 +869,12 @@ function isIssueAvailable(array $issue): bool
         case 'pluginApp':
             // CMSPlugin fills $app only when the plugin class declares it and
             // it is not private (deprecated, removal announced for 7.0).
-            if (!empty($issue['declared'])) {
-                return (int) JVERSION < (int) ($issue['removedIn'] ?? 0);
-            }
-
             if (!empty($issue['private'])) {
                 return false;
+            }
+
+            if (!empty($issue['declared'])) {
+                return (int) JVERSION < (int) ($issue['removedIn'] ?? 0);
             }
 
             // Undeclared here: it depends on the parent class. A parent this
@@ -869,9 +924,7 @@ function scanForIssues($path, $patterns) {
             continue;
         }
 
-        $code      = getScannableCode($content);
-        $refs      = getClassReferences($content);
-        $pluginApp = getPluginAppInfo($code, $refs);
+        $structure = getClassStructure($content);
 
         // Files below a com_j2store folder (template overrides an extension
         // ships for J2Store sites) are loaded only by com_j2store itself.
@@ -886,21 +939,20 @@ function scanForIssues($path, $patterns) {
             foreach ($patterns[$type] ?? [] as $pattern => $info) {
                 $probe = $info['probe'] ?? '';
 
-                // $this->app is the deprecated CMSPlugin property only in a
-                // plugin class that does not set it itself. Module dispatchers
-                // and console commands own their $app.
-                if ($probe === 'pluginApp' && ($pluginApp === null || $pluginApp['assigned'])) {
-                    continue;
-                }
-
-                // What the pattern is matched against (see getIssuePatterns()).
+                // What the pattern is matched against (see getIssuePatterns()):
+                // [subject, class or plugin class info].
                 $subjects = [];
                 if ($probe === 'pluginApp') {
-                    if (preg_match($pattern, $code) === 1) {
-                        $subjects[] = ['', ''];
+                    // $this->app is the deprecated CMSPlugin property only in a
+                    // plugin class that reads it without setting it itself.
+                    // Module dispatchers and console commands own their $app.
+                    foreach ($structure['classes'] as $class) {
+                        if ($class['uses'] && !$class['initialized'] && preg_match('/Plugin$/i', $class['parent']) === 1) {
+                            $subjects[] = [$info['api'], $class];
+                        }
                     }
                 } else {
-                    foreach ($refs as $ref) {
+                    foreach ($structure['refs'] as $ref) {
                         $subjects[] = [$probe === 'factory' ? $ref['call'] : $ref['name'], $ref['name']];
                     }
                 }
@@ -908,13 +960,14 @@ function scanForIssues($path, $patterns) {
                 // One finding per API and file; it counts as available only if
                 // every reference to it is.
                 $found = [];
-                foreach ($subjects as [$subject, $class]) {
+                foreach ($subjects as [$subject, $target]) {
+                    $m = [];
                     if ($probe !== 'pluginApp' && ($subject === '' || preg_match($pattern, $subject, $m) !== 1)) {
                         continue;
                     }
 
                     // Class names are case-insensitive: J2html is J2Html.
-                    $detail = $probe === 'pluginApp' || !isset($m[1]) || strcasecmp($m[1], $info['api']) === 0 ? $info['api'] : $m[1];
+                    $detail = !isset($m[1]) || strcasecmp($m[1], $info['api']) === 0 ? $info['api'] : $m[1];
                     $issue  = [
                         'type'      => $type,
                         'detail'    => $detail,
@@ -923,9 +976,9 @@ function scanForIssues($path, $patterns) {
                     ];
 
                     if ($probe === 'pluginApp') {
-                        $issue += ['parent' => $pluginApp['parent'], 'declared' => $pluginApp['declared'], 'private' => $pluginApp['private']];
+                        $issue += ['parent' => $target['parent'], 'declared' => $target['declared'], 'private' => $target['private']];
                     } else {
-                        $issue['class'] = $class;
+                        $issue['class'] = $target;
                     }
 
                     $issue['available'] = isIssueAvailable($issue);
