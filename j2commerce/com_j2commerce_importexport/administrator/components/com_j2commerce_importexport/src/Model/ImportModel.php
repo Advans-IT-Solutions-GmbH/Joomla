@@ -103,10 +103,8 @@ class ImportModel extends BaseDatabaseModel
                 ? (int) $article['existing']->id
                 : $this->createArticle($article['values']);
 
-            // An existing article moved to another category takes its permission asset along.
-            if ($article['existing'] && (int) ($article['existing']->catid ?? 0) !== $catId) {
-                $this->moveArticleAsset($articleId, $catId);
-            }
+            // The article's permission asset belongs below its (new) category.
+            $this->moveArticleAsset($articleId, $catId);
 
             // 3. Menu item if requested
             if (!empty($options['create_menu']) && !empty($data['menu_item'])) {
@@ -196,6 +194,8 @@ class ImportModel extends BaseDatabaseModel
         }
 
         $this->rowUndo = [];
+        // The undo deleted or moved permission assets.
+        Access::clearStatics();
 
         if ($leftovers === []) {
             throw $error;
@@ -260,7 +260,20 @@ class ImportModel extends BaseDatabaseModel
         return $table->delete($categoryId);
     }
 
-    private function deleteArticle(int $articleId): bool
+    /**
+     * Columns that show whether an article was edited or checked out after the import
+     * created it.
+     */
+    private const ARTICLE_VERSION_COLUMNS = ['title', 'alias', 'catid', 'state', 'modified', 'modified_by', 'checked_out', 'version'];
+
+    /**
+     * Deletes an article the failed row created, unless it changed since: it is committed
+     * before the row ends, so an editor may already have saved or opened it. Such an
+     * article is kept and reported.
+     *
+     * @param   ?array  $written  Persisted values after the row's store; null if unknown
+     */
+    private function deleteArticle(int $articleId, ?array $written): bool
     {
         $table = $this->newTable(ContentTable::class);
 
@@ -268,7 +281,34 @@ class ImportModel extends BaseDatabaseModel
             return true;
         }
 
+        if ($written === null || !$this->tableHolds($table, $written)) {
+            return false;
+        }
+
         return $table->delete($articleId);
+    }
+
+    /**
+     * Persisted values of a table row, or null if they cannot be read.
+     */
+    private function tableSnapshot(string $class, int $id, array $keys): ?array
+    {
+        try {
+            $table = $this->newTable($class);
+
+            if ($id < 1 || !$table->load($id)) {
+                return null;
+            }
+
+            $values = [];
+            foreach ($keys as $key) {
+                $values[$key] = $table->$key;
+            }
+
+            return $values;
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 
     /**
@@ -286,7 +326,7 @@ class ImportModel extends BaseDatabaseModel
             return true;
         }
 
-        if ($written === null || !$this->menuHolds($table, $written) || (int) $table->rgt - (int) $table->lft > 1) {
+        if ($written === null || !$this->tableHolds($table, $written) || (int) $table->rgt - (int) $table->lft > 1) {
             return false;
         }
 
@@ -310,7 +350,7 @@ class ImportModel extends BaseDatabaseModel
     {
         $table = $this->newTable(MenuTable::class);
 
-        if ($written === null || !$table->load($menuId) || !$this->menuHolds($table, $written)) {
+        if ($written === null || !$table->load($menuId) || !$this->tableHolds($table, $written)) {
             return false;
         }
 
@@ -351,7 +391,7 @@ class ImportModel extends BaseDatabaseModel
         return true;
     }
 
-    private function menuHolds(object $table, array $values): bool
+    private function tableHolds(object $table, array $values): bool
     {
         foreach ($values as $key => $value) {
             if ((string) $table->$key !== (string) $value) {
@@ -378,22 +418,7 @@ class ImportModel extends BaseDatabaseModel
      */
     private function menuSnapshot(int $menuId, array $keys): ?array
     {
-        try {
-            $table = $this->newTable(MenuTable::class);
-
-            if ($menuId < 1 || !$table->load($menuId)) {
-                return null;
-            }
-
-            $values = [];
-            foreach ($keys as $key) {
-                $values[$key] = $table->$key;
-            }
-
-            return $values;
-        } catch (\Throwable $e) {
-            return null;
-        }
+        return $this->tableSnapshot(MenuTable::class, $menuId, $keys);
     }
 
     /**
@@ -555,6 +580,8 @@ class ImportModel extends BaseDatabaseModel
         } finally {
             // Also when the store throws after the row was written.
             $categoryId = (int) $table->id;
+            // Permission checks must see the new asset.
+            Access::clearStatics();
 
             if ($categoryId > 0) {
                 $this->registerUndo(
@@ -589,11 +616,15 @@ class ImportModel extends BaseDatabaseModel
         } finally {
             // Also when the store throws after the row was written.
             $articleId = (int) $table->id;
+            // Permission checks must see the new asset.
+            Access::clearStatics();
 
             if ($articleId > 0) {
+                // What the store left in the database, so the undo recognizes later edits.
+                $written = $this->tableSnapshot(ContentTable::class, $articleId, self::ARTICLE_VERSION_COLUMNS);
                 $this->registerUndo(
                     Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_ARTICLE', $articleId),
-                    fn (): bool => $this->deleteArticle($articleId)
+                    fn (): bool => $this->deleteArticle($articleId, $written)
                 );
             }
         }
@@ -632,7 +663,22 @@ class ImportModel extends BaseDatabaseModel
         $oldParent = (int) $asset->parent_id;
         $newParent = (int) $db->loadResult();
 
-        if ($newParent < 1 || $newParent === $oldParent) {
+        // A category without its own asset (for example from earlier imports) is checked
+        // with the Content component's permissions, so the article inherits from there.
+        if ($newParent < 1) {
+            $query = $this->createDbQuery($db)
+                ->select($db->quoteName('id'))
+                ->from($db->quoteName('#__assets'))
+                ->where($db->quoteName('name') . ' = ' . $db->quote('com_content'));
+            $db->setQuery($query);
+            $newParent = (int) $db->loadResult();
+        }
+
+        if ($newParent < 1) {
+            throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
+        }
+
+        if ($newParent === $oldParent) {
             return;
         }
 
@@ -643,6 +689,8 @@ class ImportModel extends BaseDatabaseModel
         try {
             $stored = $asset->store();
         } finally {
+            // Permission checks of later rows must see the moved asset.
+            Access::clearStatics();
             $this->registerUndo(
                 Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_ARTICLE_ASSET', $articleId),
                 fn (): bool => $this->moveAssetBack($assetId, $oldParent, $newParent)

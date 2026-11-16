@@ -200,6 +200,7 @@ class ImportModelTest
 
                 $this->testRestrictedAuthor($model, $db, $context, $data, $adminArticleId);
                 $this->testNativeItemsAndRowUndo($db, $context, $data);
+                $this->testMovedAssetPermissionsInBatch($model, $db, $context, $data);
             }
 
             $this->testTranslatedRowErrors($model);
@@ -576,6 +577,69 @@ class ImportModelTest
                 }
                 $this->removeImportedRow($db, $row);
             }
+        }
+    }
+
+    /**
+     * A row that moves an article into a category with stricter permissions must govern
+     * the next row of the same import: Joomla caches permissions, and the asset move
+     * changes what the article inherits.
+     */
+    private function testMovedAssetPermissionsInBatch(ImportModel $model, object $db, array $context, array $data): void
+    {
+        $context['application']->loadIdentity($context['identity']);
+        $suffix = bin2hex(random_bytes(4));
+        $publisherId = 0;
+        $strictId = 0;
+        $row = array_replace($data, ['title' => 'Batch move ' . $suffix, 'alias' => 'batch-move-' . $suffix, 'catid' => 2, 'article_state' => 0]);
+        $file = sys_get_temp_dir() . '/import-batch-move-' . $suffix . '.json';
+
+        try {
+            // A category in which the Publisher group may not change the publication state.
+            $category = new CategoryTable($db);
+            $category->setCurrentUser($context['identity']);
+            $category->setLocation(1, 'last-child');
+            $stored = $category->bind([
+                'parent_id' => 1, 'extension' => 'com_content', 'title' => 'Strict category ' . $suffix,
+                'alias' => 'strict-category-' . $suffix, 'published' => 1, 'language' => '*', 'description' => '',
+                'note' => '', 'params' => '{}', 'metadata' => '{}', 'metadesc' => '', 'metakey' => '',
+                'rules' => ['core.edit.state' => ['5' => 0]],
+            ]) && $category->check() && $category->store() && $category->rebuildPath($category->id);
+            $strictId = (int) $category->id;
+
+            $publisher = importExportCreateTestUser(5, 'Synthetic Import Test Publisher', $publisherId);
+            $context['application']->loadIdentity($publisher);
+            Access::clearStatics();
+
+            $this->test('Precondition: the Publisher group may publish in category 2 but not in the strict category',
+                fn () => $stored && $strictId > 0
+                    && $publisher->authorise('core.edit.state', 'com_content.category.2')
+                    && !$publisher->authorise('core.edit.state', 'com_content.category.' . $strictId));
+
+            $created = $model->importProductFull($row, []);
+            $articleId = (int) ($created['article_id'] ?? 0);
+            $moveRow = array_replace($row, ['catid' => $strictId]);
+            $publishRow = array_replace($moveRow, ['article_state' => 1]);
+            file_put_contents($file, json_encode([$moveRow, $publishRow]));
+            $result = $model->importData($file, 'products_full', [], ['update_existing' => true]);
+
+            $db->setQuery('SELECT ' . implode(', ', $db->quoteName(['state', 'catid'])) . ' FROM ' . $db->quoteName('#__content')
+                . ' WHERE ' . $db->quoteName('id') . ' = ' . $articleId);
+            $article = $db->loadAssoc();
+            $this->test('After a row moves an article into a stricter category, the next row of the batch cannot publish it',
+                fn () => $articleId > 0 && ($result['imported'] ?? 0) === 1 && ($result['failed'] ?? 0) === 1
+                    && (int) ($article['catid'] ?? 0) === $strictId && (int) ($article['state'] ?? -1) === 0);
+        } finally {
+            $context['application']->loadIdentity($context['identity']);
+            @unlink($file);
+            $this->removeImportedRow($db, $row);
+            if ($strictId > 0) {
+                $table = new CategoryTable($db);
+                $table->setCurrentUser($context['identity']);
+                $table->load($strictId) && $table->delete($strictId);
+            }
+            importExportRemoveTestAdministrator($publisherId);
+            Access::clearStatics();
         }
     }
 

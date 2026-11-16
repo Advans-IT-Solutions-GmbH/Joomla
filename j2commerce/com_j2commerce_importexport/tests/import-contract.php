@@ -47,6 +47,13 @@ namespace Joomla\CMS\Session {
         public static function checkToken(): bool { return true; }
     }
 }
+namespace Joomla\CMS\Access {
+    class Access
+    {
+        public static int $cleared = 0;
+        public static function clearStatics(): void { self::$cleared++; }
+    }
+}
 namespace Joomla\CMS\Application {
     class ApplicationHelper
     {
@@ -201,7 +208,14 @@ namespace Joomla\CMS\Table {
             $this->recordTableWrite('store', $this->id);
             return true;
         }
-        public function load($pk): bool { return true; }
+        public function load($pk): bool {
+            $stored = $this->db->inserted['#__content'] ?? null;
+            if (!$stored || (int) ($stored->id ?? 0) !== (int) $pk) { return false; }
+            $this->row = (array) $stored;
+            $this->id = (int) $stored->id;
+            return true;
+        }
+        public function __get(string $name): mixed { return $this->row[$name] ?? null; }
         public function delete($pk = null): bool {
             $this->lockForStore();
             $this->recordTableWrite('delete', (int) ($pk ?? $this->id));
@@ -1347,6 +1361,35 @@ namespace {
         })() && $authDb->assetMoves === [[501, 33], [501, 22]] && $authDb->assets['com_content.article.81']['parent_id'] === 22,
             'A failed row moves the article asset back below its previous category');
         $user->permissions = $nativePermissions;
+
+        // A destination category without its own asset: the article inherits from the Content component.
+        $clearedBefore = \Joomla\CMS\Access\Access::$cleared;
+        $user->permissions = ['core.edit.own:com_content.article.81' => true, 'core.create:com_content.category.3' => true];
+        $authDb->resetAuthorizationScenario([3, 0], [$movedArticle]);
+        $authDb->tableResults = ['#__j2commerce_products' => 1, '#__assets' => 7];
+        $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
+        $authModel->importProductFull($moveRow, ['update_existing' => true]);
+        check($authDb->assetMoves === [[501, 7]] && \Joomla\CMS\Access\Access::$cleared > $clearedBefore,
+            'An article moved into a category without asset is placed below the Content component and the permission cache is cleared');
+
+        // A new article that an editor saved after the row created it is kept and reported.
+        $user->permissions = $nativePermissions;
+        $authDb->resetAuthorizationScenario([]);
+        $authDb->tableResults = $nativeTables;
+        $failingModel->beforeFailure = function () use ($authDb): void {
+            $authDb->inserted['#__content']->modified = '2026-01-02 00:00:00';
+            // The kept article still uses the new category.
+            $authDb->tableResults['#__content'] = 1;
+        };
+        try {
+            $failure = $runFailingRow();
+        } finally {
+            $failingModel->beforeFailure = null;
+        }
+        check(str_contains($failure->getMessage(), 'COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_ARTICLE: 42')
+            && str_contains($failure->getMessage(), 'COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_CATEGORY: 42')
+            && !in_array('#__content', array_column($deletes(), 1), true),
+            'A new article saved by an editor after the row created it is kept and reported');
 
         // A blank alias is derived from the title, as Joomla does, also for matching.
         $authDb->resetAuthorizationScenario([], [null]);
