@@ -46,6 +46,38 @@ $exportCsv = static function (AppointmentsHttp $client, string $task, int $event
     return $client->request('/administrator/index.php?option=com_appointments', ['task' => 'bookings.' . $task, $client->token($html) => 1,
         'filter_eventtype_id' => $event, 'filter_state' => '', 'filter_search' => '', 'filter_from' => '', 'filter_to' => '']);
 };
+// Of the origin, mails and calendar entries show the campaign name only (Attribution::text()).
+$onlyCampaign = static function (string $content, array $record) use ($agent): array {
+    $leaks = [];
+
+    foreach (array_filter([$record['booking_ip'] ?? '', $record['landing_ip'] ?? '', $agent, 'LI-CLICK-1', 'G-CLICK-1', 'MC-1', 'linkedin',
+        'mail.example.org', 'utm_source', 'de-CH', 'Origin of the booking', 'onerror']) as $hidden) {
+        if (str_contains($content, $hidden)) {
+            $leaks[] = $hidden;
+        }
+    }
+
+    return $leaks;
+};
+$calendarText = static function (array $mails): string {
+    $text = '';
+
+    foreach ($mails as $mime) {
+        foreach (AppointmentsMail::calendars($mime) as $calendar) {
+            $text .= preg_replace('/\r\n[ \t]/', '', $calendar);
+        }
+    }
+
+    return $text;
+};
+$runReminders = static function () use ($db, $prefix): void {
+    $time = gmdate('Y-m-d H:i:s');
+    $db->query("INSERT INTO {$prefix}scheduler_tasks (title,type,execution_rules,cron_rules,state,last_exit_code,times_executed,times_failed,priority,ordering,params,note,created,created_by)"
+        . " VALUES ('Appointments origin test','plg_task_appointments.reminders','{\"rule-type\":\"manual\"}','{\"type\":\"manual\",\"exp\":\"\"}',1,0,0,0,0,0,'{\"batch_size\":100}','','{$time}',0)");
+    $task = (int) $db->insert_id;
+    exec('cd /var/www/html && HTTP_HOST=localhost php cli/joomla.php scheduler:run --id=' . $task . ' 2>&1', $output);
+    $db->query("DELETE FROM {$prefix}scheduler_tasks WHERE id={$task}");
+};
 $csvRows = static function (string $csv): array {
     $stream = fopen('php://memory', 'w+');
     fwrite($stream, $csv);
@@ -148,9 +180,15 @@ try {
     $hostMails = array_values(array_filter($messages, static fn (string $mime): bool => str_contains($messageTo($mime), $hostEmail)));
     $inviteeMails = array_values(array_filter($messages, static fn (string $mime): bool => str_contains($messageTo($mime), $address)));
     $hostText = implode("\n", array_map([AppointmentsMail::class, 'decoded'], $hostMails));
-    $check($hostMails !== [] && str_contains($hostText, 'Origin of the booking') && str_contains($hostText, 'utm_source=linkedin')
-        && str_contains($hostText, 'utm_source=newsletter') && str_contains($hostText, (string) ($record['booking_ip'] ?? 'missing')),
-        'The host mail carries the origin of the booking');
+    $hostLeaks = $onlyCampaign($hostText, $record);
+    if ($hostLeaks !== []) {
+        echo '    host mail shows: ' . implode(', ', $hostLeaks) . "\n";
+    }
+    $check($hostMails !== [] && str_contains($hostText, 'Campaign: last-campaign') && $hostLeaks === [],
+        'The host mail shows the campaign name of the last campaign visit and nothing else of the origin');
+    $hostCalendar = $calendarText($hostMails);
+    $check(str_contains($hostCalendar, 'Campaign: last-campaign') && $onlyCampaign($hostCalendar, $record) === [],
+        'The host calendar entry shows the campaign name and nothing else of the origin');
     $hostHtml = implode("\n", array_merge(...array_map(static fn (string $mime): array => AppointmentsMail::parts($mime, 'text/html'), $hostMails)));
     $check(!str_contains($hostHtml, $xss), 'The origin is escaped in the HTML part of the host mail');
     $inviteeText = implode("\n", array_map([AppointmentsMail::class, 'decoded'], $inviteeMails));
@@ -193,6 +231,23 @@ try {
         && $campaignRows[0]['confirmed'] === '1' && $campaignRows[0]['cancelled'] === '0',
         'The campaign statistics export counts the event type per campaign and state');
 
+    // The reminder to the host: the campaign name only, also in its calendar entry.
+    $params = json_decode($originalParams, true) ?: [];
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode(['attribution_capture' => 1,
+        'reminder_offsets' => '120', 'public_site_url' => $base] + $params)) . "' WHERE element='com_appointments' AND type='component'");
+    $soon = gmdate('Y-m-d H:i:s', time() + 3600);
+    $soonEnd = gmdate('Y-m-d H:i:s', time() + 4800);
+    $db->query("UPDATE {$prefix}appointments_bookings SET start_utc='{$soon}',end_utc='{$soonEnd}',reminder_sent_utc=NULL WHERE id={$id}");
+    $before = AppointmentsMail::snapshot();
+    $runReminders();
+    $reminders = array_values(array_filter(AppointmentsMail::messagesSince($before),
+        static fn (string $mime): bool => str_contains($messageTo($mime), $hostEmail)));
+    $reminderText = implode("\n", array_map([AppointmentsMail::class, 'decoded'], $reminders));
+    $check($reminders !== [] && str_contains($reminderText, 'Campaign: last-campaign') && $onlyCampaign($reminderText, $record) === []
+        && str_contains($calendarText($reminders), 'Campaign: last-campaign'),
+        'The host reminder and its calendar entry show the campaign name and nothing else of the origin');
+    $booking = $fixture->row($id);
+
     // Privacy export of the invitee's address.
     $application->bootComponent('com_privacy');
     $plugin = $application->bootPlugin('appointments', 'privacy');
@@ -218,7 +273,15 @@ try {
     $direct->headers = ['User-Agent: ' . $agent];
     [$browser, $path, $form] = $direct->bookingForm($event, $day . ' 11:00:00', ['email' => $address]);
     sleep(2);
+    $before = AppointmentsMail::snapshot();
     $browser->request($path, $form);
+    $directHost = array_values(array_filter(AppointmentsMail::messagesSince($before),
+        static fn (string $mime): bool => str_contains($messageTo($mime), $hostEmail)));
+    $directText = implode("\n", array_map(static fn (string $mime): string => implode("\n", AppointmentsMail::parts($mime, 'text/plain'))
+        . implode("\n", AppointmentsMail::parts($mime, 'text/html')), $directHost));
+    $check($directHost !== [] && !str_contains($directText, 'Campaign') && !str_contains($directText, '{attribution}')
+        && !str_contains($calendarText($directHost), 'Campaign'),
+        'Without a campaign the host mail and its calendar entry have no campaign line at all');
     $time = $db->real_escape_string($day . ' 11:00:00');
     $plain = appointments_open_booking($db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$time}'")->fetch_assoc());
     $plainRecord = Attribution::decode($plain['attribution'] ?? null);

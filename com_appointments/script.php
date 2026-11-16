@@ -355,6 +355,17 @@ class Com_appointmentsInstallerScript extends InstallerScript
             . " `utm_campaign` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '', `referrer_host` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',"
             . ' `state` TINYINT NOT NULL, PRIMARY KEY (`booking_id`), KEY `idx_eventtype_day` (`eventtype_id`, `day`),'
             . ' KEY `idx_day` (`day`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
+
+        // A table of a test build before the release may differ: the campaign columns compare exactly.
+        $stats = $db->replacePrefix('#__appointments_campaign_stats');
+        $columns = $db->getTableColumns($stats, false);
+
+        foreach (['utm_source', 'utm_medium', 'utm_campaign', 'referrer_host'] as $column) {
+            if (isset($columns[$column]) && (string) ($columns[$column]->Collation ?? '') !== 'utf8mb4_bin') {
+                $db->setQuery('ALTER TABLE ' . $db->quoteName($stats) . ' MODIFY ' . $db->quoteName($column)
+                    . " VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT ''")->execute();
+            }
+        }
     }
 
     private function prepareUninstall(): bool

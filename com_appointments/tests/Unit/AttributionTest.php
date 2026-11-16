@@ -283,10 +283,35 @@ final class AttributionTest extends TestCase
         self::assertSame('198.51.100.7', $values['[COM_APPOINTMENTS_ATTRIBUTION_BOOKING_IP]']);
         self::assertNotContains('[COM_APPOINTMENTS_ATTRIBUTION_LAST_PARAMETERS]', $labels, 'The last touch is left out while it is the first');
         self::assertSame([], Attribution::lines(null, static fn (string $key): string => $key));
+    }
 
-        $text = Attribution::text(Attribution::record($state, $this->submit(), $this->at('2026-11-16 08:30:00')), static fn (string $key): string => $key, '%s:');
-        self::assertStringStartsWith("COM_APPOINTMENTS_ATTRIBUTION_HEADING:\n", $text);
-        self::assertStringContainsString("COM_APPOINTMENTS_ATTRIBUTION_FIRST_REFERRER: https://www.linkedin.com/\n", $text);
-        self::assertSame('', Attribution::text(null, static fn (string $key): string => $key, '%s:'));
+    public function testMailsAndTheCalendarEntryShowOnlyTheCampaignName(): void
+    {
+        $translate = static fn (string $key): string => $key === 'COM_APPOINTMENTS_ATTRIBUTION_CAMPAIGN' ? 'Campaign' : $key;
+        $state = Attribution::visit(null, $this->request('/lp?utm_source=linkedin&utm_campaign=first-campaign&gclid=G-1', 'https://www.linkedin.com/feed/'),
+            $this->at('2026-11-16 08:00:00'));
+        $state = Attribution::visit($state, $this->request('/lp?utm_source=newsletter&utm_campaign=last-campaign&mc_cid=MC-1', 'https://mail.example.org/'),
+            $this->at('2026-11-16 08:10:00'));
+        $record = Attribution::record($state, $this->submit(), $this->at('2026-11-16 08:30:00'));
+
+        // The last touch, else the first.
+        self::assertSame('last-campaign', Attribution::campaignName($record));
+        $text = Attribution::text($record, $translate, '%s:');
+        self::assertSame('Campaign: last-campaign', $text, 'One line with the campaign name and nothing else');
+        foreach (['198.51.100.7', '192.0.2.10', 'Chrome', 'Windows', 'desktop', 'linkedin', 'mail.example.org', 'G-1', 'MC-1', 'de-CH', '/lp', 'newsletter'] as $hidden) {
+            self::assertStringNotContainsString($hidden, $text, 'Never in a mail or calendar entry: ' . $hidden);
+        }
+
+        $noLastCampaign = $record;
+        $noLastCampaign['last_touch']['parameters'] = ['utm_source' => 'newsletter'];
+        self::assertSame('first-campaign', Attribution::campaignName($noLastCampaign), 'A last touch without a campaign falls back to the first');
+        self::assertSame('Campagne : first-campaign', Attribution::text($noLastCampaign, static fn (string $key): string => 'Campagne', '%s :'));
+
+        // No campaign: no line at all, not even a label.
+        $direct = Attribution::record(Attribution::visit(null, $this->request('/lp', 'https://www.google.com/'), $this->at('2026-11-16 08:00:00')),
+            $this->submit(), $this->at('2026-11-16 08:30:00'));
+        self::assertSame('', Attribution::campaignName($direct));
+        self::assertSame('', Attribution::text($direct, $translate, '%s:'));
+        self::assertSame('', Attribution::text(null, $translate, '%s:'));
     }
 }

@@ -39,7 +39,7 @@ no contact form.
 | all custom field answers | erased |
 | guest e-mail addresses | erased |
 | `cancel_reason`, any free text | erased |
-| `attribution` (origin of the booking: campaign, referrer, landing and booking page, IP addresses, User-Agent) | erased; the non-personal row in `#__appointments_campaign_stats` (day, event type, campaign, state) stays |
+| `attribution` (origin of the booking: campaign, referrer, landing and booking page, IP addresses, User-Agent) | erased; the non-personal row in `#__appointments_campaign_stats` (day, event type, campaign, state) stays. Host mails and the host's calendar entry carry only the campaign name (`Attribution::text()`), never the rest: copies outside the website are neither encrypted nor anonymised |
 | conference room identifier and link | erased, and the room is torn down if the adapter supports it |
 | anti-bot timing data | never stored in the first place, so there is nothing to erase |
 | `start_utc`, `end_utc`, `eventtype_id`, `state`, `created_utc` | kept |

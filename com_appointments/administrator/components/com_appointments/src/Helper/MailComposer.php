@@ -113,7 +113,7 @@ final class MailComposer
         // token never reaches a mail as text.
         $result['{field_answers}'] = '';
         $result['{invitee_time}'] = '';
-        // The origin of the booking (Attribution), filled for the host only, never from the stored record.
+        // The campaign name of the booking (Attribution::text()), filled for the host only, never from the stored record.
         $result['{attribution}'] = '';
 
         // {guest_email} and {guest_remove_url} are only filled in a mail to an additional guest:

@@ -520,27 +520,45 @@ final class Attribution
     }
 
     /**
-     * The lines as plain text under a heading, for the {attribution} block of a host mail; ''
-     * without a record. $labelFormat is the label format of the mail (`%s:`).
+     * The campaign name of a booking: `utm_campaign` of the last touch, else of the first touch,
+     * '' without one.
+     *
+     * @param   array<string, mixed>|null  $record
+     */
+    public static function campaignName(?array $record): string
+    {
+        foreach (['last_touch', 'first_touch'] as $touch) {
+            $value = $record[$touch]['parameters']['utm_campaign'] ?? '';
+
+            if (\is_string($value) && self::clean($value) !== '') {
+                return self::clean($value);
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * What a mail and the calendar entry of the host show of the origin (the {attribution} block
+     * and the entry's DESCRIPTION): one line with the campaign name ({@see self::campaignName()}),
+     * nothing else, and '' without a campaign, so no label remains. Mails and calendar entries
+     * are copies outside the website: they are neither encrypted nor anonymised with the booking,
+     * so they never carry addresses, the device, referrers or pages. The full record is shown in
+     * the administrator only. $labelFormat is the label format of the mail (`%s:`).
      *
      * @param   array<string, mixed>|null  $record
      */
     public static function text(?array $record, callable $translate, string $labelFormat): string
     {
-        $lines = self::lines($record, $translate);
+        $campaign = self::campaignName($record);
 
-        if ($lines === []) {
+        if ($campaign === '') {
             return '';
         }
 
         $labelFormat = str_contains($labelFormat, '%s') ? $labelFormat : '%s:';
-        $text = sprintf($labelFormat, $translate('COM_APPOINTMENTS_ATTRIBUTION_HEADING'));
 
-        foreach ($lines as [$label, $value]) {
-            $text .= "\n" . sprintf($labelFormat, $label) . ' ' . $value;
-        }
-
-        return $text;
+        return sprintf($labelFormat, $translate('COM_APPOINTMENTS_ATTRIBUTION_CAMPAIGN')) . ' ' . $campaign;
     }
 
     /** An IP address as text, '' for anything else. */

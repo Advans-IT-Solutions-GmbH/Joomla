@@ -230,8 +230,8 @@ final class NotificationService
                         }
                     }
 
-                    // The origin of the booking (campaign, referrer, device): for the host only, never for
-                    // the invitee or a guest, and nothing of an erased booking.
+                    // Of the origin of the booking only the campaign name (Attribution::text()): for the host
+                    // only, never for the invitee or a guest, and nothing of an erased booking.
                     $origin = $isHost && !$erased ? Attribution::text(Attribution::decode($booking['attribution'] ?? null), $translate, $labelFormat) : '';
                     $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $recipientEvent, $links, $now,
                         ['{field_answers}' => $answers, '{invitee_time}' => $inviteeTime, '{attribution}' => $origin]);
@@ -642,6 +642,8 @@ final class NotificationService
             'COM_APPOINTMENTS_MAIL_DETAIL_PHONE' => (string) ($booking['invitee_phone'] ?? ''),
             'COM_APPOINTMENTS_MAIL_DETAIL_GUESTS' => implode(', ', PrivacyAddress::guestList($booking['guest_emails'] ?? null)),
             'COM_APPOINTMENTS_MAIL_DETAIL_INVITEE_TIME' => $inviteeTime,
+            // Of the origin only the campaign name, as in the host mail (Attribution::text()).
+            'COM_APPOINTMENTS_ATTRIBUTION_CAMPAIGN' => Attribution::campaignName(Attribution::decode($booking['attribution'] ?? null)),
         ] as $key => $value) {
             if ($value !== '') {
                 $rows[$language->_($key)] = $value;

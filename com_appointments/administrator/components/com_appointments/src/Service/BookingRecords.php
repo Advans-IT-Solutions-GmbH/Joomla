@@ -481,15 +481,23 @@ final class BookingRecords
         $query->clear('select')->clear('order')->select($db->quoteName(array_merge(['b.id'], BookingData::readColumns('b'))))
             ->order($db->quoteName('b.id') . ' DESC');
         $rows = [];
+        $offset = 0;
+        $batch = 500;
 
-        $query->setLimit(self::SEARCH_LIMIT);
+        // Read in batches: only the sort keys and IDs are kept, never all encrypted rows at once (the
+        // origin of a booking can be large).
+        do {
+            $query->setLimit(min($batch, self::SEARCH_LIMIT - $offset), $offset);
+            $page = $db->setQuery($query)->loadAssocList();
+            $offset += \count($page);
 
-        foreach ($db->setQuery($query)->loadAssocList() as $row) {
-            $row = $this->data->openLenient($row);
-            $last = (string) ($row['invitee_last_name'] ?? '');
-            $rows[] = [mb_strtolower($last !== '' ? $last : (string) ($row['invitee_name'] ?? ''), 'UTF-8'),
-                mb_strtolower((string) ($row['invitee_first_name'] ?? ''), 'UTF-8'), (int) $row['id']];
-        }
+            foreach ($page as $row) {
+                $row = $this->data->openLenient($row);
+                $last = (string) ($row['invitee_last_name'] ?? '');
+                $rows[] = [mb_strtolower($last !== '' ? $last : (string) ($row['invitee_name'] ?? ''), 'UTF-8'),
+                    mb_strtolower((string) ($row['invitee_first_name'] ?? ''), 'UTF-8'), (int) $row['id']];
+            }
+        } while (\count($page) === $batch && $offset < self::SEARCH_LIMIT);
 
         usort($rows, static fn (array $a, array $b): int => $descending ? [$b[0], $b[1], $b[2]] <=> [$a[0], $a[1], $a[2]] : $a <=> $b);
 

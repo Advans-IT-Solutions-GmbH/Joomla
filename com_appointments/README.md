@@ -1541,13 +1541,24 @@ marketing question without it. Browsers usually send only the origin of another 
 session ends with Joomla's session lifetime: a visitor who books after it has expired is recorded
 as a direct visit with the booking page.
 
-**Where it is shown.** To the host only: in the `{attribution}` block of the host mails (the
-`host_*` and the content `calendar_*` defaults, see [Email templates](#email-templates)), on the
-booking in the administrator, in the bookings CSV export (every field a column of its own, see
-[Booking administration and system checks](#booking-administration-and-system-checks)) and in the
-formal privacy export. Never in a mail to the booking person or a guest, on a page of the booking
-person, in the calendar entry or in the transfer to Close. Output is escaped text: the administrator
-page and the HTML mail never render a value as markup.
+**Where it is shown.** The whole record to the host only: on the booking in the administrator,
+in the bookings CSV export (every field a column of its own, see
+[Booking administration and system checks](#booking-administration-and-system-checks)), in the
+formal privacy export and, without personal data, in the campaign statistics.
+
+**Mails and calendar entries show only the campaign name.** The `{attribution}` line of the host mails
+(the `host_*` and the content `calendar_*` defaults: confirmation, approval, change, cancellation and
+the reminders, see [Email templates](#email-templates)) and the DESCRIPTION of the host's calendar
+entry show «Campaign: name» with `utm_campaign` of the last campaign visit, else of the first, and
+nothing else of the origin: no IP address, device, browser, operating system, User-Agent, browser
+language, referrer, landing or booking page, click ID or page count. Without a campaign there is no
+line at all. The reason: mails and calendar entries are copies outside the website. They are neither
+encrypted nor anonymised after the retention period (for example 30 days) like the booking, so they
+must not carry what the privacy notice promises to keep only encrypted and for that period. The
+rendering is in the code, not in the template text: an edited template cannot show more than the
+campaign name either. Never in a mail to the booking person or a guest, on a page of the booking
+person or in the transfer to Close. Output is escaped text: the administrator page and the HTML mail
+never render a value as markup.
 
 **Retention.** The record is one of the booking's personal fields: it is erased with them by the
 deletion link, a formal privacy request, the retention task (for example 30 days after the end of
@@ -1875,7 +1886,7 @@ empty, so a telephone appointment shows no empty location:
 | `{event_title}`, `{description}`, `{location_text}`, `{location_type}` | The event type |
 | `{location}` | The location text of the event type; a telephone appointment without one names the kind of call («Phone call, you will be called» for the invitee, «Telephone: host calls invitee» for host and guests). The same text is the `LOCATION` of the invitation |
 | `{field_answers}` | Every answer to the custom fields as «Field: answer» lines in the order of the form, an empty answer as «no answer»; in mails to the booking person and the host, empty for guests. A line holding only this placeholder disappears when there are no answers |
-| `{attribution}` | The origin of the booking (first visit, landing page, campaign parameters and referrer of the first and last campaign visit, page views, booking page, IP addresses, browser language, device and User-Agent) under a heading, one «Label: value» line each; filled only in mails to the host (the `host_*` and content `calendar_*` defaults use it), empty in every other mail. A line holding only this placeholder disappears when it is empty. An edited site template does not get it by itself: add the line where it should appear |
+| `{attribution}` | «Campaign: name» with the campaign name of the booking (`utm_campaign` of the last campaign visit, else of the first) and nothing else of its [origin](#origin-of-bookings-campaign-attribution); filled only in mails to the host (the `host_*` and content `calendar_*` defaults use it), empty in every other mail and without a campaign. A line holding only this placeholder disappears when it is empty. An edited site template does not get it by itself: add the line where it should appear |
 | `{invitee_time}` | The start in the booking person's zone with the zone, «2026-11-24 08:00 (America/New_York)», when it differs from the host's zone (used by the `host_*` defaults), otherwise empty |
 | `{host_name}`, `{host_email}` | The host |
 | `{invitee_name}` | Full name of the booking person ("first last"), unchanged since earlier versions |
