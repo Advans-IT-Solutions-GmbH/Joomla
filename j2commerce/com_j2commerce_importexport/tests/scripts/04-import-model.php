@@ -512,6 +512,44 @@ class ImportModelTest
                     return false;
                 });
 
+            $this->test('Moving an imported article to another category moves its asset below that category', function () use ($newModel, $first, $articleId, $db, $assoc, $assetQuery) {
+                $result = $newModel(ImportModel::class)->importProductFull(array_replace($first, ['catid' => 2]), ['update_existing' => true]);
+                $article = $assoc('SELECT ' . implode(', ', $db->quoteName(['asset_id', 'catid'])) . ' FROM ' . $db->quoteName('#__content')
+                    . ' WHERE ' . $db->quoteName('id') . ' = ' . $articleId);
+                $asset = $assoc($assetQuery . $db->quoteName('id') . ' = ' . (int) ($article['asset_id'] ?? 0));
+                $category = $assoc('SELECT ' . $db->quoteName('asset_id') . ' FROM ' . $db->quoteName('#__categories')
+                    . ' WHERE ' . $db->quoteName('id') . ' = 2');
+
+                return $articleId > 0 && (int) ($result['article_id'] ?? 0) === $articleId && (int) ($article['catid'] ?? 0) === 2
+                    && $asset !== null && (int) $asset['parent_id'] === (int) ($category['asset_id'] ?? -1);
+            });
+
+            // A failed re-import of a nested menu item gives it its previous values back.
+            $parentRow = array_replace($rowFor('menu-parent'), ['catid' => 2]);
+            $parentRow['menu_item'] = ['title' => $parentRow['title'], 'alias' => $parentRow['alias']];
+            $childRow = array_replace($rowFor('menu-child'), ['catid' => 2]);
+            $this->test('A failed re-import of a nested menu item restores it completely', function () use ($newModel, $parentRow, &$childRow, $menuOptions, $db, $assoc) {
+                $newModel(ImportModel::class)->importProductFull($parentRow, $menuOptions);
+                $parentMenu = $assoc('SELECT ' . $db->quoteName('id') . ' FROM ' . $db->quoteName('#__menu')
+                    . ' WHERE ' . $db->quoteName('client_id') . ' = 0 AND ' . $db->quoteName('alias') . ' = ' . $db->quote($parentRow['alias']));
+                $childRow['menu_item'] = ['title' => $childRow['title'], 'alias' => $childRow['alias'], 'parent_id' => (int) ($parentMenu['id'] ?? 0)];
+                $newModel(ImportModel::class)->importProductFull($childRow, $menuOptions);
+                $menuQuery = 'SELECT ' . implode(', ', $db->quoteName(['id', 'title', 'path', 'parent_id'])) . ' FROM ' . $db->quoteName('#__menu')
+                    . ' WHERE ' . $db->quoteName('client_id') . ' = 0 AND ' . $db->quoteName('alias') . ' = ' . $db->quote($childRow['alias']);
+                $before = $assoc($menuQuery);
+
+                $changed = $childRow;
+                $changed['menu_item']['title'] = 'Changed ' . $childRow['title'];
+                try {
+                    $newModel(ImportModelFailingInRowTransaction::class)->importProductFull($changed, ['update_existing' => true] + $menuOptions);
+                    return false;
+                } catch (\RuntimeException $e) {
+                    return $e->getMessage() === 'Forced failure in a later row step'
+                        && $before !== null && (int) $before['parent_id'] === (int) ($parentMenu['id'] ?? -1)
+                        && $assoc($menuQuery) === $before;
+                }
+            });
+
             // Joomla stores the alias URL-safe; a re-import with the alias as written updates that article.
             $mixedSuffix = bin2hex(random_bytes(4));
             $mixedAlias = array_replace($data, [
@@ -532,7 +570,10 @@ class ImportModelTest
             if (isset($mixedCleanup)) {
                 $this->removeImportedRow($db, $mixedCleanup);
             }
-            foreach ([$second, $first, $afterMenu, $inTransaction] as $row) {
+            foreach ([$childRow ?? null, $parentRow ?? null, $second, $first, $afterMenu, $inTransaction] as $row) {
+                if ($row === null) {
+                    continue;
+                }
                 $this->removeImportedRow($db, $row);
             }
         }

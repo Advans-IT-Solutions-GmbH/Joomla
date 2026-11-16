@@ -13,6 +13,7 @@ defined('_JEXEC') or die;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Table\Asset as AssetTable;
 use Joomla\CMS\Table\Category as CategoryTable;
 use Joomla\CMS\Table\Content as ContentTable;
 use Joomla\CMS\Table\Menu as MenuTable;
@@ -101,6 +102,11 @@ class ImportModel extends BaseDatabaseModel
             $articleId = $article['existing']
                 ? (int) $article['existing']->id
                 : $this->createArticle($article['values']);
+
+            // An existing article moved to another category takes its permission asset along.
+            if ($article['existing'] && (int) ($article['existing']->catid ?? 0) !== $catId) {
+                $this->moveArticleAsset($articleId, $catId);
+            }
 
             // 3. Menu item if requested
             if (!empty($options['create_menu']) && !empty($data['menu_item'])) {
@@ -265,12 +271,23 @@ class ImportModel extends BaseDatabaseModel
         return $table->delete($articleId);
     }
 
-    private function deleteMenuItem(int $menuId): bool
+    /**
+     * Deletes a menu item the failed row created, unless it changed since: it is
+     * committed before the row ends, so another import or an editor may already have
+     * edited it or placed items below it. Such an item is kept and reported.
+     *
+     * @param   ?array  $written  Values after the row's store, by column; null if unknown
+     */
+    private function deleteMenuItem(int $menuId, ?array $written): bool
     {
         $table = $this->newTable(MenuTable::class);
 
         if (!$table->load($menuId)) {
             return true;
+        }
+
+        if ($written === null || !$this->menuHolds($table, $written) || (int) $table->rgt - (int) $table->lft > 1) {
+            return false;
         }
 
         return $table->delete($menuId);
@@ -281,61 +298,102 @@ class ImportModel extends BaseDatabaseModel
      * publication state of descendants that Joomla's nested-set store changed with it.
      *
      * The change is committed before the row ends, so another import or an editor may
-     * have changed the item or a descendant since. Such values are kept, and the item is
-     * reported, so a later change is never overwritten with the old snapshot.
+     * have changed the item or a descendant since. Then nothing is restored, because
+     * restoring the item would cascade over the later change, and the item is reported.
      *
-     * @param   array  $previous          Values before the row's store, by column
-     * @param   array  $written           Values after the row's store, by column
-     * @param   array  $previousChildren  Publication state of descendants before the store, by ID
-     * @param   array  $writtenChildren   Publication state of descendants after the store, by ID
+     * @param   array   $previous          Values before the row's store, by column
+     * @param   ?array  $written           Values after the row's store, by column; null if unknown
+     * @param   array   $previousChildren  Publication state of descendants before the store, by ID
+     * @param   ?array  $writtenChildren   Publication state of descendants after the store, by ID; null if unknown
      */
-    private function restoreMenuItem(int $menuId, array $previous, array $written, array $previousChildren, array $writtenChildren): bool
+    private function restoreMenuItem(int $menuId, array $previous, ?array $written, array $previousChildren, ?array $writtenChildren): bool
     {
         $table = $this->newTable(MenuTable::class);
 
-        if (!$table->load($menuId)) {
+        if ($written === null || !$table->load($menuId) || !$this->menuHolds($table, $written)) {
             return false;
         }
 
-        foreach ($written as $key => $value) {
-            if ((string) $table->$key !== (string) $value) {
-                return false;
-            }
+        if ($writtenChildren !== null && !$this->sameStates($this->menuDescendantStates($menuId), $writtenChildren)) {
+            return false;
         }
 
         if (!($table->bind($previous) && $table->check() && $table->store())) {
             return false;
         }
 
-        $db       = $this->getDatabase();
-        $current  = $this->menuDescendantStates($menuId);
-        $restored = true;
+        // Unknown descendant states: the item is restored, the descendants are reported.
+        if ($writtenChildren === null) {
+            return false;
+        }
 
-        foreach ($previousChildren as $childId => $state) {
-            if (!isset($writtenChildren[$childId]) || (int) $writtenChildren[$childId] === (int) $state) {
-                continue;
-            }
+        // Restoring the item may have cascaded again; give every descendant its state from before the row.
+        $db = $this->getDatabase();
 
-            if (!isset($current[$childId]) || (int) $current[$childId] !== (int) $writtenChildren[$childId]) {
-                $restored = false;
+        foreach ($this->menuDescendantStates($menuId) as $childId => $current) {
+            if (!array_key_exists($childId, $previousChildren) || (int) $previousChildren[$childId] === $current) {
                 continue;
             }
 
             $childId = (int) $childId;
-            $state   = (int) $state;
-            $writtenState = (int) $writtenChildren[$childId];
+            $state   = (int) $previousChildren[$childId];
             $query   = $this->createDbQuery($db)
                 ->update($db->quoteName('#__menu'))
                 ->set($db->quoteName('published') . ' = :state')
                 ->where($db->quoteName('id') . ' = :id')
-                ->where($db->quoteName('published') . ' = :written')
+                ->where($db->quoteName('published') . ' = :current')
                 ->bind(':state', $state, \Joomla\Database\ParameterType::INTEGER)
                 ->bind(':id', $childId, \Joomla\Database\ParameterType::INTEGER)
-                ->bind(':written', $writtenState, \Joomla\Database\ParameterType::INTEGER);
+                ->bind(':current', $current, \Joomla\Database\ParameterType::INTEGER);
             $db->setQuery($query)->execute();
         }
 
-        return $restored;
+        return true;
+    }
+
+    private function menuHolds(object $table, array $values): bool
+    {
+        foreach ($values as $key => $value) {
+            if ((string) $table->$key !== (string) $value) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function sameStates(array $a, array $b): bool
+    {
+        $a = array_map('intval', $a);
+        $b = array_map('intval', $b);
+        ksort($a);
+        ksort($b);
+
+        return $a === $b;
+    }
+
+    /**
+     * The persisted values of a menu item (Joomla's store rebuilds the path in the
+     * database only), or null if they cannot be read.
+     */
+    private function menuSnapshot(int $menuId, array $keys): ?array
+    {
+        try {
+            $table = $this->newTable(MenuTable::class);
+
+            if ($menuId < 1 || !$table->load($menuId)) {
+                return null;
+            }
+
+            $values = [];
+            foreach ($keys as $key) {
+                $values[$key] = $table->$key;
+            }
+
+            return $values;
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 
     /**
@@ -548,6 +606,81 @@ class ImportModel extends BaseDatabaseModel
     }
 
     /**
+     * Moves the permission asset of an existing article below its new category, as
+     * Joomla does when an article is saved in another category, so it inherits the new
+     * category's permissions. The asset is a nested set, so the move runs before the row
+     * transaction (which updates the article) and registers its undo.
+     */
+    protected function moveArticleAsset(int $articleId, int $categoryId): void
+    {
+        $asset = $this->newTable(AssetTable::class);
+
+        // An article without its own asset is checked against its category anyway.
+        if (!$asset->loadByName('com_content.article.' . $articleId)) {
+            return;
+        }
+
+        $db    = $this->getDatabase();
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('asset_id'))
+            ->from($db->quoteName('#__categories'))
+            ->where($db->quoteName('id') . ' = :id')
+            ->bind(':id', $categoryId, \Joomla\Database\ParameterType::INTEGER);
+        $db->setQuery($query);
+
+        $assetId   = (int) $asset->id;
+        $oldParent = (int) $asset->parent_id;
+        $newParent = (int) $db->loadResult();
+
+        if ($newParent < 1 || $newParent === $oldParent) {
+            return;
+        }
+
+        $asset->setLocation($newParent, 'last-child');
+        $asset->parent_id = $newParent;
+        $stored = false;
+
+        try {
+            $stored = $asset->store();
+        } finally {
+            $this->registerUndo(
+                Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_ARTICLE_ASSET', $articleId),
+                fn (): bool => $this->moveAssetBack($assetId, $oldParent, $newParent)
+            );
+        }
+
+        if (!$stored) {
+            throw new \RuntimeException($asset->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
+        }
+    }
+
+    /**
+     * Moves an article's asset back below its previous parent, unless it was moved again
+     * since the failed row moved it (the later move is then kept and reported).
+     */
+    private function moveAssetBack(int $assetId, int $oldParent, int $newParent): bool
+    {
+        $asset = $this->newTable(AssetTable::class);
+
+        if (!$asset->load($assetId)) {
+            return true;
+        }
+
+        if ((int) $asset->parent_id === $oldParent) {
+            return true;
+        }
+
+        if ((int) $asset->parent_id !== $newParent) {
+            return false;
+        }
+
+        $asset->setLocation($oldParent, 'last-child');
+        $asset->parent_id = $oldParent;
+
+        return $asset->store();
+    }
+
+    /**
      * Joomla's content table reports its errors (for example a duplicate alias) with
      * com_content language strings, which this component does not load itself.
      */
@@ -587,8 +720,8 @@ class ImportModel extends BaseDatabaseModel
             throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
         }
         // Joomla's content table stores the alias in this URL-safe form, so a re-import
-        // matches the article it created. An empty alias is derived from the title there.
-        $alias = trim($suppliedAlias) === '' ? '' : ApplicationHelper::stringURLSafe($suppliedAlias, $language);
+        // matches the article it created. Like Joomla, an empty alias is derived from the title.
+        $alias = ApplicationHelper::stringURLSafe(trim($suppliedAlias) === '' ? $title : $suppliedAlias, $language);
         $existing = !empty($options['update_existing'])
             ? $this->findExistingArticle($data, $alias, $suppliedAlias)
             : null;
@@ -1717,18 +1850,15 @@ class ImportModel extends BaseDatabaseModel
             $stored = $menu->bind($row) && $menu->check() && $menu->store();
         } finally {
             $menuId = (int) $menu->id;
+            // What the store left in the database, so the undo recognizes later changes.
+            $written = $this->menuSnapshot($menuId, array_keys($row));
 
             if ($existing) {
-                $written = [];
-                foreach (array_keys($row) as $key) {
-                    $written[$key] = $menu->$key;
-                }
-
                 try {
                     $writtenChildren = $this->menuDescendantStates($menuId);
                 } catch (\Throwable $e) {
-                    // Unknown: the undo then leaves the descendants as they are.
-                    $writtenChildren = [];
+                    // Unknown: the undo then reports the descendants instead of skipping them.
+                    $writtenChildren = null;
                 }
 
                 $this->registerUndo(
@@ -1738,7 +1868,7 @@ class ImportModel extends BaseDatabaseModel
             } elseif ($menuId > 0) {
                 $this->registerUndo(
                     Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_MENU_ITEM', $menuId),
-                    fn (): bool => $this->deleteMenuItem($menuId)
+                    fn (): bool => $this->deleteMenuItem($menuId, $written)
                 );
             }
         }
