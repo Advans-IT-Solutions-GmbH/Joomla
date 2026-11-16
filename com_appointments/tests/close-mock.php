@@ -599,6 +599,13 @@ namespace {
                 'an empty or unusable value never replaces a stored key: ' . strlen($unusable) . ' characters');
         }
     }
+    try {
+        $store->put(99, $keyQr, 42);
+        $check(false, 'a key for a deleted event type is refused');
+    } catch (\RuntimeException $e) {
+        $check($store->status(99)['stored'] === false && !str_contains($e->getMessage(), 'DummyOnly'),
+            'a key for an event type that no longer exists is refused and nothing is stored');
+    }
     $store->delete(3);
     $keyed = [];
     $enrol($booking(24, 3, 'fallback-qr@example.test', ['31' => 'Fallback Club']));

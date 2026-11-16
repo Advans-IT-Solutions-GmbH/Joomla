@@ -72,9 +72,27 @@ final class CredentialStore
         }
 
         $db = $this->db;
-        $db->setQuery('REPLACE INTO ' . $db->quoteName(self::TABLE) . ' (eventtype_id, secret, modified_utc, modified_by) VALUES ('
-            . $eventType . ', ' . $db->quote($this->cipher->seal($eventType, $apiKey)) . ', ' . $db->quote(gmdate('Y-m-d H:i:s'))
-            . ', ' . max(0, $user) . ')')->execute();
+        $sealed = $this->cipher->seal($eventType, $apiKey);
+        $db->transactionStart();
+
+        try {
+            // Parent before child, the lock order of EventtypeModel::delete(): a deletion that finished after the
+            // event type was saved must not leave a key behind that no form can remove any more.
+            $exists = $db->setQuery('SELECT id FROM ' . $db->quoteName('#__appointments_eventtypes') . ' WHERE id = ' . $eventType
+                . ' FOR UPDATE')->loadResult();
+
+            if ($exists === null || $exists === false) {
+                throw new \RuntimeException('The event type no longer exists.');
+            }
+
+            $db->setQuery('REPLACE INTO ' . $db->quoteName(self::TABLE) . ' (eventtype_id, secret, modified_utc, modified_by) VALUES ('
+                . $eventType . ', ' . $db->quote($sealed) . ', ' . $db->quote(gmdate('Y-m-d H:i:s')) . ', ' . max(0, $user) . ')')->execute();
+            $db->transactionCommit();
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+
+            throw $e;
+        }
     }
 
     public function delete(int $eventType): void
