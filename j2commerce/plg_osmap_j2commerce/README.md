@@ -170,6 +170,17 @@ uninstall routine: the OSMap ≤ 5.1.3 patch and the disabled state of the legac
 OSMap's per-menu priority and change frequency settings take precedence over
 the plugin defaults.
 
+### Help tab
+
+The plugin's edit screen (**System → Manage → Plugins → OSMap - J2Commerce**) has a **Help** tab, the
+first tab after Joomla's own **Plugin** tab. It explains, in de-DE, en-GB and fr-FR, what the plugin does and which products it lists, prerequisites and setup (OSMap, shop, menu item, sitemap, SEF URLs), which menu item views add which products, both settings with their defaults, and typical problems with what to do.
+A note at the top of the **Plugin** tab points to it.
+
+The page is described in the manifest (fieldset `help`, field type `helppage`) and rendered by
+`src/Field/HelppageField.php`; its texts are the language keys `PLG_OSMAP_J2COMMERCE_HELP_*`. Keep them in step
+with the code when a setting or a behaviour changes (`php shared/tests/help-lint.php` checks the
+structure).
+
 ## Usage
 
 ### Permissions and Data Handling

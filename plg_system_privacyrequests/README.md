@@ -46,6 +46,10 @@ The public page is:
 index.php?option=com_ajax&plugin=privacyrequests&group=system&format=html
 ```
 
+### Help
+
+The plugin's edit screen has a **Help** tab (de-DE, en-GB, fr-FR), the first tab after Joomla's own **Plugin** tab, which points to it with a note. It explains what the plugin does, the setup step by step, the **Operator contact route** setting, how a request is processed, the limits and locks, how it works with the J2Commerce privacy plugin and Appointments, and typical problems.
+
 ### Distribution and updates
 
 The approved update channel uses this repository's GitHub raw update feed and

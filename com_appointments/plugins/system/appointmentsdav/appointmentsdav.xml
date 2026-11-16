@@ -13,6 +13,7 @@
     <version>1.0.0</version>
     <description>PLG_SYSTEM_APPOINTMENTSDAV_XML_DESCRIPTION</description>
     <namespace path="src">Advans\Plugin\System\AppointmentsDav</namespace>
+    <help url="PLG_SYSTEM_APPOINTMENTSDAV_HELP_URL"/>
     <files>
         <folder plugin="appointmentsdav">services</folder>
         <folder>src</folder>
@@ -30,6 +31,12 @@
     <config>
         <fields name="params">
             <fieldset name="basic">
+                <field
+                    name="help_note"
+                    type="note"
+                    class="alert alert-info"
+                    description="PLG_SYSTEM_APPOINTMENTSDAV_HELP_NOTE"
+                />
                 <field
                     name="dav_base_url"
                     type="url"

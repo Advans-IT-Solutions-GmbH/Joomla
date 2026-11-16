@@ -12,6 +12,8 @@ on:
       - 'shared/installer/**'
       - 'shared/tests/run-tests.sh'
       - 'shared/tests/lang-lint.php'
+      - 'shared/tests/help-lint.php'
+      - 'shared/tests/scripts/shared-help-pages.php'
       - 'shared/tests/requirements-check.php'
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
@@ -33,6 +35,8 @@ on:
       - 'shared/installer/**'
       - 'shared/tests/run-tests.sh'
       - 'shared/tests/lang-lint.php'
+      - 'shared/tests/help-lint.php'
+      - 'shared/tests/scripts/shared-help-pages.php'
       - 'shared/tests/requirements-check.php'
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
@@ -90,6 +94,8 @@ jobs:
         run: find plg_system_privacyrequests -name '*.php' -not -path '*/vendor/*' -print0 | xargs -0 -n1 php -l
       - name: Language parity and usage
         run: php shared/tests/lang-lint.php plg_system_privacyrequests
+      - name: Check that the extension has reachable help
+        run: php shared/tests/help-lint.php plg_system_privacyrequests
       - name: Deprecated APIs
         run: php shared/tests/deprecated-api-scan.php plg_system_privacyrequests
       - name: Compatibility and release requirements

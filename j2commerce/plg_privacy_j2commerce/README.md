@@ -1018,6 +1018,10 @@ This plugin does not store or have access to complete payment details. Users mus
 
 ## Configuration
 
+### Help
+
+The plugin's edit screen (**System → Manage → Plugins → Privacy - J2Commerce**) has a **Help** tab, the first tab after Joomla's own **Plugin** tab, which points to it with a note. In de-DE, en-GB and fr-FR it explains what the plugin does, the requirements and the setup step by step, the template overrides, every setting with its default, how the retention period is calculated, what a removal request deletes, anonymises and keeps, lifetime licenses, guest requests, disabling and uninstalling, and typical problems. The bundled system and task plugins have a **Help** tab of their own.
+
 ### Plugin Settings
 
 **Access:** `System → Manage → Plugins → Privacy - J2Commerce`

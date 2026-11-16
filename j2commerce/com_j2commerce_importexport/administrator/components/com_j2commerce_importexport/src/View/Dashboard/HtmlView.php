@@ -89,6 +89,8 @@ class HtmlView extends BaseHtmlView implements DatabaseAwareInterface
         if ($user->authorise('core.admin', 'com_j2commerce_importexport') || $user->authorise('core.options', 'com_j2commerce_importexport')) {
             ToolbarHelper::preferences('com_j2commerce_importexport');
         }
+
+        ToolbarHelper::help('', false, 'index.php?option=com_j2commerce_importexport&view=help&tmpl=component');
     }
 
     protected function getMenuTypes(): array

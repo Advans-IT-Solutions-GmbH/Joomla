@@ -103,6 +103,10 @@ The **Permissions** tab of the same screen sets who may use the component (see b
 
 ## Usage
 
+### Help
+
+The component has a help page in the administrator (en-GB, de-DE, fr-FR). The **Help** button in the toolbar of the dashboard opens it in Joomla's help popup; the address is `administrator/index.php?option=com_j2commerce_importexport&view=help`. It explains export and import, the import options and file format, how existing products are matched and updated, categories and aliases, errors and the undo of failed rows, the Options, typical problems and data protection. Every user who can open the component (`core.manage`) can read it; no further permission is needed.
+
 ### Permissions and Data Handling
 
 Access to the component requires `core.manage`. Import upload/preview/process additionally require the component action **Import** (`importexport.import`), and export requires the action **Export** (`importexport.export`), both set on the component's **Permissions** tab, plus a valid Joomla form token. The dashboard shows only the section the user may use. An installation or update gives both actions to every group that effectively has `core.manage` on the component, including grants inherited from the global permissions; change them on the Permissions tab afterwards. Article texts (`introtext`, `fulltext`) are run through Joomla's text filters of the importing user's groups (Global Configuration, Text Filters), as when saving the article in the backend, so a group that is filtered there cannot import scripts. The JSON columns `article_images`, `urls`, `attribs` and `metadata` must be JSON objects; their strings are stripped of markup, and links (`urla`, `urlb`, `urlc`, `image_intro`, `image_fulltext`) may only use the schemes http, https, mailto, tel, ftp, ftps and sftp. A row with an invalid value is reported as failed. Product imports also enforce Joomla Content permissions for the target category and any matched article. Existing rows can be updated only when the article is linked to a product in the active shop; creating or moving articles requires `core.create`, while changing publication state, access level, the featured flag or the publishing window (start and end date) requires `core.edit.state`. Articles without their own Joomla permission asset (for example from earlier imports) are checked against their current category. New articles default to published for users with `core.edit.state` on the target category and unpublished otherwise. Creating categories requires `core.create` on the Content component or an authorized Content category, following Joomla's category-controller permission check. New categories are published only for users with `core.edit.state` on the Content component, matching Joomla's new-category form asset; their access level uses the site's configured default. Creating a menu item requires `core.create` on the target site menu, updating one requires `core.edit`, and changing its publication state requires `core.edit.state`; an unknown menu type is rejected. Creating a new tag requires `core.create` on the Tags component, and writing a custom field value requires `core.edit.value` on that field. A denied row is reported as failed. Grant component access only to trusted administrators: imports change articles, categories, menus and shop records. The component has no own business tables, no Scheduler routine and no notification mail. Removing it does not undo imports.
@@ -289,8 +293,12 @@ com_j2commerce_importexport/
 │   │   │   │   ├── ExportModel.php
 │   │   │   │   ├── ImportModel.php
 │   │   │   │   └── J2CommerceAwareTrait.php   ← version detection + table helpers
-│   │   │   └── View/Dashboard/
-│   │   └── tmpl/dashboard/
+│   │   │   └── View/
+│   │   │       ├── Dashboard/
+│   │   │       └── Help/
+│   │   └── tmpl/
+│   │       ├── dashboard/
+│   │       └── help/
 │   └── language/ (en-GB, de-DE, fr-FR)
 ├── tests/
 ├── LICENSE.txt
@@ -298,9 +306,9 @@ com_j2commerce_importexport/
 └── VERSION
 ```
 
-### One View, Two Tasks
+### Two Views, Two Tasks
 
-The component has exactly one backend view, `dashboard`. Import and export are
+The component has two backend views: `dashboard` and the help page `help`. Import and export are
 **controller tasks**, not views of their own: the dashboard renders both forms
 and they post to `task=import.upload`, `task=import.preview`,
 `task=import.process` and `task=export.export`. There is no `View\Import` or
@@ -345,7 +353,7 @@ DOM and HTTP responses. These checks do not replace the real Joomla HTTP suites 
 Order as in `tests/test.env`:
 
 1. **Installation** — component registration in DB, file deployment
-2. **Component Structure** — `php -l` lint of every shipped PHP file + reflection-based class/type checks
+2. **Component Structure** — `php -l` lint of every shipped PHP file + reflection-based class/type checks; asserts that exactly the `Dashboard` and `Help` view classes are shipped and that the dashboard toolbar opens the help view
 3. **Export Model** — JSON, CSV, XML export output validation (J2Commerce 4 and 6)
 4. **Import Model** — full product import, duplicate detection, quantity modes, permissions, assets and nested set of new categories and articles, and that a row failing after a nested-set store leaves nothing behind (J2Commerce 4 and 6)
 5. **Round-Trip** (`04b-roundtrip.php`) — imports a product via `importProductFull()`, exports it via `exportData('products_full')` and verifies the exported record matches the imported data

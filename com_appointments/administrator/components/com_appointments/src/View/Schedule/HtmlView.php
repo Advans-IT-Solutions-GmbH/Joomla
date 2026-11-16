@@ -58,5 +58,6 @@ class HtmlView extends BaseHtmlView
         $toolbar->apply('schedule.apply');
         $toolbar->save('schedule.save');
         $toolbar->cancel('schedule.cancel');
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
     }
 }

@@ -65,6 +65,10 @@ Navigate to: **Components → J2Store Extension Cleanup**
 
 URL: `administrator/index.php?option=com_j2store_cleanup`
 
+### Help
+
+The component has a help page in the administrator (en-GB, de-DE, fr-FR). The **Help** button in the toolbar opens it in Joomla's help popup, and the link below the page heading opens it in the same window; the address is `administrator/index.php?option=com_j2store_cleanup&view=help`. It explains when to use the component and when not, the permissions, which extensions are listed, how the scan classifies them, what a removal does and never does, what cannot be undone, the Options and typical problems. Every user who can open the page (`core.manage`) can read it; the help view runs no scan and needs no further permission. `j2store_cleanup.php` renders `tmpl/help/default.php` for `view=help` after its access check.
+
 ### Interface Overview
 The component displays:
 
@@ -176,7 +180,8 @@ Order as in `tests/test.env`:
    the page Atum renders it checks the theme color variables and the responsive table
    containers
 8. **Backend Views** - shared suite (`shared-backend-views.php`): logs into `/administrator`
-   and really renders the component page. It asserts HTTP 200, no PHP error and no Joomla
+   and really renders the component page and the help page (`view=help`, found through the
+   `tmpl/help` folder). It asserts HTTP 200, no PHP error and no Joomla
    error page, no untranslated language key, and at least one string of the component's own
    language file on the page
 9. **Installer Messages** - shared suite: removes and reinstalls the package through the
@@ -232,7 +237,8 @@ com_j2store_cleanup/
 ├── administrator/
 │   ├── components/
 │   │   └── com_j2store_cleanup/
-│   │       └── j2store_cleanup.php   # Main component file
+│   │       ├── j2store_cleanup.php   # Main component file
+│   │       └── tmpl/help/default.php # Help page (view=help)
 │   └── language/
 │       ├── en-GB/
 │       ├── de-DE/

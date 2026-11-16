@@ -58,5 +58,6 @@ class HtmlView extends BaseHtmlView
         $toolbar->apply('blocked.apply');
         $toolbar->save('blocked.save');
         $toolbar->cancel('blocked.cancel');
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
     }
 }

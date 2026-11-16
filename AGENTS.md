@@ -146,3 +146,5 @@ mit vollständiger Schlüsselparität. `de-DE` enthält Schweizer Hochdeutsch; k
 oder Build-Kopien. Details: Skill `joomla-extensions`, `references/conventions.md`, „Language Files“.
 Auch alle E-Mail-Vorlagen in diesen drei Sprachen; Empfängerkonto, sonst Site-Standardsprache
 (auch bei Gästen). Details und Sender-Inventar: `README.md`, „E-mail templates“.
+
+**Jede Extension hat eine Hilfeseite.** Sie ist dort erreichbar, wo der Administrator mit der Extension arbeitet, und erklärt in den drei Sprachen, was die Extension tut, wie sie funktioniert und was zu tun ist. Komponenten haben eine Hilfeansicht (`tmpl/help`), die jede Backend-Ansicht über die Schaltfläche «Hilfe» der Werkzeugleiste öffnet. Plugins und Module haben entweder einen eigenen Tab «Hilfe» (erster eigener Tab, Feld `helppage`) oder verweisen über `<help url>` im Manifest und einen Hinweis oben in den Optionen auf die Hilfeansicht ihrer Komponente. Ein Hinweis allein in einem Optionen-Tab genügt nicht. `shared/tests/help-lint.php` prüft das in jedem Extension-Workflow. Details: `README.md`, «Help pages», und Skill `joomla-extensions`.

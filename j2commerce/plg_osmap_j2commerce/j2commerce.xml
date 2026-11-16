@@ -28,8 +28,9 @@
     </files>
 
     <config>
-        <fields name="params">
+        <fields name="params" addfieldprefix="Advans\Plugin\Osmap\J2Commerce\Field">
             <fieldset name="basic">
+                <field name="help_note" type="note" class="alert alert-info" description="PLG_OSMAP_J2COMMERCE_HELP_NOTE"/>
                 <field
                     name="priority"
                     type="list"
@@ -61,6 +62,62 @@
                     <option value="monthly">monthly</option>
                     <option value="yearly">yearly</option>
                     <option value="never">never</option>
+                </field>
+            </fieldset>
+            <fieldset name="help" label="PLG_OSMAP_J2COMMERCE_HELP_TAB">
+                <field name="helppage" type="helppage" hiddenLabel="true">
+                    <section title="PLG_OSMAP_J2COMMERCE_HELP_WHAT_TITLE">
+                        <p>PLG_OSMAP_J2COMMERCE_HELP_WHAT_P1</p>
+                        <p>PLG_OSMAP_J2COMMERCE_HELP_WHAT_P2</p>
+                        <ul>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_WHAT_LI1</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_WHAT_LI2</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_WHAT_LI3</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_WHAT_LI4</li>
+                        </ul>
+                        <note>PLG_OSMAP_J2COMMERCE_HELP_WHAT_NOTE</note>
+                    </section>
+                    <section title="PLG_OSMAP_J2COMMERCE_HELP_SETUP_TITLE">
+                        <ol>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_SETUP_STEP1</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_SETUP_STEP2</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_SETUP_STEP3</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_SETUP_STEP4</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_SETUP_STEP5</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_SETUP_STEP6</li>
+                        </ol>
+                    </section>
+                    <section title="PLG_OSMAP_J2COMMERCE_HELP_CONTENT_TITLE">
+                        <p>PLG_OSMAP_J2COMMERCE_HELP_CONTENT_P1</p>
+                        <ul>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_CONTENT_LI1</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_CONTENT_LI2</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_CONTENT_LI3</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_CONTENT_LI4</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_CONTENT_LI5</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_CONTENT_LI6</li>
+                        </ul>
+                        <note>PLG_OSMAP_J2COMMERCE_HELP_CONTENT_NOTE</note>
+                    </section>
+                    <section title="PLG_OSMAP_J2COMMERCE_HELP_SETTINGS_TITLE">
+                        <p>PLG_OSMAP_J2COMMERCE_HELP_SETTINGS_P1</p>
+                        <ul>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_SETTINGS_LI1</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_SETTINGS_LI2</li>
+                        </ul>
+                        <note>PLG_OSMAP_J2COMMERCE_HELP_SETTINGS_NOTE</note>
+                    </section>
+                    <section title="PLG_OSMAP_J2COMMERCE_HELP_PROBLEMS_TITLE">
+                        <ul>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_PROBLEMS_LI1</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_PROBLEMS_LI2</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_PROBLEMS_LI3</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_PROBLEMS_LI4</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_PROBLEMS_LI5</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_PROBLEMS_LI6</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_PROBLEMS_LI7</li>
+                        </ul>
+                    </section>
                 </field>
             </fieldset>
         </fields>
