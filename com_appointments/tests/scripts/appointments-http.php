@@ -8,6 +8,8 @@ final class AppointmentsHttp
     /** The Location headers of the redirects the last request followed, in order. */
     public array $locations = [];
     public string $contentType = '';
+    /** Request headers sent with every following request, such as «Referer: …» or «User-Agent: …». */
+    public array $headers = [];
     private string $cookie;
 
     public function __construct(private string $base = 'http://localhost', string $name = 'appointments')
@@ -53,6 +55,10 @@ final class AppointmentsHttp
             },
         ]);
         $this->locations = [];
+
+        if ($this->headers !== []) {
+            curl_setopt($curl, CURLOPT_HTTPHEADER, $this->headers);
+        }
 
         if ($data !== null) {
             curl_setopt($curl, CURLOPT_POST, true);

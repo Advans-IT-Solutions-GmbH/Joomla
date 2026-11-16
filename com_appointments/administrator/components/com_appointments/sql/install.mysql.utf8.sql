@@ -259,6 +259,7 @@ CREATE TABLE IF NOT EXISTS `#__appointments_bookings` (
     `invitee_language` CHAR(7) DEFAULT NULL,
     `guest_emails` MEDIUMTEXT,
     `custom_fields` MEDIUMTEXT,
+    `attribution` MEDIUMTEXT,
     `consent_utc` DATETIME DEFAULT NULL,
     `consent_version` CHAR(64) DEFAULT NULL,
     `conference_provider` VARCHAR(64) DEFAULT NULL,
@@ -351,6 +352,27 @@ CREATE TABLE IF NOT EXISTS `#__appointments_audit` (
     PRIMARY KEY (`id`),
     KEY `idx_booking` (`booking_id`),
     KEY `idx_occurred` (`occurred_utc`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Campaign evaluation without personal data: bookings counted per day of booking
+-- (UTC), event type, utm_source, utm_medium, utm_campaign and referrer host, with
+-- the number per current state. No booking ID, URL, click ID, address or device,
+-- so the rows outlive the anonymisation of the bookings (Service\CampaignStats).
+--
+CREATE TABLE IF NOT EXISTS `#__appointments_campaign_stats` (
+    `day` DATE NOT NULL,
+    `eventtype_id` INT UNSIGNED NOT NULL,
+    `utm_source` VARCHAR(100) NOT NULL DEFAULT '',
+    `utm_medium` VARCHAR(100) NOT NULL DEFAULT '',
+    `utm_campaign` VARCHAR(100) NOT NULL DEFAULT '',
+    `referrer_host` VARCHAR(100) NOT NULL DEFAULT '',
+    `bookings` INT UNSIGNED NOT NULL DEFAULT 0,
+    `pending` INT UNSIGNED NOT NULL DEFAULT 0,
+    `confirmed` INT UNSIGNED NOT NULL DEFAULT 0,
+    `cancelled` INT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (`day`, `eventtype_id`, `utm_source`, `utm_medium`, `utm_campaign`, `referrer_host`),
+    KEY `idx_eventtype_day` (`eventtype_id`, `day`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --

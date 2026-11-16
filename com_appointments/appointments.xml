@@ -21,6 +21,7 @@
         <plugin group="privacy" element="appointments" folder="plugins/privacy/appointments" />
         <plugin group="content" element="appointmentsprivacy" folder="plugins/content/appointmentsprivacy" />
         <plugin group="system" element="appointmentsdav" folder="plugins/system/appointmentsdav" />
+        <plugin group="system" element="appointmentsattribution" folder="plugins/system/appointmentsattribution" />
         <plugin group="user" element="appointments" folder="plugins/user/appointments" />
     </plugins>
 

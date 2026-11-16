@@ -26,6 +26,7 @@ class StructureTest
         'appointments_fields',
         'appointments_templates',
         'appointments_audit',
+        'appointments_campaign_stats',
         'appointments_ratelimit',
         'appointments_keyring',
         'appointments_user_keys',
@@ -1051,13 +1052,28 @@ class StructureTest
                 return (string) (($result ? $result->fetch_row() : null)[0] ?? '');
             };
             $rows = ['de-DE' => $body('de-DE'), 'en-GB' => $body('en-GB')];
-            $old = static fn (string $text): string => str_replace(['Zeit beim Besucher: {invitee_time}\n', "Visitor's time: {invitee_time}\\n", '{field_answers}\n'], '', $text);
+            $old = static fn (string $text): string => str_replace(['Zeit beim Besucher: {invitee_time}\n', "Visitor's time: {invitee_time}\\n", '{field_answers}\n',
+                '{attribution}\n'], '', $text);
+            // The origin of bookings (1.6.0): column and aggregate table as a version before had them, none.
+            $origin = function () use ($table): bool {
+                $result = $this->db->query("SHOW COLUMNS FROM {$table} LIKE 'attribution'");
+
+                return $result && $result->num_rows === 1;
+            };
+            $statsTable = "{$this->dbPrefix}appointments_campaign_stats";
+            $stats = function () use ($statsTable): bool {
+                $result = $this->db->query("SHOW TABLES LIKE '{$statsTable}'");
+
+                return $result && $result->num_rows === 1;
+            };
 
             try {
                 $this->db->query("ALTER TABLE {$table} DROP COLUMN cancelled_version_utc");
                 $this->db->query("ALTER TABLE {$fields} DROP COLUMN max_length");
+                $this->db->query("ALTER TABLE {$table} DROP COLUMN attribution");
+                $this->db->query("DROP TABLE {$statsTable}");
 
-                if ($column() !== null || $maxLength() !== null) {
+                if ($column() !== null || $maxLength() !== null || $origin() || $stats()) {
                     return false;
                 }
 
@@ -1082,11 +1098,30 @@ class StructureTest
                         . ', en-GB ' . ($kept === 'Edited by the operator' ? 'kept' : 'overwritten') . "\n";
                 }
 
+                if (!$origin() || !$stats()) {
+                    echo "    origin: the update did not add the attribution column or the campaign statistics\n";
+                }
+
                 return $code === 0 && $nullableDatetime($column()) && $smallint($maxLength()) && str_contains($refreshed, '{field_answers}')
+                    && str_contains($refreshed, '{attribution}') && $origin() && $stats()
                     && $refreshed === $rows['de-DE'] && $kept === 'Edited by the operator';
             } finally {
                 if ($column() === null) {
                     $this->db->query("ALTER TABLE {$table} ADD COLUMN cancelled_version_utc DATETIME DEFAULT NULL AFTER cancel_reason");
+                }
+
+                if (!$origin()) {
+                    $this->db->query("ALTER TABLE {$table} ADD COLUMN attribution MEDIUMTEXT AFTER custom_fields");
+                }
+
+                if (!$stats()) {
+                    $this->db->query("CREATE TABLE {$statsTable} (`day` DATE NOT NULL, `eventtype_id` INT UNSIGNED NOT NULL,"
+                        . " `utm_source` VARCHAR(100) NOT NULL DEFAULT '', `utm_medium` VARCHAR(100) NOT NULL DEFAULT '',"
+                        . " `utm_campaign` VARCHAR(100) NOT NULL DEFAULT '', `referrer_host` VARCHAR(100) NOT NULL DEFAULT '',"
+                        . ' `bookings` INT UNSIGNED NOT NULL DEFAULT 0, `pending` INT UNSIGNED NOT NULL DEFAULT 0,'
+                        . ' `confirmed` INT UNSIGNED NOT NULL DEFAULT 0, `cancelled` INT UNSIGNED NOT NULL DEFAULT 0,'
+                        . ' PRIMARY KEY (`day`, `eventtype_id`, `utm_source`, `utm_medium`, `utm_campaign`, `referrer_host`),'
+                        . ' KEY `idx_eventtype_day` (`eventtype_id`, `day`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
                 }
 
                 if ($maxLength() === null) {

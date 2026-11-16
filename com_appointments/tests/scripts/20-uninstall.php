@@ -24,6 +24,7 @@ class UninstallTest
         'appointments_fields',
         'appointments_templates',
         'appointments_audit',
+        'appointments_campaign_stats',
         'appointments_ratelimit',
         'appointments_keyring',
         'appointments_user_keys',
@@ -297,8 +298,8 @@ class UninstallTest
             return true;
         });
 
-        $this->test('Bundled team calendar plugins and their languages removed', function () {
-            foreach (['system' => 'appointmentsdav', 'user' => 'appointments'] as $group => $element) {
+        $this->test('Bundled team calendar and origin plugins and their languages removed', function () {
+            foreach ([['system', 'appointmentsdav'], ['system', 'appointmentsattribution'], ['user', 'appointments']] as [$group, $element]) {
                 $result = $this->db->query("SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}extensions WHERE element='{$element}' AND type='plugin' AND folder='{$group}'");
                 $row = $result ? $result->fetch_assoc() : null;
 
@@ -362,7 +363,7 @@ class UninstallTest
         $snapshot = function (): array {
             return $this->db->query(
                 "SELECT extension_id FROM {$this->dbPrefix}extensions"
-                . " WHERE element = 'com_appointments' OR (element IN ('appointments','appointmentsdav') AND type = 'plugin')"
+                . " WHERE element = 'com_appointments' OR (element IN ('appointments','appointmentsdav','appointmentsattribution') AND type = 'plugin')"
                 . ' ORDER BY extension_id'
             )->fetch_all(MYSQLI_ASSOC);
         };

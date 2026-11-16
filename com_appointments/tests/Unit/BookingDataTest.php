@@ -23,7 +23,8 @@ final class BookingDataTest extends TestCase
             'created_utc' => '2026-11-04 09:00:00', 'state' => 1, 'invitee_name' => 'Anna Muster', 'invitee_first_name' => 'Anna',
             'invitee_last_name' => 'Muster', 'invitee_email' => 'anna@example.test', 'invitee_phone' => '+41 00 000 00 00',
             'guest_emails' => "one@example.test\ntwo@example.test", 'custom_fields' => '{"3":"Ja"}', 'cancel_reason' => null,
-            'conference_url' => 'https://meet.example.test/room'];
+            'conference_url' => 'https://meet.example.test/room',
+            'attribution' => '{"version":1,"booking_ip":"198.51.100.7","user_agent":"Mozilla/5.0"}'];
     }
 
     private function data(?int $clearBefore = null): BookingData
@@ -82,14 +83,14 @@ final class BookingDataTest extends TestCase
         $failed = [];
         $opened = $data->openLenient($moved, $failed);
         self::assertSame(['invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone', 'guest_emails',
-            'custom_fields', 'conference_url'], $failed);
+            'custom_fields', 'conference_url', 'attribution'], $failed);
         self::assertNull($opened['invitee_email']);
 
         // UID and personal fields copied into another row with another creation time.
         $copied = $sealed;
         $copied['created_utc'] = '2026-11-05 09:00:00';
         $data->openLenient($copied, $failed);
-        self::assertCount(8, $failed);
+        self::assertCount(9, $failed);
 
         $swapped = $sealed;
         $swapped['invitee_email'] = $sealed['invitee_name'];
@@ -97,7 +98,7 @@ final class BookingDataTest extends TestCase
         self::assertSame(['invitee_email'], $failed);
 
         (new BookingData(new KeyProvider('another-site-secret')))->openLenient($sealed, $failed);
-        self::assertCount(8, $failed);
+        self::assertCount(9, $failed);
 
         $tampered = $sealed;
         $tampered['invitee_phone'][10] = $tampered['invitee_phone'][10] === 'A' ? 'B' : 'A';
@@ -111,7 +112,7 @@ final class BookingDataTest extends TestCase
         $failed = [];
         $strict = $this->data()->openLenient($this->row(), $failed);
         self::assertNull($strict['invitee_email'], 'A clear address put in by a database write gets no mail');
-        self::assertCount(8, $failed);
+        self::assertCount(9, $failed);
 
         // While the migration runs: clear text of a row created before the update reads as it is, of a later row not.
         $update = (new \DateTimeImmutable('2026-11-04 10:00:00', new \DateTimeZone('UTC')))->getTimestamp();
@@ -121,10 +122,10 @@ final class BookingDataTest extends TestCase
         $partial = array_diff_key($this->row(), ['invitee_email' => true]);
         $opened = $this->data($update)->openLenient($partial, $failed);
         self::assertNull($opened['guest_emails'], 'Clear text is decided on the whole row');
-        self::assertCount(7, $failed);
+        self::assertCount(8, $failed);
         $later = array_replace($this->row(), ['created_utc' => '2026-11-04 11:00:00']);
         $this->data($update)->openLenient($later, $failed);
-        self::assertCount(8, $failed, 'Clear text in a row made after the update is never data');
+        self::assertCount(9, $failed, 'Clear text in a row made after the update is never data');
 
         // A 1.4 row backdated and given one clear address: refused, because it holds sealed fields.
         $mixed = array_replace($this->data()->seal($this->row()), ['invitee_email' => 'planted@example.test']);
@@ -181,7 +182,7 @@ final class BookingDataTest extends TestCase
         $failed = [];
         // Still only rows of 1.3: a later row or one with a sealed field stays unreadable.
         $late->openLenient(array_replace($this->row(), ['created_utc' => '2026-11-04 11:00:00']), $failed);
-        self::assertCount(8, $failed);
+        self::assertCount(9, $failed);
         $mixed = array_replace($this->data()->seal($this->row()), ['invitee_email' => 'planted@example.test']);
         $late->openLenient($mixed, $failed);
         self::assertContains('invitee_email', $failed);
@@ -198,7 +199,7 @@ final class BookingDataTest extends TestCase
         // After the end marker, and for a forged value, clear text is never read.
         foreach ([BookingData::migrationDoneMarker($keys), '', BookingData::migrationToken(new KeyProvider('another-site-secret'), $cutoff + 86400, $cutoff)] as $state) {
             BookingData::forToken($keys, $state, $cutoff + 100 * 86400)->openLenient($this->row(), $failed);
-            self::assertCount(8, $failed);
+            self::assertCount(9, $failed);
         }
     }
 
@@ -248,7 +249,7 @@ final class BookingDataTest extends TestCase
         $transplanted = array_replace($attacker, $copy);
         $opened = $data->openLenient($transplanted, $failed);
 
-        self::assertCount(8, $failed);
+        self::assertCount(9, $failed);
         self::assertNull($opened['conference_url']);
         self::assertNull($opened['invitee_email']);
         self::assertSame(8, $opened['id']);
@@ -260,7 +261,7 @@ final class BookingDataTest extends TestCase
             'created_utc' => '2026-11-05 09:00:00'] as $column => $value) {
             $changed = array_replace($victim, [$column => $value]);
             $opened = $data->openLenient($changed, $failed);
-            self::assertCount(8, $failed, $column);
+            self::assertCount(9, $failed, $column);
             self::assertNull($opened['conference_url'], $column);
 
             try {
@@ -272,7 +273,7 @@ final class BookingDataTest extends TestCase
 
             $cutoff = (new \DateTimeImmutable('2026-11-04 10:00:00', new \DateTimeZone('UTC')))->getTimestamp();
             $duringMigration = $this->data($cutoff)->openLenient($changed, $failed);
-            self::assertCount(8, $failed, 'Migration never permits invalid sealed context: ' . $column);
+            self::assertCount(9, $failed, 'Migration never permits invalid sealed context: ' . $column);
             self::assertNull($duringMigration['conference_url']);
             self::assertArrayNotHasKey(BookingData::CLEAR, $duringMigration);
         }
@@ -342,7 +343,7 @@ final class BookingDataTest extends TestCase
             }
 
             $opened = $data->openLenient($stored, $failed);
-            self::assertCount(8, $failed, $column);
+            self::assertCount(9, $failed, $column);
             self::assertNull($opened['conference_url'], $column);
 
             try {
@@ -354,7 +355,7 @@ final class BookingDataTest extends TestCase
 
             $cutoff = (new \DateTimeImmutable('2026-11-04 10:00:00', new \DateTimeZone('UTC')))->getTimestamp();
             $duringMigration = $this->data($cutoff)->openLenient($stored, $failed);
-            self::assertCount(8, $failed, 'Migration never permits invalid sealed context: ' . $column);
+            self::assertCount(9, $failed, 'Migration never permits invalid sealed context: ' . $column);
             self::assertNull($duringMigration['conference_url']);
             self::assertArrayNotHasKey(BookingData::CLEAR, $duringMigration);
         }
@@ -405,7 +406,7 @@ final class BookingDataTest extends TestCase
         foreach ([$this->data(), $this->data($cutoff), new BookingData(new KeyProvider('unit-site-secret'), $cutoff, false)] as $data) {
             foreach ([$row, array_replace($row, ['invitee_email' => 'planted@example.test'])] as $stored) {
                 $opened = $data->openLenient($stored, $failed);
-                self::assertCount(8, $failed);
+                self::assertCount(9, $failed);
                 self::assertNull($opened['conference_url']);
                 self::assertNull($opened['invitee_email']);
                 self::assertArrayNotHasKey(BookingData::CLEAR, $opened);

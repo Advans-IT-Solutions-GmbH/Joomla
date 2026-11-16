@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Administrator\View\Booking;
 
+use Advans\Component\Appointments\Administrator\Helper\Attribution;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Service\ConferenceService;
 use Advans\Component\Appointments\Administrator\Service\PrivacyService;
@@ -25,6 +26,9 @@ class HtmlView extends BaseHtmlView
 {
     protected $item;
     protected $answers = [];
+
+    /** @var list<array{0: string, 1: string}> Labelled lines of the booking's origin (Attribution::lines()). */
+    protected $origin = [];
     protected $hostUrl;
 
     public function display($tpl = null)
@@ -40,6 +44,8 @@ class HtmlView extends BaseHtmlView
         foreach (PrivacyAddress::answers($this->item->custom_fields) as $id => $answer) {
             $this->answers[] = ['label' => $labels[$id] ?? (string) $id, 'value' => PrivacyAddress::readable($answer)];
         }
+        // The origin of the booking (campaign, referrer, device, addresses), shown as text only.
+        $this->origin = Attribution::lines(Attribution::decode($this->item->attribution ?? null), static fn (string $key): string => Text::_($key));
         $user = Factory::getApplication()->getIdentity();
         $this->hostUrl = (int) $user->id === (int) $this->item->host_user_id || $user->authorise('core.admin', 'com_appointments')
             ? ConferenceService::forComponent($db)->hostUrl((array) $this->item) : $this->item->conference_url;

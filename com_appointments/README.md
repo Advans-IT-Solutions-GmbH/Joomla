@@ -198,6 +198,7 @@ activation and effective content access.
 | [`content/appointmentsprivacy`](plugins/content/appointmentsprivacy/README.md) | Independent veto of native removal completion while Appointments reports incomplete | Enabled |
 | [`task/appointments`](plugins/task/appointments/README.md) | Booking reminders/retention and calendar-maintenance routines | Enabled; check task states and trigger separately |
 | [`system/appointmentsdav`](plugins/system/appointmentsdav/README.md) | Local CalDAV endpoint and pre-authentication sign-in guard | Disabled until deliberate setup |
+| [`system/appointmentsattribution`](plugins/system/appointmentsattribution/README.md) | Records the origin of a visit in the session for the [origin of bookings](#origin-of-bookings-campaign-attribution) | Enabled, also when an update introduces it |
 | [`user/appointments`](plugins/user/appointments/README.md) | Password/key sessions, lockout and account/device cleanup | Disabled until deliberate setup |
 
 Updates preserve existing enabled/disabled states. Start with [Internet calendars](#internet-calendars)
@@ -830,6 +831,7 @@ its own deletion rules. State the waiting period in the privacy policy.
 | Calendars on a device set to **Clean up** | At the next synchronisation after removing the device, a block or a password reset. A device set to **Block only** is only refused and deletes nothing. | Only on the device. The server keeps everything. |
 | Whole internet calendar | At once when somebody deletes it with all its entries in the administrator. | Website. On devices depending on the program. |
 | Erasure record | After the erasure-audit retention in years. | Website. |
+| Campaign statistics | Never because of its age. It holds no personal data: only counts per day, event type and campaign. | Website. |
 | Internet calendar log | After twelve months. | Website. |
 | Backup of the website | After 30 days at most. | Backup storage. |
 | Data in Close | Never by the website. A booking with a pending transfer stays on the website for up to 30 more days. | Close, under the rules of the CRM. |
@@ -1483,7 +1485,80 @@ version let it store is served afterwards.
 Public requests use the directly connected address for rate limiting, not untrusted forwarding
 headers: an IPv4 address counts on its own, an IPv6 address counts together with its whole /64
 network (one connection usually holds all of it), an IPv4-mapped IPv6 address as its IPv4 address.
-Only a keyed hash is stored; no raw address is added to a booking.
+The rate limiter stores only a keyed hash. The raw address reaches a booking only inside its
+encrypted origin record, see [Origin of bookings](#origin-of-bookings-campaign-attribution).
+
+### Origin of bookings (campaign attribution)
+
+Every booking stores how the visitor reached the site, so a campaign can be evaluated per booking
+and as a whole at any time. A typical path: a landing page (any Joomla page, for example an article
+reached through `?utm_source=linkedin&utm_campaign=…`) whose button leads to the booking page. The
+component option **Origin of bookings** (`attribution_capture`, default on) switches recording and
+storing off; mention the processing in your site's privacy notice.
+
+**How it is recorded.** The bundled plugin **System - Appointments origin of bookings** records every
+page view of the site in the visitor's Joomla session, the component's own pages also without it.
+Only GET requests of HTML pages count, never an Ajax, raw or JSON request. There is no cookie of its
+own, no script and no form field: a value posted with the booking form never reaches the record.
+
+- The first page view of the session keeps its time, path and query and IP address.
+- A page view that carries a `utm_*` parameter or a click ID, or arrives from another host (the
+  Referer header, «www.» counts as the same site), is a *touch*. The first touch is kept. The last
+  touch is replaced only by a touch with other parameters or another referrer host, never by
+  internal navigation, a direct visit or a reload of the same touch.
+- The booking adds what its own request tells.
+
+**What is stored**, as JSON in the encrypted column `attribution` of the booking:
+
+| Field | Content |
+|---|---|
+| `first_seen_utc` | Time of the first page view of the session (UTC) |
+| `landing_url` | Path and query of that first page view |
+| `landing_ip` | IP address of that first page view |
+| `first_touch`, `last_touch` | Each with `time_utc`, `landing_url` (path and query), `referrer` (the URL as the browser sent it), `referrer_host` and `parameters`: `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `utm_id`, `gclid`, `gbraid`, `wbraid`, `fbclid`, `msclkid`, `li_fat_id`, `ttclid`, `twclid`, `mc_cid`, `mc_eid` |
+| `page_views` | Page views of the session before the booking, the booking page included |
+| `booking_page_url` | Path and query of the booking page |
+| `booking_ip` | IP address of the booking request |
+| `accept_language` | The browser's Accept-Language header |
+| `user_agent` | The User-Agent header as sent |
+| `device`, `browser`, `os` | Derived from the User-Agent: `desktop`, `mobile`, `tablet`, `bot` or `unknown`, the browser family and the operating system (an iPad that presents itself as a Mac counts as a desktop) |
+
+The visitor's time zone is the booking's `invitee_timezone`, as before. Every value is valid UTF-8
+without control or format characters and at most 2048 characters (Accept-Language 512). Only the
+parameters listed above are kept. URLs lose their fragment and every query parameter whose name
+suggests a credential (`token`, `signature`, `secret`, `password`, `pwd`, `key`, `auth`, `session`, `sid`,
+`code`, `nonce`, `hash`, `otp`, `ticket`, `mail`) and Joomla form tokens.
+
+**Not collected.** Screen and viewport size would need a script that reads properties of the
+device. That is an access to the visitor's terminal equipment, which needs consent under the
+ePrivacy rules, and a known fingerprinting signal. The device class from the User-Agent answers the
+marketing question without it. Browsers usually send only the origin of another site as referrer
+(`strict-origin-when-cross-origin`), so `referrer` is often just `https://www.linkedin.com/`. The
+session ends with Joomla's session lifetime: a visitor who books after it has expired is recorded
+as a direct visit with the booking page.
+
+**Where it is shown.** To the host only: in the `{attribution}` block of the host mails (the
+`host_*` and the content `calendar_*` defaults, see [Email templates](#email-templates)), on the
+booking in the administrator, in the bookings CSV export (every field a column of its own, see
+[Booking administration and system checks](#booking-administration-and-system-checks)) and in the
+formal privacy export. Never in a mail to the booking person or a guest, on a page of the booking
+person, in the calendar entry or in the transfer to Close. Output is escaped text: the administrator
+page and the HTML mail never render a value as markup.
+
+**Retention.** The record is one of the booking's personal fields: it is erased with them by the
+deletion link, a formal privacy request, the retention task (for example 30 days after the end of
+the appointment) and an erasure in the administrator, and it goes with the row in the delete mode.
+The session holds its values until the session ends.
+
+**Campaign statistics without personal data.** Each booking with a record is also counted in
+`#__appointments_campaign_stats`: day of booking (UTC), event type, `utm_source`, `utm_medium`,
+`utm_campaign` and referrer host of the last touch (else the first), each cut at 100 characters,
+with the number of bookings and the number per current state (pending, confirmed, cancelled). It
+holds no booking ID, URL, click ID, IP address or device, so it is not erased with the bookings and
+the evaluation of a campaign stays possible after they are anonymised. **Export campaign statistics**
+in the bookings toolbar downloads it as CSV, filtered by event type and by the day of booking (the
+list's from and to dates). It is counted after the booking is stored and never fails a booking.
+Campaign names are whatever the link carried: never put personal data into `utm_*` values.
 
 ### Page markup and styling
 
@@ -1792,6 +1867,7 @@ empty, so a telephone appointment shows no empty location:
 | `{event_title}`, `{description}`, `{location_text}`, `{location_type}` | The event type |
 | `{location}` | The location text of the event type; a telephone appointment without one names the kind of call («Phone call, you will be called» for the invitee, «Telephone: host calls invitee» for host and guests). The same text is the `LOCATION` of the invitation |
 | `{field_answers}` | Every answer to the custom fields as «Field: answer» lines in the order of the form, an empty answer as «no answer»; in mails to the booking person and the host, empty for guests. A line holding only this placeholder disappears when there are no answers |
+| `{attribution}` | The origin of the booking (first visit, landing page, campaign parameters and referrer of the first and last campaign visit, page views, booking page, IP addresses, browser language, device and User-Agent) under a heading, one «Label: value» line each; filled only in mails to the host (the `host_*` and content `calendar_*` defaults use it), empty in every other mail. A line holding only this placeholder disappears when it is empty. An edited site template does not get it by itself: add the line where it should appear |
 | `{invitee_time}` | The start in the booking person's zone with the zone, «2026-11-24 08:00 (America/New_York)», when it differs from the host's zone (used by the `host_*` defaults), otherwise empty |
 | `{host_name}`, `{host_email}` | The host |
 | `{invitee_name}` | Full name of the booking person ("first last"), unchanged since earlier versions |
@@ -1875,14 +1951,18 @@ first and last name and email address. The list sorts by start (default, latest 
 name, then first name. The CSV has the columns `invitee_name`, `invitee_first_name` and
 `invitee_last_name`, and the booking detail shows first and last name. CSV export
 requires a token-protected POST and uses a consistent database snapshot with bounded read batches.
-Its columns include contacts, guest addresses and raw custom answers; protect downloaded files as
-personal data. Spreadsheet-like text is prefixed with an apostrophe to prevent formula execution.
+Its columns include contacts, guest addresses and raw custom answers, then `eventtype_id`,
+`created_utc` and the [origin of each booking](#origin-of-bookings-campaign-attribution), every field
+a column of its own (`first_utm_source` … `last_mc_eid`, `first_referrer`, `first_referrer_host`,
+`landing_url`, `landing_ip`, `booking_ip`, `device`, `browser`, `os`, `user_agent` and more); protect
+downloaded files as personal data. **Export campaign statistics** downloads the non-personal
+aggregate with the same event type and date filters, applied to the day of booking. Spreadsheet-like text is prefixed with an apostrophe to prevent formula execution.
 
 Event, custom-field and email-template lists and event selectors use that same permission scope:
 an explicitly denied event's metadata is not disclosed. Site-wide templates additionally require
 component options or administrator permission. An editor with no permitted event sees no event rows.
 
-Open a start time to view booking details, readable custom answers, conference diagnostics and
+Open a start time to view booking details, readable custom answers, the origin of the booking, conference diagnostics and
 single-event ICS. Rescheduling takes a **UTC** date/time, revalidates current availability and keeps
 the original UID and approval state. Approval/cancellation require the event's state permission;
 erasure requires delete permission. Moderator links are shown only to the host or a component
@@ -2126,6 +2206,7 @@ The authoritative list and order is [`tests/test.env`](tests/test.env):
 | Conference | Automatic links, JWT separation, explicit failure, retry and lifecycle teardown |
 | Privacy | Real typed Joomla privacy events, Unicode isolation, export/removal and legal blocking |
 | Administration | Filters, CSV safety, reschedule, system checks, restricted event ACL by exact list/CSV row identity across pagination, Close action POST/token/component-administrator guards, and scoped mobile queue layout |
+| Origin of bookings | Landing article with campaign parameters and click IDs, referrer from another host, last-touch rules, encrypted storage, host mail only, escaped administrator page, CSV columns, campaign statistics, privacy export, erasure and the option switched off |
 | Backend views | Shared HTTP rendering checks for every administrator view |
 | Installer messages | Shared install/update checks in en-GB, de-DE and fr-FR |
 | Uninstall | Component removal and table cleanup |

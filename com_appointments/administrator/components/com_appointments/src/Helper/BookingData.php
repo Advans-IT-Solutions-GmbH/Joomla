@@ -61,7 +61,7 @@ final class BookingData
 {
     /** The encrypted columns of `#__appointments_bookings`. */
     public const COLUMNS = ['invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone',
-        'guest_emails', 'custom_fields', 'cancel_reason', 'conference_url'];
+        'guest_emails', 'custom_fields', 'cancel_reason', 'conference_url', 'attribution'];
 
     /** Request-internal only; never supplied by a form, storage or another trust boundary. */
     public const OPENED = '_opened';

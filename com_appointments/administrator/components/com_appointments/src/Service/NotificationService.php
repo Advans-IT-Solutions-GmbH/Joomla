@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Administrator\Service;
 
+use Advans\Component\Appointments\Administrator\Helper\Attribution;
 use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\BookingDetails;
 use Advans\Component\Appointments\Administrator\Helper\CalendarOrganizer;
@@ -229,8 +230,11 @@ final class NotificationService
                         }
                     }
 
+                    // The origin of the booking (campaign, referrer, device): for the host only, never for
+                    // the invitee or a guest, and nothing of an erased booking.
+                    $origin = $isHost && !$erased ? Attribution::text(Attribution::decode($booking['attribution'] ?? null), $translate, $labelFormat) : '';
                     $message = (new MailComposer(new IcsWriter()))->compose($template, $recipientBooking, $recipientEvent, $links, $now,
-                        ['{field_answers}' => $answers, '{invitee_time}' => $inviteeTime]);
+                        ['{field_answers}' => $answers, '{invitee_time}' => $inviteeTime, '{attribution}' => $origin]);
                     // Each URL on a line of its own: a signed URL is long and has no break opportunity. The HTML
                     // part shows the label as link text instead (MailHtml), the text part keeps the full URL.
                     if (!empty($recipientBooking['conference_url']) && !str_contains($message['body'], $recipientBooking['conference_url'])) {
@@ -474,6 +478,8 @@ final class NotificationService
                 $extra['{field_answers}'] = BookingDetails::answers($this->fields((int) $booking['eventtype_id']), $booking['custom_fields'] ?? null,
                     static fn (string $key): string => $language->_($key), $labelFormat);
                 $extra['{invitee_time}'] = (new MailPresentation())->inviteeTime($booking, $tag, $timezone);
+                $extra['{attribution}'] = Attribution::text(Attribution::decode($booking['attribution'] ?? null),
+                    static fn (string $key): string => $language->_($key), $labelFormat);
             }
 
             // {location} of a telephone appointment without its own text: the neutral label, as in

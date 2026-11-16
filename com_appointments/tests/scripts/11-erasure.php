@@ -27,6 +27,7 @@ try {
         'custom_fields' => '{"12":"CANARY-ANSWER"}', 'cancel_reason' => 'CANARY-REASON',
         'conference_provider' => 'fixed', 'conference_url' => 'https://example.test/CANARY-LINK',
         'conference_room' => 'CANARY-ROOM', 'conference_state' => 'failed', 'conference_error' => 'CANARY-ERROR',
+        'attribution' => '{"version":1,"landing_url":"/CANARY-ORIGIN","booking_ip":"203.0.113.9","user_agent":"CANARY-AGENT"}',
     ];
     // Stored the way the application stores them: the personal fields sealed.
     $fixture->update($id, $private);

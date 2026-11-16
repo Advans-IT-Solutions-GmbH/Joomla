@@ -58,6 +58,29 @@ class InstallationTest
                 && is_file('/var/www/html/plugins/task/appointments/LICENSE.txt');
         });
 
+        $this->test('The origin plugin is installed and enabled, with its license and three languages', function () {
+            $result = $this->db->query("SELECT enabled FROM {$this->dbPrefix}extensions WHERE element='appointmentsattribution' AND type='plugin' AND folder='system'");
+            $row = $result ? $result->fetch_assoc() : null;
+
+            return $row && (int) $row['enabled'] === 1
+                && is_file('/var/www/html/plugins/system/appointmentsattribution/services/provider.php')
+                && is_file('/var/www/html/plugins/system/appointmentsattribution/LICENSE.txt')
+                && is_file('/var/www/html/administrator/language/de-DE/plg_system_appointmentsattribution.sys.ini');
+        });
+
+        $this->test('Bookings have the encrypted origin column and the campaign aggregate exists', function () {
+            $column = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}appointments_bookings LIKE 'attribution'");
+            $stats = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}appointments_campaign_stats");
+            $names = [];
+
+            while ($stats && ($row = $stats->fetch_assoc())) {
+                $names[] = $row['Field'];
+            }
+
+            return $column && $column->num_rows === 1 && $names === ['day', 'eventtype_id', 'utm_source', 'utm_medium', 'utm_campaign', 'referrer_host',
+                'bookings', 'pending', 'confirmed', 'cancelled'];
+        });
+
         $this->test('Team calendar plugins are installed and stay disabled until an operator enables them', function () {
             // Default deny: the CalDAV endpoint and the key handling at sign-in
             // are off after installation. Enabling them is a deliberate step.

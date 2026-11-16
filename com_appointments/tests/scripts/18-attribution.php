@@ -1,0 +1,234 @@
+<?php
+
+/*
+ * The origin of a booking (campaign attribution): recorded in the session from a landing
+ * article that is no page of the component, stored encrypted with the booking, shown to the
+ * host only (host mail, booking page, CSV export), exported for a privacy request, erased with
+ * the booking, and counted without personal data in the campaign aggregate that outlives it.
+ */
+
+require __DIR__ . '/appointments-fixtures.php';
+require __DIR__ . '/appointments-mail.php';
+require_once appointments_test_root() . '/administrator/components/com_appointments/src/Helper/Attribution.php';
+
+use Advans\Component\Appointments\Administrator\Helper\Attribution;
+
+$fixture = new AppointmentsFixture('attribution');
+$db = $fixture->db;
+$prefix = $fixture->prefix;
+$failed = 0;
+$check = static function (bool $ok, string $message) use (&$failed): void {
+    echo ($ok ? 'PASS ' : 'FAIL ') . $message . "\n";
+    $failed += $ok ? 0 : 1;
+};
+$base = appointments_test_base_url();
+$originalParams = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc()['params'];
+$article = 0;
+$event = 0;
+$agent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14.6; rv:132.0) Gecko/20100101 Firefox/132.0';
+$address = 'attribution-' . bin2hex(random_bytes(4)) . '@example.test';
+$xss = '<script>alert(1)</script>';
+$day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+2 days')->format('Y-m-d');
+$messageTo = static function (string $mime): string {
+    return preg_match('/^To:\s*(.+)$/mi', $mime, $match) === 1 ? strtolower(trim($match[1])) : '';
+};
+$exportCsv = static function (AppointmentsHttp $client, string $task, int $event): string {
+    $html = $client->request('/administrator/index.php?' . http_build_query(['option' => 'com_appointments', 'view' => 'bookings',
+        'filter_eventtype_id' => $event, 'filter_state' => '', 'filter_search' => '', 'filter_from' => '', 'filter_to' => '']));
+
+    return $client->request('/administrator/index.php?option=com_appointments', ['task' => 'bookings.' . $task, $client->token($html) => 1,
+        'filter_eventtype_id' => $event, 'filter_state' => '', 'filter_search' => '', 'filter_from' => '', 'filter_to' => '']);
+};
+$csvRows = static function (string $csv): array {
+    $stream = fopen('php://memory', 'w+');
+    fwrite($stream, $csv);
+    rewind($stream);
+    $header = fgetcsv($stream, 0, ',', '"', '');
+    $rows = [];
+
+    while (is_array($header) && ($row = fgetcsv($stream, 0, ',', '"', '')) !== false) {
+        if (count($row) === count($header)) {
+            $rows[] = array_combine($header, $row);
+        }
+    }
+
+    fclose($stream);
+
+    return [$header ?: [], $rows];
+};
+
+try {
+    $event = $fixture->event();
+    $hostEmail = strtolower((string) $db->query("SELECT email FROM {$prefix}users WHERE id={$fixture->host}")->fetch_assoc()['email']);
+    $category = (int) $db->query("SELECT id FROM {$prefix}categories WHERE extension='com_content' AND published=1 ORDER BY id LIMIT 1")->fetch_assoc()['id'];
+    $now = gmdate('Y-m-d H:i:s');
+    $alias = 'attribution-landing-' . bin2hex(random_bytes(4));
+    $db->query("INSERT INTO {$prefix}content (title, alias, introtext, `fulltext`, state, catid, created, created_by, modified, modified_by, publish_up,"
+        . " images, urls, attribs, version, metakey, metadesc, access, metadata, language, note)"
+        . " VALUES ('Attribution landing page', '{$alias}', '<p>ATTRIBUTION-LANDING-ARTICLE</p>', '', 1, {$category}, '{$now}', {$fixture->host}, '{$now}',"
+        . " {$fixture->host}, '{$now}', '{}', '{}', '{}', 1, '', '', 1, '{}', '*', '')");
+    $article = (int) $db->insert_id;
+
+    // 1. The landing article, reached from LinkedIn with campaign parameters and click IDs.
+    $visitor = new AppointmentsHttp($base, 'attribution-visitor');
+    $visitor->headers = ['Referer: https://www.linkedin.com/feed/', 'User-Agent: ' . $agent, 'Accept-Language: de-CH,de;q=0.9'];
+    $landing = '/index.php?' . http_build_query(['option' => 'com_content', 'view' => 'article', 'id' => $article, 'catid' => $category,
+        'utm_source' => 'linkedin', 'utm_medium' => 'paid-social', 'utm_campaign' => 'first-campaign', 'utm_content' => $xss,
+        'li_fat_id' => 'LI-CLICK-1', 'gclid' => 'G-CLICK-1', 'token' => 'NEVER-STORED']);
+    $html = $visitor->request($landing);
+    $check($visitor->status === 200 && str_contains($html, 'ATTRIBUTION-LANDING-ARTICLE'), 'The landing article with campaign parameters opens');
+
+    // 2. Internal navigation: no new touch.
+    $visitor->headers = ['Referer: ' . $base . $landing, 'User-Agent: ' . $agent, 'Accept-Language: de-CH,de;q=0.9'];
+    $visitor->request('/index.php?option=com_content&view=article&id=' . $article . '&catid=' . $category);
+
+    // 3. Back from a newsletter: the last touch.
+    $visitor->headers = ['Referer: https://mail.example.org/inbox', 'User-Agent: ' . $agent, 'Accept-Language: de-CH,de;q=0.9'];
+    $visitor->request('/index.php?option=com_content&view=article&id=' . $article . '&catid=' . $category
+        . '&utm_source=newsletter&utm_medium=email&utm_campaign=last-campaign&mc_cid=MC-1');
+
+    // 4. The booking page and the booking, in the same session.
+    $visitor->headers = ['Referer: ' . $base . '/index.php?option=com_content&view=article&id=' . $article, 'User-Agent: ' . $agent, 'Accept-Language: de-CH,de;q=0.9'];
+    [$browser, $path, $form] = $visitor->bookingForm($event, $day . ' 10:00:00', ['email' => $address]);
+    $form['attribution'] = 'FORGED-BY-FORM';
+    $form['booking']['attribution'] = 'FORGED-BY-FORM';
+    sleep(2);
+    $before = AppointmentsMail::snapshot();
+    $html = $browser->request($path, $form);
+    $check($browser->status === 200 && preg_match('/Appointment (?:received|confirmed)/', $html) === 1, 'The booking is taken');
+    $time = $db->real_escape_string($day . ' 10:00:00');
+    $stored = $db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$time}'")->fetch_assoc();
+    $booking = appointments_open_booking($stored);
+    $id = (int) ($booking['id'] ?? 0);
+    $check(is_string($stored['attribution'] ?? null) && appointments_is_sealed($stored['attribution']) && !str_contains($stored['attribution'], 'linkedin'),
+        'The origin is stored encrypted with the personal fields');
+    $record = Attribution::decode($booking['attribution'] ?? null);
+    $check($record !== null, 'The stored origin opens as a record');
+    $record ??= [];
+    $check(($record['first_touch']['parameters']['utm_source'] ?? '') === 'linkedin'
+        && ($record['first_touch']['parameters']['utm_campaign'] ?? '') === 'first-campaign'
+        && ($record['first_touch']['parameters']['li_fat_id'] ?? '') === 'LI-CLICK-1'
+        && ($record['first_touch']['parameters']['gclid'] ?? '') === 'G-CLICK-1'
+        && ($record['first_touch']['referrer'] ?? '') === 'https://www.linkedin.com/feed/', 'First touch: landing article, campaign, click IDs and referrer');
+    $check(($record['last_touch']['parameters']['utm_source'] ?? '') === 'newsletter'
+        && ($record['last_touch']['parameters']['mc_cid'] ?? '') === 'MC-1'
+        && ($record['last_touch']['referrer_host'] ?? '') === 'mail.example.org', 'Last touch: the newsletter visit, not the internal navigation');
+    $check(str_contains($record['landing_url'] ?? '', 'id=' . $article) && str_contains($record['landing_url'] ?? '', 'utm_source=linkedin')
+        && !str_contains(json_encode($record), 'NEVER-STORED'), 'The first landing URL keeps path and query, without a credential parameter');
+    $check(str_contains($record['booking_page_url'] ?? '', 'com_appointments') || str_contains($record['booking_page_url'] ?? '', 'timezone=UTC'),
+        'The booking page is the last page before the booking');
+    $check((int) ($record['page_views'] ?? 0) >= 4, 'Page views before the booking are counted');
+    $check(filter_var($record['booking_ip'] ?? '', FILTER_VALIDATE_IP) !== false && filter_var($record['landing_ip'] ?? '', FILTER_VALIDATE_IP) !== false,
+        'The IP address of the first page view and of the booking are stored');
+    $check(($record['accept_language'] ?? '') === 'de-CH,de;q=0.9' && ($record['user_agent'] ?? '') === $agent
+        && ($record['device'] ?? '') === 'desktop' && ($record['browser'] ?? '') === 'Firefox' && ($record['os'] ?? '') === 'macOS',
+        'Browser language, User-Agent and the derived device, browser and operating system are stored');
+    $check(!str_contains(json_encode($booking), 'FORGED-BY-FORM'), 'A posted form value never reaches the origin');
+
+    // Mails: the host sees the origin, the invitee never.
+    $messages = AppointmentsMail::messagesSince($before);
+    $hostMails = array_values(array_filter($messages, static fn (string $mime): bool => str_contains($messageTo($mime), $hostEmail)));
+    $inviteeMails = array_values(array_filter($messages, static fn (string $mime): bool => str_contains($messageTo($mime), $address)));
+    $hostText = implode("\n", array_map([AppointmentsMail::class, 'decoded'], $hostMails));
+    $check($hostMails !== [] && str_contains($hostText, 'Origin of the booking') && str_contains($hostText, 'utm_source=linkedin')
+        && str_contains($hostText, 'utm_source=newsletter') && str_contains($hostText, (string) ($record['booking_ip'] ?? 'missing')),
+        'The host mail carries the origin of the booking');
+    $hostHtml = implode("\n", array_merge(...array_map(static fn (string $mime): array => AppointmentsMail::parts($mime, 'text/html'), $hostMails)));
+    $check(!str_contains($hostHtml, $xss), 'The origin is escaped in the HTML part of the host mail');
+    $inviteeText = implode("\n", array_map([AppointmentsMail::class, 'decoded'], $inviteeMails));
+    $check($inviteeMails !== [] && !str_contains($inviteeText, 'Origin of the booking') && !str_contains($inviteeText, 'utm_source')
+        && !str_contains($inviteeText, 'LI-CLICK-1') && !str_contains($inviteeText, (string) ($record['booking_ip'] ?? 'missing')),
+        'The invitee mail carries nothing of the origin');
+
+    // The non-personal aggregate: the last touch's campaign, one confirmed booking.
+    $stats = $db->query("SELECT * FROM {$prefix}appointments_campaign_stats WHERE eventtype_id={$event}")->fetch_all(MYSQLI_ASSOC);
+    $check(count($stats) === 1 && $stats[0]['utm_source'] === 'newsletter' && $stats[0]['utm_campaign'] === 'last-campaign'
+        && $stats[0]['referrer_host'] === 'mail.example.org' && (int) $stats[0]['bookings'] === 1 && (int) $stats[0]['confirmed'] === 1,
+        'The campaign aggregate counts the booking under its last campaign');
+    $check(array_keys($stats[0] ?? []) === ['day', 'eventtype_id', 'utm_source', 'utm_medium', 'utm_campaign', 'referrer_host',
+        'bookings', 'pending', 'confirmed', 'cancelled'], 'The aggregate has no column for a person, a URL, a click ID or an address');
+
+    // Administrator: booking page, CSV export, campaign CSV.
+    $admin = new AppointmentsHttp($base, 'attribution-admin');
+    $admin->login();
+    $page = $admin->request('/administrator/index.php?option=com_appointments&view=booking&id=' . $id);
+    $check($admin->status === 200 && str_contains($page, 'Origin of the booking') && str_contains($page, 'LI-CLICK-1'),
+        'The booking page in the administrator shows the origin');
+    $check(!str_contains($page, $xss) && str_contains($page, htmlspecialchars($xss, ENT_QUOTES, 'UTF-8')), 'The booking page escapes the origin');
+    [$header, $rows] = $csvRows($exportCsv($admin, 'exportCsv', $event));
+    $row = array_values(array_filter($rows, static fn (array $row): bool => (int) $row['id'] === $id))[0] ?? [];
+    $check(array_diff(['first_utm_source', 'first_utm_medium', 'first_utm_campaign', 'first_li_fat_id', 'first_gclid', 'last_utm_campaign',
+        'first_referrer', 'first_referrer_host', 'landing_url', 'booking_ip', 'landing_ip', 'device', 'browser', 'os', 'user_agent', 'accept_language',
+        'booking_page_url', 'first_seen_utc', 'created_utc', 'eventtype_id', 'eventtype_title', 'state'], $header) === []
+        && ($row['first_utm_source'] ?? '') === 'linkedin' && ($row['last_utm_campaign'] ?? '') === 'last-campaign'
+        && ($row['first_li_fat_id'] ?? '') === 'LI-CLICK-1' && ($row['booking_ip'] ?? '') === ($record['booking_ip'] ?? 'missing')
+        && ($row['browser'] ?? '') === 'Firefox', 'The CSV export has every origin field in a column of its own');
+    [, $campaignRows] = $csvRows($exportCsv($admin, 'exportCampaigns', $event));
+    $check(count($campaignRows) === 1 && $campaignRows[0]['utm_source'] === 'newsletter' && $campaignRows[0]['bookings'] === '1',
+        'The campaign statistics export has the aggregate of the event type');
+
+    // Privacy export of the invitee's address.
+    require __DIR__ . '/appointments-joomla.php';
+    $application->bootComponent('com_privacy');
+    $plugin = $application->bootPlugin('appointments', 'privacy');
+    $request = new \Joomla\Component\Privacy\Administrator\Table\RequestTable($joomlaDb);
+    $request->email = $address;
+    $request->status = 1;
+    $export = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', ['subject' => $request, 'user' => null]);
+    $plugin->onPrivacyExportRequest($export);
+    $exported = serialize($export->getArgument('result')[0][0] ?? null);
+    $check(str_contains($exported, 'attribution_first_utm_source') && str_contains($exported, 'LI-CLICK-1')
+        && str_contains($exported, 'attribution_booking_ip'), 'The privacy export contains the origin, field by field');
+
+    // Self-service erasure removes the origin; the aggregate stays, now as cancelled.
+    $html = $fixture->apply($visitor, $fixture->link($booking, 'erase'));
+    $erased = $fixture->row($id);
+    $check($erased['anonymised_utc'] !== null && $erased['attribution'] === null, 'Erasure removes the origin with the personal fields');
+    $stats = $db->query("SELECT * FROM {$prefix}appointments_campaign_stats WHERE eventtype_id={$event}")->fetch_all(MYSQLI_ASSOC);
+    $check(count($stats) === 1 && (int) $stats[0]['bookings'] === 1 && (int) $stats[0]['confirmed'] === 0 && (int) $stats[0]['cancelled'] === 1,
+        'The campaign aggregate outlives the erasure and counts the cancelled booking');
+
+    // A booking without a session: the request itself still tells the booking page, the address and the browser.
+    $direct = new AppointmentsHttp($base, 'attribution-direct');
+    $direct->headers = ['User-Agent: ' . $agent];
+    [$browser, $path, $form] = $direct->bookingForm($event, $day . ' 11:00:00', ['email' => $address]);
+    sleep(2);
+    $browser->request($path, $form);
+    $time = $db->real_escape_string($day . ' 11:00:00');
+    $plain = appointments_open_booking($db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$time}'")->fetch_assoc());
+    $plainRecord = Attribution::decode($plain['attribution'] ?? null);
+    $check($plainRecord !== null && $plainRecord['first_touch'] === null && $plainRecord['browser'] === 'Firefox',
+        'A direct booking stores its origin without a campaign touch');
+
+    // The option off: nothing is recorded or counted.
+    $params = json_decode($originalParams, true) ?: [];
+    $params['attribution_capture'] = 0;
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($params)) . "' WHERE element='com_appointments' AND type='component'");
+    $off = new AppointmentsHttp($base, 'attribution-off');
+    $off->headers = ['Referer: https://www.linkedin.com/'];
+    $off->request('/index.php?option=com_content&view=article&id=' . $article . '&utm_source=off-campaign');
+    [$browser, $path, $form] = $off->bookingForm($event, $day . ' 12:00:00', ['email' => $address]);
+    sleep(2);
+    $browser->request($path, $form);
+    $time = $db->real_escape_string($day . ' 12:00:00');
+    $offRow = $db->query("SELECT attribution FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$time}'")->fetch_assoc();
+    $offStats = (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_campaign_stats WHERE utm_source='off-campaign'")->fetch_assoc()['n'];
+    $check($offRow !== null && $offRow['attribution'] === null && $offStats === 0, 'With the option off neither the origin nor the aggregate is written');
+} catch (Throwable $e) {
+    $check(false, 'Unexpected ' . $e::class . ': ' . $e->getMessage());
+} finally {
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($originalParams) . "' WHERE element='com_appointments' AND type='component'");
+
+    if ($article > 0) {
+        $db->query("DELETE FROM {$prefix}content WHERE id={$article}");
+    }
+
+    if ($event > 0) {
+        $db->query("DELETE FROM {$prefix}appointments_campaign_stats WHERE eventtype_id={$event}");
+    }
+
+    $fixture->cleanup();
+}
+
+echo "\n" . ($failed === 0 ? 'All attribution tests passed' : $failed . ' attribution test(s) failed') . "\n";
+exit($failed === 0 ? 0 : 1);

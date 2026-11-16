@@ -14,6 +14,7 @@ use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Helper\EventScope;
+use Advans\Component\Appointments\Administrator\Helper\Attribution;
 use Advans\Component\Appointments\Administrator\Helper\BookingData;
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Service\BookingRecords;
@@ -45,7 +46,7 @@ class BookingsModel extends ListModel
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
         $query->select($db->quoteName(['b.id', 'b.uid', 'b.created_utc', 'b.eventtype_id', 'b.host_user_id', 'b.start_utc', 'b.end_utc', 'b.state',
             'b.invitee_name', 'b.invitee_first_name', 'b.invitee_last_name', 'b.invitee_email', 'b.invitee_phone', 'b.guest_emails', 'b.custom_fields', 'b.cancel_reason', 'b.conference_url',
-            'b.consent_utc', 'b.consent_version',
+            'b.attribution', 'b.consent_utc', 'b.consent_version',
             'b.sequence', 'b.conference_state', 'b.conference_error', 'b.anonymised_utc']))
             ->select($db->quoteName('e.title', 'eventtype_title'))
             ->from($db->quoteName('#__appointments_bookings', 'b'))
@@ -170,6 +171,56 @@ class BookingsModel extends ListModel
         return parent::getStoreId($id);
     }
 
+    /**
+     * The non-personal campaign aggregate (CampaignStats) of the event types this user may see,
+     * filtered by event type and by the day of booking (filters «from» and «to»), oldest first.
+     *
+     * @return  \Generator<array<string, mixed>>
+     */
+    public function campaignRows(): \Generator
+    {
+        $db = $this->getDatabase();
+        $ids = array_map(static fn ($row) => (int) $row['id'], $this->authorisedEvents());
+
+        if ($ids === [] || !Factory::getApplication()->getIdentity()->authorise('core.manage', 'com_appointments')) {
+            return;
+        }
+
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName(['s.day', 's.eventtype_id', 's.utm_source', 's.utm_medium', 's.utm_campaign', 's.referrer_host',
+            's.bookings', 's.pending', 's.confirmed', 's.cancelled']))
+            ->select($db->quoteName('e.title', 'eventtype_title'))
+            ->from($db->quoteName(\Advans\Component\Appointments\Administrator\Service\CampaignStats::TABLE, 's'))
+            ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e') . ' ON ' . $db->quoteName('e.id') . ' = ' . $db->quoteName('s.eventtype_id'))
+            ->where($db->quoteName('s.eventtype_id') . ' IN (' . implode(',', $ids) . ')');
+        $event = (string) $this->getState('filter.eventtype_id', '');
+
+        if ($event !== '') {
+            $query->where($db->quoteName('s.eventtype_id') . ' = ' . (int) $event);
+        }
+
+        foreach (['from' => '>=', 'to' => '<='] as $key => $comparison) {
+            $day = (string) $this->getState('filter.' . $key, '');
+
+            if ($day !== '') {
+                $query->where($db->quoteName('s.day') . ' ' . $comparison . ' ' . $db->quote($day));
+            }
+        }
+
+        $query->order([$db->quoteName('s.day'), $db->quoteName('s.eventtype_id'), $db->quoteName('s.utm_source'), $db->quoteName('s.utm_medium'),
+            $db->quoteName('s.utm_campaign'), $db->quoteName('s.referrer_host')]);
+        $offset = 0;
+
+        do {
+            $rows = $db->setQuery($query->setLimit(500, $offset))->loadAssocList();
+            $offset += 500;
+
+            foreach ($rows as $row) {
+                yield $row;
+            }
+        } while (count($rows) === 500);
+    }
+
     public function exportRows(): \Generator
     {
         $db = $this->getDatabase();
@@ -194,6 +245,8 @@ class BookingsModel extends ListModel
                 $row = $data->openLenient($row, $failed);
                 // A booking of 1.3 still in clear text after the migration window (team-calendars.md, 5.10).
                 $row['unverified'] = empty($row[BookingData::UNVERIFIED]) ? '' : '1';
+                // The origin of the booking, every field in a column of its own (Attribution::columns()).
+                $row += Attribution::flatten(Attribution::decode($row['attribution'] ?? null));
 
                 if ($failed !== []) {
                     Log::add('Appointment export: booking ' . $last . ' has fields that could not be decrypted (' . implode(', ', $failed) . ').', Log::WARNING, 'com_appointments');

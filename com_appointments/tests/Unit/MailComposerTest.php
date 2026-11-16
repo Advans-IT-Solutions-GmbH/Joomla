@@ -43,6 +43,22 @@ final class MailComposerTest extends TestCase
         self::assertSame("Private Invitee: Answer {host_email} / ä,;\nhttps://example.test/erase?signature=example", $mail['body']);
     }
 
+    public function testTheOriginOfABookingNeverReachesAMailUnlessTheHostCopyFillsIt(): void
+    {
+        $composer = new MailComposer(new IcsWriter());
+        $booking = $this->booking() + ['attribution' => '{"version":1,"booking_ip":"198.51.100.7","user_agent":"CANARY-AGENT"}'];
+        $template = ['subject' => 'Termin', 'body' => "Hallo\n{attribution}\nEnde {attribution}"];
+        $now = new \DateTimeImmutable('2026-10-14 10:00:00', new \DateTimeZone('UTC'));
+
+        self::assertSame('', $composer->placeholders($booking, $this->event())['{attribution}'], 'The stored JSON is no placeholder value');
+        $invitee = $composer->compose($template, $booking, $this->event(), [], $now);
+        self::assertSame("Hallo\nEnde ", $invitee['body'], 'An empty origin block leaves no line');
+        self::assertStringNotContainsString('198.51.100.7', $invitee['body']);
+        self::assertStringNotContainsString('CANARY-AGENT', $invitee['body']);
+        $host = $composer->compose($template, $booking, $this->event(), [], $now, ['{attribution}' => "Origin:\nIP: 198.51.100.7"]);
+        self::assertSame("Hallo\nOrigin:\nIP: 198.51.100.7\nEnde Origin:\nIP: 198.51.100.7", $host['body']);
+    }
+
     public function testDetailLinesWithAnEmptyValueAreLeftOut(): void
     {
         $body = "Guten Tag,\nOrt: {location}\nTelefon: {invitee_phone}\nE-Mail: {invitee_email}\nHinweis: {location} folgt\n{conference_url}\nEnde";

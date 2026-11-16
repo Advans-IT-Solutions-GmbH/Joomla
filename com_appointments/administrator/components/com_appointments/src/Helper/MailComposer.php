@@ -85,7 +85,7 @@ final class MailComposer
     }
 
     /** Tokens that stand for whole lines of their own. */
-    private const BLOCKS = ['{field_answers}'];
+    private const BLOCKS = ['{field_answers}', '{attribution}'];
 
     /** All schema fields, including null/JSON fields, have a documented token. */
     public function placeholders(array $booking, array $event, array $links = []): array
@@ -113,6 +113,8 @@ final class MailComposer
         // token never reaches a mail as text.
         $result['{field_answers}'] = '';
         $result['{invitee_time}'] = '';
+        // The origin of the booking (Attribution), filled for the host only, never from the stored record.
+        $result['{attribution}'] = '';
 
         // {guest_email} and {guest_remove_url} are only filled in a mail to an additional guest:
         // the recipient's own address and the signed link that removes only that address.

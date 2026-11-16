@@ -144,6 +144,7 @@ Index `(user_id, start_utc, end_utc)`.
 | `invitee_language` | `CHAR(7)` | language captured with the booking; mail delivery independently resolves each recipient's account language, else the site default |
 | `guest_emails` | `TEXT` | newline separated, at most the component option `max_guests` (0–50, default 10) addresses; a guest is matched exactly per line, never by substring |
 | `custom_fields` | `JSON` | answers, keyed by field id |
+| `attribution` | `MEDIUMTEXT NULL` | the origin of the booking (`Helper\Attribution`): JSON with first visit, landing URL, IP address of the first page view and of the booking, first and last touch (time, page, referrer, whitelisted `utm_*` and click-ID parameters), page views, booking page, Accept-Language, User-Agent with device, browser and OS. Sealed like the other personal fields (`BookingData::COLUMNS`) and erased with them (`Anonymiser::ERASED_FIELDS`). Shown to the host only. Added by `script.php` on update (`ensureAttribution()`) |
 | `consent_utc` | `DATETIME NULL` | set only in the consent mode of the booking form (`consent_mode = consent`): when the person consented; kept on anonymisation (proof, no data of the person) |
 | `consent_version` | `CHAR(64) NULL` | sha256 hex of mode, language tag and the exact plain label text (`ConsentMode::version()`); kept on anonymisation |
 | `conference_provider` | `VARCHAR(64) NULL` | |
@@ -174,11 +175,20 @@ There is deliberately **no `asset_id`** on this table. A booking inherits the pe
 event type; see `references/scope.md`, "Administration". Adding one later would mean an `#__assets`
 row per booking, an extra insert in the hot path and an orphan asset after every erasure.
 
-There is also deliberately **no IP address column**. The anti-bot timing check compares the render
-time of the form with the submission time and persists nothing, and the rate limiter keeps only a
-keyed hash in `#__appointments_ratelimit` with a one-day retention. A column here would keep the raw
-address for the life of the booking and break the promise in
-`references/privacy-and-deletion.md`.
+There is deliberately **no IP address column**. Since 1.6.0 the IP address of the first page view
+and of the booking is part of the encrypted `attribution` record (owner decision: complete campaign
+evaluation per booking), so it is sealed and erased with the other personal fields and never
+readable in the table. The anti-bot timing check persists nothing, and the rate limiter keeps only a
+keyed hash in `#__appointments_ratelimit` with a one-day retention.
+
+## `#__appointments_campaign_stats`
+
+The non-personal campaign aggregate (`Service\CampaignStats`): primary key day of booking (UTC),
+`eventtype_id`, `utm_source`, `utm_medium`, `utm_campaign`, `referrer_host` (each at most 100
+characters, from the last touch, else the first), counters `bookings`, `pending`, `confirmed`,
+`cancelled`. No booking ID, URL, click ID, address or device. Counted after the booking's own
+transaction, best effort, only for bookings with a record of their origin; a state change moves
+the count, anonymisation and erasure never remove it. Created by `script.php` on update.
 
 ### Rescheduling updates the row
 
