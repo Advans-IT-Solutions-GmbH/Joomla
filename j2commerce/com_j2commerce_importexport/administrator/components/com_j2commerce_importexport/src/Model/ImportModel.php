@@ -687,8 +687,10 @@ class ImportModel extends BaseDatabaseModel
      */
     protected function syncArticleAsset(int $articleId): void
     {
-        // Each round follows one concurrent move; more than that in a row is reported.
-        for ($round = 0; $round < 3; $round++) {
+        // Every round re-reads the asset and the committed category, so the last round
+        // confirms the last move. After three moves in a row the article keeps changing
+        // category, which is reported instead of chased further.
+        for ($moves = 0; ; $moves++) {
             $asset = $this->newTable(AssetTable::class);
 
             // An article without its own asset is checked against its category anyway.
@@ -700,6 +702,10 @@ class ImportModel extends BaseDatabaseModel
 
             if ($parentId === (int) $asset->parent_id) {
                 return;
+            }
+
+            if ($moves >= 3) {
+                throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
             }
 
             $asset->setLocation($parentId, 'last-child');
@@ -716,8 +722,6 @@ class ImportModel extends BaseDatabaseModel
                 throw new \RuntimeException($asset->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
             }
         }
-
-        throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
     }
 
     /**

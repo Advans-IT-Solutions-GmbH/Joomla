@@ -1467,6 +1467,34 @@ namespace {
         $authModel->importProductFull($moveRow, ['update_existing' => true]);
         check($authDb->assetMoves === [[501, 33], [501, 44]] && $authDb->assets['com_content.article.81']['parent_id'] === 44,
             'An asset sync reads the category again after each move and follows a concurrent move');
+
+        // A third move that matches the committed category completes the sync; a fourth needed move is reported.
+        foreach ([[[44, 55], null], [[44, 55, 66], 'COM_J2COMMERCE_IMPORTEXPORT_ERROR_ASSET_SYNC']] as [$targets, $expectedError]) {
+            $authDb->resetAuthorizationScenario([], [$movedArticle]);
+            $authDb->tableResults = $moveTables;
+            $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
+            $authDb->afterCommit = function () use ($authDb): void { $authDb->tableResults['#__content'] = 33; };
+            $queue = $targets;
+            $rearm = function () use ($authDb, &$queue, &$rearm): void {
+                if ($queue) {
+                    $authDb->tableResults['#__content'] = array_shift($queue);
+                    $authDb->afterAssetStore = $rearm;
+                }
+            };
+            $authDb->afterAssetStore = $rearm;
+            $raceError = null;
+            try {
+                $authModel->importProductFull($moveRow, ['update_existing' => true]);
+            } catch (\RuntimeException $e) {
+                $raceError = $e->getMessage();
+            }
+            check($expectedError === null
+                ? $raceError === null && $authDb->assetMoves === [[501, 33], [501, 44], [501, 55]] && $authDb->assets['com_content.article.81']['parent_id'] === 55
+                : $raceError !== null && str_starts_with($raceError, $expectedError),
+                $expectedError === null
+                    ? 'An asset sync whose last allowed move matches the committed category succeeds'
+                    : 'An asset sync that would need more than the allowed moves reports the committed row');
+        }
         $user->permissions = $nativePermissions;
 
         // A destination category without its own asset: the article inherits from the Content component.
