@@ -43,18 +43,31 @@ $subjectFor = static function (array $before, string $address): string {
     return $subjects[0];
 };
 
-$inspect = static function (array $before, array $booking, string $method, string $status, int $expected, ?string $localizedSubject = null) use ($spool, $check): void {
+// The host's address, set once the fixture knows the host. When Joomla's From email is that
+// address and no organiser is configured (as in this test installation), the host's copy has no
+// organiser distinct from the host: it is published, never a self-invitation (CalendarOrganizer).
+$hostAddress = '';
+$inspect = static function (array $before, array $booking, string $method, string $status, int $expected, ?string $localizedSubject = null) use ($spool, $check, &$hostAddress): void {
     $messages = array_values(array_diff($spool(), $before));
     $check(count($messages) === $expected, 'Actual MIME delivered to invitee, guest and host');
     $localized = false;
     foreach ($messages as $file) {
         $mime = file_get_contents($file);
         $unfolded = preg_replace('/\r?\n[ \t]+/', ' ', $mime);
+        $toHost = $hostAddress !== '' && preg_match('/^To:.*' . preg_quote($hostAddress, '/') . '/mi', $unfolded) === 1;
+        $expectedMethod = AppointmentsMail::expectedMethod($mime, $method);
+        $published = $expectedMethod === 'PUBLISH';
         // One invitation, as the text/calendar alternative mail clients present as an invitation,
         // no copy as an attachment (Outlook showed two «invite.ics»).
-        $check(AppointmentsMail::isInvitation($mime, $method), 'The invitation is the one text/calendar alternative with method ' . $method);
+        $check(AppointmentsMail::isInvitation($mime, $expectedMethod), 'The invitation is the one text/calendar alternative with method ' . $expectedMethod);
         $ics = AppointmentsMail::calendars($mime)[0] ?? false;
-        $check(is_string($ics) && str_contains($ics, 'METHOD:' . $method . "\r\n")
+        if ($toHost) {
+            $check(is_string($ics) && ($published ? !str_contains($ics, 'PARTSTAT=')
+                : str_contains($ics, 'ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=FALSE')),
+                $published ? 'Sender and host share one address: the host copy is published, no self-invitation'
+                    : 'The host copy names the host as attendee of another organiser');
+        }
+        $check(is_string($ics) && str_contains($ics, 'METHOD:' . $expectedMethod . "\r\n")
             && str_contains($ics, 'STATUS:' . $status . "\r\n")
             && str_contains($ics, 'UID:' . $booking['uid'] . "\r\n")
             && str_contains($ics, 'SEQUENCE:' . $booking['sequence'] . "\r\n"), 'Actual calendar carries stable UID, state and sequence');
@@ -96,6 +109,7 @@ try {
     $admin->login();
     $username = $db->real_escape_string(getenv('JOOMLA_ADMIN_USERNAME') ?: 'admin');
     $host = (int) $db->query("SELECT id FROM {$prefix}users WHERE username='{$username}'")->fetch_assoc()['id'];
+    $hostAddress = strtolower(trim((string) $db->query("SELECT email FROM {$prefix}users WHERE id={$host}")->fetch_row()[0]));
     $db->query("INSERT INTO {$prefix}users (name,username,email,password,block,sendEmail,registerDate,params) VALUES ('Mail fixture','{$tag}','invitee@example.test','',1,0,UTC_TIMESTAMP(),'{\"language\":\"en-GB\"}')");
     $inviteeUser = (int) $db->insert_id;
     $time = $now->format('Y-m-d H:i:s');

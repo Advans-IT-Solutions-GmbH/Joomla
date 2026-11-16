@@ -120,9 +120,10 @@ try {
     $check(count($messages) === 3, 'Reschedule sends actual mail to invitee, guest and host');
     foreach ($messages as $mime) {
         $decoded = AppointmentsMail::decoded($mime);
-        $check(AppointmentsMail::isInvitation($mime, 'REQUEST')
+        $method = AppointmentsMail::expectedMethod($mime, 'REQUEST');
+        $check(AppointmentsMail::isInvitation($mime, $method)
             && str_contains($decoded, 'UID:' . $booking['uid']) && str_contains($decoded, "SEQUENCE:1\r\n")
-            && str_contains($decoded, "METHOD:REQUEST\r\n"), 'Every reschedule recipient receives one invitation with the updated original UID');
+            && str_contains($decoded, 'METHOD:' . $method . "\r\n"), 'Every reschedule recipient receives one invitation with the updated original UID');
     }
     $outsider = new AppointmentsHttp('http://localhost', 'lifecycle-used-link');
     $outsider->request($reschedule);

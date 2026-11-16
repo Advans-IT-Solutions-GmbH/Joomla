@@ -69,7 +69,7 @@ try {
     $check(count($messages) === 3, 'Reminder reaches invitee, guest and host through the configured transport');
     foreach ($messages as $mime) {
         $decoded = AppointmentsMail::decoded($mime);
-        $check(AppointmentsMail::isInvitation($mime, 'REQUEST')
+        $check(AppointmentsMail::isInvitation($mime, AppointmentsMail::expectedMethod($mime, 'REQUEST'))
             && str_contains(AppointmentsMail::calendars($mime)[0] ?? '', 'UID:' . $created['booking']['uid']),
             'Reminder has one invitation with the existing booking UID');
         $canManage = preg_match('/^To:.*invitee@example\.test/mi', $mime) === 1;

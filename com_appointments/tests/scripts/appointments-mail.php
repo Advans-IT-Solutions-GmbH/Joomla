@@ -63,6 +63,25 @@ final class AppointmentsMail
     }
 
     /**
+     * The method the invitation of a message must have: $method, except for a message to Joomla's
+     * own From email when no organiser is configured. That is the host's copy on a site whose sender
+     * is the host's mailbox (as in the test installations): it is published (METHOD:PUBLISH), never
+     * a self-invitation (CalendarOrganizer).
+     */
+    public static function expectedMethod(string $mime, string $method, string $organizerOption = ''): string
+    {
+        if (!class_exists('JConfig', false)) {
+            require_once '/var/www/html/configuration.php';
+        }
+
+        $mailFrom = strtolower(trim((string) (new JConfig())->mailfrom));
+        $unfolded = (string) preg_replace('/\r?\n[ \t]+/', ' ', $mime);
+
+        return $organizerOption === '' && $mailFrom !== '' && preg_match('/^To:.*' . preg_quote($mailFrom, '/') . '/mi', $unfolded) === 1
+            ? 'PUBLISH' : $method;
+    }
+
+    /**
      * Whether a message carries its invitation as mail clients present one: exactly one text/calendar
      * part with the method, inside multipart/alternative next to text/plain and text/html, and no
      * calendar as an attachment (no application/ics, no invite.ics file name).

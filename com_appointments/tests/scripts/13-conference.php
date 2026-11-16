@@ -49,7 +49,8 @@ $calendarMail = static function (array $before, array $booking, int $count, ?str
 
     foreach ($messages as $mime) {
         $decoded = preg_replace("/\r\n[ \t]/", '', AppointmentsMail::decoded($mime));
-        $check((AppointmentsMail::isInvitation($mime, 'REQUEST') || AppointmentsMail::isInvitation($mime, 'CANCEL'))
+        $check((AppointmentsMail::isInvitation($mime, AppointmentsMail::expectedMethod($mime, 'REQUEST'))
+                || AppointmentsMail::isInvitation($mime, AppointmentsMail::expectedMethod($mime, 'CANCEL')))
             && str_contains($decoded, 'UID:' . $booking['uid'])
             && str_contains($decoded, 'SEQUENCE:' . $booking['sequence']),
             'Conference notification contains one invitation with stable UID and current sequence');
