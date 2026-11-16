@@ -62,7 +62,7 @@ campaign. Each profile has:
 |---|---|
 | Profile key | Short unique name. Changing it, the origin, the key variable, the delivery mode or the activity type stops updates of records already transferred with the old destination. |
 | Event types | New bookings of these event types use this profile. An event type belongs to at most one profile; an event type without a profile is **never transferred**. |
-| API origin, key variable | The HTTPS origin and the **name** of a server environment variable holding that organisation's API key. The key itself is never stored in the options, the database, screenshots or reports. Use one variable per organisation. |
+| API origin, key variable | The HTTPS origin and, optionally, the **name** of a server environment variable holding that organisation's API key. The variable applies to the profile's event types that have no key of their own (see below). The key itself is never stored in the options, screenshots or reports. Use one variable per organisation. |
 | Expected organisation ID | Optional `orga_…`. Before any personal data is sent, the worker reads the organisation of the configured key (`GET /api/v1/me/`, exactly one organisation required) and binds every transfer record to it. A key of another organisation blocks the affected records, and a configured expected ID that differs blocks the profile. |
 | Booking record | Note (all plans) or Custom Activity (plans with custom activities), with its type ID, field mapping and answer mapping. |
 | Answers in the note | Comma-separated local form field IDs. Nothing else from the form is transferred. Guests, conference links, cancellation reasons, consent records and capability links are never sent. |
@@ -75,6 +75,34 @@ organisation, and its bookings do not occupy the batch of the other profiles. En
 **Appointments: deliver approved bookings to Close**, which is created **disabled**, including on fresh
 installations. An invalid configuration never breaks a booking: the booking is recorded for later
 routing and the dashboard shows the configuration warning; no call is made until it is fixed.
+
+### API key per booking page
+
+Each event type has a **Close CRM** tab where a component administrator enters the Close API key
+for that booking page. Several keys exist side by side, for example two booking pages of one Close
+organisation and a third page of another one. The transfer of a booking uses the key of its event
+type; without one, it uses the key variable of the profile, so a configuration with variables keeps
+working unchanged. Without either, the profile's records block with `credential`.
+
+- **Masked and write-only.** The input is a password field that is always empty. After saving the
+  form shows only "Saved" with the last four characters (none for keys shorter than 16 characters),
+  never the key. An empty submit keeps the stored key, a new value replaces it, a checkbox deletes it.
+  A refused save does not keep the key in the session or show it again; it is entered again.
+- **Encrypted at rest.** `#__appointments_close_credentials` holds per event type only a sodium
+  secretbox (XSalsa20-Poly1305) with a random nonce, keyed from the Joomla site secret for this
+  purpose and the event type. The options, the event type row, logs, messages, audit rows, the
+  privacy export, CSV exports and the Close delivery records never contain the key. HTTP errors from
+  Close are recorded as their status code only.
+- **Replacing a key** keeps already transferred records deliverable as long as the new key
+  authenticates the same Close organisation. A key of another organisation blocks them with
+  `organization_changed` before any personal data is sent.
+- **Changing the site secret** makes every stored key unreadable. Nothing fails: the tab shows that
+  the key must be entered again, and until then the profile variable applies, if there is one.
+- **Permission.** Only users with `core.admin` on the component see the tab and can set or delete a
+  key, also when they may edit the event type otherwise. Deleting an event type deletes its key.
+- **Rights of the key.** A Close API key always carries all rights of the Close user it was created
+  for. Close has no keys with limited rights. Create it for a dedicated Close user that serves only
+  this transfer, and handle it with care.
 
 ### Nothing is deleted in Close
 
