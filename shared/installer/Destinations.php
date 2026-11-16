@@ -81,7 +81,15 @@ final class Destinations
         if ($id === 'plg_j2commerce_productcompare' && \Joomla\CMS\Version::MAJOR_VERSION < 6) {
             foreach ($files as $target => $candidate) {
                 if (str_starts_with($target, $root . '/')) {
-                    self::add($files, JPATH_PLUGINS . '/j2store/productcompare/' . substr($target, strlen($root) + 1), $candidate);
+                    $relative = substr($target, strlen($root) + 1);
+                    self::add($files, JPATH_PLUGINS . '/j2store/productcompare/' . $relative, $candidate);
+
+                    // The plugin edit screen loads plg_<folder>_<element>(.sys).ini,
+                    // so the j2store group needs the language under that name too.
+                    if (preg_match('#^language/[a-z]{2}-[A-Z]{2}/plg_j2commerce_productcompare(\.sys)?\.ini$#', $relative)) {
+                        $alias = str_replace('/plg_j2commerce_productcompare', '/plg_j2store_productcompare', $relative);
+                        self::add($files, JPATH_PLUGINS . '/j2store/productcompare/' . $alias, $candidate);
+                    }
                 }
             }
         }

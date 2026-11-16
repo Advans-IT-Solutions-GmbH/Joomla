@@ -34,8 +34,9 @@
     </media>
 
     <config>
-        <fields name="params">
+        <fields name="params" addfieldprefix="Advans\Plugin\J2Commerce\ProductCompare\Field">
             <fieldset name="basic">
+                <field name="help_note" type="note" class="alert alert-info" description="PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_NOTE"/>
                 <field
                     name="show_in_list"
                     type="radio"
@@ -86,6 +87,50 @@
                     description="PLG_J2COMMERCE_PRODUCTCOMPARE_BUTTON_CLASS_DESC"
                     default="btn btn-secondary"
                 />
+            </fieldset>
+            <fieldset name="help" label="PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_TAB">
+                <field name="helppage" type="helppage" hiddenLabel="true">
+                    <section title="PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_WHAT_TITLE">
+                        <p>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_WHAT_P1</p>
+                        <ul>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_WHAT_LI1</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_WHAT_LI2</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_WHAT_LI3</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_WHAT_LI4</li>
+                        </ul>
+                        <note>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_WHAT_NOTE</note>
+                    </section>
+                    <section title="PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETUP_TITLE">
+                        <ol>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETUP_STEP1</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETUP_STEP2</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETUP_STEP3</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETUP_STEP4</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETUP_STEP5</li>
+                        </ol>
+                        <note>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETUP_NOTE</note>
+                    </section>
+                    <section title="PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETTINGS_TITLE">
+                        <p>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETTINGS_P1</p>
+                        <ul>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETTINGS_LI1</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETTINGS_LI2</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETTINGS_LI3</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETTINGS_LI4</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETTINGS_LI5</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PROBLEMS_TITLE">
+                        <ul>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PROBLEMS_LI1</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PROBLEMS_LI2</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PROBLEMS_LI3</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PROBLEMS_LI4</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PROBLEMS_LI5</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PROBLEMS_LI6</li>
+                        </ul>
+                    </section>
+                </field>
             </fieldset>
         </fields>
     </config>
