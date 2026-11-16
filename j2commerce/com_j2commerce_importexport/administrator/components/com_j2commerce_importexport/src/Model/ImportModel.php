@@ -13,18 +13,29 @@ defined('_JEXEC') or die;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Table\Asset as AssetTable;
 use Joomla\CMS\Table\Category as CategoryTable;
+use Joomla\CMS\Table\Content as ContentTable;
 use Joomla\CMS\Table\Menu as MenuTable;
 use Joomla\CMS\Access\Access;
 use Joomla\CMS\Application\ApplicationHelper;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Filter\InputFilter;
+use Joomla\CMS\User\CurrentUserInterface;
+use Joomla\CMS\User\User;
 
 class ImportModel extends BaseDatabaseModel
 {
     use J2CommerceAwareTrait;
 
     const BATCH_SIZE = 100;
+
+    /**
+     * How to undo each nested-set write of the row being imported, oldest first.
+     *
+     * @var array<int, array{label: string, undo: callable(): bool}>
+     */
+    private array $rowUndo = [];
 
     /**
      * Returns the current user ID, or 0 in CLI/test contexts where no
@@ -75,55 +86,378 @@ class ImportModel extends BaseDatabaseModel
         }
 
         $db = $this->getDatabase();
-        $db->transactionStart();
+        $this->rowUndo = [];
 
         try {
-            // 1. Create/Update Category if needed
+            // Categories, assets and menu items are nested sets. Joomla stores them under
+            // LOCK TABLES, which on MySQL commits an open transaction, so they are written
+            // before the row transaction starts. Each of these writes registers its undo,
+            // which runs if a later step of the row fails. The article's asset follows its
+            // category after the commit (step 14).
+
+            // 1. Existing category, or a new one through Joomla's category table
             $catId = $this->ensureCategory($data, $options);
 
-            // 2. Create/Update Joomla Article
-            $articleId = $this->importArticle($data, $catId, $options);
+            // 2. Article: authorized and validated before it is written
+            $article   = $this->prepareArticle($data, $catId, $options);
+            $articleId = $article['existing']
+                ? (int) $article['existing']->id
+                : $this->createArticle($article['values']);
 
-            // 3. Create/Update J2Store Product
-            $productId = $this->importJ2StoreProduct($data, $articleId, $options);
-
-            // 4. Import Variants
-            $this->importVariants($data['variants'] ?? [], $productId, $options);
-
-            // 5. Import Images
-            $this->importProductImages($data['product_images'] ?? [], $productId);
-
-            // 6. Import Options
-            $this->importProductOptions($data['options'] ?? [], $productId);
-
-            // 7. Import Filters
-            $this->importProductFilters($data['filters'] ?? [], $productId);
-
-            // 8. Import Files
-            $this->importProductFiles($data['files'] ?? [], $productId);
-
-            // 9. Import Tags
-            $this->importArticleTags($data['tags'] ?? [], $articleId);
-
-            // 10. Import Custom Fields
-            $this->importCustomFields($data['custom_fields'] ?? [], $articleId);
-
-            // 11. Import Metafields (J2Commerce 6 only)
-            $this->importProductMetafields($data['metafields'] ?? [], $productId);
-
-            // 12. Create Menu Item if requested
+            // 3. Menu item if requested
             if (!empty($options['create_menu']) && !empty($data['menu_item'])) {
                 $this->importMenuItem($data['menu_item'], $articleId, $options);
             }
 
-            $db->transactionCommit();
-            return ['success' => true, 'article_id' => $articleId, 'product_id' => $productId];
+            $db->transactionStart();
 
+            try {
+                // 4. Update an existing article
+                if ($article['existing']) {
+                    $this->updateArticle($articleId, $article['values']);
+                }
+
+                // 5. Create/Update J2Store Product
+                $productId = $this->importJ2StoreProduct($data, $articleId, $options);
+
+                // 6. Import Variants
+                $this->importVariants($data['variants'] ?? [], $productId, $options);
+
+                // 7. Import Images
+                $this->importProductImages($data['product_images'] ?? [], $productId);
+
+                // 8. Import Options
+                $this->importProductOptions($data['options'] ?? [], $productId);
+
+                // 9. Import Filters
+                $this->importProductFilters($data['filters'] ?? [], $productId);
+
+                // 10. Import Files
+                $this->importProductFiles($data['files'] ?? [], $productId);
+
+                // 11. Import Tags
+                $this->importArticleTags($data['tags'] ?? [], $articleId);
+
+                // 12. Import Custom Fields
+                $this->importCustomFields($data['custom_fields'] ?? [], $articleId);
+
+                // 13. Import Metafields (J2Commerce 6 only)
+                $this->importProductMetafields($data['metafields'] ?? [], $productId);
+
+                $db->transactionCommit();
+            } catch (\Throwable $e) {
+                // Roll back on PHP errors too, so no transaction is left open.
+                $db->transactionRollback();
+                throw $e;
+            }
         } catch (\Throwable $e) {
-            // Roll back on PHP errors too, so no transaction is left open.
-            $db->transactionRollback();
-            throw $e;
+            $this->undoRowWrites($e);
+        } finally {
+            $this->rowUndo = [];
         }
+
+        // 14. Permission asset of the article below its committed category
+        try {
+            $this->syncArticleAsset($articleId);
+        } catch (\Throwable $e) {
+            // The row is committed; only the asset could not follow the category.
+            throw new \RuntimeException(Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_ERROR_ASSET_SYNC', $articleId, $e->getMessage()), 0, $e);
+        }
+
+        return ['success' => true, 'article_id' => $articleId, 'product_id' => $productId];
+    }
+
+    /**
+     * Registers how a nested-set write of the current row is undone.
+     *
+     * @param   string            $label  Names the item in the row error if the undo fails
+     * @param   callable(): bool  $undo   Returns true when the item is removed or restored
+     */
+    private function registerUndo(string $label, callable $undo): void
+    {
+        $this->rowUndo[] = ['label' => $label, 'undo' => $undo];
+    }
+
+    /**
+     * Undoes the nested-set writes of a failed row, newest first, and rethrows the row
+     * error. Anything that cannot be undone is named in the error, so the administrator
+     * knows what the failed row left behind.
+     */
+    private function undoRowWrites(\Throwable $error): never
+    {
+        $leftovers = [];
+
+        foreach (array_reverse($this->rowUndo) as $step) {
+            try {
+                $undone = (bool) ($step['undo'])();
+            } catch (\Throwable $e) {
+                $undone = false;
+            }
+
+            if (!$undone) {
+                $leftovers[] = $step['label'];
+            }
+        }
+
+        $this->rowUndo = [];
+        // The undo deleted permission assets.
+        Access::clearStatics();
+
+        if ($leftovers === []) {
+            throw $error;
+        }
+
+        throw new \RuntimeException(
+            Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_ERROR_ROW_LEFTOVERS', $error->getMessage(), implode(', ', $leftovers)),
+            (int) $error->getCode(),
+            $error
+        );
+    }
+
+    /**
+     * A Joomla table that records the importing identity, not the session user, as
+     * author or editor.
+     *
+     * @template T of object
+     * @param    class-string<T>  $class
+     * @return   T
+     */
+    private function newTable(string $class): object
+    {
+        $table    = new $class($this->getDatabase());
+        $identity = $this->getImportIdentity();
+
+        if ($table instanceof CurrentUserInterface && $identity instanceof User) {
+            $table->setCurrentUser($identity);
+        }
+
+        return $table;
+    }
+
+    /**
+     * Deletes a category the failed row created, unless it changed or is used by now: the
+     * category is committed before the row ends, so an editor may already have edited or
+     * checked it out, or a concurrent import placed an article or a subcategory in it.
+     * Such a category is kept and reported.
+     *
+     * @param   ?array  $written  Persisted values after the row's store; null if unknown
+     */
+    private function deleteCategory(int $categoryId, ?array $written): bool
+    {
+        $table = $this->newTable(CategoryTable::class);
+
+        // Nothing left to remove.
+        if (!$table->load($categoryId)) {
+            return true;
+        }
+
+        if ($written === null || !$this->tableHolds($table, $written)) {
+            return false;
+        }
+
+        $db = $this->getDatabase();
+
+        foreach (['#__content' => 'catid', '#__categories' => 'parent_id'] as $usedBy => $column) {
+            $query = $this->createDbQuery($db)
+                ->select('COUNT(*)')
+                ->from($db->quoteName($usedBy))
+                ->where($db->quoteName($column) . ' = :categoryid')
+                ->bind(':categoryid', $categoryId, \Joomla\Database\ParameterType::INTEGER);
+            $db->setQuery($query);
+
+            if ((int) $db->loadResult() > 0) {
+                return false;
+            }
+        }
+
+        return $table->delete($categoryId);
+    }
+
+    /**
+     * Columns that change without an edit: the hit counter of an article, and the
+     * nested-set positions that shift whenever another item is added or removed.
+     */
+    private const VOLATILE_COLUMNS = ['hits', 'lft', 'rgt'];
+
+    /**
+     * Deletes an article the failed row created, unless it changed since: it is committed
+     * before the row ends, so an editor may already have saved or opened it. Such an
+     * article is kept and reported.
+     *
+     * @param   ?array  $written  Persisted values after the row's store; null if unknown
+     */
+    private function deleteArticle(int $articleId, ?array $written): bool
+    {
+        $table = $this->newTable(ContentTable::class);
+
+        if (!$table->load($articleId)) {
+            return true;
+        }
+
+        if ($written === null || !$this->tableHolds($table, $written)) {
+            return false;
+        }
+
+        return $table->delete($articleId);
+    }
+
+    /**
+     * Persisted values of every column of a table row except the volatile ones, including
+     * the checkout state, so an undo recognizes any later edit. Null if they cannot be read.
+     */
+    private function tableSnapshot(string $class, int $id): ?array
+    {
+        try {
+            $table = $this->newTable($class);
+
+            if ($id < 1 || !$table->load($id)) {
+                return null;
+            }
+
+            $values = [];
+            foreach (array_keys($table->getFields()) as $key) {
+                if (!in_array($key, self::VOLATILE_COLUMNS, true)) {
+                    $values[$key] = $table->$key;
+                }
+            }
+
+            return $values;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Deletes a menu item the failed row created, unless it changed since: it is
+     * committed before the row ends, so another import or an editor may already have
+     * edited it or placed items below it. Such an item is kept and reported.
+     *
+     * @param   ?array  $written  Values after the row's store, by column; null if unknown
+     */
+    private function deleteMenuItem(int $menuId, ?array $written): bool
+    {
+        $table = $this->newTable(MenuTable::class);
+
+        if (!$table->load($menuId)) {
+            return true;
+        }
+
+        if ($written === null || !$this->tableHolds($table, $written) || (int) $table->rgt - (int) $table->lft > 1) {
+            return false;
+        }
+
+        return $table->delete($menuId);
+    }
+
+    /**
+     * Gives a menu item the failed row changed its previous values back, and the
+     * publication state of descendants that Joomla's nested-set store changed with it.
+     *
+     * The change is committed before the row ends, so another import or an editor may
+     * have changed the item or a descendant since. Then nothing is restored, because
+     * restoring the item would cascade over the later change, and the item is reported.
+     *
+     * @param   array   $previous          Values before the row's store, by column
+     * @param   ?array  $written           Values after the row's store, by column; null if unknown
+     * @param   array   $previousChildren  Publication state of descendants before the store, by ID
+     * @param   ?array  $writtenChildren   Publication state of descendants after the store, by ID; null if unknown
+     */
+    private function restoreMenuItem(int $menuId, array $previous, ?array $written, array $previousChildren, ?array $writtenChildren): bool
+    {
+        $table = $this->newTable(MenuTable::class);
+
+        if ($written === null || !$table->load($menuId) || !$this->tableHolds($table, $written)) {
+            return false;
+        }
+
+        if ($writtenChildren !== null && !$this->sameStates($this->menuDescendantStates($menuId), $writtenChildren)) {
+            return false;
+        }
+
+        if (!($table->bind($previous) && $table->check() && $table->store())) {
+            return false;
+        }
+
+        // Unknown descendant states: the item is restored, the descendants are reported.
+        if ($writtenChildren === null) {
+            return false;
+        }
+
+        // Restoring the item may have cascaded again; give every descendant its state from before the row.
+        $db = $this->getDatabase();
+
+        foreach ($this->menuDescendantStates($menuId) as $childId => $current) {
+            if (!array_key_exists($childId, $previousChildren) || (int) $previousChildren[$childId] === $current) {
+                continue;
+            }
+
+            $childId = (int) $childId;
+            $state   = (int) $previousChildren[$childId];
+            $query   = $this->createDbQuery($db)
+                ->update($db->quoteName('#__menu'))
+                ->set($db->quoteName('published') . ' = :state')
+                ->where($db->quoteName('id') . ' = :id')
+                ->where($db->quoteName('published') . ' = :current')
+                ->bind(':state', $state, \Joomla\Database\ParameterType::INTEGER)
+                ->bind(':id', $childId, \Joomla\Database\ParameterType::INTEGER)
+                ->bind(':current', $current, \Joomla\Database\ParameterType::INTEGER);
+            $db->setQuery($query)->execute();
+        }
+
+        return true;
+    }
+
+    private function tableHolds(object $table, array $values): bool
+    {
+        foreach ($values as $key => $value) {
+            if ((string) $table->$key !== (string) $value) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function sameStates(array $a, array $b): bool
+    {
+        $a = array_map('intval', $a);
+        $b = array_map('intval', $b);
+        ksort($a);
+        ksort($b);
+
+        return $a === $b;
+    }
+
+    /**
+     * The persisted values of a menu item (Joomla's store rebuilds the path in the
+     * database only), or null if they cannot be read.
+     */
+    private function menuSnapshot(int $menuId): ?array
+    {
+        return $this->tableSnapshot(MenuTable::class, $menuId);
+    }
+
+    /**
+     * Publication state of all descendants of a menu item, by ID.
+     *
+     * @return  array<int, int>
+     */
+    private function menuDescendantStates(int $menuId): array
+    {
+        $db    = $this->getDatabase();
+        $query = $this->createDbQuery($db)
+            ->select([$db->quoteName('c.id'), $db->quoteName('c.published')])
+            ->from($db->quoteName('#__menu', 'n'))
+            ->join(
+                'INNER',
+                $db->quoteName('#__menu', 'c'),
+                $db->quoteName('c.lft') . ' > ' . $db->quoteName('n.lft') . ' AND ' . $db->quoteName('c.rgt') . ' < ' . $db->quoteName('n.rgt')
+            )
+            ->where($db->quoteName('n.id') . ' = :id')
+            ->bind(':id', $menuId, \Joomla\Database\ParameterType::INTEGER);
+        $db->setQuery($query);
+
+        return array_map('intval', $db->loadAssocList('id', 'published') ?: []);
     }
 
     protected function ensureCategory(array $data, array $options): int
@@ -165,10 +499,58 @@ class ImportModel extends BaseDatabaseModel
                 throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
             }
 
-            return $this->createCategory($title, $alias);
+            // The category is created at the root level with the alias in the URL-safe form
+            // Joomla stores, and Joomla allows an alias only once per level. A root-level
+            // Content category with that alias is the one this import creates for the path
+            // (for example for an earlier row of the same file), so it is used again.
+            $alias = $this->urlSafeAlias($alias !== null && trim($alias) !== '' ? $alias : $title, '*');
+            $existingId = $this->findRootContentCategory($alias);
+
+            return $existingId > 0
+                ? $this->requireContentCategory($existingId)
+                : $this->createCategory($title, $alias);
         }
 
         return $this->requireContentCategory($options['default_category'] ?? 2);
+    }
+
+    /**
+     * A root-level Content category with the alias, unless it is trashed: products are
+     * not imported into the trash, and Joomla then refuses the new category with its
+     * "alias exists in the trash" error, which the row reports.
+     */
+    /**
+     * The alias in the URL-safe form Joomla's tables store. Where nothing URL-safe is left
+     * (for example a title in a non-Latin script while Unicode aliases are off), Joomla
+     * would store the current date and time instead, which a later import of the same row
+     * could not find again, so the row is refused with a hint.
+     */
+    protected function urlSafeAlias(string $alias, string $language): string
+    {
+        $alias = ApplicationHelper::stringURLSafe($alias, $language);
+
+        if (trim(str_replace('-', '', $alias)) === '') {
+            throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_ALIAS_NOT_URL_SAFE'));
+        }
+
+        return $alias;
+    }
+
+    protected function findRootContentCategory(string $alias): int
+    {
+        $db = $this->getDatabase();
+        $query = $this->createDbQuery($db)
+            ->select('id')
+            ->from($db->quoteName('#__categories'))
+            ->where('parent_id = 1')
+            ->where('alias = :alias')
+            ->where('extension = ' . $db->quote('com_content'))
+            ->where('published <> -2')
+            ->bind(':alias', $alias);
+
+        $db->setQuery($query);
+
+        return (int) $db->loadResult();
     }
 
     protected function requireContentCategory(int $categoryId): int
@@ -199,48 +581,233 @@ class ImportModel extends BaseDatabaseModel
         return (int) $value;
     }
 
-    protected function createCategory(string $title, ?string $alias = null): int
+    /**
+     * Creates a root-level Content category through Joomla's category table: it gets its
+     * nested-set position and path, its own permission asset below the Content component
+     * without own rules (so it inherits them) and Joomla's checks, such as the unique alias.
+     * The store runs before the row transaction and registers its undo.
+     */
+    protected function createCategory(string $title, string $alias): int
     {
-        $db = $this->getDatabase();
-        $alias = $alias ?: ApplicationHelper::stringURLSafe($title);
-        $application = Factory::getApplication();
-        $user = $this->getImportIdentity();
+        $table = $this->newTable(CategoryTable::class);
+        $table->setLocation(1, 'last-child');
+        $stored = false;
+        $pathBuilt = false;
 
-        $category = (object) [
-            'parent_id' => 1,
-            'level' => 1,
-            'path' => $alias,
-            'extension' => 'com_content',
-            'title' => $title,
-            'alias' => $alias,
-            'published' => $user->authorise('core.edit.state', 'com_content') ? 1 : 0,
-            'access' => (int) $application->get('access'),
-            'language' => '*',
-            'created_user_id' => $this->getCurrentUserId(),
-            'created_time' => Factory::getDate()->toSql(),
-        ];
+        try {
+            $stored = $table->bind([
+                'parent_id'       => 1,
+                'extension'       => 'com_content',
+                'title'           => $title,
+                'alias'           => $alias,
+                'note'            => '',
+                'description'     => '',
+                'published'       => $this->getImportIdentity()->authorise('core.edit.state', 'com_content') ? 1 : 0,
+                'access'          => (int) Factory::getApplication()->get('access'),
+                'language'        => '*',
+                'params'          => '{}',
+                'metadesc'        => '',
+                'metakey'         => '',
+                'metadata'        => '{}',
+                'created_user_id' => $this->getCurrentUserId(),
+            ]) && $table->check() && $table->store();
+            $pathBuilt = $stored && $table->rebuildPath((int) $table->id);
+        } finally {
+            // Also when the store throws after the row was written.
+            $categoryId = (int) $table->id;
+            // Permission checks must see the new asset.
+            Access::clearStatics();
 
-        $db->insertObject('#__categories', $category);
-        $catId = $db->insertid();
+            if ($categoryId > 0) {
+                // What the store left in the database, so the undo recognizes later edits.
+                $written = $this->tableSnapshot(CategoryTable::class, $categoryId);
+                $this->registerUndo(
+                    Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_CATEGORY', $categoryId),
+                    fn (): bool => $this->deleteCategory($categoryId, $written)
+                );
+            }
+        }
 
-        // Rebuild nested set
-        (new CategoryTable($db))->rebuild();
+        if (!$stored || !$pathBuilt) {
+            throw new \RuntimeException($table->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
+        }
 
-        return $catId;
+        return $categoryId;
     }
 
-    protected function importArticle(array $data, int $catId, array $options): int
+    /**
+     * Creates a new article through Joomla's content table: it gets its own permission
+     * asset below its category without own rules (so it inherits them), Joomla's defaults
+     * and checks, such as the unique alias within the category. The store runs before the
+     * row transaction and registers its undo.
+     */
+    protected function createArticle(object $values): int
     {
-        $db = $this->getDatabase();
+        $this->loadContentLanguage();
+
+        $table  = $this->newTable(ContentTable::class);
+        $stored = false;
+
+        try {
+            $stored = $table->bind((array) $values) && $table->check() && $table->store();
+        } finally {
+            // Also when the store throws after the row was written.
+            $articleId = (int) $table->id;
+            // Permission checks must see the new asset.
+            Access::clearStatics();
+
+            if ($articleId > 0) {
+                // What the store left in the database, so the undo recognizes later edits.
+                $written = $this->tableSnapshot(ContentTable::class, $articleId);
+                $this->registerUndo(
+                    Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_ARTICLE', $articleId),
+                    fn (): bool => $this->deleteArticle($articleId, $written)
+                );
+            }
+        }
+
+        if (!$stored) {
+            throw new \RuntimeException($table->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
+        }
+
+        return $articleId;
+    }
+
+    /**
+     * Places the permission asset of an article below the asset of the category the
+     * article is in now, as Joomla does when an article is saved in another category, so
+     * it inherits that category's permissions.
+     *
+     * It runs outside the row transaction and reads the committed category: an asset is a
+     * nested set, so moving it inside the transaction would commit it early. It runs
+     * before an existing article is authorized, so a stale asset (for example after a
+     * failed move) never decides a permission, and after the row has committed. After
+     * each move the category is read again, so an import that moved the same article
+     * concurrently is followed instead of overwritten.
+     */
+    protected function syncArticleAsset(int $articleId): void
+    {
+        // Every round re-reads the asset and the committed category, so the last round
+        // confirms the last move. After three moves in a row the article keeps changing
+        // category, which is reported instead of chased further.
+        for ($moves = 0; ; $moves++) {
+            $asset = $this->newTable(AssetTable::class);
+
+            // An article without its own asset is checked against its category anyway.
+            if (!$asset->loadByName('com_content.article.' . $articleId)) {
+                return;
+            }
+
+            $parentId = $this->articleCategoryAssetId($articleId);
+
+            if ($parentId === (int) $asset->parent_id) {
+                return;
+            }
+
+            if ($moves >= 3) {
+                throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
+            }
+
+            $asset->setLocation($parentId, 'last-child');
+            $asset->parent_id = $parentId;
+
+            try {
+                $stored = $asset->store();
+            } finally {
+                // Permission checks must see the moved asset.
+                Access::clearStatics();
+            }
+
+            if (!$stored) {
+                throw new \RuntimeException($asset->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
+            }
+        }
+    }
+
+    /**
+     * The asset ID an article's asset belongs below: its committed category's asset, or
+     * for a category without its own asset (for example from earlier imports) the Content
+     * component's asset, whose permissions Joomla applies to such a category.
+     */
+    private function articleCategoryAssetId(int $articleId): int
+    {
+        $db    = $this->getDatabase();
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('c.asset_id'))
+            ->from($db->quoteName('#__content', 'a'))
+            ->join('INNER', $db->quoteName('#__categories', 'c'), $db->quoteName('c.id') . ' = ' . $db->quoteName('a.catid'))
+            ->where($db->quoteName('a.id') . ' = :id')
+            ->bind(':id', $articleId, \Joomla\Database\ParameterType::INTEGER);
+        $db->setQuery($query);
+        $parentId = (int) $db->loadResult();
+
+        if ($parentId < 1) {
+            $query = $this->createDbQuery($db)
+                ->select($db->quoteName('id'))
+                ->from($db->quoteName('#__assets'))
+                ->where($db->quoteName('name') . ' = ' . $db->quote('com_content'));
+            $db->setQuery($query);
+            $parentId = (int) $db->loadResult();
+        }
+
+        if ($parentId < 1) {
+            throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
+        }
+
+        return $parentId;
+    }
+
+    /**
+     * Joomla's content table reports its errors (for example a duplicate alias) with
+     * com_content language strings, which this component does not load itself.
+     */
+    protected function loadContentLanguage(): void
+    {
+        Factory::getApplication()->getLanguage()->load('com_content', JPATH_ADMINISTRATOR);
+    }
+
+    /**
+     * Updates an existing article inside the row transaction.
+     */
+    protected function updateArticle(int $articleId, object $values): int
+    {
+        $values->id = $articleId;
+
+        // Null updates are required so a cleared publishing end date is written.
+        $this->getDatabase()->updateObject('#__content', $values, 'id', true);
+
+        return $articleId;
+    }
+
+    /**
+     * Resolves, authorizes and validates the article of a row without writing it.
+     *
+     * @return array{existing: ?object, values: object}  The existing article, if the row
+     *                                                     updates one, and the column values
+     */
+    protected function prepareArticle(array $data, int $catId, array $options): array
+    {
         $userId = $this->getCurrentUserId();
         $now = Factory::getDate()->toSql();
 
         $title = (string) $data['title'];
-        $alias = $data['alias'] ?? ApplicationHelper::stringURLSafe($title);
-        if (!is_string($alias)) {
+        $language = $data['language'] ?? '*';
+        $suppliedAlias = $data['alias'] ?? $title;
+        if (!is_string($suppliedAlias) || !is_string($language)) {
             throw new \InvalidArgumentException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_INVALID_DATA'));
         }
-        $existing = !empty($options['update_existing']) ? $this->findExistingArticle($data, $alias) : null;
+        // Joomla's content table stores the alias in this URL-safe form, so a re-import
+        // matches the article it created. Like Joomla, an empty alias is derived from the title.
+        $alias = $this->urlSafeAlias(trim($suppliedAlias) === '' ? $title : $suppliedAlias, $language);
+        $existing = !empty($options['update_existing'])
+            ? $this->findExistingArticle($data, $alias, $suppliedAlias)
+            : null;
+
+        // An existing article is authorized against an asset that matches its category.
+        if ($existing) {
+            $this->syncArticleAsset((int) $existing->id);
+        }
+
         $permissions = $this->authorizeArticleImport($existing, $catId, $data);
         $schedule = $this->authorizeArticleSchedule($existing, $catId, $data, $now);
 
@@ -261,7 +828,7 @@ class ImportModel extends BaseDatabaseModel
             'state' => $permissions['state'],
             'catid' => $catId,
             'access' => $permissions['access'],
-            'language' => $data['language'] ?? '*',
+            'language' => $language,
             'featured' => $schedule['featured'],
             'images' => $images,
             'urls' => $urls,
@@ -275,17 +842,12 @@ class ImportModel extends BaseDatabaseModel
             'modified_by' => $userId,
         ];
 
-        if ($existing) {
-            $article->id = (int) $existing->id;
-            // Null updates are required so a cleared publishing end date is written.
-            $db->updateObject('#__content', $article, 'id', true);
-            return (int) $existing->id;
+        if (!$existing) {
+            $article->created = $now;
+            $article->created_by = $userId;
         }
 
-        $article->created = $now;
-        $article->created_by = $userId;
-        $db->insertObject('#__content', $article);
-        return $db->insertid();
+        return ['existing' => $existing, 'values' => $article];
     }
 
     /**
@@ -460,7 +1022,12 @@ class ImportModel extends BaseDatabaseModel
 
         return $item;
     }
-    protected function findExistingArticle(array $data, string $alias): ?object
+    /**
+     * @param   string   $alias        The alias in the URL-safe form Joomla stores
+     * @param   ?string  $legacyAlias  The alias as supplied, for articles stored with it
+     *                                 unchanged (for example by earlier imports)
+     */
+    protected function findExistingArticle(array $data, string $alias, ?string $legacyAlias = null): ?object
     {
         $db = $this->getDatabase();
         $article = null;
@@ -476,12 +1043,15 @@ class ImportModel extends BaseDatabaseModel
             $article = $db->loadObject() ?: null;
         }
 
-        if (!$article && $alias !== '') {
+        foreach (array_unique([$alias, (string) $legacyAlias]) as $candidate) {
+            if ($article || $candidate === '') {
+                continue;
+            }
             $query = $this->createDbQuery($db)
                 ->select('*')
                 ->from($db->quoteName('#__content'))
                 ->where('alias = :alias')
-                ->bind(':alias', $alias);
+                ->bind(':alias', $candidate);
             $db->setQuery($query);
             $article = $db->loadObject() ?: null;
         }
@@ -1342,10 +1912,51 @@ class ImportModel extends BaseDatabaseModel
             $existing ? (int) $menu->published : 0
         );
         $row['home'] = (int) $menu->home;
-        if (!$existing) {
+        $previous = [];
+        $previousChildren = [];
+        if ($existing) {
+            // The values this import replaces, restored if a later step of the row fails,
+            // including the publication state Joomla's store may cascade to descendants.
+            foreach (array_keys($row) as $key) {
+                $previous[$key] = $menu->$key;
+            }
+            $previousChildren = $this->menuDescendantStates((int) $menu->id);
+        } else {
             $menu->setLocation((int) $row['parent_id'], 'last-child');
         }
-        if (!$menu->bind($row) || !$menu->check() || !$menu->store()) {
+
+        // Joomla's menu table is a nested set: the store runs before the row transaction
+        // (see importProductFull()) and registers its undo, also when it throws.
+        $stored = false;
+
+        try {
+            $stored = $menu->bind($row) && $menu->check() && $menu->store();
+        } finally {
+            $menuId = (int) $menu->id;
+            // What the store left in the database, so the undo recognizes later changes.
+            $written = $this->menuSnapshot($menuId);
+
+            if ($existing) {
+                try {
+                    $writtenChildren = $this->menuDescendantStates($menuId);
+                } catch (\Throwable $e) {
+                    // Unknown: the undo then reports the descendants instead of skipping them.
+                    $writtenChildren = null;
+                }
+
+                $this->registerUndo(
+                    Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_MENU_ITEM_CHANGED', $menuId),
+                    fn (): bool => $this->restoreMenuItem($menuId, $previous, $written, $previousChildren, $writtenChildren)
+                );
+            } elseif ($menuId > 0) {
+                $this->registerUndo(
+                    Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_MENU_ITEM', $menuId),
+                    fn (): bool => $this->deleteMenuItem($menuId, $written)
+                );
+            }
+        }
+
+        if (!$stored) {
             throw new \RuntimeException($menu->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
         }
     }
