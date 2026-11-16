@@ -124,6 +124,20 @@ final class MailComposerTest extends TestCase
         }
     }
 
+    /** The host's calendar entry lists the booking, {description} of the mail stays the event's own text. */
+    public function testCalendarDescriptionDoesNotChangeTheDescriptionPlaceholder(): void
+    {
+        $mail = (new MailComposer(new IcsWriter()))->compose(
+            ['subject' => 'Booked: {description}', 'body' => '{description}'],
+            $this->booking(), $this->event() + ['calendar_description' => "Details\n\nName: Private Invitee\nTopic: Network"], [],
+            new \DateTimeImmutable('2026-10-14 10:00:00', new \DateTimeZone('UTC'))
+        );
+
+        self::assertSame('Booked: Details', $mail['subject']);
+        self::assertSame('Details', $mail['body']);
+        self::assertStringContainsString('DESCRIPTION:Details\\n\\nName: Private Invitee\\nTopic: Network', str_replace("\r\n ", '', $mail['calendar']));
+    }
+
     public function testExtraTokensAreReplacedInTheSamePassAndAnEmptyBlockLeavesNoLine(): void
     {
         $composer = new MailComposer(new IcsWriter());

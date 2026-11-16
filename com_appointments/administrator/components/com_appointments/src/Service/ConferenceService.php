@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Administrator\Service;
 
+use Advans\Component\Appointments\Administrator\Extension\AppointmentsComponent;
 use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceException;
 use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceManager;
 use Advans\Component\Appointments\Administrator\Helper\Conference\ConferenceUrl;
@@ -39,10 +40,44 @@ defined('_JEXEC') or die;
  */
 final class ConferenceService
 {
+    /**
+     * The service with the component's options and the shared provider registry of the booted
+     * component. Outside a web request (a console script, the Scheduler) booting the component can
+     * fail or yield Joomla's LegacyComponent without a registry (#351). The service then works with
+     * an empty registry of its own and knows that it is incomplete: provisioning still builds the
+     * native providers, but a room cannot be released, because a plugin may have registered a
+     * provider under a native name and created it. The release then reports a cleanup failure
+     * (retried by formal privacy requests), never a successful no-op and never an exception.
+     */
     public static function forComponent(DatabaseInterface $db): self
     {
-        return new self($db, \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments'),
-            \Joomla\CMS\Factory::getApplication()->bootComponent('com_appointments')->getConferenceManager());
+        $params = \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments');
+        $manager = self::componentManager($params);
+
+        return new self($db, $params, $manager ?? new ConferenceManager([], (bool) $params->get('conference_allow_outbound', false)),
+            null, $manager !== null);
+    }
+
+    /** The registry of the booted component, or null when the component is not booted here. */
+    private static function componentManager(Registry $params): ?ConferenceManager
+    {
+        try {
+            $component = Factory::getApplication()->bootComponent('com_appointments');
+
+            if ($component instanceof AppointmentsComponent) {
+                return $component->getConferenceManager();
+            }
+        } catch (\Throwable $error) {
+            // Below: no registry.
+        }
+
+        // Best effort: the note must not fail the caller.
+        try {
+            Log::add('Appointments conference: the component is not booted in this context, the provider registry is unavailable.', Log::INFO, 'com_appointments');
+        } catch (\Throwable $logError) {
+        }
+
+        return null;
     }
 
     private ?BookingData $bookingData = null;
@@ -74,7 +109,10 @@ final class ConferenceService
         private DatabaseInterface $db,
         private Registry $params,
         private ?ConferenceManager $manager = null,
-        private ?KeyProvider $keys = null
+        private ?KeyProvider $keys = null,
+        // False when the registry is not the booted component's (forComponent()): providers that
+        // plugins registered are unknown, so no room can be released safely.
+        private bool $registryComplete = true
     ) {
     }
 
@@ -216,8 +254,16 @@ final class ConferenceService
                     || (int) ($booking['sequence'] ?? -1) !== (int) $current['sequence']
                     || ($booking['modified_utc'] ?? null) !== $current['modified_utc']);
 
-            if ($room !== '' && $name !== '' && !$reusedByNewerActive) {
+            // The native providers keep no room to release (their destroyMeeting() does nothing):
+            // with the complete registry nothing is built for them, so a configuration changed
+            // since the booking (a removed fixed URL) cannot fail a release. Without it (#351) a
+            // plugin may have created the room under a native name: reported as a failure.
+            if ($room !== '' && $name !== '' && !$reusedByNewerActive && !$this->nothingToRelease($name)) {
                 try {
+                    if (!$this->registryComplete && !$this->registered($name)) {
+                        throw new ConferenceException('configuration');
+                    }
+
                     $event = $this->event((int) ($booking['eventtype_id'] ?? 0)) ?? [];
                     $this->providerManager($name, $event)->destroyMeeting($name, $room);
                 } catch (\Throwable $error) {
@@ -343,6 +389,15 @@ final class ConferenceService
     private function registered(string $name): bool
     {
         return $this->manager !== null && in_array($name, $this->manager->getProviderNames(), true);
+    }
+
+    /**
+     * A native provider not overridden by a registered one: it has no room to release. Known only
+     * with the booted component's registry, which holds every override a plugin registered.
+     */
+    private function nothingToRelease(string $name): bool
+    {
+        return $this->registryComplete && in_array($name, ['jitsi', 'generic', 'fixed'], true) && !$this->registered($name);
     }
 
     private function jitsiConfig(array $event): array
