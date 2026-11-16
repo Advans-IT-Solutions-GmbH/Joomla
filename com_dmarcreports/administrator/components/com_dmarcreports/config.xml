@@ -2,6 +2,14 @@
 <config addruleprefix="Advans\Component\DmarcReports\Administrator\Rule">
     <fieldset name="basic" label="COM_DMARCREPORTS_CONFIG_BASIC_FIELDSET">
         <field
+            name="help_note"
+            type="note"
+            description="COM_DMARCREPORTS_CONFIG_HELP_NOTE"
+            class="alert alert-info"
+            filter="unset"
+        />
+
+        <field
             name="default_policy_target"
             type="list"
             label="COM_DMARCREPORTS_CONFIG_POLICY_TARGET_LABEL"

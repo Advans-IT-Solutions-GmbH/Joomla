@@ -159,12 +159,21 @@ final class ActionCenter
             $items[]  = self::item('align_source', 'alignment', $severity, $domainId, [$ip, $count, $share], $ip);
         }
 
-        // Newly observed sending sources need a human decision.
+        // Newly observed sending sources need a human decision, but only when some
+        // of their mail failed DMARC. A new source whose every message passed is
+        // already authenticated (typically a mailbox provider forwarding mail with
+        // the domain's DKIM signature intact) and cannot be abuse, so flagging it
+        // would only refill the list with every new forwarder. A bundle without the
+        // failing figure is treated as undecided and still flagged.
         foreach ((array) ($metrics['new_sources'] ?? []) as $source) {
             $ip    = (string) ($source['ip'] ?? '');
             $count = (int) ($source['count'] ?? 0);
 
             if ($ip === '') {
+                continue;
+            }
+
+            if (\array_key_exists('fail', $source) && (int) $source['fail'] <= 0) {
                 continue;
             }
 

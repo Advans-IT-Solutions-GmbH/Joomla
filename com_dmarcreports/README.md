@@ -35,6 +35,7 @@ Beyond showing the numbers, the component includes an **Action Center** that rea
 - Live diagnostics (optional, off by default): SPF/DMARC records, MTA-STS/TLS-RPT publication and policy drift, and actual receiving-MX coverage before MTA-STS enforce advice
 - CSV export of the per-domain record data
 - System check view that reports whether the IMAP transport is available
+- **Help & tips** page for administrators (submenu, the Help button of every view and the edit screens of the module and plugins): the terms DMARC, SPF, DKIM, MTA-STS and TLS-RPT, how the extension works, every Action Center entry and the typical tasks
 - Administrator-only, behind Joomla ACL — the data never appears on the public site
 
 ## Requirements
@@ -130,7 +131,7 @@ Why these defaults: RFC 7489 (section 7.2.1.1) and RFC 9990 (section 3.5.2) put 
 
 ### Access
 
-Navigate to **Components → DMARC Reports** (`administrator/index.php?option=com_dmarcreports`).
+Navigate to **Components → DMARC Reports** (`administrator/index.php?option=com_dmarcreports`). The submenu also lists Domains, Report sources, System check and **Help & tips** (`view=help`); every view has a Help button in its toolbar that opens the same page.
 
 ### Workflow
 
@@ -149,11 +150,11 @@ The Action Center converts the parsed reports into concrete, prioritised tasks, 
 
 - A domain is still at `p=none` while the aligned-pass rate is already above the quarantine threshold → it is safe to move to `p=quarantine`
 - An unaligned sender sends a meaningful share of mail → add it to SPF or set up DKIM before tightening policy
-- A new or unknown sending source appeared → review it before it affects a stricter policy
+- A new sending source appeared and some of its mail failed DMARC → review it before it affects a stricter policy. A new source whose mail all passes (for example a mailbox provider forwarding with the DKIM signature intact) is already authenticated and is not listed
 - An SPF or DMARC DNS record is missing → the suggested record to publish is shown
 - A DNS lookup failed → the records could not be checked, so none is suggested and a transient outage is not mistaken for a missing record
 
-Each item explains what to change, why, and when it is safe, ordered so the most important action comes first.
+Each item explains what to change, why, and when it is safe, ordered so the most important action comes first. The **Help & tips** page explains every entry type and what to do about it.
 
 ### Policy rollout guidance
 
@@ -163,7 +164,7 @@ DMARC policy is rolled out in stages: `p=none` (monitor only) → `p=quarantine`
 
 The MTA-STS MX list in component options is shared across monitored domains; a union of all their receiving hosts is valid. With live diagnostics enabled, the domain detail Action Center and System Check compare **each domain's actual DNS MX targets** with that policy. Exact matches are case-insensitive; `*.example.org` matches `mail.example.org`, but neither `example.org` nor `mail.eu.example.org` (RFC 8461 section 4.1).
 
-Uncovered targets produce an actionable warning even before policy publication, with higher urgency in `enforce`. DNS failures and answers without usable MX targets (including null MX) remain explicit, unverified states and never produce enforce advice. Correct the MX list, publish the updated policy and TXT id, and recheck every affected domain before enforcing. A mismatch in an enforcing policy can defer delivery and eventually cause bounces. Coverage alone does not test SMTP STARTTLS or MX certificates: verify those and review TLS-RPT reports as well. The main dashboard/module remain network-free and direct you to these checks through their publish guidance.
+Uncovered targets produce an actionable warning even before policy publication, with higher urgency in `enforce`. DNS failures and answers without usable MX targets (including null MX) remain explicit, unverified states and never produce enforce advice. Correct the MX list, publish the updated policy and TXT id, and recheck every affected domain before enforcing. A mismatch in an enforcing policy can defer delivery and eventually cause bounces. Coverage alone does not test SMTP STARTTLS or MX certificates: verify those and review TLS-RPT reports as well. The main dashboard/module remain network-free. With live diagnostics off they show the MTA-STS/TLS-RPT publish guidance, because nothing else tells you what to publish. With live diagnostics on they leave that unverified guidance out, since the domain detail and System Check report the verified state and an unconditional publish reminder would contradict a record that is already published.
 
 ## Development
 
@@ -191,7 +192,7 @@ com_dmarcreports/
 │   │       │   ├── Helper/                     # Parser, IMAP client, Action Center, DNS, crypto
 │   │       │   ├── Model/                      # Dashboard, Detail, Domain(s), Source(s), Systemcheck
 │   │       │   ├── Table/                      # DomainTable, SourceTable
-│   │       │   └── View/                       # Dashboard, Detail, Domain(s), Source(s), Systemcheck
+│   │       │   └── View/                       # Dashboard, Detail, Domain(s), Source(s), Systemcheck, Help
 │   │       └── tmpl/                           # Layouts per view
 │   └── language/
 │       ├── en-GB/
@@ -231,7 +232,7 @@ Order as in `tests/test.env`:
 11. **Installer Messages** - shared suite: removes and reinstalls the component through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 12. **Uninstall** - Component removal, table drop, verification
 
-A separate **PHPUnit (Unit)** job runs the parser, DNS-diagnostics and Action-Center unit tests from `tests/Unit/` without Docker. The database-backed `Metrics` aggregation is covered by the **Metrics** integration suite instead, because it needs a real database.
+A separate **PHPUnit (Unit)** job runs the parser, DNS-diagnostics and Action-Center unit tests from `tests/Unit/` without Docker. `HelpPageTest` renders the help page in every language and fails when an Action Center code has no help entry or when the submenu, a view toolbar or a module/plugin edit screen no longer links the page. The database-backed `Metrics` aggregation is covered by the **Metrics** integration suite instead, because it needs a real database.
 
 ### Running Tests Locally
 

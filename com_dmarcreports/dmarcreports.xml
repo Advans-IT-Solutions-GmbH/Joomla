@@ -36,6 +36,13 @@
 
     <administration>
         <menu link="option=com_dmarcreports">COM_DMARCREPORTS</menu>
+        <submenu>
+            <menu link="option=com_dmarcreports">COM_DMARCREPORTS_MENU_DASHBOARD</menu>
+            <menu link="option=com_dmarcreports&amp;view=domains">COM_DMARCREPORTS_MENU_DOMAINS</menu>
+            <menu link="option=com_dmarcreports&amp;view=sources">COM_DMARCREPORTS_MENU_SOURCES</menu>
+            <menu link="option=com_dmarcreports&amp;view=systemcheck">COM_DMARCREPORTS_MENU_SYSTEMCHECK</menu>
+            <menu link="option=com_dmarcreports&amp;view=help">COM_DMARCREPORTS_MENU_HELP</menu>
+        </submenu>
         <files folder="administrator/components/com_dmarcreports">
             <folder>forms</folder>
             <folder>services</folder>

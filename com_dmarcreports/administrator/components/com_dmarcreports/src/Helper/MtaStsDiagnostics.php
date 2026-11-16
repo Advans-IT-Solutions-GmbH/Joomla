@@ -82,6 +82,41 @@ final class MtaStsDiagnostics
     }
 
     /**
+     * The codes of the "publish this record" reminders the network-free
+     * dashboard produces without looking anything up.
+     */
+    public const UNVERIFIED_REMINDERS = ['mtasts_publish', 'tlsrpt_publish'];
+
+    /**
+     * Drop the unverified publish reminders from the dashboard's ACTIVE Action
+     * Center items when live checks are on. Without live checks these reminders
+     * are the only place that tells the administrator what to publish, so they
+     * stay. With live checks the domain view and the System Check verify the
+     * published records, and the dashboard, which never performs a lookup,
+     * cannot tell whether a record is already published; repeating "publish this
+     * record" there contradicted a verified record. Only active items are
+     * filtered: a reminder the operator already marked done, ignored or snoozed
+     * stays under Handled actions so it can still be reopened. Configuration
+     * errors that need no lookup (no MX host, no TLS-RPT address) are kept.
+     *
+     * @param   array<int, array<string, mixed>>  $activeItems        Active Action Center items.
+     * @param   bool                              $liveChecksEnabled  Whether the dns_diagnostics option is on.
+     *
+     * @return  array<int, array<string, mixed>>
+     */
+    public static function withoutUnverifiedReminders(array $activeItems, bool $liveChecksEnabled): array
+    {
+        if (!$liveChecksEnabled) {
+            return $activeItems;
+        }
+
+        return array_values(array_filter(
+            $activeItems,
+            static fn (array $item): bool => !\in_array((string) ($item['code'] ?? ''), self::UNVERIFIED_REMINDERS, true)
+        ));
+    }
+
+    /**
      * Roll several monitored domains up into the System Check view's MTA-STS /
      * TLS-RPT section. This is pure aggregation over {@see inspect()}: the
      * caller supplies each domain's generated artifacts (built from the

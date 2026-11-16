@@ -163,6 +163,54 @@ class MtaStsDiagnosticsTest extends TestCase
         $this->assertContains('tlsrpt_publish', $codes);
     }
 
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function dashboardItems(): array
+    {
+        // The active dashboard items for a domain with MTA-STS and TLS-RPT on, as
+        // the network-free inspection and the Action Center produce them.
+        $findings = (new MtaStsDiagnostics($this->resolver([]), $this->fetcher(null)))
+            ->inspect($this->generated(), false)['findings'];
+
+        return array_merge(
+            [['code' => 'enforced', 'action_key' => 'enforced:1']],
+            array_map(static fn (array $f): array => $f + ['action_key' => $f['code'] . ':1'], $findings),
+            [['code' => 'mtasts_no_mx', 'action_key' => 'mtasts_no_mx:1'], ['code' => 'tlsrpt_missing_rua', 'action_key' => 'tlsrpt_missing_rua:1']]
+        );
+    }
+
+    /**
+     * @param   array<int, array<string, mixed>>  $items
+     *
+     * @return  string[]
+     */
+    private static function itemCodes(array $items): array
+    {
+        return array_map(static fn (array $i): string => (string) $i['code'], $items);
+    }
+
+    public function testDashboardKeepsPublishGuidanceWhenLiveChecksAreOff(): void
+    {
+        // Without live checks nothing else tells the administrator what to
+        // publish, so the dashboard keeps the copy-ready records.
+        $codes = self::itemCodes(MtaStsDiagnostics::withoutUnverifiedReminders($this->dashboardItems(), false));
+
+        $this->assertContains('mtasts_publish', $codes);
+        $this->assertContains('tlsrpt_publish', $codes);
+    }
+
+    public function testDashboardDropsUnverifiedPublishGuidanceWhenLiveChecksAreOn(): void
+    {
+        // With live checks on, the domain view and the system check verify the
+        // published records. The network-free dashboard cannot, so repeating
+        // "publish this record" there contradicted a verified, published record.
+        // Configuration errors that need no lookup stay visible.
+        $codes = self::itemCodes(MtaStsDiagnostics::withoutUnverifiedReminders($this->dashboardItems(), true));
+
+        $this->assertSame(['enforced', 'mtasts_no_mx', 'tlsrpt_missing_rua'], $codes);
+    }
+
     public function testMissingStsRecordIsReportedAsPublish(): void
     {
         $diagnostics = new MtaStsDiagnostics($this->resolver([

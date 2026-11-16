@@ -42,6 +42,8 @@ extension/tag family, not the monorepo's global latest release.
 
 ## Configuration
 
+Help: the Help button of the plugin edit screen and the note at the top of its options open the **Help & tips** page of the DMARC Reports component (`index.php?option=com_dmarcreports&view=help`), which explains the terms, the Action Center entries and the typical tasks.
+
 1. Create a scheduled task: System → Manage → Scheduled Tasks → New → **DMARC Reports - Automatic ingestion**.
 2. Set the execution rule (for example every 30 minutes).
 3. Optionally enable automatic domain creation. This is a privileged action, so it only takes
