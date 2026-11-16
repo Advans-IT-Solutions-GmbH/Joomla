@@ -245,17 +245,21 @@ try {
     if ($at === false) {
         echo '    console: ' . substr($text, 0, 1200) . "\n";
     }
-    foreach (['plain' => 'a booking without a conference', 'room' => 'a booking with a conference room'] as $key => $label) {
-        $check(($console[$key]['ok'] ?? false) === true && ($console[$key]['cleanup_error'] ?? true) === false,
-            'Console erasure of ' . $label . ' completes without an exception and without a cleanup error: ' . json_encode($console[$key] ?? $text));
-    }
+    $check(($console['plain']['ok'] ?? false) === true && ($console['plain']['cleanup_error'] ?? true) === false,
+        'Console erasure of a booking without a conference completes silently: ' . json_encode($console['plain'] ?? $text));
+    // With a room: released when the component boots here, otherwise reported as a cleanup failure,
+    // because a plugin may have created the room under a native name. Never an exception.
+    $check(($console['room']['ok'] ?? false) === true && is_bool($console['room']['cleanup_error'] ?? null),
+        'Console erasure of a booking with a conference room completes, the room released or the failure reported: ' . json_encode($console['room'] ?? $text));
     $check($fixture->stored((int) $plain['id']) === null && $fixture->stored((int) $withRoom['id']) === null
         && (int) $db->query("SELECT COUNT(*) FROM {$prefix}appointments_audit WHERE booking_id IN (" . (int) $plain['id'] . ',' . (int) $withRoom['id'] . ") AND path='admin'")->fetch_row()[0] === 2,
         'The console erasures removed both bookings and recorded them once each');
     $retained = $fixture->stored((int) $old['id']);
-    $check(($console['retention']['ok'] ?? false) === true && ($console['retention']['failed'] ?? 1) === 0
+    $check(($console['retention']['ok'] ?? false) === true
+        && ($console['retention']['failed'] ?? -1) === (($console['room']['cleanup_error'] ?? false) ? 1 : 0)
         && ($retained === null || $retained['anonymised_utc'] !== null) && ($retained['conference_room'] ?? null) === null,
-        'The Scheduler retention outside a web request erases an old booking with a room and releases it: ' . json_encode($console['retention'] ?? $text));
+        'The Scheduler retention outside a web request erases an old booking with a room and counts an unreleased room as failed: '
+        . json_encode($console['retention'] ?? $text));
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;

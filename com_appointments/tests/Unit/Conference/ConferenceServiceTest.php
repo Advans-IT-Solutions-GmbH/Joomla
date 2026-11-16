@@ -701,6 +701,24 @@ final class ConferenceServiceTest extends TestCase
         self::assertNull($this->row['conference_provider']);
     }
 
+    /**
+     * #351: without the booted component's registry (a console context) a plugin may have created
+     * the room under a native name. The release is reported as failed, never a silent success, and
+     * the committed change keeps its cleared fields.
+     */
+    public function testWithoutTheComponentRegistryARoomReleaseIsReportedAsFailed(): void
+    {
+        $options = ['conference_provider' => 'fixed', 'conference_fixed_url' => 'https://meet.example.com/permanent'];
+        $saved = $this->service($options)->provision($this->row, $this->now());
+        $this->row['state'] = 2;
+        $incomplete = new ConferenceService($this->database(), new Registry($options), new ConferenceManager([]), new KeyProvider('unit-site-secret'), false);
+        $result = $incomplete->destroy($saved);
+
+        self::assertSame('Conference room cleanup failed. Please retry.', $result['_conference_cleanup_error']);
+        self::assertNull($this->row['conference_room']);
+        self::assertNull($this->row['conference_provider']);
+    }
+
     public function testDatabaseFailuresCannotPropagateSensitiveDiagnosticsOrStaleData(): void
     {
         $service = $this->service(['conference_provider' => 'fixed', 'conference_fixed_url' => 'https://meet.example.com/permanent']);

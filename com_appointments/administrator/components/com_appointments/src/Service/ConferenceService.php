@@ -44,18 +44,22 @@ final class ConferenceService
      * The service with the component's options and the shared provider registry of the booted
      * component. Outside a web request (a console script, the Scheduler) booting the component can
      * fail or yield Joomla's LegacyComponent without a registry (#351). The service then works with
-     * an empty registry of its own: the native providers (Jitsi, generic, fixed room) are built per
-     * call anyway, and a provider registered by a plugin that is not available reports a cleanup
-     * failure instead of throwing after a committed erasure.
+     * an empty registry of its own and knows that it is incomplete: provisioning still builds the
+     * native providers, but a room cannot be released, because a plugin may have registered a
+     * provider under a native name and created it. The release then reports a cleanup failure
+     * (retried by formal privacy requests), never a successful no-op and never an exception.
      */
     public static function forComponent(DatabaseInterface $db): self
     {
         $params = \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments');
+        $manager = self::componentManager($params);
 
-        return new self($db, $params, self::componentManager($params));
+        return new self($db, $params, $manager ?? new ConferenceManager([], (bool) $params->get('conference_allow_outbound', false)),
+            null, $manager !== null);
     }
 
-    private static function componentManager(Registry $params): ConferenceManager
+    /** The registry of the booted component, or null when the component is not booted here. */
+    private static function componentManager(Registry $params): ?ConferenceManager
     {
         try {
             $component = Factory::getApplication()->bootComponent('com_appointments');
@@ -64,16 +68,16 @@ final class ConferenceService
                 return $component->getConferenceManager();
             }
         } catch (\Throwable $error) {
-            // Below: the registry of its own.
+            // Below: no registry.
         }
 
         // Best effort: the note must not fail the caller.
         try {
-            Log::add('Appointments conference: the component is not booted in this context, native providers only.', Log::INFO, 'com_appointments');
+            Log::add('Appointments conference: the component is not booted in this context, the provider registry is unavailable.', Log::INFO, 'com_appointments');
         } catch (\Throwable $logError) {
         }
 
-        return new ConferenceManager([], (bool) $params->get('conference_allow_outbound', false));
+        return null;
     }
 
     private ?BookingData $bookingData = null;
@@ -105,7 +109,10 @@ final class ConferenceService
         private DatabaseInterface $db,
         private Registry $params,
         private ?ConferenceManager $manager = null,
-        private ?KeyProvider $keys = null
+        private ?KeyProvider $keys = null,
+        // False when the registry is not the booted component's (forComponent()): providers that
+        // plugins registered are unknown, so no room can be released safely.
+        private bool $registryComplete = true
     ) {
     }
 
@@ -248,10 +255,15 @@ final class ConferenceService
                     || ($booking['modified_utc'] ?? null) !== $current['modified_utc']);
 
             // The native providers keep no room to release (their destroyMeeting() does nothing):
-            // nothing is built for them, so a configuration changed since the booking (a removed
-            // fixed URL, a context without the component's registry, #351) cannot fail a release.
+            // with the complete registry nothing is built for them, so a configuration changed
+            // since the booking (a removed fixed URL) cannot fail a release. Without it (#351) a
+            // plugin may have created the room under a native name: reported as a failure.
             if ($room !== '' && $name !== '' && !$reusedByNewerActive && !$this->nothingToRelease($name)) {
                 try {
+                    if (!$this->registryComplete && !$this->registered($name)) {
+                        throw new ConferenceException('configuration');
+                    }
+
                     $event = $this->event((int) ($booking['eventtype_id'] ?? 0)) ?? [];
                     $this->providerManager($name, $event)->destroyMeeting($name, $room);
                 } catch (\Throwable $error) {
@@ -379,10 +391,13 @@ final class ConferenceService
         return $this->manager !== null && in_array($name, $this->manager->getProviderNames(), true);
     }
 
-    /** A native provider not overridden by a registered one: it has no room to release. */
+    /**
+     * A native provider not overridden by a registered one: it has no room to release. Known only
+     * with the booted component's registry, which holds every override a plugin registered.
+     */
     private function nothingToRelease(string $name): bool
     {
-        return in_array($name, ['jitsi', 'generic', 'fixed'], true) && !$this->registered($name);
+        return $this->registryComplete && in_array($name, ['jitsi', 'generic', 'fixed'], true) && !$this->registered($name);
     }
 
     private function jitsiConfig(array $event): array
