@@ -143,6 +143,15 @@ class DashboardModel extends BaseDatabaseModel
 
         $partition = $status->partition($items);
 
+        // With live checks on, the drill-down and the System Check verify the
+        // published records, so the dashboard leaves the unverified publish
+        // reminders out of its active list instead of contradicting them. Handled
+        // reminders stay in the suppressed list so they can still be reopened.
+        $partition['active'] = MtaStsDiagnostics::withoutUnverifiedReminders(
+            $partition['active'],
+            (int) $params->get('dns_diagnostics', 0) === 1
+        );
+
         $sort = static fn (array $a, array $b): int => ($b['severity'] <=> $a['severity'])
             ?: strcmp((string) $a['domain'], (string) $b['domain']);
 
@@ -157,7 +166,7 @@ class DashboardModel extends BaseDatabaseModel
      * the main Action Center and the dashboard module surface the same publish
      * actions as the drill-down; with live checks on, the verified state lives
      * in the drill-down and the System Check (see
-     * {@see MtaStsDiagnostics::dashboardFindings()}).
+     * {@see MtaStsDiagnostics::withoutUnverifiedReminders()}).
      * This is pure string generation: it is always network-free, so rendering a
      * dashboard that lists many domains never waits on DNS or HTTPS. The live
      * DNS and MTA-STS/TLS-RPT drift lookups are performed only in the drill-down
@@ -177,13 +186,9 @@ class DashboardModel extends BaseDatabaseModel
             return [];
         }
 
-        // With live checks on, the drill-down and the System Check verify the
-        // published records, so the dashboard leaves out the unverified publish
-        // reminders instead of contradicting them.
-        return (new MtaStsDiagnostics())->dashboardFindings(
-            $generated,
-            (int) $params->get('dns_diagnostics', 0) === 1
-        );
+        $mtasts = (new MtaStsDiagnostics())->inspect($generated, false);
+
+        return (array) ($mtasts['findings'] ?? []);
     }
 
     /**

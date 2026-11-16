@@ -83,11 +83,11 @@ in enforce, otherwise 2); resolver failure (`null`) and no usable targets (`[]`,
 are explicit unverified findings. Enforce advice is emitted only after MX coverage and the hosted
 policy/record checks pass. SMTP STARTTLS and MX certificates still need separate verification.
 Domain detail/its Action Center and System Check reuse this path; the main dashboard/module stay
-network-free and take their findings from `MtaStsDiagnostics::dashboardFindings()`: with `dns_diagnostics`
-off that is the publish guidance (nothing else tells the administrator what to publish), with it on the
-unverified `mtasts_publish`/`tlsrpt_publish` reminders are left out, because the drill-down and System Check
-report the verified state and a reminder would contradict an already published record. Configuration errors
-(`mtasts_no_mx`, `tlsrpt_missing_rua`) stay visible either way.
+network-free and fold in the network-free publish guidance. With `dns_diagnostics` on,
+`MtaStsDiagnostics::withoutUnverifiedReminders()` removes the unverified `mtasts_publish`/`tlsrpt_publish`
+reminders from the dashboard's ACTIVE list, because the drill-down and System Check report the verified state
+and a reminder would contradict an already published record. Handled reminders stay in the suppressed list so
+they can be reopened. Configuration errors (`mtasts_no_mx`, `tlsrpt_missing_rua`) stay visible either way.
 
 ## TLS-RPT ingestion
 
