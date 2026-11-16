@@ -24,6 +24,7 @@ class HtmlView extends BaseHtmlView
         $this->checks = $this->getModel()->getChecks();
         ToolbarHelper::title(Text::_('COM_APPOINTMENTS_SYSTEM_TITLE'), 'info-circle');
         Toolbar::getInstance('toolbar')->linkButton('back')->url('index.php?option=com_appointments')->text(Text::_('JTOOLBAR_BACK'));
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
         return parent::display($tpl);
     }
 }
