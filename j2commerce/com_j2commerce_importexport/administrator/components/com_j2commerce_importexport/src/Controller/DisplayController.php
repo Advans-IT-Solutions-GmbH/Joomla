@@ -20,14 +20,19 @@ class DisplayController extends BaseController
     /**
      * Feature names that are not views of their own.
      *
-     * The component has exactly one view, `dashboard`. Import and export are
-     * controller tasks (`task=import.upload`, `task=import.preview`,
-     * `task=import.process`, `task=export.export`) driven from the two forms
-     * that view renders; there is no View\Import or View\Export class and none
-     * is registered anywhere. `&view=import` and `&view=export` therefore used
-     * to end in Joomla's "View not found" error (HTTP 404). Both names now
-     * render the dashboard, so the addresses a user may guess or bookmark lead
-     * to the component instead of an error page.
+     * The component has two views: `dashboard` and the help page `help`.
+     * Import and export are controller tasks (`task=import.upload`,
+     * `task=import.preview`, `task=import.process`, `task=export.export`)
+     * driven from the two forms the dashboard renders; there is no View\Import
+     * or View\Export class and none is registered anywhere. `&view=import` and
+     * `&view=export` therefore used to end in Joomla's "View not found" error
+     * (HTTP 404). Both names now render the dashboard, so the addresses a user
+     * may guess or bookmark lead to the component instead of an error page.
+     *
+     * Both views need only the access to the component (core.manage), which
+     * Joomla's component dispatcher checks before this controller runs. The
+     * dashboard shows its import and export sections by their own actions, and
+     * the help page needs no further right.
      *
      * @var string[]
      */
