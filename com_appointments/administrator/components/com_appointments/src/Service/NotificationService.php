@@ -47,7 +47,11 @@ final class NotificationService
     /** Address of «My calendars» per language and set of view levels (myCalendarsLink()). */
     private array $myCalendarsLinks = [];
 
-    /** Custom fields per event type (fields()). */
+    /**
+     * Custom fields per event type (fields()), for the recipients of one send() only: one service
+     * instance can outlive a change of the fields (a Scheduler run, a test suite), and a stale
+     * list would label the answers with their ids.
+     */
     private array $fieldCache = [];
 
     /**
@@ -106,6 +110,8 @@ final class NotificationService
                 . ', purpose ' . $purpose . ').', Log::ERROR, 'com_appointments');
             throw new NotificationException('No valid public site URL is configured (component option or live_site).');
         }
+        // The fields as they are now (fieldCache).
+        $this->fieldCache = [];
         // Callers pass a stored row or a row opened before: opening is idempotent. A field that
         // cannot be decrypted is left blank (no mail to that address), only its column is logged.
         $failed = [];
