@@ -20,9 +20,17 @@ class HtmlView extends BaseHtmlView
 {
     protected bool $canOptions = false;
 
+    /**
+     * Opened by the toolbar «Help» button in a popup (tmpl=component): links that leave the
+     * page would navigate inside the popup, so the template hides them.
+     */
+    protected bool $popup = false;
+
     public function display($tpl = null)
     {
-        $this->canOptions = Factory::getApplication()->getIdentity()->authorise('core.options', 'com_appointments');
+        $app = Factory::getApplication();
+        $this->popup = $app->getInput()->getCmd('tmpl') === 'component';
+        $this->canOptions = $app->getIdentity()->authorise('core.options', 'com_appointments');
         ToolbarHelper::title(Text::_('COM_APPOINTMENTS_HELP_TITLE'), 'info-circle');
         Toolbar::getInstance('toolbar')->linkButton('back')
             ->url('index.php?option=com_appointments')
