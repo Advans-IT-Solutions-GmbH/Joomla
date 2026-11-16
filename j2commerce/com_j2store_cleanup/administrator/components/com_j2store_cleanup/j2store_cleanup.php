@@ -558,7 +558,9 @@ function getIssuePatterns() {
 
 /**
  * The executable code of a PHP file, with comments, string contents and
- * inline HTML blanked out, so only real API use is matched.
+ * inline HTML blanked out, so only real API use is matched. Blanked parts
+ * keep their length: an offset in the result is the same offset in the
+ * source, which getNameContext() relies on.
  */
 function getScannableCode(string $source): string
 {
@@ -569,7 +571,7 @@ function getScannableCode(string $source): string
         if (!is_array($token)) {
             $code .= $token;
         } elseif (in_array($token[0], $skip, true)) {
-            $code .= ' ';
+            $code .= str_repeat(' ', strlen($token[1]));
         } else {
             $code .= $token[1];
         }
@@ -579,54 +581,69 @@ function getScannableCode(string $source): string
 }
 
 /**
- * Namespace and `use` imports of a PHP file, so a name in its code can be
- * resolved the way PHP resolves it.
+ * Namespaces and `use` imports of a PHP file by source range, so a name in its
+ * code can be resolved the way PHP resolves it at that place.
  *
- * @return array{namespace: string, imports: array<string, string>}  imports:
- *         lower-case local name => fully qualified class name
+ * @return array{blocks: array<int, array{start: int, namespace: string, imports: array<string, string>}>,
+ *               uses: array<int, array{0: int, 1: int}>}
+ *         blocks: one per namespace declaration, from its offset on; imports map
+ *         a lower-case local name to the absolute class name.
+ *         uses: offset ranges of the import statements.
  */
 function getNameContext(string $source): array
 {
-    $tokens = array_values(array_filter(
-        token_get_all($source),
-        static fn ($t): bool => !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
-    ));
-    $isName    = static fn ($t): bool => is_array($t) && in_array($t[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true);
-    $namespace = '';
-    $imports   = [];
-    $count     = count($tokens);
+    $tokens = [];
+    $offset = 0;
+
+    foreach (token_get_all($source) as $token) {
+        $text = is_array($token) ? $token[1] : $token;
+
+        if (!is_array($token) || !in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+            $tokens[] = [$token, $offset];
+        }
+
+        $offset += strlen($text);
+    }
+
+    $isName = static fn ($t): bool => is_array($t) && in_array($t[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true);
+    $blocks = [['start' => 0, 'namespace' => '', 'imports' => []]];
+    $uses   = [];
+    $count  = count($tokens);
 
     for ($i = 0; $i < $count; $i++) {
-        $token = $tokens[$i];
+        [$token, $start] = $tokens[$i];
+        $next            = $tokens[$i + 1][0] ?? null;
 
-        if (is_array($token) && $token[0] === T_NAMESPACE && $namespace === '' && $isName($tokens[$i + 1] ?? null)) {
-            $namespace = ltrim($tokens[$i + 1][1], '\\');
+        if (is_array($token) && $token[0] === T_NAMESPACE && ($isName($next) || $next === '{')) {
+            $blocks[] = ['start' => $start, 'namespace' => $isName($next) ? ltrim($next[1], '\\') : '', 'imports' => []];
             continue;
         }
 
         // Imports only: a closure's "use (" and "use function/const" are skipped.
-        if (!is_array($token) || $token[0] !== T_USE || !$isName($tokens[$i + 1] ?? null)) {
+        if (!is_array($token) || $token[0] !== T_USE || !$isName($next)) {
             continue;
         }
 
-        $j = $i + 1;
-        while ($isName($tokens[$j] ?? null)) {
-            $name = ltrim($tokens[$j][1], '\\');
+        $current = count($blocks) - 1;
+        $j       = $i + 1;
+
+        while ($isName($tokens[$j][0] ?? null)) {
+            $name = ltrim($tokens[$j][0][1], '\\');
             $j++;
 
             // Group import: use Prefix\{A, B as C};
-            if (is_array($tokens[$j] ?? null) && $tokens[$j][0] === T_NS_SEPARATOR && ($tokens[$j + 1] ?? null) === '{') {
+            if (is_array($tokens[$j][0] ?? null) && $tokens[$j][0][0] === T_NS_SEPARATOR && ($tokens[$j + 1][0] ?? null) === '{') {
                 $j += 2;
-                while ($isName($tokens[$j] ?? null)) {
-                    $member = $name . '\\' . ltrim($tokens[$j][1], '\\');
+                while ($isName($tokens[$j][0] ?? null)) {
+                    $member = $name . '\\' . ltrim($tokens[$j][0][1], '\\');
+                    $alias  = substr(strrchr('\\' . $member, '\\'), 1);
                     $j++;
-                    $alias = substr(strrchr('\\' . $member, '\\'), 1);
-                    if (is_array($tokens[$j] ?? null) && $tokens[$j][0] === T_AS && $isName($tokens[$j + 1] ?? null)) {
-                        $alias = $tokens[$j + 1][1];
+                    if (is_array($tokens[$j][0] ?? null) && $tokens[$j][0][0] === T_AS && $isName($tokens[$j + 1][0] ?? null)) {
+                        $alias = $tokens[$j + 1][0][1];
                         $j += 2;
                     }
-                    $imports[strtolower($alias)] = $member;
-                    if (($tokens[$j] ?? null) !== ',') {
+                    $blocks[$current]['imports'][strtolower($alias)] = $member;
+                    if (($tokens[$j][0] ?? null) !== ',') {
                         break;
                     }
                     $j++;
@@ -635,35 +652,56 @@ function getNameContext(string $source): array
             }
 
             $alias = substr(strrchr('\\' . $name, '\\'), 1);
-            if (is_array($tokens[$j] ?? null) && $tokens[$j][0] === T_AS && $isName($tokens[$j + 1] ?? null)) {
-                $alias = $tokens[$j + 1][1];
+            if (is_array($tokens[$j][0] ?? null) && $tokens[$j][0][0] === T_AS && $isName($tokens[$j + 1][0] ?? null)) {
+                $alias = $tokens[$j + 1][0][1];
                 $j += 2;
             }
-            $imports[strtolower($alias)] = $name;
+            $blocks[$current]['imports'][strtolower($alias)] = $name;
 
-            if (($tokens[$j] ?? null) !== ',') {
+            if (($tokens[$j][0] ?? null) !== ',') {
                 break;
             }
             $j++;
         }
 
-        $i = $j;
+        $uses[] = [$start, $tokens[$j][1] ?? $offset];
+        $i      = $j;
     }
 
-    return ['namespace' => $namespace, 'imports' => $imports];
+    return ['blocks' => $blocks, 'uses' => $uses];
 }
 
 /**
- * The class a name stands for at one place in the code, or null when the
- * place is no class reference to resolve here (a qualified name of another
- * vendor, a member, a variable or a declaration).
+ * The namespace block (namespace and imports) that holds a source offset.
+ *
+ * @return array{start: int, namespace: string, imports: array<string, string>}
+ */
+function getNameBlockAt(array $context, int $offset): array
+{
+    $found = ['start' => 0, 'namespace' => '', 'imports' => []];
+
+    foreach ($context['blocks'] ?? [] as $block) {
+        if ($block['start'] <= $offset) {
+            $found = $block;
+        }
+    }
+
+    return $found;
+}
+
+/**
+ * The absolute class a name stands for at one place in the code, or null when
+ * the place is no reference to the global class of that name: a qualified
+ * name of another class, a member, a variable, a declaration, the local name
+ * of an import, a class imported under that name or an own class of that name
+ * in the file's namespace.
  *
  * @param string $code     From getScannableCode()
- * @param int    $offset   Byte offset of the name in $code
+ * @param int    $offset   Byte offset of the name in $code (same in the source)
  * @param string $name     The unqualified name, e.g. JSession
  * @param array  $context  From getNameContext()
  */
-function resolveClassReference(string $code, int $offset, string $name, array $context): ?string
+function resolveLegacyClassReference(string $code, int $offset, string $name, array $context): ?string
 {
     $start = $offset;
     while ($start > 0 && preg_match('/[\w\\\\]/', $code[$start - 1]) === 1) {
@@ -671,28 +709,44 @@ function resolveClassReference(string $code, int $offset, string $name, array $c
     }
 
     $prefix = substr($code, $start, $offset - $start);
+    $before = rtrim(substr($code, max(0, $start - 30), $start - max(0, $start - 30)));
+
+    foreach ($context['uses'] ?? [] as [$from, $to]) {
+        if ($offset >= $from && $offset <= $to) {
+            // Import targets are absolute names. The name after "as" is a
+            // local alias, the class it imports is resolved where it is used.
+            if (preg_match('/\bas$/i', $before) === 1) {
+                return null;
+            }
+
+            return ltrim($prefix, '\\') === '' ? $name : null;
+        }
+    }
 
     if ($prefix === '\\') {
         return $name;
     }
 
-    if ($prefix !== '') {
+    if ($prefix !== '' || preg_match('/(?:->|::|\$|\b(?:function|const|class|interface|trait|enum))$/', $before) === 1) {
         return null;
     }
 
-    $before = rtrim(substr($code, max(0, $start - 30), $start - max(0, $start - 30)));
-
-    if (preg_match('/(?:->|::|\$|\b(?:function|const|class|interface|trait|enum))$/', $before) === 1) {
-        return null;
-    }
-
+    $block = getNameBlockAt($context, $offset);
     $local = strtolower($name);
 
-    if (isset($context['imports'][$local])) {
-        return $context['imports'][$local];
+    if (isset($block['imports'][$local])) {
+        return strcasecmp($block['imports'][$local], $name) === 0 ? $name : null;
     }
 
-    return $context['namespace'] !== '' ? $context['namespace'] . '\\' . $name : $name;
+    if ($block['namespace'] === '') {
+        return $name;
+    }
+
+    // Unqualified in a namespace: PHP looks up Namespace\Name, never the
+    // global class. An own class of that name is not the legacy class.
+    $class = $block['namespace'] . '\\' . $name;
+
+    return class_exists($class) ? null : $class;
 }
 
 /**
@@ -703,22 +757,23 @@ function resolveClassReference(string $code, int $offset, string $name, array $c
  */
 function getPluginAppInfo(string $code, array $context): ?array
 {
-    if (preg_match('/\bclass\s+\w+\s+extends\s+(\\\\?[\w\\\\]*Plugin)\b/i', $code, $m) !== 1) {
+    if (preg_match('/\bclass\s+\w+\s+extends\s+(\\\\?[\w\\\\]*Plugin)\b/i', $code, $m, PREG_OFFSET_CAPTURE) !== 1) {
         return null;
     }
 
-    $parent = $m[1];
+    [$parent, $offset] = $m[1];
+    $block             = getNameBlockAt($context, $offset);
 
     if ($parent[0] === '\\') {
         $parent = substr($parent, 1);
     } else {
-        $first = strtolower(strtok($parent, '\\'));
+        $first = strtok($parent, '\\');
         $rest  = (string) substr($parent, strlen($first));
 
-        if (isset($context['imports'][$first])) {
-            $parent = $context['imports'][$first] . $rest;
-        } elseif ($context['namespace'] !== '') {
-            $parent = $context['namespace'] . '\\' . $parent;
+        if (isset($block['imports'][strtolower($first)])) {
+            $parent = $block['imports'][strtolower($first)] . $rest;
+        } elseif ($block['namespace'] !== '') {
+            $parent = $block['namespace'] . '\\' . $parent;
         }
     }
 
@@ -839,16 +894,11 @@ function scanForIssues($path, $patterns) {
                         'probe'     => $probe,
                     ];
 
-                    if ($probe === 'class') {
-                        $class = resolveClassReference($code, $offset, $detail, $context);
+                    if ($probe === 'class' || $probe === 'j2store') {
+                        // Only references to the global class of that name count.
+                        $class = resolveLegacyClassReference($code, $offset, $detail, $context);
 
-                        // Not the legacy alias: a qualified name or member,
-                        // a class imported under that name, or an own class
-                        // of that name in the file's namespace.
-                        $imported = isset($context['imports'][strtolower($detail)]);
-                        if ($class === null
-                            || ($imported && strcasecmp($class, $detail) !== 0)
-                            || (!$imported && $class !== $detail && class_exists($class))) {
+                        if ($class === null) {
                             continue;
                         }
 

@@ -62,6 +62,13 @@ namespace Joomla\CMS\Session {
     }
 }
 
+namespace Acme\Two {
+    // An extension's own class that happens to carry a legacy name.
+    class JSession
+    {
+    }
+}
+
 namespace Joomla\CMS\Language {
     final class Text
     {
@@ -272,6 +279,34 @@ PHP]);
                 && in_array('JFactory', array_column($r['issues'], 'detail'), true)
                 && in_array('JSession', array_column($r['issues'], 'detail'), true),
                 $r['status'] . ': ' . self::details($r));
+
+            // --- Names resolve in the namespace block they stand in ---
+            $r = $this->classify('namespace_blocks_import', ['a.php' => <<<'PHP'
+<?php
+namespace Acme\One {
+    use Joomla\CMS\Session\Session as JSession;
+}
+namespace {
+    JSession::checkToken();
+}
+PHP]);
+            $this->test('An import of another namespace block does not cover a global JSession',
+                $r['status'] === 'incompatible', $r['status'] . ': ' . self::details($r));
+
+            $r = $this->classify('namespace_blocks_own_class', ['a.php' => "<?php\nnamespace Acme\\One;\nconst X = 1;\nnamespace Acme\\Two;\nJSession::make();\n"]);
+            $this->test('An own class in the second namespace is not taken for the alias',
+                $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            // --- A renamed import of a global alias is the alias ---
+            $r = $this->classify('renamed_global_import', ['a.php' => "<?php\nnamespace Acme;\nuse JFactory as LegacyFactory;\n\$app = LegacyFactory::getApplication();\n"]);
+            $this->test('use JFactory as LegacyFactory checks the global JFactory (available here)',
+                $r['status'] === 'deprecated' && array_column($r['issues'], 'detail') === ['JFactory'],
+                $r['status'] . ': ' . self::details($r));
+
+            // --- J2Store names are resolved like every class name ---
+            $r = $this->classify('j2store_imported', ['a.php' => "<?php\nnamespace Demo;\nuse Demo\\Api\\CurrentShop as J2Store;\n\$c = J2Store::config();\n\$d = \\Demo\\Api\\J2Store::config();\n"]);
+            $this->test('An imported or qualified class named J2Store is no finding',
+                $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
 
             // --- One unavailable API makes the extension incompatible ---
             $r = $this->classify('mixed', ['a.php' => "<?php\nJFactory::getApplication();\nnew JModelLegacy();\n"]);

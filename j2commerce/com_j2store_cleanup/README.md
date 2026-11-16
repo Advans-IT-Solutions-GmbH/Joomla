@@ -330,7 +330,7 @@ Each listed extension is classified in this order:
 | **Deprecated** | APIs found, all still available on the running site |
 | **Compatible** | No legacy APIs found in the PHP code |
 
-All PHP files in the extension folder are scanned recursively. The scan works on the PHP tokens: comments, string contents and inline HTML never match, so a class name in a message, a regular expression or a doc block is no finding. Class names are resolved the way PHP resolves them, with the file's namespace and `use` imports: a class imported under a legacy name (`use Joomla\CMS\Session\Session as JSession;`) or a qualified name of another class (`Vendor\JSession`) is no finding, `\JSession` and an unqualified `JSession` without import are. For every API found, the scanner checks on the running site whether it still works:
+All PHP files in the extension folder are scanned recursively. The scan works on the PHP tokens: comments, string contents and inline HTML never match, so a class name in a message, a regular expression or a doc block is no finding. Class names, the J2Store ones included, are resolved the way PHP resolves them, with the namespace block and the `use` imports in force at that place: a class imported under a legacy name (`use Joomla\CMS\Session\Session as JSession;`), a qualified name of another class (`Vendor\JSession`) or an own class of that name in the namespace is no finding. `\JSession`, an unqualified `JSession` without import and a renamed import of the global class (`use JFactory as LegacyFactory;`) are. For every API found, the scanner checks on the running site whether it still works:
 
 | API | Still available when | Removal |
 |-----|----------------------|---------|
