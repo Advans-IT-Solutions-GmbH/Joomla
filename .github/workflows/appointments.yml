@@ -26,6 +26,7 @@ on:
       - 'shared/tests/scripts/shared-installer-module-url.php'
       - 'shared/tests/scripts/shared-database-check-lib.php'
       - 'shared/tests/scripts/shared-backend-views.php'
+      - 'shared/tests/browser/**'
       - '.github/workflows/appointments.yml'
   pull_request:
     branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
@@ -44,6 +45,7 @@ on:
       - 'shared/tests/scripts/shared-installer-module-url.php'
       - 'shared/tests/scripts/shared-database-check-lib.php'
       - 'shared/tests/scripts/shared-backend-views.php'
+      - 'shared/tests/browser/**'
       - '.github/workflows/appointments.yml'
 
 permissions: {}
@@ -104,6 +106,25 @@ jobs:
           find com_appointments -name '*.php' -not -path '*/vendor/*' -print0 | xargs -0 -n1 php -l
       - name: Check booking focus regressions
         run: node --test com_appointments/tests/booking-focus.test.cjs
+
+  booking-focus-browsers:
+    name: Outcome focus (Chromium and Firefox)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install pinned browser test dependencies
+        working-directory: shared/tests/browser
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps chromium firefox
+      - name: Focus the outcome of every completed form with the keyboard
+        working-directory: shared/tests/browser
+        run: npx playwright test -c focus.config.cjs
 
   language-lint:
     name: Language Files

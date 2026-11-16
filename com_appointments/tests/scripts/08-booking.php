@@ -173,6 +173,26 @@ try {
     $stranger = new AppointmentsHttp('http://localhost', 'booking-stranger');
     $stranger->request($calendarHref !== '' ? $calendarHref : '/index.php?option=com_appointments&task=booking.ics&id=1');
     $check($stranger->status === 404, 'The .ics download is not available to another browser session');
+    // Release test 16.11.: the confirmation page shows its event type (a template override frames the
+    // card with it). getItem() drops the personal fields it read to open the row, not the event type.
+    $itemScript = sys_get_temp_dir() . '/confirmation-item-' . bin2hex(random_bytes(4)) . '.php';
+    file_put_contents($itemScript, '<?php
+        require "/var/www/html/tests/scripts/appointments-joomla.php";
+        $session = new \Joomla\CMS\Session\Session(new \Joomla\Session\Storage\RuntimeStorage());
+        $session->set("registry", new \Joomla\Registry\Registry());
+        $application->setSession($session);
+        $application->setUserState("com_appointments.confirmation.id", ' . (int) ($booking['id'] ?? 0) . ');
+        $item = (new \Advans\Component\Appointments\Site\Model\BookingModel(["ignore_request" => true]))->getItem();
+        echo "\n@@ITEM@@" . json_encode(["eventtype_id" => (int) ($item->eventtype_id ?? 0),
+            "personal" => array_values(array_intersect(array_keys(get_object_vars($item)), ["invitee_name", "invitee_email", "invitee_phone", "guest_emails", "custom_fields"]))]);');
+    $itemOutput = [];
+    exec('cd /var/www/html && php ' . escapeshellarg($itemScript) . ' 2>&1', $itemOutput);
+    unlink($itemScript);
+    $itemText = implode("\n", $itemOutput);
+    $itemAt = strrpos($itemText, '@@ITEM@@');
+    $confirmationItem = $itemAt === false ? [] : (array) json_decode(substr($itemText, $itemAt + 8), true);
+    $check(($confirmationItem['eventtype_id'] ?? 0) === $eventIds[0] && ($confirmationItem['personal'] ?? null) === [],
+        'The confirmation keeps the event type of the booking and none of its personal fields: ' . ($itemAt === false ? substr($itemText, 0, 300) : json_encode($confirmationItem)));
     $bookingId = (int) ($booking['id'] ?? 0);
     $page = $admin->request('/administrator/index.php?option=com_appointments&view=bookings');
     $check($admin->status === 200 && str_contains($page, 'invitee@example.test'), 'Booking visible in administrator list');
@@ -551,6 +571,11 @@ try {
         $body = $request[0]->request($request[1], $request[2]);
         $check($fieldError($dom($body), 'booking-phone', 'Please fill in this field.') && $bookings($phoneEvent) === 0,
             $location . ': a booking without a telephone number is refused at the telephone field');
+        // Release test 16.11.: the missing number is the error, not the preselected calling code.
+        $country = $dom($body)->query('//select[@id="booking-phone-country"]')->item(0);
+        $check($country instanceof DOMElement && !$country->hasAttribute('aria-invalid') && !$country->hasAttribute('aria-describedby')
+            && !str_contains(' ' . $country->getAttribute('class') . ' ', ' is-invalid '),
+            $location . ': without a number the calling code stays unmarked and is not described by the message');
 
         $request = $prepare($phoneEvent, $phoneSlot);
         $request[2]['booking']['phone'] = ['country' => '41', 'number' => 'call me'];
@@ -621,6 +646,14 @@ try {
         $body = $request[0]->request($request[1], $request[2]);
         $check($fieldError($dom($body), 'booking-field-' . $lengthId, 'Please shorten your entry to at most 10 characters.') && $bookings($eventIds[1]) === $booked,
             'A longer answer is refused at the field with the number of characters allowed');
+        // Release test 16.11.: a name longer than its column allows names the maximum, not a missing name.
+        $db->query("DELETE FROM {$prefix}appointments_ratelimit");
+        $request = $prepare($eventIds[1], $freeSlot);
+        $request[2]['booking']['first_name'] = str_repeat('a', 128);
+        sleep(2);
+        $body = $request[0]->request($request[1], $request[2]);
+        $check($fieldError($dom($body), 'booking-first_name', 'Please shorten your entry to at most 127 characters.') && $bookings($eventIds[1]) === $booked,
+            'A first name above 127 characters is refused with the number of characters allowed');
     } finally {
         $db->query("DELETE FROM {$prefix}appointments_fields WHERE label LIKE '" . $db->real_escape_string($fieldTitle) . "%'");
     }

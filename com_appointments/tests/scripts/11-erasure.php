@@ -41,8 +41,12 @@ try {
     $check($client->landedAt($html, 'appointment-result'),
         'A completed erasure lands at #appointment-result with a focusable status region the screen reader announces');
     $erased = $fixture->row($id);
-    $check(str_contains($html, 'Your data has already been erased') && $erased['anonymised_utc'] !== null && (int) $erased['state'] === 2,
+    $check(str_contains($html, 'Your data has been erased.') && $erased['anonymised_utc'] !== null && (int) $erased['state'] === 2,
         'Future booking is cancelled and anonymised in the self-service operation');
+    // Release test 16.11.: the receipt confirms this erasure, it does not report an earlier one.
+    $status = preg_match('/<[^>]*\bdata-appointments-result\b[^>]*>([^<]*)</', $html, $match) ? trim($match[1]) : '';
+    $check($status === 'Your data has been erased. No further action is needed.',
+        'The receipt of the erasure reads as the confirmation of this erasure: ' . $status);
     foreach (array_keys($private) as $field) {
         $check($erased[$field] === null, 'Erasure clears exactly the personal/conference field: ' . $field);
     }
@@ -89,7 +93,7 @@ try {
     $check($fixture->row($id) === null && $db->query("SELECT action FROM {$prefix}appointments_audit WHERE booking_id={$id}")->fetch_assoc()['action'] === 'delete',
         'Delete mode removes the row and preserves only the minimal deletion evidence');
     $html = $created['browser']->request($link);
-    $check(str_contains($html, 'already been erased'), 'Deleted-row repeat click remains idempotent without exposing data');
+    $check(str_contains($html, 'Your data has been erased.'), 'Deleted-row repeat click remains idempotent without exposing data');
 
     $params['erase_mode'] = 'anonymise';
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($params)) . "' WHERE element='com_appointments' AND type='component'");

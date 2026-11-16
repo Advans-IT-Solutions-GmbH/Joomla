@@ -6,9 +6,11 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'media', 'com_appointments', 'js', 'booking.js'), 'utf8');
 
+const blockerSelector = '[autofocus]:not([data-appointments-result]), [aria-invalid="true"], [aria-modal="true"], dialog[open]';
+
 function page({ request = true, result = true, nativeResultFocus = false, invalid = false, modal = false,
-    populated = true, interaction = false, unrelatedFocus = false, reveal = true, persisted = false,
-    readyState = 'loading' } = {}) {
+    hiddenModal = false, populated = true, interaction = false, unrelatedFocus = false, reveal = true,
+    persisted = false, readyState = 'loading' } = {}) {
     const listeners = {};
     const windowListeners = {};
     let observer;
@@ -21,7 +23,10 @@ function page({ request = true, result = true, nativeResultFocus = false, invali
         setAttribute(name, value) { this[name] = value; },
         focus() { document.activeElement = status; },
     };
-    const field = {};
+    const field = { getClientRects: () => [{}] };
+    // A closed dialog a site template keeps in every page (release test 16.11.2026).
+    const hiddenLayer = { getClientRects: () => [{}], visibility: 'hidden' };
+    const blockers = [...(invalid || modal ? [field] : []), ...(hiddenModal ? [hiddenLayer] : [])];
     const message = { textContent: 'Notification could not be delivered', getClientRects: () => [{}] };
     const container = {
         querySelectorAll: () => populated ? [message] : [],
@@ -41,8 +46,8 @@ function page({ request = true, result = true, nativeResultFocus = false, invali
             if (selector === '[data-appointments-result]') {
                 return result ? status : null;
             }
-            if (selector === '[autofocus]:not([data-appointments-result]), [aria-invalid="true"], [aria-modal="true"], dialog[open]') {
-                return invalid || modal ? field : null;
+            if (selector === blockerSelector) {
+                return blockers[0] || null;
             }
             // The old guard also blocks overrides containing the updated result status.
             if (selector.includes('[data-appointments-result]')) {
@@ -50,10 +55,11 @@ function page({ request = true, result = true, nativeResultFocus = false, invali
             }
             return null;
         },
-        querySelectorAll: () => [],
+        querySelectorAll: (selector) => selector === blockerSelector ? blockers : [],
     };
     const window = {
         Joomla: { getOptions: () => request },
+        getComputedStyle: (element) => ({ visibility: element.visibility || 'visible' }),
         location: { hash: '#appointment-result' },
         addEventListener(name, callback) { windowListeners[name] = callback; },
         requestAnimationFrame: (callback) => callback(),
@@ -125,6 +131,16 @@ for (const guard of ['invalid', 'modal', 'unrelatedFocus']) {
         assert.equal(fixture.document.activeElement, active);
     });
 }
+
+test('A closed dialog in the page does not keep the result from the focus', () => {
+    const fixture = page({ request: false, hiddenModal: true });
+    assert.equal(fixture.document.activeElement, fixture.status);
+});
+
+test('A closed dialog in the page does not keep the override warning from the focus', () => {
+    const fixture = page({ hiddenModal: true });
+    assert.equal(fixture.document.activeElement, fixture.container);
+});
 
 test('Repeated page reveal does not create another message watcher', () => {
     const fixture = page({ populated: false });
