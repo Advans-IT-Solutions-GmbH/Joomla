@@ -224,6 +224,13 @@ PHP]);
                 describeIssue($r['issues'][0] ?? []) === 'COM_J2STORE_CLEANUP_ISSUE_J2STORE_MISSING:J2Store',
                 describeIssue($r['issues'][0] ?? []));
 
+            // Template overrides an extension ships for J2Store sites (privacy plugin)
+            $r = $this->classify('j2store_overrides', [
+                'overrides/com_j2store/checkout/default.php' => "<?php echo J2Store::plugin()->eventWithHtml('X', []); ?>\n",
+                'src/Extension/Plugin.php'                   => "<?php\nuse Joomla\\CMS\\Factory;\n\$app = Factory::getApplication();\n",
+            ]);
+            $this->test('J2Store classes in com_j2store overrides are no finding', $r['status'] === 'compatible', self::details($r));
+
             mkdir(JPATH_ADMINISTRATOR . '/components/com_j2store', 0777, true);
             $r = $this->classify('j2store_classes_present', $legacyModule);
             $this->test('J2Store classes with com_j2store installed are no finding', $r['status'] === 'compatible', self::details($r));
