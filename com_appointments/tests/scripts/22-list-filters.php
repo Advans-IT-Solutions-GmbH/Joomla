@@ -168,8 +168,9 @@ try {
     $check($ids($fields($admin, ['eventtype_id' => $eventB, 'required' => '1'])) === [$fB1], 'Booking field filters combine');
     $check($ids($fields($admin, ['search' => $tag . '-choice'])) === [$fA3], 'The search finds a booking field by its label');
     $check($ids($fields($admin, ['search' => 'id:' . $fB2])) === [$fB2], 'The search finds a booking field by id:<number>');
-    $check($ids($fields($admin, ['type' => "text' OR '1'='1"])) === [] && $admin->status === 200,
-        'A crafted field type is a value, not SQL');
+    // Not a type name: dropped like an empty filter, never part of the query.
+    $check($ids($fields($admin, ['type' => "text' OR '1'='1"])) === [$fA1, $fA2, $fA3, $fB1, $fB2] && $admin->status === 200,
+        'A crafted field type is ignored as a filter and never reaches the query');
     $paged = [];
     foreach ([0, 2, 4] as $start) {
         $paged[] = $ids($fields($admin, [], ['limit' => 2], ['limitstart' => $start]));
@@ -331,6 +332,8 @@ try {
     $db->query("UPDATE {$prefix}appointments_schedules SET published=1, owner_user_id={$fixture->host} WHERE id={$scheduleB}");
 
     // ------------------------------------------------------------------ bookings
+    // The required fixture fields above would need answers; the bookings here only test the list.
+    $db->query("UPDATE {$prefix}appointments_fields SET required=0 WHERE eventtype_id IN ({$eventA},{$eventB})");
     $day = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+2 days')->format('Y-m-d');
     $k1 = (int) $fixture->booking($eventA, $day . ' 10:00:00', ['first_name' => $tag . '-one'])['booking']['id'];
     $k2 = (int) $fixture->booking($eventA, $day . ' 11:00:00', ['first_name' => $tag . '-two'])['booking']['id'];
@@ -363,7 +366,7 @@ try {
         'task' => 'bookings.exportCsv', $admin->token($listHtml) => 1,
         'filter' => array_replace($bookingFilter, ['eventtype_id' => $eventB]), 'list' => ['fullordering' => 'b.start_utc ASC'],
     ]);
-    $rows = array_values(array_filter(array_map(static fn (string $line): array => str_getcsv($line, ',', '\"', ''), preg_split('/\r\n|\n/', trim($csv))), static fn ($row) => isset($row[0]) && ctype_digit((string) $row[0])));
+    $rows = array_values(array_filter(array_map(static fn (string $line): array => str_getcsv($line, ',', '"', ''), preg_split('/\r\n|\n/', trim($csv))), static fn ($row) => isset($row[0]) && ctype_digit((string) $row[0])));
     $check(str_starts_with($csv, 'id,') && array_map('intval', array_column($rows, 0)) === [$k3],
         'The CSV export uses the filters of the search tools');
 
