@@ -45,10 +45,12 @@ namespace {
     });
 
     use Advans\Component\Appointments\Administrator\Service\Close\Client;
+    use Advans\Component\Appointments\Administrator\Service\Close\CredentialStore;
     use Advans\Component\Appointments\Administrator\Service\Close\DeliveryException;
     use Advans\Component\Appointments\Administrator\Service\Close\Profile;
     use Advans\Component\Appointments\Administrator\Service\Close\Queue;
     use Advans\Component\Appointments\Administrator\Service\Close\Settings;
+    use Advans\Component\Appointments\Administrator\Service\Close\Transport;
     use Advans\Component\Appointments\Administrator\Service\PrivacyOutcome;
     use Joomla\CMS\Component\ComponentHelper;
 
@@ -74,6 +76,8 @@ namespace {
                 reason TEXT, binding TEXT, organization_id TEXT, lead_id TEXT, contact_id TEXT, contact_created INTEGER, activity_id TEXT,
                 attempts INTEGER, next_attempt INTEGER, last_attempt INTEGER, mac TEXT)');
             $this->pdo->exec('CREATE TABLE test_appointments_close_limits (profile TEXT PRIMARY KEY, paused_until INTEGER)');
+            $this->pdo->exec('CREATE TABLE test_appointments_close_credentials (eventtype_id INTEGER PRIMARY KEY, secret TEXT,
+                modified_utc TEXT, modified_by INTEGER)');
             $this->pdo->exec('CREATE TABLE test_appointments_bookings (
                 id INTEGER PRIMARY KEY, uid TEXT, sequence INTEGER, eventtype_id INTEGER, anonymised_utc TEXT,
                 invitee_name TEXT, invitee_email TEXT, invitee_phone TEXT, start_utc TEXT, end_utc TEXT,
@@ -243,12 +247,27 @@ namespace {
     $db = new MemoryDatabase();
     $remote = ['main' => new FakeClose('main'), 'qr' => new FakeClose('qr')];
     $origins = [];
-    $factory = static function (Profile $profile) use (&$remote, &$origins): \Closure {
-        if ($profile->credential === 'SYNTHETIC_MISSING_KEY') {
+    // Every request with the key it was sent with: [profile, key or null for the profile variable, method, path, payload].
+    $keyed = [];
+    $factory = static function (Profile $profile, ?string $key = null) use (&$remote, &$origins, &$keyed): \Closure {
+        if ($profile->credential === 'SYNTHETIC_MISSING_KEY' && $key === null) {
             throw new \RuntimeException('Synthetic missing credential.');
         }
+        if ($profile->credential === '' && $key === null) {
+            // The production rule for a profile without a variable and without a stored key.
+            return Transport::forProfile($profile, null);
+        }
         $origins[$profile->key] = $profile->origin;
-        return static fn (string $method, string $path, ?array $payload): array => $remote[$profile->key]->handle($method, $path, $payload);
+        return static function (string $method, string $path, ?array $payload) use ($profile, $key, &$remote, &$keyed): array {
+            $keyed[] = [$profile->key, $key, $method, $path, json_encode($payload)];
+            if ($remote[$profile->key]->mode === 'leak') {
+                throw new \RuntimeException('Synthetic transport failure for ' . $key);
+            }
+            if ($remote[$profile->key]->mode === 'leak401') {
+                return ['code' => 401, 'body' => '{"error":"Invalid API key ' . $key . '"}'];
+            }
+            return $remote[$profile->key]->handle($method, $path, $payload);
+        };
     };
     $translate = static fn (string $key): string => $key;
     $queue = new Queue($db, $params, $factory, static fn (array $row): array => $row, $translate, 'Europe/Zurich');
@@ -542,6 +561,98 @@ namespace {
     $queue->run();
     $check($remote['activity']->objects['acti_activity2']['custom.cf_state'] === 'cancelled'
         && $remote['activity']->count('POST', '/api/v1/activity/custom/') === 1, 'custom activity is updated, never duplicated');
+
+    // Keys entered per event type in the backend. Life Sciences (1) and IT (2) share the main organisation,
+    // the product page (3) uses another one. All keys are synthetic dummies.
+    $keyLs = 'api_SyntheticLifeSciencesKey0001.DummyOnlyAbCd';
+    $keyIt = 'api_SyntheticItKey000000000002.DummyOnlyEfGh';
+    $keyQr = 'api_SyntheticProductKey00003.DummyOnlyIjKl';
+    $store = new CredentialStore($db);
+    $store->put(1, $keyLs, 42);
+    $store->put(2, $keyIt, 42);
+    $store->put(3, $keyQr, 42);
+    $stored = json_encode($db->pdo->query('SELECT * FROM test_appointments_close_credentials ORDER BY eventtype_id')->fetchAll(\PDO::FETCH_ASSOC));
+    $check(count(json_decode($stored, true)) === 3 && !str_contains($stored, 'DummyOnly') && !str_contains($stored, 'Synthetic')
+        && substr_count($stored, '"v1:') === 3, 'stored keys are sealed per event type and the database never holds a plain key');
+    $check($store->status(1) === ['stored' => true, 'readable' => true, 'hint' => 'AbCd']
+        && $store->status(4) === ['stored' => false, 'readable' => false, 'hint' => ''],
+        'the status of a stored key reveals at most its last four characters');
+    $sentWith = static function (string $email) use (&$keyed): array {
+        return array_values(array_unique(array_column(array_filter($keyed,
+            static fn (array $request): bool => str_contains($request[4], $email)), 1), SORT_REGULAR));
+    };
+    $keyed = [];
+    $enrol($booking(21, 1, 'stored-ls@example.test', $lifeSciences));
+    $enrol($booking(22, 2, 'stored-it@example.test', $lifeSciences));
+    $enrol($booking(23, 3, 'stored-qr@example.test', ['31' => 'Stored Club']));
+    $queue->run();
+    $check($state(21)['state'] === 'done' && $state(22)['state'] === 'done' && $state(23)['state'] === 'done'
+        && $sentWith('stored-ls@example.test') === [$keyLs] && $sentWith('stored-it@example.test') === [$keyIt]
+        && $sentWith('stored-qr@example.test') === [$keyQr], 'every booking is sent with the key of its own event type');
+    $check(!in_array(null, array_column($keyed, 1), true), 'a stored key takes precedence over the variable of the profile');
+    foreach (['', 'api_with:colon', 'api with space'] as $unusable) {
+        try {
+            $store->put(3, $unusable, 42);
+            $check(false, 'an unusable value is refused');
+        } catch (\InvalidArgumentException $e) {
+            $check($store->key(3) === $keyQr && !str_contains($e->getMessage(), $unusable === '' ? "\0" : $unusable),
+                'an empty or unusable value never replaces a stored key: ' . strlen($unusable) . ' characters');
+        }
+    }
+    try {
+        $store->put(99, $keyQr, 42);
+        $check(false, 'a key for a deleted event type is refused');
+    } catch (\RuntimeException $e) {
+        $check($store->status(99)['stored'] === false && !str_contains($e->getMessage(), 'DummyOnly'),
+            'a key for an event type that no longer exists is refused and nothing is stored');
+    }
+    $store->delete(3);
+    $keyed = [];
+    $enrol($booking(24, 3, 'fallback-qr@example.test', ['31' => 'Fallback Club']));
+    $queue->run();
+    $check($store->status(3)['stored'] === false && $state(24)['state'] === 'done' && $sentWith('fallback-qr@example.test') === [null],
+        'after deleting the key the variable of the profile applies again, so existing configurations keep working');
+
+    // A changed site secret: the stored key is unreadable, nothing crashes, the variable still applies.
+    $changed = new CredentialStore($db, 'another-synthetic-site-secret-after-a-change');
+    $check($changed->key(1) === null && $changed->status(1) === ['stored' => true, 'readable' => false, 'hint' => ''],
+        'a changed site secret makes a stored key unreadable without an error');
+    $keyed = [];
+    $enrol($booking(25, 1, 'secret-changed@example.test', $lifeSciences));
+    (new Queue($db, $params, $factory, static fn (array $row): array => $row, $translate, 'Europe/Zurich', $changed))->run();
+    $check($state(25)['state'] === 'done' && $sentWith('secret-changed@example.test') === [null],
+        'with an unreadable key the transfer falls back to the profile variable');
+
+    // A profile without a variable relies on the stored key alone.
+    $check((new Profile(array_replace($profileQr, ['credential_env' => ''])))->credential === '', 'a profile may rely on stored keys alone');
+    $params->values['close_profiles']['close_profiles1']['credential_env'] = '';
+    $enrol($booking(26, 3, 'no-key@example.test', ['31' => 'No Key Club']));
+    $queue->run();
+    $check($state(26)['state'] === 'blocked' && $state(26)['reason'] === 'credential',
+        'without a stored key and without a variable the profile blocks visibly');
+    $store->put(3, $keyQr, 42);
+    $queue->run(20, true);
+    $check($state(26)['state'] === 'done' && $sentWith('no-key@example.test') === [$keyQr], 'a key entered later releases the blocked booking');
+
+    // The key never leaves through an error: an HTTP error body or a transport message that contains it.
+    $remote['qr']->mode = 'leak401';
+    $enrol($booking(27, 3, 'leak-http@example.test', ['31' => 'Leak Club']));
+    $queue->run();
+    $remote['qr']->mode = 'leak';
+    $enrol($booking(28, 3, 'leak-transport@example.test', ['31' => 'Leak Club']));
+    $queue->run();
+    $remote['qr']->mode = 'ok';
+    $delivery = json_encode($db->pdo->query('SELECT * FROM test_appointments_close_delivery')->fetchAll(\PDO::FETCH_ASSOC));
+    $check($state(27)['reason'] === 'http_401' && $state(28)['reason'] === 'transport' && !str_contains($delivery, 'DummyOnly'),
+        'an HTTP error or a transport failure containing the key is recorded as a code only');
+    try {
+        (new Client(new Profile($profileQr), static fn () => throw new \RuntimeException('Failure for ' . $keyQr)))->request('GET', '/api/v1/me/');
+        $check(false, 'a failing transport raises a delivery error');
+    } catch (DeliveryException $e) {
+        $check(!str_contains($e->getMessage(), 'DummyOnly') && $e->getPrevious() === null && !str_contains((string) $e, 'DummyOnly'),
+            'a delivery error carries neither the key nor the original exception');
+    }
+    $params->values['close_profiles']['close_profiles1']['credential_env'] = 'SYNTHETIC_QR_KEY';
 
     // Nothing in this component can delete in Close.
     $methods = array_unique(array_column($all(), 0));

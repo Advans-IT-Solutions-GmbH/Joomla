@@ -34,12 +34,14 @@ final class Queue
     private array $clients = [];
 
     /**
-     * @param ?\Closure(Profile): \Closure $transport test transport factory
-     * @param ?\Closure(array): array      $open      test booking decryption
-     * @param ?\Closure(string): string    $translate test translation
+     * @param ?\Closure(Profile, ?string): \Closure $transport   test transport factory; receives the stored key or null
+     * @param ?\Closure(array): array               $open        test booking decryption
+     * @param ?\Closure(string): string             $translate   test translation
+     * @param ?CredentialStore                      $credentials the keys entered per event type
      */
     public function __construct(private DatabaseInterface $db, private object $params, private ?\Closure $transport = null,
-        private ?\Closure $open = null, private ?\Closure $translate = null, private ?string $timezone = null)
+        private ?\Closure $open = null, private ?\Closure $translate = null, private ?string $timezone = null,
+        private ?CredentialStore $credentials = null)
     {
     }
 
@@ -75,6 +77,13 @@ final class Queue
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName(self::LIMITS) . ' (
             profile VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
             paused_until BIGINT NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+        // The Close API key of each event type, only as a value sealed with the site secret (CredentialStore).
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_close_credentials') . ' (
+            eventtype_id INT UNSIGNED NOT NULL PRIMARY KEY,
+            secret VARCHAR(2048) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            modified_utc DATETIME NOT NULL,
+            modified_by INT UNSIGNED NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
     }
 
@@ -180,8 +189,8 @@ final class Queue
                     throw new \RuntimeException('Close delivery is waiting for its rate limit.');
                 }
                 $this->profileKey = $profile->key;
-                $client = $this->client($profile);
-                if ($row['organization_id'] === '' || !hash_equals($row['organization_id'], $client->organization())) {
+                $client = $this->client($profile, (int) $booking['eventtype_id']);
+                if ($row['organization_id'] === ''|| !hash_equals($row['organization_id'], $client->organization())) {
                     throw new DeliveryException('blocked', 'organization_changed');
                 }
                 if ($row['operation'] === 'create_activity') {
@@ -351,7 +360,7 @@ final class Queue
             if (!empty($opened[BookingData::UNVERIFIED])) {
                 throw new DeliveryException('blocked', 'unverified_booking');
             }
-            $client = $this->client($profile);
+            $client = $this->client($profile, (int) $booking['eventtype_id']);
             // Prove the destination before any personal data leaves: the authenticated organisation
             // must be the one this record is bound to.
             $organization = $client->organization();
@@ -482,17 +491,25 @@ final class Queue
         return $this->translate;
     }
 
-    private function client(Profile $profile): Client
+    /**
+     * One client per profile and key: the key stored for the booking's event type, or the profile's
+     * variable when there is none (or it cannot be opened, for example after a site secret change).
+     * Event types with the same key share the client and its verified organisation.
+     */
+    private function client(Profile $profile, int $eventType): Client
     {
-        if (!isset($this->clients[$profile->key]) || $this->clients[$profile->key]->profile !== $profile) {
+        $this->credentials ??= new CredentialStore($this->db);
+        $key = $this->credentials->key($eventType);
+        $id = $profile->key . '|' . ($key === null ? 'variable' : hash('sha256', $key));
+        if (!isset($this->clients[$id]) || $this->clients[$id]->profile !== $profile) {
             try {
-                $transport = $this->transport !== null ? ($this->transport)($profile) : Transport::forProfile($profile);
+                $transport = $this->transport !== null ? ($this->transport)($profile, $key) : Transport::forProfile($profile, $key);
             } catch (\RuntimeException $e) {
                 throw new DeliveryException('blocked', 'credential');
             }
-            $this->clients[$profile->key] = new Client($profile, $transport);
+            $this->clients[$id] = new Client($profile, $transport);
         }
-        return $this->clients[$profile->key];
+        return $this->clients[$id];
     }
 
     private function activityPath(Profile $profile): string

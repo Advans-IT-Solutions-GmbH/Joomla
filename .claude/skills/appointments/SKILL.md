@@ -58,7 +58,9 @@ See the component README, "Email templates", and the repository-wide language co
    README, "Optional direct Close transfer". CRM delivery is off by default, has no external
    origin/credential default, and never requires a cloud calendar or changes the booking core.
    It routes per event type through profiles (one Close organisation each), only creates and
-   updates, and never deletes in Close. Website erasure and privacy requests drop only the local
+   updates, and never deletes in Close. The API key is entered per event type by `core.admin`
+   only, stored sealed with the site secret and never rendered or logged. The profile's
+   environment variable remains the fallback. Website erasure and privacy requests drop only the local
    link and never wait for Close; Close data subject requests are handled in Close.
 2. **The component owns the calendar.** It does not read a user's existing mailbox or calendar to
    detect conflicts. Conflicts are prevented by the component's own availability rules, its own

@@ -37,6 +37,15 @@ $this->getDocument()->getWebAssetManager()->useStyle('com_appointments.admin')
             <div class="col-lg-3"><?php echo $this->form->renderFieldset('state'); ?></div>
         </div>
         <?php echo HTMLHelper::_('uitab.endTab'); ?>
+        <?php // Only component administrators get the field (EventtypeModel::getForm()). ?>
+        <?php if ($this->form->getField('close_api_secret')) : ?>
+        <?php echo HTMLHelper::_('uitab.addTab', 'eventtype-tabs', 'close', Text::_('COM_APPOINTMENTS_CLOSE_KEY_FIELDSET')); ?>
+        <fieldset class="options-form" id="eventtype-close">
+            <legend><?php echo Text::_('COM_APPOINTMENTS_CLOSE_KEY_FIELDSET'); ?></legend>
+            <?php echo $this->form->renderFieldset('close'); ?>
+        </fieldset>
+        <?php echo HTMLHelper::_('uitab.endTab'); ?>
+        <?php endif; ?>
         <?php echo HTMLHelper::_('uitab.addTab', 'eventtype-tabs', 'permissions', Text::_('JCONFIG_PERMISSIONS_LABEL')); ?>
         <fieldset class="options-form" id="eventtype-permissions">
             <legend><?php echo Text::_('JCONFIG_PERMISSIONS_LABEL'); ?></legend>

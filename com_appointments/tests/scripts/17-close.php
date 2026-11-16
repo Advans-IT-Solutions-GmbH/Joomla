@@ -254,9 +254,12 @@ $racePipes = [];
 $raceSignal = null;
 $raceReadiness = null;
 $requestId = random_int(1000000000, 2000000000);
-$transport = static function (\Advans\Component\Appointments\Administrator\Service\Close\Profile $profile) use (
-    &$requests, &$notes, &$timeout, &$raceId, &$raceProcess, &$racePipes, &$raceSignal, &$raceReadiness, $fixture
+// The key each client was created with: [profile, stored key or null for the profile variable].
+$keysUsed = [];
+$transport = static function (\Advans\Component\Appointments\Administrator\Service\Close\Profile $profile, ?string $key = null) use (
+    &$requests, &$notes, &$timeout, &$raceId, &$raceProcess, &$racePipes, &$raceSignal, &$raceReadiness, $fixture, &$keysUsed
 ): \Closure {
+    $keysUsed[] = [$profile->key, $key];
     return static function (string $method, string $path, ?array $payload) use (
         $profile, &$requests, &$notes, &$timeout, &$raceId, &$raceProcess, &$racePipes, &$raceSignal, &$raceReadiness, $fixture
     ): array {
@@ -357,6 +360,17 @@ try {
     $queue = new \Advans\Component\Appointments\Administrator\Service\Close\Queue(
         $joomlaDb, \Joomla\CMS\Component\ComponentHelper::getParams('com_appointments'), $transport);
     $store = new \Advans\Component\Appointments\Administrator\Service\BookingStore($joomlaDb);
+    // The key entered for the first booking page; the second page keeps the variable of its profile.
+    $closeKey = 'api_SyntheticInstalledKey0123456789.DummyOnlyUvWx';
+    $credentials = new \Advans\Component\Appointments\Administrator\Service\Close\CredentialStore($joomlaDb);
+    $credentials->put($event, $closeKey, $fixture->host);
+    $sealed = $db->query("SELECT secret FROM {$prefix}appointments_close_credentials WHERE eventtype_id={$event}")->fetch_assoc()['secret'] ?? '';
+    $check(str_starts_with($sealed, 'v1:') && !str_contains($sealed, 'DummyOnly') && !str_contains((string) base64_decode(substr($sealed, 3)), 'DummyOnly')
+        && $credentials->key($event) === $closeKey && $credentials->status($event) === ['stored' => true, 'readable' => true, 'hint' => 'UvWx'],
+        'The installed table holds the key of an event type only sealed with the site secret');
+    $changedSecret = new \Advans\Component\Appointments\Administrator\Service\Close\CredentialStore($joomlaDb, 'changed-' . bin2hex(random_bytes(16)));
+    $check($changedSecret->key($event) === null && $changedSecret->status($event) === ['stored' => true, 'readable' => false, 'hint' => ''],
+        'After a change of the site secret the stored key is unreadable without an error and must be entered again');
 
     $local = $book($event);
     $check($queue->run()['disabled'] === 1 && $requests === [] && $link((int) $local['id']) === null,
@@ -400,6 +414,9 @@ try {
     $qrRequests = array_filter($requests, static fn ($request) => $request[0] === 'qr');
     $check(count($qrRequests) === 3 && array_values($qrRequests)[0][2] === '/api/v1/me/' && $link((int) $qr['id'])['profile'] === 'qr' && $link((int) $qr['id'])['state'] === 'done',
         'A second event type is delivered through its own profile');
+    $check(in_array(['main', $closeKey], $keysUsed, true) && !in_array(['main', null], $keysUsed, true) && in_array(['qr', null], $keysUsed, true)
+        && !in_array(['qr', $closeKey], $keysUsed, true),
+        'Each booking page is delivered with its own stored key, and a page without one keeps the variable of its profile');
 
     $before = count($requests);
     $erased = $store->erase($id, $now, 'admin', delete: true, actor: $fixture->host);
@@ -421,7 +438,12 @@ try {
             throw new RuntimeException('Cannot load the formal privacy request.');
         }
         $application->getMessageQueue(true);
-        $canRemove = new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $removal, 'user' => null]);
+        $export = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', ['subject' => $removal, 'user' => null]);
+        $privacyPlugin->onPrivacyExportRequest($export);
+        $exported = serialize($export->getArgument('result'));
+        $check(str_contains($exported, 'invitee@example.test') && !str_contains($exported, 'DummyOnly') && !str_contains($exported, $sealed),
+            'The privacy export contains neither the Close API key nor its sealed value');
+        $canRemove =new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $removal, 'user' => null]);
         $privacyPlugin->onPrivacyCanRemoveData($canRemove);
         $privacyPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData',
             ['subject' => $removal, 'user' => null]));
@@ -569,6 +591,9 @@ try {
         $db->query("DELETE FROM {$prefix}appointments_audit WHERE booking_id IN (" . implode(',', $ids) . ')');
     }
     $db->query("DELETE FROM {$prefix}appointments_close_limits");
+    if (isset($event)) {
+        $db->query("DELETE FROM {$prefix}appointments_close_credentials WHERE eventtype_id=" . (int) $event);
+    }
     $db->query("DELETE FROM {$prefix}appointments_privacy_outcomes WHERE request_id={$requestId}");
     $db->query("DELETE FROM {$prefix}appointments_privacy_cleanup WHERE request_id={$requestId}");
     $db->query("DELETE FROM {$prefix}appointments_privacy_staff WHERE request_id={$requestId}");

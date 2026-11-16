@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Administrator\Model;
 
+use Advans\Component\Appointments\Administrator\Service\Close\CredentialStore;
 use Advans\Component\Appointments\Administrator\Service\HostStore;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 use Advans\Component\Appointments\Administrator\Service\Team\GrantService;
@@ -238,6 +239,8 @@ class EventtypeModel extends AdminModel
 
         if ($form && !Factory::getApplication()->getIdentity()->authorise('core.admin', 'com_appointments')) {
             $form->setFieldAttribute('rules', 'filter', 'unset');
+            // The Close API key carries all rights of a Close user: only component administrators see or change it.
+            $form->removeField('close_api_secret');
         }
 
         if ($form && !$this->teamEnabled()) {
@@ -455,6 +458,7 @@ class EventtypeModel extends AdminModel
             $query->delete($db->quoteName('#__appointments_fields'))
                 ->where($db->quoteName('eventtype_id') . ' IN (' . implode(',', array_map('intval', $pks)) . ')');
             $db->setQuery($query)->execute();
+            (new CredentialStore($db))->deleteMany(array_map('intval', $pks));
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();

@@ -15,10 +15,14 @@ defined('_JEXEC') or die;
 
 final class Transport
 {
-    /** Each profile reads its own key from its own server environment variable. */
-    public static function forProfile(Profile $profile): \Closure
+    /**
+     * The key stored for the booking's event type wins; without one, the profile's server environment
+     * variable applies. Errors never carry the key: callers only see a static message, and the response
+     * body of a failed request is reduced to its status code by the client.
+     */
+    public static function forProfile(Profile $profile, ?string $key = null): \Closure
     {
-        $key = getenv($profile->credential);
+        $key ??= $profile->credential === '' ? false : getenv($profile->credential);
         if (!is_string($key) || $key === '' || strlen($key) > 1024 || preg_match('/[\s\x00-\x1f\x7f:]/', $key)
             || !extension_loaded('curl')) {
             throw new \RuntimeException('Close credential or HTTPS transport is unavailable.');
@@ -53,6 +57,7 @@ final class Transport
                     },
                 ]);
                 if (curl_exec($handle) === false) {
+                    // curl_error() is not passed on: it could echo request details.
                     throw new \RuntimeException('Close transport did not complete.');
                 }
                 return ['code' => (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE), 'body' => $body, 'retry_after' => $retry];
