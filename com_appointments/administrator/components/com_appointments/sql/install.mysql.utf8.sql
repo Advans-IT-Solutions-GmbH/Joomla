@@ -359,17 +359,18 @@ CREATE TABLE IF NOT EXISTS `#__appointments_audit` (
 -- the event type and its title at that time, utm_source, utm_medium, utm_campaign,
 -- referrer host and the current state. No name, address, URL, click ID, IP address
 -- or device, so the rows outlive the anonymisation and the deletion of the bookings
--- (Service\CampaignStats). Written in the booking's own transaction.
+-- (Service\CampaignStats). Written in the booking's own transaction. The campaign
+-- columns compare in binary, so «Launch» and «launch» stay separate campaigns.
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_campaign_stats` (
     `booking_id` INT UNSIGNED NOT NULL,
     `day` DATE NOT NULL,
     `eventtype_id` INT UNSIGNED NOT NULL,
     `eventtype_title` VARCHAR(255) NOT NULL DEFAULT '',
-    `utm_source` VARCHAR(100) NOT NULL DEFAULT '',
-    `utm_medium` VARCHAR(100) NOT NULL DEFAULT '',
-    `utm_campaign` VARCHAR(100) NOT NULL DEFAULT '',
-    `referrer_host` VARCHAR(100) NOT NULL DEFAULT '',
+    `utm_source` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+    `utm_medium` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+    `utm_campaign` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
+    `referrer_host` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
     `state` TINYINT NOT NULL,
     PRIMARY KEY (`booking_id`),
     KEY `idx_eventtype_day` (`eventtype_id`, `day`),

@@ -185,9 +185,27 @@ final class AttributionTest extends TestCase
         self::assertSame($json, $data->open($sealed)['attribution']);
     }
 
+    public function testTheLargestRecordTheLimitsAllowOpensAgain(): void
+    {
+        $long = str_repeat("\u{1F600}", 5000);
+        $query = array_fill_keys(Attribution::PARAMETERS, $long);
+        $uri = '/' . str_repeat('p', 9000) . '?' . http_build_query($query);
+        $state = Attribution::visit(null, ['uri' => $uri, 'referrer' => 'https://a.example.org/' . $long, 'host' => self::HOST, 'query' => $query,
+            'ip' => '2001:db8::1'], $this->at('2026-11-16 08:00:00'));
+        $query['utm_source'] = 'x' . $long;
+        $state = Attribution::visit($state, ['uri' => $uri, 'referrer' => 'https://b.example.org/' . $long, 'host' => self::HOST, 'query' => $query,
+            'ip' => '2001:db8::1'], $this->at('2026-11-16 08:01:00'));
+        $record = Attribution::record($state, $this->submit(['user_agent' => $long, 'accept_language' => $long,
+            'referrer' => 'https://www.example.test/' . $long]), $this->at('2026-11-16 08:02:00'));
+        $json = Attribution::encode($record);
+
+        self::assertGreaterThan(262144, \strlen($json), 'Larger than the earlier limit');
+        self::assertSame($record, Attribution::decode($json), 'The largest record opens again');
+    }
+
     public function testDecodeRejectsAnythingButARecord(): void
     {
-        foreach ([null, '', 'not json', '[1,2]', '"text"', '{"version":2}', str_repeat(' ', 300000)] as $value) {
+        foreach ([null, '', 'not json', '[1,2]', '"text"', '{"version":2}', str_repeat(' ', 1048577)] as $value) {
             self::assertNull(Attribution::decode($value));
         }
     }

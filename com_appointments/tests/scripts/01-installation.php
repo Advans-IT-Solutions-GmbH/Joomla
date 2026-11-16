@@ -78,15 +78,19 @@ class InstallationTest
 
         $this->test('Bookings have the encrypted origin column and the campaign aggregate exists', function () {
             $column = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}appointments_bookings LIKE 'attribution'");
-            $stats = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}appointments_campaign_stats");
+            $stats = $this->db->query("SHOW FULL COLUMNS FROM {$this->dbPrefix}appointments_campaign_stats");
             $names = [];
+            $binary = true;
 
             while ($stats && ($row = $stats->fetch_assoc())) {
                 $names[] = $row['Field'];
+                // Campaign values compare exactly: «Launch» and «launch» are two campaigns.
+                $binary = $binary && (!in_array($row['Field'], ['utm_source', 'utm_medium', 'utm_campaign', 'referrer_host'], true)
+                    || $row['Collation'] === 'utf8mb4_bin');
             }
 
             return $column && $column->num_rows === 1 && $names === ['booking_id', 'day', 'eventtype_id', 'eventtype_title', 'utm_source', 'utm_medium',
-                'utm_campaign', 'referrer_host', 'state'];
+                'utm_campaign', 'referrer_host', 'state'] && $binary;
         });
 
         $this->test('Team calendar plugins are installed and stay disabled until an operator enables them', function () {

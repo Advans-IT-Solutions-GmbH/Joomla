@@ -1557,7 +1557,7 @@ The session holds its values until the session ends.
 **Campaign statistics without personal data.** Each booking with a record also gets a row in
 `#__appointments_campaign_stats`: booking ID, day of booking (UTC), event type and its title at that
 time, `utm_source`, `utm_medium`, `utm_campaign` and the referrer host of the last touch (else the
-first), each cut at 100 characters, and the current state. No name, address, URL, click ID, IP
+first), each cut at 100 characters and compared exactly (`Launch` and `launch` are two campaigns), and the current state. No name, address, URL, click ID, IP
 address or device. The row is written in the booking's own transaction and follows its state
 (a cancellation, also one by an erasure). It is not erased with the booking, also not in the delete
 mode, so the evaluation of a campaign stays possible after the bookings are anonymised or deleted.

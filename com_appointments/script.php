@@ -351,8 +351,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_campaign_stats')
             . ' (`booking_id` INT UNSIGNED NOT NULL, `day` DATE NOT NULL, `eventtype_id` INT UNSIGNED NOT NULL,'
             . " `eventtype_title` VARCHAR(255) NOT NULL DEFAULT '',"
-            . " `utm_source` VARCHAR(100) NOT NULL DEFAULT '', `utm_medium` VARCHAR(100) NOT NULL DEFAULT '',"
-            . " `utm_campaign` VARCHAR(100) NOT NULL DEFAULT '', `referrer_host` VARCHAR(100) NOT NULL DEFAULT '',"
+            . " `utm_source` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '', `utm_medium` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',"
+            . " `utm_campaign` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '', `referrer_host` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',"
             . ' `state` TINYINT NOT NULL, PRIMARY KEY (`booking_id`), KEY `idx_eventtype_day` (`eventtype_id`, `day`),'
             . ' KEY `idx_day` (`day`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
     }

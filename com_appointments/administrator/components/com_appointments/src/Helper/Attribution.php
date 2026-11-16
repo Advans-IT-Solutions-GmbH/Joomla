@@ -59,8 +59,12 @@ final class Attribution
 
     private const MAX_VIEWS = 1000000;
 
-    /** The largest stored JSON that is read back. */
-    private const MAX_JSON = 262144;
+    /**
+     * The largest stored JSON that is read back: above the largest record the limits allow (about
+     * 40 values of {@see self::MAX_LENGTH} characters of up to four bytes each), so a stored record
+     * always opens again.
+     */
+    private const MAX_JSON = 1048576;
 
     /** Query parameters that are never stored with a URL. */
     private const SECRET = '/token|signature|secret|passw|pwd|key|auth|session|sid|code|nonce|hash|otp|ticket|mail/i';

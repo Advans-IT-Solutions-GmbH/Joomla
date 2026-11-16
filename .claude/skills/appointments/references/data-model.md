@@ -186,7 +186,7 @@ keyed hash in `#__appointments_ratelimit` with a one-day retention.
 The campaign statistics without personal data (`Service\CampaignStats`): primary key
 `booking_id`, then the day of booking (UTC), `eventtype_id`, `eventtype_title` (at booking time),
 `utm_source`, `utm_medium`, `utm_campaign`, `referrer_host` (each at most 100 characters, from the
-last touch, else the first) and `state`. No name, address, URL, click ID, IP address or device.
+last touch, else the first, binary collation so case variants stay separate campaigns) and `state`. No name, address, URL, click ID, IP address or device.
 Written in the booking's own transaction (create, state change, erasure), only for bookings with a
 record of their origin; anonymisation and erasure, also the delete mode, keep the row. The export
 groups it per day, event type and campaign. Created by `script.php` on update.
