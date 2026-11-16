@@ -291,7 +291,8 @@ class InstallationTest
             $exists = fn (string $table): bool => ($result = $this->db->query("SHOW TABLES LIKE '{$this->dbPrefix}{$table}'"))
                 && $result->num_rows === 1;
 
-            return $exists('appointments_close_delivery') && $exists('appointments_close_limits') && !$exists('appointments_close');
+            return $exists('appointments_close_delivery') && $exists('appointments_close_limits')
+                && $exists('appointments_close_credentials') && !$exists('appointments_close');
         });
 
         $this->test('An update keeps the Close task once and preserves the state the operator chose', function () use ($tasks, $reinstall) {
