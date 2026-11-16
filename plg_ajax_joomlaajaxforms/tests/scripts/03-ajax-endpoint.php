@@ -223,6 +223,17 @@ class AjaxEndpointTest
                 . var_export($payload['debug'] ?? null, true);
         }
 
+        // Same answer tells the script which forms the options hand to AJAX, so a
+        // form that is switched off is submitted to com_users instead of being
+        // answered with "disabled". All forms are on by default.
+        $enabled = is_array($payload['enabled'] ?? null) ? $payload['enabled'] : [];
+
+        foreach (['login', 'registration', 'reset', 'remind', 'profile'] as $form) {
+            if (($enabled[$form] ?? null) !== true) {
+                $problems[] = "enabled flag for $form missing or not true by default";
+            }
+        }
+
         if ($problems === []) {
             echo "PASS\n";
 
