@@ -10,6 +10,7 @@
 
 | Routine ID | Work |
 |---|---|
+| `plg_task_appointments.close` | Transfers bookings to the configured Close profiles. It creates and updates, never deletes in Close |
 | `plg_task_appointments.reminders` | Sends due reminders for confirmed future bookings |
 | `plg_task_appointments.retention` | Erases eligible ended bookings and prunes eligible audit/rate-limit rows |
 | `plg_task_appointments.teamcleanup` | Advances blocked-device cleanup and purges old sign-in failure counters |
@@ -17,7 +18,7 @@
 | `plg_task_appointments.teaminvitations` | Closes expired internet-calendar invitations |
 | `plg_task_appointments.teamretention` | Runs calendar retention and booking-calendar maintenance/encryption upkeep |
 
-These are the six routines in the component source; advertising one does not create or enable a scheduled task for it.
+These are the seven routines in the component source; advertising one does not create or enable a scheduled task for it.
 
 ## Requirements
 
