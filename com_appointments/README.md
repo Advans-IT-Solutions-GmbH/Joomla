@@ -1566,7 +1566,8 @@ the appointment) and an erasure in the administrator, and it goes with the row i
 **In the session** the component keeps only what the booking needs: the first visit with its single
 IP address (never one per page view), the first and last touch, the page count and the last page.
 Joomla removes it with the session at the end of the configured session lifetime. A stored booking
-takes the values over encrypted, and the component removes them from the session at once, so a
+takes the values over encrypted, and the component removes them from the session as soon as the
+booking is committed (also when the conference link or a mail fails afterwards), so a
 later booking in the same session starts anew. With the option off nothing is kept, and values of
 an earlier visit are removed at the next page view.
 
@@ -1574,7 +1575,7 @@ an earlier visit are removed at the next page view.
 `#__appointments_campaign_stats`: booking ID (removed by the erasure of the booking), day of booking
 (UTC), event type and its title at that
 time, `utm_source`, `utm_medium`, `utm_campaign` and the referrer host of the last touch (else the
-first), each cut at 100 characters, a value that looks like an e-mail address or a telephone number
+first), each cut at 100 characters, a value that looks like an e-mail address or a telephone number (nine or more digits)
 replaced by `(redacted)`, compared exactly (`Launch` and `launch` are two campaigns), and the current state. No name, address, URL, click ID, IP
 address or device. The row is written in the booking's own transaction and follows its state
 (a cancellation, also one by an erasure). It is not erased with the booking, also not in the delete

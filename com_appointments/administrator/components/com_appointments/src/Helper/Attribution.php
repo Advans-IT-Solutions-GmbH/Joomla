@@ -471,12 +471,14 @@ final class Attribution
     {
         $touch = $record['last_touch'] ?? $record['first_touch'] ?? null;
         $parameters = \is_array($touch) && \is_array($touch['parameters'] ?? null) ? $touch['parameters'] : [];
-        // A visitor can put anything into a link: an e-mail address or a telephone number never
-        // reaches the statistics, which are kept after the booking is anonymised.
+        // A visitor can put anything into a link: an e-mail address or a telephone number (nine or
+        // more digits, also with spaces, hyphens, dots, slashes or brackets between them) never
+        // reaches the statistics, which are kept after the booking is anonymised. A date such as
+        // 2026-11-16 has eight digits and stays.
         $cut = static function (mixed $value): string {
             $value = self::clean($value, self::AGGREGATE_LENGTH);
 
-            return preg_match('/@|(?:\+\s?)?\d(?:[ ().\/]?\d){6,}/u', $value) === 1 ? self::REDACTED : $value;
+            return preg_match('/@|\d(?:[ ().\/-]{0,2}\d){8,}/u', $value) === 1 ? self::REDACTED : $value;
         };
 
         return [

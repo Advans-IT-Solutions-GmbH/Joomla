@@ -290,6 +290,15 @@ final class AttributionTest extends TestCase
             $this->at('2026-11-16 08:00:00'));
         self::assertSame('kmu-it-2026-11', Attribution::campaign(Attribution::record($ordinary, $this->submit(), $this->at('2026-11-16 08:30:00')))['utm_campaign'],
             'An ordinary campaign name with a date stays');
+
+        $forms = ['079-123-45-67' => true, '+41-79-123-45-67' => true, '0041 79 123 45 67' => true, '(044) 123.45.67' => true,
+            'launch-2026-11-16' => false, 'q4-2026' => false, 'webinar-20261116' => false];
+        foreach ($forms as $value => $redacted) {
+            $visit = Attribution::visit(null, $this->request('/lp?utm_campaign=' . rawurlencode($value), 'https://www.linkedin.com/'),
+                $this->at('2026-11-16 08:00:00'));
+            self::assertSame($redacted ? Attribution::REDACTED : $value,
+                Attribution::campaign(Attribution::record($visit, $this->submit(), $this->at('2026-11-16 08:30:00')))['utm_campaign'], $value);
+        }
     }
 
     public function testLinesForTheHostAreLabelledAndLeaveOutEmptyValues(): void

@@ -132,8 +132,7 @@ class BookingController extends BaseController
             return $this->refuse($eventId, 'COM_APPOINTMENTS_BOOKING_ERROR_TAKEN');
         }
 
-        // The booking holds the origin encrypted now: nothing of it stays in the session.
-        AttributionTracker::forget($this->app);
+        // The model removed the origin from the session as soon as the booking was committed.
         $this->app->setUserState('com_appointments.booking.' . $eventId, null);
         $this->app->setUserState('com_appointments.booking_errors.' . $eventId, null);
         $this->app->setUserState('com_appointments.confirmation.id', (int) $booking['id']);

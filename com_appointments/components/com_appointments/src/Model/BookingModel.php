@@ -43,6 +43,9 @@ class BookingModel extends BaseDatabaseModel
         $booking = (new BookingStore($this->getDatabase()))->create(
             (array) $event, $invitee, $start, $now, $app->getIdentity()->getAuthorisedViewLevels(), $app->getLanguage()->getTag()
         );
+        // The booking is committed and holds the origin encrypted: nothing of it stays in the session,
+        // also when a later step (conference, mail) fails.
+        \Advans\Component\Appointments\Administrator\Service\AttributionTracker::forget($app);
         $booking = ConferenceService::forComponent($this->getDatabase())->provision($booking, $now);
         if (!isset($booking['id']) && (!empty($booking['_conference_missing']) || !empty($booking['_conference_error']))) {
             $app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'), 'warning');
