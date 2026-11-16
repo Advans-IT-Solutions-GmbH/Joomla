@@ -48,6 +48,20 @@ namespace Joomla\CMS {
     }
 }
 
+namespace Joomla\CMS\Plugin {
+    // As in Joomla 6.2: CMSPlugin declares no $app. It fills a non-private $app only
+    // when the plugin class declares one.
+    class CMSPlugin
+    {
+    }
+}
+
+namespace Joomla\CMS\Session {
+    class Session
+    {
+    }
+}
+
 namespace Joomla\CMS\Language {
     final class Text
     {
@@ -187,6 +201,32 @@ class PlgSystemOld extends CMSPlugin
 PHP]);
             $this->test('$this->app in a plugin is deprecated, not incompatible', $r['status'] === 'deprecated', $r['status'] . ': ' . self::details($r));
 
+            // --- $this->app in a plugin that does not declare it: CMSPlugin fills nothing ---
+            $r = $this->classify('plugin_app_undeclared', ['plugin.php' => <<<'PHP'
+<?php
+namespace Acme\Plugin\System\Old\Extension;
+use Joomla\CMS\Plugin\CMSPlugin;
+class Old extends CMSPlugin
+{
+    public function onAfterRoute() { return $this->app->getInput(); }
+}
+PHP]);
+            $this->test('$this->app in a plugin without a declared $app is incompatible', $r['status'] === 'incompatible', $r['status'] . ': ' . self::details($r));
+
+            // --- a plugin that sets $this->app itself owns the property ---
+            $r = $this->classify('plugin_app_own', ['plugin.php' => <<<'PHP'
+<?php
+use Joomla\CMS\Factory;
+use Joomla\CMS\Plugin\CMSPlugin;
+class PlgSystemOwn extends CMSPlugin
+{
+    private $app;
+    public function __construct() { $this->app = Factory::getApplication(); }
+    public function onAfterRoute() { return $this->app->getInput(); }
+}
+PHP]);
+            $this->test('$this->app a plugin sets itself is no finding', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
             // --- Factory methods Joomla 6 still has (plg_j2store_advans_layout) ---
             $r = $this->classify('factory_methods', ['plugin.php' => "<?php\nuse Joomla\\CMS\\Factory;\n\$db = Factory::getDbo();\n\$s = \\Joomla\\CMS\\Factory::getSession();\n"]);
             $this->test('Factory::getDbo()/getSession() that still exist are deprecated, not incompatible',
@@ -210,6 +250,28 @@ PHP]);
             $this->test('Its finding says it is not available',
                 describeIssue($r['issues'][0] ?? []) === 'COM_J2STORE_CLEANUP_ISSUE_UNAVAILABLE:JSession',
                 describeIssue($r['issues'][0] ?? []));
+
+            // --- A class imported under a legacy name is not the legacy alias ---
+            $r = $this->classify('imported_alias', ['src/Helper.php' => <<<'PHP'
+<?php
+namespace Acme\Component\Shop\Site\Helper;
+use Joomla\CMS\Session\Session as JSession;
+class Helper
+{
+    public static function check() { return JSession::checkToken(); }
+}
+PHP]);
+            $this->test('A class imported as JSession is no finding', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            $r = $this->classify('qualified_name', ['a.php' => "<?php\nnamespace Acme;\n\$x = \\Vendor\\Lib\\JSession::create();\n"]);
+            $this->test('A qualified name ending in JSession is no finding', $r['status'] === 'compatible', $r['status'] . ': ' . self::details($r));
+
+            $r = $this->classify('global_alias', ['a.php' => "<?php\nnamespace Acme;\nuse JFactory;\n\$a = JFactory::getApplication();\n\$s = \\JSession::checkToken();\n"]);
+            $this->test('Imported or fully qualified global aliases are still checked',
+                $r['status'] === 'incompatible'
+                && in_array('JFactory', array_column($r['issues'], 'detail'), true)
+                && in_array('JSession', array_column($r['issues'], 'detail'), true),
+                $r['status'] . ': ' . self::details($r));
 
             // --- One unavailable API makes the extension incompatible ---
             $r = $this->classify('mixed', ['a.php' => "<?php\nJFactory::getApplication();\nnew JModelLegacy();\n"]);

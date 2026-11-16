@@ -542,7 +542,7 @@ function getIssuePatterns() {
         '/Factory::getDocument\s*\(/'         => ['api' => 'Factory::getDocument()', 'removedIn' => 7, 'probe' => 'factory'],
         // CMSPlugin fills a declared $app property, deprecated since 4.3.
         // Other classes (module dispatchers, commands) own their $app.
-        '/\$this->app\b(?!lication)/'         => ['api' => '$this->app', 'removedIn' => 7, 'probe' => 'version', 'pluginOnly' => true],
+        '/\$this->app\b(?!lication)/'         => ['api' => '$this->app', 'removedIn' => 7, 'probe' => 'pluginApp'],
     ];
 
     // J2Store classes exist only while com_j2store (J2Store / J2Commerce 4)
@@ -579,6 +579,158 @@ function getScannableCode(string $source): string
 }
 
 /**
+ * Namespace and `use` imports of a PHP file, so a name in its code can be
+ * resolved the way PHP resolves it.
+ *
+ * @return array{namespace: string, imports: array<string, string>}  imports:
+ *         lower-case local name => fully qualified class name
+ */
+function getNameContext(string $source): array
+{
+    $tokens = array_values(array_filter(
+        token_get_all($source),
+        static fn ($t): bool => !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
+    ));
+    $isName    = static fn ($t): bool => is_array($t) && in_array($t[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true);
+    $namespace = '';
+    $imports   = [];
+    $count     = count($tokens);
+
+    for ($i = 0; $i < $count; $i++) {
+        $token = $tokens[$i];
+
+        if (is_array($token) && $token[0] === T_NAMESPACE && $namespace === '' && $isName($tokens[$i + 1] ?? null)) {
+            $namespace = ltrim($tokens[$i + 1][1], '\\');
+            continue;
+        }
+
+        // Imports only: a closure's "use (" and "use function/const" are skipped.
+        if (!is_array($token) || $token[0] !== T_USE || !$isName($tokens[$i + 1] ?? null)) {
+            continue;
+        }
+
+        $j = $i + 1;
+        while ($isName($tokens[$j] ?? null)) {
+            $name = ltrim($tokens[$j][1], '\\');
+            $j++;
+
+            // Group import: use Prefix\{A, B as C};
+            if (is_array($tokens[$j] ?? null) && $tokens[$j][0] === T_NS_SEPARATOR && ($tokens[$j + 1] ?? null) === '{') {
+                $j += 2;
+                while ($isName($tokens[$j] ?? null)) {
+                    $member = $name . '\\' . ltrim($tokens[$j][1], '\\');
+                    $j++;
+                    $alias = substr(strrchr('\\' . $member, '\\'), 1);
+                    if (is_array($tokens[$j] ?? null) && $tokens[$j][0] === T_AS && $isName($tokens[$j + 1] ?? null)) {
+                        $alias = $tokens[$j + 1][1];
+                        $j += 2;
+                    }
+                    $imports[strtolower($alias)] = $member;
+                    if (($tokens[$j] ?? null) !== ',') {
+                        break;
+                    }
+                    $j++;
+                }
+                break;
+            }
+
+            $alias = substr(strrchr('\\' . $name, '\\'), 1);
+            if (is_array($tokens[$j] ?? null) && $tokens[$j][0] === T_AS && $isName($tokens[$j + 1] ?? null)) {
+                $alias = $tokens[$j + 1][1];
+                $j += 2;
+            }
+            $imports[strtolower($alias)] = $name;
+
+            if (($tokens[$j] ?? null) !== ',') {
+                break;
+            }
+            $j++;
+        }
+
+        $i = $j;
+    }
+
+    return ['namespace' => $namespace, 'imports' => $imports];
+}
+
+/**
+ * The class a name stands for at one place in the code, or null when the
+ * place is no class reference to resolve here (a qualified name of another
+ * vendor, a member, a variable or a declaration).
+ *
+ * @param string $code     From getScannableCode()
+ * @param int    $offset   Byte offset of the name in $code
+ * @param string $name     The unqualified name, e.g. JSession
+ * @param array  $context  From getNameContext()
+ */
+function resolveClassReference(string $code, int $offset, string $name, array $context): ?string
+{
+    $start = $offset;
+    while ($start > 0 && preg_match('/[\w\\\\]/', $code[$start - 1]) === 1) {
+        $start--;
+    }
+
+    $prefix = substr($code, $start, $offset - $start);
+
+    if ($prefix === '\\') {
+        return $name;
+    }
+
+    if ($prefix !== '') {
+        return null;
+    }
+
+    $before = rtrim(substr($code, max(0, $start - 30), $start - max(0, $start - 30)));
+
+    if (preg_match('/(?:->|::|\$|\b(?:function|const|class|interface|trait|enum))$/', $before) === 1) {
+        return null;
+    }
+
+    $local = strtolower($name);
+
+    if (isset($context['imports'][$local])) {
+        return $context['imports'][$local];
+    }
+
+    return $context['namespace'] !== '' ? $context['namespace'] . '\\' . $name : $name;
+}
+
+/**
+ * How a plugin class in one file deals with $this->app, or null when the file
+ * declares no plugin class (a class that extends a ...Plugin class).
+ *
+ * @return array{parent: string, declared: bool, private: bool, assigned: bool}|null
+ */
+function getPluginAppInfo(string $code, array $context): ?array
+{
+    if (preg_match('/\bclass\s+\w+\s+extends\s+(\\\\?[\w\\\\]*Plugin)\b/i', $code, $m) !== 1) {
+        return null;
+    }
+
+    $parent = $m[1];
+
+    if ($parent[0] === '\\') {
+        $parent = substr($parent, 1);
+    } else {
+        $first = strtolower(strtok($parent, '\\'));
+        $rest  = (string) substr($parent, strlen($first));
+
+        if (isset($context['imports'][$first])) {
+            $parent = $context['imports'][$first] . $rest;
+        } elseif ($context['namespace'] !== '') {
+            $parent = $context['namespace'] . '\\' . $parent;
+        }
+    }
+
+    return [
+        'parent'   => $parent,
+        'declared' => preg_match('/\b(?:public|protected|var)\b[^;{}()=]*\$app\b/', $code) === 1,
+        'private'  => preg_match('/\bprivate\b[^;{}()=]*\$app\b/', $code) === 1,
+        'assigned' => preg_match('/\$this->app\s*=(?!=)/', $code) === 1,
+    ];
+}
+
+/**
  * Whether the API of a finding still works on this site.
  *
  * @param array $issue  One finding (see scanForIssues())
@@ -587,9 +739,25 @@ function isIssueAvailable(array $issue): bool
 {
     switch ($issue['probe'] ?? '') {
         case 'class':
-            // Resolves the alias through JLoader when the backward-compatibility
-            // plugin has registered it.
-            return class_exists((string) $issue['detail']);
+            // The class the name resolves to in its file. For a J-prefixed
+            // legacy name this goes through JLoader, which resolves the alias
+            // when a backward-compatibility plugin has registered it.
+            return class_exists((string) ($issue['class'] ?? $issue['detail']));
+
+        case 'pluginApp':
+            // CMSPlugin fills $app only when the plugin class declares it and
+            // it is not private (deprecated, removal announced for 7.0).
+            if (!empty($issue['declared'])) {
+                return (int) JVERSION < (int) ($issue['removedIn'] ?? 0);
+            }
+
+            if (!empty($issue['private'])) {
+                return false;
+            }
+
+            $parent = (string) ($issue['parent'] ?? '');
+
+            return $parent !== '' && class_exists($parent) && property_exists($parent, 'app');
 
         case 'factory':
             return preg_match('/^Factory::(\w+)\(\)$/', (string) $issue['detail'], $m) === 1
@@ -597,9 +765,6 @@ function isIssueAvailable(array $issue): bool
 
         case 'j2store':
             return is_dir(JPATH_ADMINISTRATOR . '/components/com_j2store');
-
-        case 'version':
-            return (int) JVERSION < (int) ($issue['removedIn'] ?? 0);
     }
 
     return false;
@@ -634,8 +799,9 @@ function scanForIssues($path, $patterns) {
             continue;
         }
 
-        $code     = getScannableCode($content);
-        $isPlugin = preg_match('/\bextends\s+[\w\\\\]*Plugin\b/i', $code) === 1;
+        $code      = getScannableCode($content);
+        $context   = getNameContext($content);
+        $pluginApp = getPluginAppInfo($code, $context);
 
         // Files below a com_j2store folder (template overrides an extension
         // ships for J2Store sites) are loaded only by com_j2store itself.
@@ -648,23 +814,57 @@ function scanForIssues($path, $patterns) {
             }
 
             foreach ($patterns[$type] ?? [] as $pattern => $info) {
-                if (!empty($info['pluginOnly']) && !$isPlugin) {
+                $probe = $info['probe'] ?? '';
+
+                // $this->app is the deprecated CMSPlugin property only in a
+                // plugin class that does not set it itself. Module dispatchers
+                // and console commands own their $app.
+                if ($probe === 'pluginApp' && ($pluginApp === null || $pluginApp['assigned'])) {
                     continue;
                 }
 
-                if (!preg_match_all($pattern, $code, $matches)) {
+                if (!preg_match_all($pattern, $code, $matches, PREG_OFFSET_CAPTURE)) {
                     continue;
                 }
 
-                foreach (array_unique($matches[1] ?? [$info['api']]) as $detail) {
-                    $issue = [
+                // One finding per API and file. A name can resolve to different
+                // classes in one file; it counts as available only if all do.
+                $found = [];
+                foreach ($matches[1] ?? $matches[0] as [$text, $offset]) {
+                    $detail = isset($matches[1]) ? $text : $info['api'];
+                    $issue  = [
                         'type'      => $type,
                         'detail'    => $detail,
                         'removedIn' => (int) ($info['removedIn'] ?? 0),
-                        'probe'     => $info['probe'] ?? '',
+                        'probe'     => $probe,
                     ];
+
+                    if ($probe === 'class') {
+                        $class = resolveClassReference($code, $offset, $detail, $context);
+
+                        // Not the legacy alias: a qualified name or member,
+                        // a class imported under that name, or an own class
+                        // of that name in the file's namespace.
+                        $imported = isset($context['imports'][strtolower($detail)]);
+                        if ($class === null
+                            || ($imported && strcasecmp($class, $detail) !== 0)
+                            || (!$imported && $class !== $detail && class_exists($class))) {
+                            continue;
+                        }
+
+                        $issue['class'] = $class;
+                    } elseif ($probe === 'pluginApp') {
+                        $issue += ['parent' => $pluginApp['parent'], 'declared' => $pluginApp['declared'], 'private' => $pluginApp['private']];
+                    }
+
                     $issue['available'] = isIssueAvailable($issue);
 
+                    if (!isset($found[$detail]) || !$issue['available']) {
+                        $found[$detail] = $issue;
+                    }
+                }
+
+                foreach ($found as $issue) {
                     // A non-Joomla API without an announced removal is a
                     // problem only when it is missing.
                     if ($issue['available'] && $issue['removedIn'] === 0) {
@@ -681,21 +881,21 @@ function scanForIssues($path, $patterns) {
 }
 
 /**
- * Keep the first finding per issue type and API, across any number of scans.
+ * One finding per issue type and API, across any number of files and scans.
+ * An unavailable finding wins over an available one of the same API, so an
+ * API that fails in one file is never reported as merely deprecated.
  */
 function uniqueIssues(array $issues): array
 {
-    $seen = [];
     $unique = [];
     foreach ($issues as $issue) {
         $key = $issue['type'] . ':' . $issue['detail'];
-        if (!isset($seen[$key])) {
-            $seen[$key] = true;
-            $unique[] = $issue;
+        if (!isset($unique[$key]) || (!empty($unique[$key]['available']) && empty($issue['available']))) {
+            $unique[$key] = $issue;
         }
     }
 
-    return $unique;
+    return array_values($unique);
 }
 
 /**

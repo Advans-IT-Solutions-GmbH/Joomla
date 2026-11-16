@@ -330,13 +330,13 @@ Each listed extension is classified in this order:
 | **Deprecated** | APIs found, all still available on the running site |
 | **Compatible** | No legacy APIs found in the PHP code |
 
-All PHP files in the extension folder are scanned recursively. The scan works on the PHP tokens: comments, string contents and inline HTML never match, so a class name in a message, a regular expression or a doc block is no finding. For every API found, the scanner checks on the running site whether it still works:
+All PHP files in the extension folder are scanned recursively. The scan works on the PHP tokens: comments, string contents and inline HTML never match, so a class name in a message, a regular expression or a doc block is no finding. Class names are resolved the way PHP resolves them, with the file's namespace and `use` imports: a class imported under a legacy name (`use Joomla\CMS\Session\Session as JSession;`) or a qualified name of another class (`Vendor\JSession`) is no finding, `\JSession` and an unqualified `JSession` without import are. For every API found, the scanner checks on the running site whether it still works:
 
 | API | Still available when | Removal |
 |-----|----------------------|---------|
 | Class aliases `JPlugin`, `JModelLegacy`, `JTable`, `JViewLegacy`, `JControllerLegacy`, `JForm`, `JFactory`, `JText`, `JHtml`, `JRoute`, `JUri`, `JSession` | The alias resolves, i.e. a backward-compatibility plugin (`behaviour/compat` or, on Joomla 6, `behaviour/compat6`) has its class aliases option enabled | Announced for Joomla 7 |
 | `Factory::getUser()`, `Factory::getDbo()`, `Factory::getSession()`, `Factory::getDocument()` | The method exists on `Joomla\CMS\Factory` | Announced for Joomla 7 (deprecated since 4.3) |
-| `$this->app` in a plugin class (a class that extends a `...Plugin` class) | Joomla major version below 7 (`CMSPlugin` fills a declared `$app` property) | Announced for Joomla 7. In other classes, for example module dispatchers or console commands, `$app` is their own property and is not reported |
+| `$this->app` in a plugin class (a class that extends a `...Plugin` class) that does not set `$app` itself | The class declares a non-private `$app` and Joomla is below 7 (`CMSPlugin` fills only such a property), or the parent class has an `$app` property. Without a declaration it fails: `CMSPlugin` declares none | Announced for Joomla 7. In other classes, for example module dispatchers or console commands, and in a plugin that assigns `$this->app` itself, `$app` is their own property and is not reported |
 | J2Store classes `J2Store::`, `J2Html::` and the `J2Store...Plugin` base classes | `com_j2store` (J2Store or J2Commerce 4) is installed. J2Commerce 6 does not provide these classes | Reported only when unavailable |
 
 An API that is unavailable makes the extension *Incompatible*: the code fails as soon as it runs. An API that still works is listed under *Deprecated APIs*, with the announced removal, and is not offered for removal. Version numbers, author data and the enabled status are not evaluated.

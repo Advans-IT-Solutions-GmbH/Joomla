@@ -161,7 +161,7 @@ class ComponentFunctionsTest
         $this->test('Every Joomla pattern names the announced removal version',
             array_filter(array_column($patterns['joomla'], 'removedIn'), fn ($v) => $v !== 7) === []);
         $this->test('Every pattern says how its availability is checked',
-            array_filter(array_merge($patterns['joomla'], $patterns['j2store']), fn ($p) => !in_array($p['probe'] ?? '', ['class', 'factory', 'j2store', 'version'], true)) === []);
+            array_filter(array_merge($patterns['joomla'], $patterns['j2store']), fn ($p) => !in_array($p['probe'] ?? '', ['class', 'factory', 'j2store', 'pluginApp'], true)) === []);
     }
 
     private function testScanForIssues(): void
