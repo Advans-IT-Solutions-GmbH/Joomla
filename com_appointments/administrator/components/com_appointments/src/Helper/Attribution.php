@@ -60,11 +60,14 @@ final class Attribution
     private const MAX_VIEWS = 1000000;
 
     /**
-     * The largest stored JSON that is read back: above the largest record the limits allow (about
-     * 40 values of {@see self::MAX_LENGTH} characters of up to four bytes each), so a stored record
-     * always opens again.
+     * The budget of a whole record as JSON, in bytes: {@see self::record()} keeps every record
+     * within it ({@see self::fit()}) and {@see self::decode()} reads nothing larger. About 50 text
+     * values of {@see self::FIT_LENGTH} characters of up to four bytes each fit.
      */
-    private const MAX_JSON = 1048576;
+    public const MAX_RECORD_BYTES = 65536;
+
+    /** The length every text value of a record over budget is cut to, in characters. */
+    public const FIT_LENGTH = 256;
 
     /** Query parameters that are never stored with a URL. */
     private const SECRET = '/token|signature|secret|passw|pwd|key|auth|session|sid|code|nonce|hash|otp|ticket|mail/i';
@@ -251,7 +254,7 @@ final class Attribution
 
         $agent = self::clean($submit['user_agent'] ?? '');
 
-        return [
+        return self::fit([
             'version' => self::VERSION,
             'first_seen_utc' => $state['first_seen_utc'],
             'landing_url' => $state['landing_url'],
@@ -263,7 +266,32 @@ final class Attribution
             'booking_ip' => self::ip($submit['ip'] ?? ''),
             'accept_language' => self::clean($submit['accept_language'] ?? '', 512),
             'user_agent' => $agent,
-        ] + self::client($agent);
+        ] + self::client($agent));
+    }
+
+    /**
+     * The record within {@see self::MAX_RECORD_BYTES} of JSON: an ordinary record is unchanged;
+     * a larger one (only crafted values reach that) keeps the first {@see self::FIT_LENGTH}
+     * characters of each text, so it always fits. Readers of many bookings then never hold
+     * more than this per row.
+     *
+     * @param   array<string, mixed>  $record
+     *
+     * @return  array<string, mixed>
+     */
+    private static function fit(array $record): array
+    {
+        if (\strlen(self::encode($record)) <= self::MAX_RECORD_BYTES) {
+            return $record;
+        }
+
+        array_walk_recursive($record, static function (mixed &$value): void {
+            if (\is_string($value)) {
+                $value = self::clean($value, self::FIT_LENGTH);
+            }
+        });
+
+        return $record;
     }
 
     /**
@@ -331,7 +359,7 @@ final class Attribution
      */
     public static function decode(mixed $json): ?array
     {
-        if (!\is_string($json) || $json === '' || \strlen($json) > self::MAX_JSON) {
+        if (!\is_string($json) || $json === '' || \strlen($json) > self::MAX_RECORD_BYTES) {
             return null;
         }
 

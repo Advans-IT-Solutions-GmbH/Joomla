@@ -1528,7 +1528,7 @@ own, no script and no form field: a value posted with the booking form never rea
 | `device`, `browser`, `os` | Derived from the User-Agent: `desktop`, `mobile`, `tablet`, `bot` or `unknown`, the browser family and the operating system (an iPad that presents itself as a Mac counts as a desktop) |
 
 The visitor's time zone is the booking's `invitee_timezone`, as before. Every value is valid UTF-8
-without control or format characters and at most 2048 characters (Accept-Language 512). Only the
+without control or format characters and at most 2048 characters (Accept-Language 512). A whole record is at most 64 KiB of JSON: one that would be larger (only crafted values get there) keeps the first 256 characters of each value. Only the
 parameters listed above are kept. URLs lose their fragment and every query parameter whose name
 suggests a credential (`token`, `signature`, `secret`, `password`, `pwd`, `key`, `auth`, `session`, `sid`,
 `code`, `nonce`, `hash`, `otp`, `ticket`, `mail`) and Joomla form tokens.

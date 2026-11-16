@@ -81,7 +81,8 @@ final class PrivacyService
         $this->reportUnreadable($records);
 
         foreach (array_chunk($ids, 200) as $chunk) {
-            foreach ($this->rows($chunk, array_merge(['b.id', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state'], BookingData::readColumns('b'))) as $row) {
+            // A guest's export never contains the origin of the booking: it is not read (BookingData::lightSelect()).
+            foreach ($this->rows($chunk, ['b.id', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state'], true) as $row) {
                 foreach (PrivacyAddress::guestList($row['guest_emails']) as $guest) {
                     if (PrivacyAddress::isGuest($guest, $normalised)) {
                         yield ['id' => (int) $row['id'], 'eventtype_id' => (int) $row['eventtype_id'],
@@ -100,10 +101,11 @@ final class PrivacyService
      *
      * @param int[]    $ids
      * @param string[] $columns
+     * @param bool     $light   Add the personal fields without the origin (BookingData::lightSelect()).
      *
      * @return array<int, array<string, mixed>>
      */
-    private function rows(array $ids, array $columns): array
+    private function rows(array $ids, array $columns, bool $light = false): array
     {
         if ($ids === []) {
             return [];
@@ -111,7 +113,13 @@ final class PrivacyService
 
         $db = $this->db;
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($columns === ['b.*'] ? $db->quoteName('b') . '.*' : $db->quoteName($columns))
+        $query->select($columns === ['b.*'] ? $db->quoteName('b') . '.*' : $db->quoteName($columns));
+
+        if ($light) {
+            $query->select(BookingData::lightSelect($db, 'b'));
+        }
+
+        $query
             ->select($db->quoteName('e.title', 'event_title'))
             ->from($db->quoteName('#__appointments_bookings', 'b'))
             ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e') . ' ON '

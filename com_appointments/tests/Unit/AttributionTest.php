@@ -199,13 +199,19 @@ final class AttributionTest extends TestCase
             'referrer' => 'https://www.example.test/' . $long]), $this->at('2026-11-16 08:02:00'));
         $json = Attribution::encode($record);
 
-        self::assertGreaterThan(262144, \strlen($json), 'Larger than the earlier limit');
+        self::assertLessThanOrEqual(Attribution::MAX_RECORD_BYTES, \strlen($json), 'A whole record stays within its budget, so many rows fit in memory');
         self::assertSame($record, Attribution::decode($json), 'The largest record opens again');
+        self::assertSame(mb_substr($long, 0, Attribution::FIT_LENGTH), $record['user_agent'], 'Too large a record keeps the start of each value');
+        self::assertSame('2001:db8::1', $record['landing_ip']);
+
+        // An ordinary record keeps every value at its full length.
+        $ordinary = Attribution::record(null, $this->submit(['user_agent' => str_repeat('a', 2000)]), $this->at('2026-11-16 08:02:00'));
+        self::assertSame(2000, \strlen($ordinary['user_agent']));
     }
 
     public function testDecodeRejectsAnythingButARecord(): void
     {
-        foreach ([null, '', 'not json', '[1,2]', '"text"', '{"version":2}', str_repeat(' ', 1048577)] as $value) {
+        foreach ([null, '', 'not json', '[1,2]', '"text"', '{"version":2}', str_repeat(' ', Attribution::MAX_RECORD_BYTES + 1)] as $value) {
             self::assertNull(Attribution::decode($value));
         }
     }
