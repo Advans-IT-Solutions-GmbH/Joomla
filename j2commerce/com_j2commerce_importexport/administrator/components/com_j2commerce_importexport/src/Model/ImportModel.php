@@ -267,10 +267,10 @@ class ImportModel extends BaseDatabaseModel
     }
 
     /**
-     * Columns that show whether an article was edited or checked out after the import
-     * created it.
+     * Columns that change without an edit: the hit counter of an article, and the
+     * nested-set positions that shift whenever another item is added or removed.
      */
-    private const ARTICLE_VERSION_COLUMNS = ['title', 'alias', 'catid', 'state', 'modified', 'modified_by', 'checked_out', 'version'];
+    private const VOLATILE_COLUMNS = ['hits', 'lft', 'rgt'];
 
     /**
      * Deletes an article the failed row created, unless it changed since: it is committed
@@ -295,9 +295,10 @@ class ImportModel extends BaseDatabaseModel
     }
 
     /**
-     * Persisted values of a table row, or null if they cannot be read.
+     * Persisted values of every column of a table row except the volatile ones, including
+     * the checkout state, so an undo recognizes any later edit. Null if they cannot be read.
      */
-    private function tableSnapshot(string $class, int $id, array $keys): ?array
+    private function tableSnapshot(string $class, int $id): ?array
     {
         try {
             $table = $this->newTable($class);
@@ -307,8 +308,10 @@ class ImportModel extends BaseDatabaseModel
             }
 
             $values = [];
-            foreach ($keys as $key) {
-                $values[$key] = $table->$key;
+            foreach (array_keys($table->getFields()) as $key) {
+                if (!in_array($key, self::VOLATILE_COLUMNS, true)) {
+                    $values[$key] = $table->$key;
+                }
             }
 
             return $values;
@@ -422,9 +425,9 @@ class ImportModel extends BaseDatabaseModel
      * The persisted values of a menu item (Joomla's store rebuilds the path in the
      * database only), or null if they cannot be read.
      */
-    private function menuSnapshot(int $menuId, array $keys): ?array
+    private function menuSnapshot(int $menuId): ?array
     {
-        return $this->tableSnapshot(MenuTable::class, $menuId, $keys);
+        return $this->tableSnapshot(MenuTable::class, $menuId);
     }
 
     /**
@@ -627,7 +630,7 @@ class ImportModel extends BaseDatabaseModel
 
             if ($articleId > 0) {
                 // What the store left in the database, so the undo recognizes later edits.
-                $written = $this->tableSnapshot(ContentTable::class, $articleId, self::ARTICLE_VERSION_COLUMNS);
+                $written = $this->tableSnapshot(ContentTable::class, $articleId);
                 $this->registerUndo(
                     Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_ARTICLE', $articleId),
                     fn (): bool => $this->deleteArticle($articleId, $written)
@@ -1899,7 +1902,7 @@ class ImportModel extends BaseDatabaseModel
         } finally {
             $menuId = (int) $menu->id;
             // What the store left in the database, so the undo recognizes later changes.
-            $written = $this->menuSnapshot($menuId, array_keys($row));
+            $written = $this->menuSnapshot($menuId);
 
             if ($existing) {
                 try {

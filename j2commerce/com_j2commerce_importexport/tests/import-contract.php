@@ -122,6 +122,11 @@ namespace Joomla\CMS\Table {
             return true;
         }
         public function getError(): string { return 'Menu fixture validation failed'; }
+        public function getFields(): array {
+            return array_fill_keys(['id', 'menutype', 'title', 'alias', 'note', 'path', 'link', 'type', 'published', 'parent_id',
+                'level', 'component_id', 'checked_out', 'checked_out_time', 'browserNav', 'access', 'img', 'params',
+                'lft', 'rgt', 'home', 'language', 'client_id'], null);
+        }
         public function __get(string $name): mixed { return $this->row->$name ?? null; }
     }
     class Category
@@ -224,6 +229,12 @@ namespace Joomla\CMS\Table {
             return true;
         }
         public function __get(string $name): mixed { return $this->row[$name] ?? null; }
+        public function getFields(): array {
+            return array_fill_keys(['id', 'asset_id', 'title', 'alias', 'introtext', 'fulltext', 'state', 'catid', 'created',
+                'created_by', 'modified', 'modified_by', 'checked_out', 'checked_out_time', 'publish_up', 'publish_down',
+                'images', 'urls', 'attribs', 'version', 'ordering', 'metakey', 'metadesc', 'access', 'hits', 'metadata',
+                'featured', 'language', 'note'], null);
+        }
         public function delete($pk = null): bool {
             $this->lockForStore();
             $this->recordTableWrite('delete', (int) ($pk ?? $this->id));
@@ -1455,6 +1466,40 @@ namespace {
         $authModel->importProductFull($moveRow, ['update_existing' => true]);
         check($authDb->assetMoves === [[501, 7]] && \Joomla\CMS\Access\Access::$cleared > $clearedBefore,
             'An article moved into a category without asset is placed below the Content component and the permission cache is cleared');
+
+        // A new menu item that an editor only annotated or checked out is kept and reported.
+        $user->permissions = $nativePermissions;
+        foreach (['note' => 'Edited note', 'checked_out' => 99] as $column => $value) {
+            $authDb->resetAuthorizationScenario([]);
+            $authDb->tableResults = $nativeTables;
+            $failingModel->beforeFailure = function () use ($authDb, $column, $value): void {
+                $authDb->inserted['#__menu']->$column = $value;
+            };
+            try {
+                $failure = $runFailingRow();
+            } finally {
+                $failingModel->beforeFailure = null;
+            }
+            check(str_contains($failure->getMessage(), 'COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_MENU_ITEM: 1')
+                && !in_array('#__menu', array_column($deletes(), 1), true),
+                'A new menu item whose ' . $column . ' changed after the row stored it is kept and reported');
+        }
+
+        // A new article that an editor checked out after the row created it is kept and reported.
+        $authDb->resetAuthorizationScenario([]);
+        $authDb->tableResults = $nativeTables;
+        $failingModel->beforeFailure = function () use ($authDb): void {
+            $authDb->inserted['#__content']->checked_out = 99;
+            $authDb->tableResults['#__content'] = 1;
+        };
+        try {
+            $failure = $runFailingRow();
+        } finally {
+            $failingModel->beforeFailure = null;
+        }
+        check(str_contains($failure->getMessage(), 'COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_ARTICLE: 42')
+            && !in_array('#__content', array_column($deletes(), 1), true),
+            'A new article checked out after the row created it is kept and reported');
 
         // A new article that an editor saved after the row created it is kept and reported.
         $user->permissions = $nativePermissions;
