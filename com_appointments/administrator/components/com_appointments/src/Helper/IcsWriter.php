@@ -188,7 +188,9 @@ final class IcsWriter
             throw new \InvalidArgumentException('Invalid calendar interval.');
         }
 
-        $description = (string) ($event['description'] ?? '');
+        // calendar_description: the text of this calendar entry only (the host's copy lists the
+        // booking), so {description} in a mail template keeps the event's own description.
+        $description = (string) ($event['calendar_description'] ?? $event['description'] ?? '');
         $location = (string) ($event['location'] ?? $event['location_text'] ?? '');
         $conference = (string) ($booking['conference_url'] ?? '');
 

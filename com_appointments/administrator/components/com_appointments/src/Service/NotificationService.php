@@ -223,9 +223,10 @@ final class NotificationService
                             $recipientEvent['publish'] = true;
                         }
 
-                        // Everything the invitee entered in its description, so the entry is complete on its own.
+                        // Everything the invitee entered in the calendar entry's description, so the entry is
+                        // complete on its own. {description} of the template stays the event's description.
                         if (!$erased) {
-                            $recipientEvent['description'] = $this->hostDescription($booking, $event, $answers, $inviteeTime, $language, $translate, $labelFormat);
+                            $recipientEvent['calendar_description'] = $this->hostDescription($booking, $event, $answers, $inviteeTime, $language, $translate, $labelFormat);
                         }
                     }
 
