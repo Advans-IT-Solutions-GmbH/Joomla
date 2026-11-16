@@ -92,7 +92,8 @@ class ImportModel extends BaseDatabaseModel
             // Categories, assets and menu items are nested sets. Joomla stores them under
             // LOCK TABLES, which on MySQL commits an open transaction, so they are written
             // before the row transaction starts. Each of these writes registers its undo,
-            // which runs if a later step of the row fails.
+            // which runs if a later step of the row fails. The article's asset follows its
+            // category after the commit (step 14).
 
             // 1. Existing category, or a new one through Joomla's category table
             $catId = $this->ensureCategory($data, $options);
@@ -102,9 +103,6 @@ class ImportModel extends BaseDatabaseModel
             $articleId = $article['existing']
                 ? (int) $article['existing']->id
                 : $this->createArticle($article['values']);
-
-            // The article's permission asset belongs below its (new) category.
-            $this->moveArticleAsset($articleId, $catId);
 
             // 3. Menu item if requested
             if (!empty($options['create_menu']) && !empty($data['menu_item'])) {
@@ -152,13 +150,21 @@ class ImportModel extends BaseDatabaseModel
                 $db->transactionRollback();
                 throw $e;
             }
-
-            return ['success' => true, 'article_id' => $articleId, 'product_id' => $productId];
         } catch (\Throwable $e) {
             $this->undoRowWrites($e);
         } finally {
             $this->rowUndo = [];
         }
+
+        // 14. Permission asset of the article below its committed category
+        try {
+            $this->syncArticleAsset($articleId);
+        } catch (\Throwable $e) {
+            // The row is committed; only the asset could not follow the category.
+            throw new \RuntimeException(Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_ERROR_ASSET_SYNC', $articleId, $e->getMessage()), 0, $e);
+        }
+
+        return ['success' => true, 'article_id' => $articleId, 'product_id' => $productId];
     }
 
     /**
@@ -194,7 +200,7 @@ class ImportModel extends BaseDatabaseModel
         }
 
         $this->rowUndo = [];
-        // The undo deleted or moved permission assets.
+        // The undo deleted permission assets.
         Access::clearStatics();
 
         if ($leftovers === []) {
@@ -637,12 +643,15 @@ class ImportModel extends BaseDatabaseModel
     }
 
     /**
-     * Moves the permission asset of an existing article below its new category, as
-     * Joomla does when an article is saved in another category, so it inherits the new
-     * category's permissions. The asset is a nested set, so the move runs before the row
-     * transaction (which updates the article) and registers its undo.
+     * Places the permission asset of an imported article below the asset of the category
+     * the article is in now, as Joomla does when an article is saved in another category,
+     * so it inherits that category's permissions.
+     *
+     * It runs after the row transaction has committed and reads the committed category:
+     * an asset is a nested set, so moving it inside the transaction would commit it early,
+     * and a concurrent import that moved the same article meanwhile is followed, not undone.
      */
-    protected function moveArticleAsset(int $articleId, int $categoryId): void
+    protected function syncArticleAsset(int $articleId): void
     {
         $asset = $this->newTable(AssetTable::class);
 
@@ -653,79 +662,46 @@ class ImportModel extends BaseDatabaseModel
 
         $db    = $this->getDatabase();
         $query = $this->createDbQuery($db)
-            ->select($db->quoteName('asset_id'))
-            ->from($db->quoteName('#__categories'))
-            ->where($db->quoteName('id') . ' = :id')
-            ->bind(':id', $categoryId, \Joomla\Database\ParameterType::INTEGER);
+            ->select($db->quoteName('c.asset_id'))
+            ->from($db->quoteName('#__content', 'a'))
+            ->join('INNER', $db->quoteName('#__categories', 'c'), $db->quoteName('c.id') . ' = ' . $db->quoteName('a.catid'))
+            ->where($db->quoteName('a.id') . ' = :id')
+            ->bind(':id', $articleId, \Joomla\Database\ParameterType::INTEGER);
         $db->setQuery($query);
-
-        $assetId   = (int) $asset->id;
-        $oldParent = (int) $asset->parent_id;
-        $newParent = (int) $db->loadResult();
+        $parentId = (int) $db->loadResult();
 
         // A category without its own asset (for example from earlier imports) is checked
         // with the Content component's permissions, so the article inherits from there.
-        if ($newParent < 1) {
+        if ($parentId < 1) {
             $query = $this->createDbQuery($db)
                 ->select($db->quoteName('id'))
                 ->from($db->quoteName('#__assets'))
                 ->where($db->quoteName('name') . ' = ' . $db->quote('com_content'));
             $db->setQuery($query);
-            $newParent = (int) $db->loadResult();
+            $parentId = (int) $db->loadResult();
         }
 
-        if ($newParent < 1) {
+        if ($parentId < 1) {
             throw new \RuntimeException(Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
         }
 
-        if ($newParent === $oldParent) {
+        if ($parentId === (int) $asset->parent_id) {
             return;
         }
 
-        $asset->setLocation($newParent, 'last-child');
-        $asset->parent_id = $newParent;
-        $stored = false;
+        $asset->setLocation($parentId, 'last-child');
+        $asset->parent_id = $parentId;
 
         try {
             $stored = $asset->store();
         } finally {
             // Permission checks of later rows must see the moved asset.
             Access::clearStatics();
-            $this->registerUndo(
-                Text::sprintf('COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_ARTICLE_ASSET', $articleId),
-                fn (): bool => $this->moveAssetBack($assetId, $oldParent, $newParent)
-            );
         }
 
         if (!$stored) {
             throw new \RuntimeException($asset->getError() ?: Text::_('COM_J2COMMERCE_IMPORTEXPORT_ERROR_IMPORT_FAILED'));
         }
-    }
-
-    /**
-     * Moves an article's asset back below its previous parent, unless it was moved again
-     * since the failed row moved it (the later move is then kept and reported).
-     */
-    private function moveAssetBack(int $assetId, int $oldParent, int $newParent): bool
-    {
-        $asset = $this->newTable(AssetTable::class);
-
-        if (!$asset->load($assetId)) {
-            return true;
-        }
-
-        if ((int) $asset->parent_id === $oldParent) {
-            return true;
-        }
-
-        if ((int) $asset->parent_id !== $newParent) {
-            return false;
-        }
-
-        $asset->setLocation($oldParent, 'last-child');
-        $asset->parent_id = $oldParent;
-
-        return $asset->store();
     }
 
     /**

@@ -177,7 +177,9 @@ namespace Joomla\CMS\Table {
             return true;
         }
         public function setLocation(int $parent, string $position): void { $this->location = $parent; }
+        public static bool $failStore = false;
         public function store(): bool {
+            if (self::$failStore) { return false; }
             $this->lockForStore();
             foreach ($this->db->assets as $name => $asset) {
                 if ($asset['id'] === $this->id) { $this->db->assets[$name]['parent_id'] = $this->parent_id; }
@@ -1337,19 +1339,22 @@ namespace {
             && !in_array('#__menu', array_column($deletes(), 1), true),
             'A new menu item with an item below it is kept and reported');
 
-        // An existing article moved to another category takes its asset along, and back on failure.
+        // An existing article moved to another category takes its asset along after the commit.
         $movedArticle = (object) ['id' => 81, 'asset_id' => 501, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1];
         $moveRow = ['title' => 'Moved article', 'alias' => 'moved-article', 'article_id' => 81, 'catid' => 3];
         $user->permissions = ['core.edit.own:com_content.article.81' => true, 'core.create:com_content.category.3' => true];
+        // '#__content' answers the committed category's asset ID.
+        $moveTables = ['#__categories' => 3, '#__content' => 33, '#__j2commerce_products' => 1];
         $authDb->resetAuthorizationScenario([], [$movedArticle]);
-        $authDb->tableResults = ['#__categories' => 33, '#__j2commerce_products' => 1];
+        $authDb->tableResults = $moveTables;
         $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
         $moved = $authModel->importProductFull($moveRow, ['update_existing' => true]);
         check(($moved['article_id'] ?? 0) === 81 && $authDb->assetMoves === [[501, 33]]
-            && $authDb->assets['com_content.article.81']['parent_id'] === 33 && $authDb->implicitCommits === 0,
-            'An article moved to another category gets its asset moved below the new category outside the transaction');
+            && $authDb->assets['com_content.article.81']['parent_id'] === 33 && $authDb->implicitCommits === 0
+            && $authDb->transactionsCommitted === 1,
+            'An article moved to another category gets its asset moved below the committed category after the transaction');
         $authDb->resetAuthorizationScenario([], [$movedArticle]);
-        $authDb->tableResults = ['#__categories' => 33, '#__j2commerce_products' => 1];
+        $authDb->tableResults = $moveTables;
         $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
         check((function () use ($failingModel, $moveRow): bool {
             try {
@@ -1358,15 +1363,35 @@ namespace {
                 return $e->getMessage() === 'Forced failure of a later row step';
             }
             return false;
-        })() && $authDb->assetMoves === [[501, 33], [501, 22]] && $authDb->assets['com_content.article.81']['parent_id'] === 22,
-            'A failed row moves the article asset back below its previous category');
+        })() && $authDb->assetMoves === [] && $authDb->assets['com_content.article.81']['parent_id'] === 22,
+            'A failed row leaves the article asset below its previous category');
+
+        // The row is committed when the asset cannot follow: the error says so and nothing is undone.
+        \Joomla\CMS\Table\Asset::$failStore = true;
+        try {
+            $authDb->resetAuthorizationScenario([], [$movedArticle]);
+            $authDb->tableResults = $moveTables;
+            $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
+            $syncFailure = null;
+            try {
+                $authModel->importProductFull($moveRow, ['update_existing' => true]);
+            } catch (\RuntimeException $e) {
+                $syncFailure = $e;
+            }
+        } finally {
+            \Joomla\CMS\Table\Asset::$failStore = false;
+        }
+        check($syncFailure !== null
+            && str_starts_with($syncFailure->getMessage(), 'COM_J2COMMERCE_IMPORTEXPORT_ERROR_ASSET_SYNC: 81, ')
+            && $authDb->transactionsCommitted === 1 && $deletes() === [],
+            'A committed row whose article asset cannot follow its category reports that instead of undoing the row');
         $user->permissions = $nativePermissions;
 
         // A destination category without its own asset: the article inherits from the Content component.
         $clearedBefore = \Joomla\CMS\Access\Access::$cleared;
         $user->permissions = ['core.edit.own:com_content.article.81' => true, 'core.create:com_content.category.3' => true];
-        $authDb->resetAuthorizationScenario([3, 0], [$movedArticle]);
-        $authDb->tableResults = ['#__j2commerce_products' => 1, '#__assets' => 7];
+        $authDb->resetAuthorizationScenario([3], [$movedArticle]);
+        $authDb->tableResults = ['#__content' => 0, '#__j2commerce_products' => 1, '#__assets' => 7];
         $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
         $authModel->importProductFull($moveRow, ['update_existing' => true]);
         check($authDb->assetMoves === [[501, 7]] && \Joomla\CMS\Access\Access::$cleared > $clearedBefore,
