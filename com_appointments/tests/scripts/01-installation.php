@@ -85,8 +85,8 @@ class InstallationTest
                 $names[] = $row['Field'];
             }
 
-            return $column && $column->num_rows === 1 && $names === ['day', 'eventtype_id', 'utm_source', 'utm_medium', 'utm_campaign', 'referrer_host',
-                'bookings', 'pending', 'confirmed', 'cancelled'];
+            return $column && $column->num_rows === 1 && $names === ['booking_id', 'day', 'eventtype_id', 'eventtype_title', 'utm_source', 'utm_medium',
+                'utm_campaign', 'referrer_host', 'state'];
         });
 
         $this->test('Team calendar plugins are installed and stay disabled until an operator enables them', function () {

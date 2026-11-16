@@ -18,8 +18,9 @@ defined('_JEXEC') or die;
  * The session state holds the first landing (time, path and query, address), the number of
  * page views, the last page and two touches. A touch is a page view that carries a campaign
  * parameter of {@see self::PARAMETERS} or arrives from another host: the first touch is kept,
- * the last touch is replaced only by a touch with other parameters or another referrer, never
- * by internal navigation, a direct visit or a reload of the same touch.
+ * the last touch is replaced only by a touch with other parameters or by an arrival from another
+ * external host, never by internal navigation (also with the same parameters), a direct visit or a
+ * reload of the same touch. A touch keeps a referrer host only when it came from another site.
  *
  * The record of a booking ({@see self::record()}) adds what the submit itself tells: the
  * booking page, the address, Accept-Language and the User-Agent with the device class, browser
@@ -213,13 +214,15 @@ final class Attribution
             return $state;
         }
 
+        // The referrer host of a touch is another site's only: a campaign link inside the site keeps none.
         $touch = ['time_utc' => $time, 'landing_url' => $uri, 'referrer' => self::url($referrer),
-            'referrer_host' => self::host($referrer), 'parameters' => $parameters];
+            'referrer_host' => $external ? self::host($referrer) : '', 'parameters' => $parameters];
         $state['first_touch'] ??= $touch;
         $last = $state['last_touch'];
 
-        // A reload of the same arrival keeps its time; another campaign or referrer replaces it.
-        if ($last === null || $last['parameters'] !== $touch['parameters'] || $last['referrer_host'] !== $touch['referrer_host']) {
+        // A reload of the same arrival and an internal link that carries the same parameters keep it;
+        // other parameters, or an arrival from another external host, replace it.
+        if ($last === null || $last['parameters'] !== $touch['parameters'] || ($external && $last['referrer_host'] !== $touch['referrer_host'])) {
             $state['last_touch'] = $touch;
         }
 
@@ -237,12 +240,10 @@ final class Attribution
     {
         $state = self::state($state);
         $referrer = \is_string($submit['referrer'] ?? null) ? $submit['referrer'] : '';
-        $page = $state['page_url'];
-
-        if ($page === '' && $referrer !== '' && self::host($referrer) !== ''
-            && !self::external($referrer, \is_string($submit['host'] ?? null) ? $submit['host'] : '')) {
-            $page = self::url($referrer, true);
-        }
+        // The page the form was sent from (its Referer on the site itself), else the last page of the
+        // session: another tab may have opened a page after the booking form.
+        $page = $referrer !== '' && self::host($referrer) !== '' && !self::external($referrer, \is_string($submit['host'] ?? null) ? $submit['host'] : '')
+            ? self::url($referrer, true) : $state['page_url'];
 
         $agent = self::clean($submit['user_agent'] ?? '');
 

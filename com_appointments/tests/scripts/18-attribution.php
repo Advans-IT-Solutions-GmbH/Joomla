@@ -33,6 +33,7 @@ $messageTo = static function (string $mime): string {
     return preg_match('/^To:\s*(.+)$/mi', $mime, $match) === 1 ? strtolower(trim($match[1])) : '';
 };
 $exportCsv = static function (AppointmentsHttp $client, string $task, int $event): string {
+    $event = $event > 0 ? (string) $event : '';
     $html = $client->request('/administrator/index.php?' . http_build_query(['option' => 'com_appointments', 'view' => 'bookings',
         'filter_eventtype_id' => $event, 'filter_state' => '', 'filter_search' => '', 'filter_from' => '', 'filter_to' => '']));
 
@@ -92,6 +93,10 @@ try {
     [$browser, $path, $form] = $visitor->bookingForm($event, $day . ' 10:00:00', ['email' => $address]);
     $form['attribution'] = 'FORGED-BY-FORM';
     $form['booking']['attribution'] = 'FORGED-BY-FORM';
+    // Another tab opens an article after the booking form; the form is then sent from the booking page.
+    $visitor->request('/index.php?option=com_content&view=article&id=' . $article . '&catid=' . $category . '&other=tab');
+    $bookingPage = appointments_page($event, '&timezone=UTC&start=' . urlencode($day . ' 10:00:00'));
+    $visitor->headers = ['Referer: ' . $base . $bookingPage, 'User-Agent: ' . $agent, 'Accept-Language: de-CH,de;q=0.9'];
     sleep(2);
     $before = AppointmentsMail::snapshot();
     $html = $browser->request($path, $form);
@@ -115,9 +120,8 @@ try {
         && ($record['last_touch']['referrer_host'] ?? '') === 'mail.example.org', 'Last touch: the newsletter visit, not the internal navigation');
     $check(str_contains($record['landing_url'] ?? '', 'id=' . $article) && str_contains($record['landing_url'] ?? '', 'utm_source=linkedin')
         && !str_contains(json_encode($record), 'NEVER-STORED'), 'The first landing URL keeps path and query, without a credential parameter');
-    $check(str_contains($record['booking_page_url'] ?? '', 'com_appointments') || str_contains($record['booking_page_url'] ?? '', 'timezone=UTC'),
-        'The booking page is the last page before the booking');
-    $check((int) ($record['page_views'] ?? 0) >= 4, 'Page views before the booking are counted');
+    $check(($record['booking_page_url'] ?? '') === $bookingPage, 'The booking page is the page the form was sent from, not a page of another tab');
+    $check((int) ($record['page_views'] ?? 0) >= 5, 'Page views before the booking are counted');
     $check(filter_var($record['booking_ip'] ?? '', FILTER_VALIDATE_IP) !== false && filter_var($record['landing_ip'] ?? '', FILTER_VALIDATE_IP) !== false,
         'The IP address of the first page view and of the booking are stored');
     $check(($record['accept_language'] ?? '') === 'de-CH,de;q=0.9' && ($record['user_agent'] ?? '') === $agent
@@ -140,13 +144,14 @@ try {
         && !str_contains($inviteeText, 'LI-CLICK-1') && !str_contains($inviteeText, (string) ($record['booking_ip'] ?? 'missing')),
         'The invitee mail carries nothing of the origin');
 
-    // The non-personal aggregate: the last touch's campaign, one confirmed booking.
+    // The campaign statistics: the last touch's campaign, the confirmed state, nothing personal.
     $stats = $db->query("SELECT * FROM {$prefix}appointments_campaign_stats WHERE eventtype_id={$event}")->fetch_all(MYSQLI_ASSOC);
-    $check(count($stats) === 1 && $stats[0]['utm_source'] === 'newsletter' && $stats[0]['utm_campaign'] === 'last-campaign'
-        && $stats[0]['referrer_host'] === 'mail.example.org' && (int) $stats[0]['bookings'] === 1 && (int) $stats[0]['confirmed'] === 1,
-        'The campaign aggregate counts the booking under its last campaign');
-    $check(array_keys($stats[0] ?? []) === ['day', 'eventtype_id', 'utm_source', 'utm_medium', 'utm_campaign', 'referrer_host',
-        'bookings', 'pending', 'confirmed', 'cancelled'], 'The aggregate has no column for a person, a URL, a click ID or an address');
+    $eventTitle = (string) $db->query("SELECT title FROM {$prefix}appointments_eventtypes WHERE id={$event}")->fetch_assoc()['title'];
+    $check(count($stats) === 1 && (int) $stats[0]['booking_id'] === $id && $stats[0]['utm_source'] === 'newsletter'
+        && $stats[0]['utm_campaign'] === 'last-campaign' && $stats[0]['referrer_host'] === 'mail.example.org' && (int) $stats[0]['state'] === 1
+        && $stats[0]['eventtype_title'] === $eventTitle, 'The campaign statistics count the booking under its last campaign');
+    $check(array_keys($stats[0] ?? []) === ['booking_id', 'day', 'eventtype_id', 'eventtype_title', 'utm_source', 'utm_medium', 'utm_campaign',
+        'referrer_host', 'state'], 'The campaign statistics have no column for a person, a URL, a click ID or an address');
 
     // Administrator: booking page, CSV export, campaign CSV.
     $admin = new AppointmentsHttp($base, 'attribution-admin');
@@ -164,8 +169,9 @@ try {
         && ($row['first_li_fat_id'] ?? '') === 'LI-CLICK-1' && ($row['booking_ip'] ?? '') === ($record['booking_ip'] ?? 'missing')
         && ($row['browser'] ?? '') === 'Firefox', 'The CSV export has every origin field in a column of its own');
     [, $campaignRows] = $csvRows($exportCsv($admin, 'exportCampaigns', $event));
-    $check(count($campaignRows) === 1 && $campaignRows[0]['utm_source'] === 'newsletter' && $campaignRows[0]['bookings'] === '1',
-        'The campaign statistics export has the aggregate of the event type');
+    $check(count($campaignRows) === 1 && $campaignRows[0]['utm_source'] === 'newsletter' && $campaignRows[0]['bookings'] === '1'
+        && $campaignRows[0]['confirmed'] === '1' && $campaignRows[0]['cancelled'] === '0',
+        'The campaign statistics export counts the event type per campaign and state');
 
     // Privacy export of the invitee's address.
     require __DIR__ . '/appointments-joomla.php';
@@ -185,8 +191,8 @@ try {
     $erased = $fixture->row($id);
     $check($erased['anonymised_utc'] !== null && $erased['attribution'] === null, 'Erasure removes the origin with the personal fields');
     $stats = $db->query("SELECT * FROM {$prefix}appointments_campaign_stats WHERE eventtype_id={$event}")->fetch_all(MYSQLI_ASSOC);
-    $check(count($stats) === 1 && (int) $stats[0]['bookings'] === 1 && (int) $stats[0]['confirmed'] === 0 && (int) $stats[0]['cancelled'] === 1,
-        'The campaign aggregate outlives the erasure and counts the cancelled booking');
+    $check(count($stats) === 1 && (int) $stats[0]['booking_id'] === $id && (int) $stats[0]['state'] === 2 && $stats[0]['utm_source'] === 'newsletter',
+        'The campaign statistics outlive the erasure and count the booking as cancelled');
 
     // A booking without a session: the request itself still tells the booking page, the address and the browser.
     $direct = new AppointmentsHttp($base, 'attribution-direct');
@@ -213,7 +219,15 @@ try {
     $time = $db->real_escape_string($day . ' 12:00:00');
     $offRow = $db->query("SELECT attribution FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$time}'")->fetch_assoc();
     $offStats = (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_campaign_stats WHERE utm_source='off-campaign'")->fetch_assoc()['n'];
-    $check($offRow !== null && $offRow['attribution'] === null && $offStats === 0, 'With the option off neither the origin nor the aggregate is written');
+    $check($offRow !== null && $offRow['attribution'] === null && $offStats === 0, 'With the option off neither the origin nor the statistics are written');
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($originalParams) . "' WHERE element='com_appointments' AND type='component'");
+
+    // A deleted event type: its statistics stay, named by the title at booking time, for a component administrator.
+    $db->query("DELETE FROM {$prefix}appointments_eventtypes WHERE id={$event}");
+    [, $orphanRows] = $csvRows($exportCsv($admin, 'exportCampaigns', 0));
+    $orphan = array_values(array_filter($orphanRows, static fn (array $row): bool => (int) $row['eventtype_id'] === $event && $row['utm_source'] === 'newsletter'));
+    $check($orphan !== [] && $orphan[0]['eventtype_title'] === $eventTitle && $orphan[0]['cancelled'] === '1',
+        'The statistics of a deleted event type stay exportable for a component administrator');
 } catch (Throwable $e) {
     $check(false, 'Unexpected ' . $e::class . ': ' . $e->getMessage());
 } finally {

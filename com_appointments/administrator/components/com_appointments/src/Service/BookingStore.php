@@ -89,8 +89,9 @@ final class BookingStore
                 throw new \RuntimeException('The encrypted booking could not be stored.');
             }
             Close\Queue::changed($db, $clear, created: true);
+            // Campaign statistics in the same transaction, so later state changes follow in order.
+            CampaignStats::booked($db, $clear, (string) ($event['title'] ?? ''));
             $db->transactionCommit();
-            CampaignStats::booked($db, $clear);
             $this->mirror('saved', $clear);
 
             return $clear;
@@ -173,7 +174,6 @@ final class BookingStore
                 $booking['cancelled_version_utc'] = $change['cancelled_version_utc'] = $booking['modified_utc'];
             }
 
-            $previous = (int) $booking['state'];
             $booking['state'] = $state;
             $booking['sequence'] = (int) $booking['sequence'] + 1;
             $booking['modified_utc'] = ModifiedTime::next($booking['modified_utc'], $now);
@@ -182,6 +182,7 @@ final class BookingStore
                 'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'cancel_reason' => $booking['cancel_reason']] + $change);
             $db->updateObject('#__appointments_bookings', $row, 'id');
             Close\Queue::changed($db, $booking);
+            CampaignStats::moved($db, $bookingId, $state);
             $db->transactionCommit();
 
         } catch (\Throwable $e) {
@@ -190,7 +191,6 @@ final class BookingStore
             throw $e;
         }
 
-        CampaignStats::moved($db, $booking, $previous, $state);
         $this->mirror($state === 2 ? 'cancelled' : 'saved', $booking);
         $cleanup = $state === 2 ? $this->conference()->destroy($booking) : $booking;
 
@@ -356,14 +356,15 @@ final class BookingStore
                     . $db->quote($now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')) . ')')->execute();
             }
             Close\Queue::changed($db, $erased, true);
+            // The campaign statistics keep the booking without personal data, now as cancelled when
+            // the erasure cancelled it, also when the booking row itself is deleted.
+            CampaignStats::moved($db, $bookingId, (int) $erased['state']);
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();
             throw $e;
         }
 
-        // The aggregate keeps the booking, now as cancelled when the erasure cancelled it.
-        CampaignStats::moved($db, $booking, (int) $booking['state'], (int) $erased['state']);
         $mirrored = $this->mirror('erased', ['id' => $bookingId]);
         $cleanup = $this->conference()->destroy($booking);
         $conferenceFailed = !empty($cleanup['_conference_cleanup_error']) || !empty($cleanup['_conference_error']);

@@ -17,15 +17,17 @@ use Joomla\Database\DatabaseInterface;
 defined('_JEXEC') or die;
 
 /**
- * The non-personal campaign aggregate: bookings counted per day of booking (UTC), event type,
- * utm_source, utm_medium, utm_campaign and referrer host ({@see Attribution::campaign()}), with
- * the number per current state. It holds no booking ID, no URL, no click ID, no address and
- * nothing of a device, and it is not changed by anonymisation or erasure: the evaluation of a
- * campaign stays possible after the bookings themselves are anonymised.
+ * The campaign statistics without personal data: one row per booking with the day of booking
+ * (UTC), the event type and its title at that time, utm_source, utm_medium, utm_campaign and
+ * referrer host ({@see Attribution::campaign()}) and the current state. No name, address, URL,
+ * click ID, IP address or device. The rows are not changed by anonymisation or erasure (only
+ * the state follows a cancellation), so the evaluation of a campaign stays possible after the
+ * bookings are anonymised or deleted. The export counts them per day, event type and campaign.
  *
- * Counted after the booking's own transaction, best effort: a failure is logged and never
- * fails a booking, a state change or an erasure. Bookings without a record of their origin
- * (made before 1.6.0 or with the option `attribution_capture` off) are not counted.
+ * Written inside the booking's own transaction, under its host lock: the row and its state
+ * always follow the booking in order. A failure is logged and never fails the booking. Bookings
+ * without a record of their origin (made before 1.6.0 or with the option `attribution_capture`
+ * off) get no row.
  *
  * @since  1.6.0
  */
@@ -33,73 +35,48 @@ final class CampaignStats
 {
     public const TABLE = '#__appointments_campaign_stats';
 
-    /** The counter column of each booking state. */
-    private const STATES = [0 => 'pending', 1 => 'confirmed', 2 => 'cancelled'];
-
-    /** Counts a booking that was just stored (opened row with `attribution`). */
-    public static function booked(DatabaseInterface $db, array $booking): void
+    /** Adds the row of a booking that is being stored (clear row with `attribution`, inside its transaction). */
+    public static function booked(DatabaseInterface $db, array $booking, string $eventTitle): void
     {
         try {
-            $key = self::key($booking);
-            $state = self::STATES[(int) ($booking['state'] ?? -1)] ?? null;
+            $record = Attribution::decode($booking['attribution'] ?? null);
+            $created = \is_string($booking['created_utc'] ?? null) ? UtcTimestamp::parse($booking['created_utc']) : null;
+            $id = (int) ($booking['id'] ?? 0);
+            $state = (int) ($booking['state'] ?? -1);
 
-            if ($key === null || $state === null) {
+            if ($record === null || $created === null || $id < 1 || !\in_array($state, [0, 1, 2], true)) {
                 return;
             }
 
-            $columns = array_merge(array_keys($key), ['bookings', $state]);
-            $values = array_merge(array_map([$db, 'quote'], array_values($key)), ['1', '1']);
-            $db->setQuery('INSERT INTO ' . $db->quoteName(self::TABLE) . ' (' . implode(', ', $db->quoteName($columns)) . ') VALUES ('
-                . implode(', ', $values) . ') ON DUPLICATE KEY UPDATE ' . $db->quoteName('bookings') . ' = ' . $db->quoteName('bookings') . ' + 1, '
-                . $db->quoteName($state) . ' = ' . $db->quoteName($state) . ' + 1')->execute();
+            $row = (object) (['booking_id' => $id, 'day' => $created->format('Y-m-d'), 'eventtype_id' => (int) $booking['eventtype_id'],
+                'eventtype_title' => Attribution::clean($eventTitle, 255)] + Attribution::campaign($record) + ['state' => $state]);
+            $db->insertObject(self::TABLE, $row);
         } catch (\Throwable $e) {
             Log::add('Appointment campaign statistics: a booking could not be counted (' . $e::class . ').', Log::WARNING, 'com_appointments');
         }
     }
 
-    /** Moves a counted booking (opened row before the change) from state $from to state $to. */
-    public static function moved(DatabaseInterface $db, array $booking, int $from, int $to): void
+    /** The new state of a booking (inside the transaction of the change); no row, nothing to do. */
+    public static function moved(DatabaseInterface $db, int $bookingId, int $state): void
     {
-        try {
-            $key = self::key($booking);
-            $old = self::STATES[$from] ?? null;
-            $new = self::STATES[$to] ?? null;
+        if ($bookingId < 1 || !\in_array($state, [0, 1, 2], true)) {
+            return;
+        }
 
-            if ($key === null || $old === null || $new === null || $old === $new) {
+        try {
+            // A plain read first: an UPDATE of a row that does not exist would lock the gap and make a
+            // concurrent booking of another host wait for this transaction.
+            $counted = $db->setQuery('SELECT ' . $db->quoteName('booking_id') . ' FROM ' . $db->quoteName(self::TABLE)
+                . ' WHERE ' . $db->quoteName('booking_id') . ' = ' . $bookingId)->loadResult();
+
+            if ($counted === null) {
                 return;
             }
 
-            $where = [];
-
-            foreach ($key as $column => $value) {
-                $where[] = $db->quoteName($column) . ' = ' . $db->quote($value);
-            }
-
-            $db->setQuery('UPDATE ' . $db->quoteName(self::TABLE) . ' SET '
-                . $db->quoteName($old) . ' = IF(' . $db->quoteName($old) . ' > 0, ' . $db->quoteName($old) . ' - 1, 0), '
-                . $db->quoteName($new) . ' = ' . $db->quoteName($new) . ' + 1 WHERE ' . implode(' AND ', $where))->execute();
+            $db->setQuery('UPDATE ' . $db->quoteName(self::TABLE) . ' SET ' . $db->quoteName('state') . ' = ' . $state
+                . ' WHERE ' . $db->quoteName('booking_id') . ' = ' . $bookingId)->execute();
         } catch (\Throwable $e) {
             Log::add('Appointment campaign statistics: a state change could not be counted (' . $e::class . ').', Log::WARNING, 'com_appointments');
         }
-    }
-
-    /**
-     * The aggregate key of a booking: day of creation, event type and campaign. Null for a
-     * booking without a record of its origin (made before 1.6.0 or with the option off, already
-     * erased), so only bookings counted at their creation are ever moved.
-     *
-     * @return  array{day: string, eventtype_id: int, utm_source: string, utm_medium: string, utm_campaign: string, referrer_host: string}|null
-     */
-    private static function key(array $booking): ?array
-    {
-        $created = \is_string($booking['created_utc'] ?? null) ? UtcTimestamp::parse($booking['created_utc']) : null;
-        $event = (int) ($booking['eventtype_id'] ?? 0);
-        $record = Attribution::decode($booking['attribution'] ?? null);
-
-        if ($created === null || $event < 1 || $record === null) {
-            return null;
-        }
-
-        return ['day' => $created->format('Y-m-d'), 'eventtype_id' => $event] + Attribution::campaign($record);
     }
 }

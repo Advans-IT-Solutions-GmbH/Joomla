@@ -831,7 +831,7 @@ its own deletion rules. State the waiting period in the privacy policy.
 | Calendars on a device set to **Clean up** | At the next synchronisation after removing the device, a block or a password reset. A device set to **Block only** is only refused and deletes nothing. | Only on the device. The server keeps everything. |
 | Whole internet calendar | At once when somebody deletes it with all its entries in the administrator. | Website. On devices depending on the program. |
 | Erasure record | After the erasure-audit retention in years. | Website. |
-| Campaign statistics | Never because of its age. It holds no personal data: only counts per day, event type and campaign. | Website. |
+| Campaign statistics | Never because of its age. It holds no personal data: per booking only the day, event type, campaign and state. | Website. |
 | Internet calendar log | After twelve months. | Website. |
 | Backup of the website | After 30 days at most. | Backup storage. |
 | Data in Close | Never by the website. A booking with a pending transfer stays on the website for up to 30 more days. | Close, under the rules of the CRM. |
@@ -1504,9 +1504,11 @@ own, no script and no form field: a value posted with the booking form never rea
 - The first page view of the session keeps its time, path and query and IP address.
 - A page view that carries a `utm_*` parameter or a click ID, or arrives from another host (the
   Referer header, «www.» counts as the same site), is a *touch*. The first touch is kept. The last
-  touch is replaced only by a touch with other parameters or another referrer host, never by
-  internal navigation, a direct visit or a reload of the same touch.
-- The booking adds what its own request tells.
+  touch is replaced only by a touch with other parameters or by an arrival from another external
+  host, never by internal navigation (also with the same parameters), a direct visit or a reload of
+  the same touch. A touch keeps a referrer host only when it came from another site.
+- The booking adds what its own request tells. The booking page is the page the form was sent from
+  (its Referer on the site itself), else the last page of the session.
 
 **What is stored**, as JSON in the encrypted column `attribution` of the booking:
 
@@ -1517,7 +1519,7 @@ own, no script and no form field: a value posted with the booking form never rea
 | `landing_ip` | IP address of that first page view |
 | `first_touch`, `last_touch` | Each with `time_utc`, `landing_url` (path and query), `referrer` (the URL as the browser sent it), `referrer_host` and `parameters`: `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `utm_id`, `gclid`, `gbraid`, `wbraid`, `fbclid`, `msclkid`, `li_fat_id`, `ttclid`, `twclid`, `mc_cid`, `mc_eid` |
 | `page_views` | Page views of the session before the booking, the booking page included |
-| `booking_page_url` | Path and query of the booking page |
+| `booking_page_url` | Path and query of the page the booking form was sent from |
 | `booking_ip` | IP address of the booking request |
 | `accept_language` | The browser's Accept-Language header |
 | `user_agent` | The User-Agent header as sent |
@@ -1550,15 +1552,19 @@ deletion link, a formal privacy request, the retention task (for example 30 days
 the appointment) and an erasure in the administrator, and it goes with the row in the delete mode.
 The session holds its values until the session ends.
 
-**Campaign statistics without personal data.** Each booking with a record is also counted in
-`#__appointments_campaign_stats`: day of booking (UTC), event type, `utm_source`, `utm_medium`,
-`utm_campaign` and referrer host of the last touch (else the first), each cut at 100 characters,
-with the number of bookings and the number per current state (pending, confirmed, cancelled). It
-holds no booking ID, URL, click ID, IP address or device, so it is not erased with the bookings and
-the evaluation of a campaign stays possible after they are anonymised. **Export campaign statistics**
-in the bookings toolbar downloads it as CSV, filtered by event type and by the day of booking (the
-list's from and to dates). It is counted after the booking is stored and never fails a booking.
-Campaign names are whatever the link carried: never put personal data into `utm_*` values.
+**Campaign statistics without personal data.** Each booking with a record also gets a row in
+`#__appointments_campaign_stats`: booking ID, day of booking (UTC), event type and its title at that
+time, `utm_source`, `utm_medium`, `utm_campaign` and the referrer host of the last touch (else the
+first), each cut at 100 characters, and the current state. No name, address, URL, click ID, IP
+address or device. The row is written in the booking's own transaction and follows its state
+(a cancellation, also one by an erasure). It is not erased with the booking, also not in the delete
+mode, so the evaluation of a campaign stays possible after the bookings are anonymised or deleted.
+**Export campaign statistics** in the bookings toolbar downloads the number of bookings and the
+number per state (pending, confirmed, cancelled) per day, event type and campaign, filtered by event
+type and by the day of booking (the list's from and to dates). The statistics of a deleted event
+type stay, named by its title at booking time, and only a component administrator exports them.
+Writing the row never fails a booking. Campaign names are whatever the link carried: never put
+personal data into `utm_*` values.
 
 ### Page markup and styling
 

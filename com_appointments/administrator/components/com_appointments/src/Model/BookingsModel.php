@@ -172,27 +172,45 @@ class BookingsModel extends ListModel
     }
 
     /**
-     * The non-personal campaign aggregate (CampaignStats) of the event types this user may see,
-     * filtered by event type and by the day of booking (filters «from» and «to»), oldest first.
+     * The campaign statistics (CampaignStats) counted per day of booking, event type and campaign,
+     * with the number per state, filtered by event type and by the day of booking (filters «from»
+     * and «to»), oldest first. The event types this user may see; the statistics of a deleted
+     * event type (named by its title at booking time) only for a component administrator.
      *
      * @return  \Generator<array<string, mixed>>
      */
     public function campaignRows(): \Generator
     {
         $db = $this->getDatabase();
+        $user = Factory::getApplication()->getIdentity();
         $ids = array_map(static fn ($row) => (int) $row['id'], $this->authorisedEvents());
+        $orphans = $user->authorise('core.admin', 'com_appointments');
 
-        if ($ids === [] || !Factory::getApplication()->getIdentity()->authorise('core.manage', 'com_appointments')) {
+        if (($ids === [] && !$orphans) || !$user->authorise('core.manage', 'com_appointments')) {
             return;
         }
 
+        $scope = [];
+
+        if ($ids !== []) {
+            $scope[] = $db->quoteName('s.eventtype_id') . ' IN (' . implode(',', $ids) . ')';
+        }
+
+        if ($orphans) {
+            $scope[] = $db->quoteName('e.id') . ' IS NULL';
+        }
+
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(['s.day', 's.eventtype_id', 's.utm_source', 's.utm_medium', 's.utm_campaign', 's.referrer_host',
-            's.bookings', 's.pending', 's.confirmed', 's.cancelled']))
-            ->select($db->quoteName('e.title', 'eventtype_title'))
+        $query->select($db->quoteName(['s.day', 's.eventtype_id', 's.utm_source', 's.utm_medium', 's.utm_campaign', 's.referrer_host']))
+            ->select('MAX(COALESCE(' . $db->quoteName('e.title') . ', ' . $db->quoteName('s.eventtype_title') . ')) AS ' . $db->quoteName('eventtype_title'))
+            ->select('COUNT(*) AS ' . $db->quoteName('bookings'))
+            ->select('SUM(' . $db->quoteName('s.state') . ' = 0) AS ' . $db->quoteName('pending'))
+            ->select('SUM(' . $db->quoteName('s.state') . ' = 1) AS ' . $db->quoteName('confirmed'))
+            ->select('SUM(' . $db->quoteName('s.state') . ' = 2) AS ' . $db->quoteName('cancelled'))
             ->from($db->quoteName(\Advans\Component\Appointments\Administrator\Service\CampaignStats::TABLE, 's'))
-            ->join('INNER', $db->quoteName('#__appointments_eventtypes', 'e') . ' ON ' . $db->quoteName('e.id') . ' = ' . $db->quoteName('s.eventtype_id'))
-            ->where($db->quoteName('s.eventtype_id') . ' IN (' . implode(',', $ids) . ')');
+            ->join('LEFT', $db->quoteName('#__appointments_eventtypes', 'e') . ' ON ' . $db->quoteName('e.id') . ' = ' . $db->quoteName('s.eventtype_id'))
+            ->where('(' . implode(' OR ', $scope) . ')')
+            ->group($db->quoteName(['s.day', 's.eventtype_id', 's.utm_source', 's.utm_medium', 's.utm_campaign', 's.referrer_host']));
         $event = (string) $this->getState('filter.eventtype_id', '');
 
         if ($event !== '') {

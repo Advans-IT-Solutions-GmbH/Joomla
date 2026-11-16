@@ -84,6 +84,12 @@ final class AttributionTest extends TestCase
         $state = Attribution::visit($state, $this->request('/de/it-services?utm_source=linkedin&utm_campaign=a', 'https://www.linkedin.com/'),
             $this->at('2026-11-16 08:03:00'));
         self::assertSame('2026-11-16 08:00:00', $state['last_touch']['time_utc']);
+        // An internal link that carries the same parameters keeps the external arrival and its referrer host.
+        $state = Attribution::visit($state, $this->request('/de/erstgespraech?utm_source=linkedin&utm_campaign=a', 'https://www.example.test/de/it-services'),
+            $this->at('2026-11-16 08:03:30'));
+        self::assertSame('2026-11-16 08:00:00', $state['last_touch']['time_utc']);
+        self::assertSame('www.linkedin.com', $state['last_touch']['referrer_host']);
+        self::assertSame('www.linkedin.com', Attribution::campaign(['last_touch' => $state['last_touch']])['referrer_host']);
         // Another campaign replaces the last touch, the first stays.
         $state = Attribution::visit($state, $this->request('/de/it-services?utm_source=newsletter&utm_campaign=b&mc_cid=x', 'https://mail.example.org/'),
             $this->at('2026-11-16 08:04:00'));
@@ -92,8 +98,13 @@ final class AttributionTest extends TestCase
         self::assertSame('2026-11-16 08:04:00', $state['last_touch']['time_utc']);
         self::assertSame('2026-11-16 08:00:00', $state['first_seen_utc']);
         self::assertSame('/de/it-services?utm_source=linkedin&utm_campaign=a', $state['landing_url'], 'The first landing URL never changes');
-        self::assertSame(5, $state['views']);
+        self::assertSame(6, $state['views']);
         self::assertSame('/de/it-services?utm_source=newsletter&utm_campaign=b&mc_cid=x', $state['page_url']);
+        // An internal link with other parameters is a new touch, but names no referrer host of the site itself.
+        $internal = Attribution::visit($state, $this->request('/de/x?utm_source=site&utm_campaign=banner', 'https://www.example.test/de/'),
+            $this->at('2026-11-16 08:05:00'));
+        self::assertSame('banner', $internal['last_touch']['parameters']['utm_campaign']);
+        self::assertSame('', $internal['last_touch']['referrer_host']);
     }
 
     public function testValuesAreCleanedCappedAndCredentialsLeaveTheUrls(): void
@@ -139,6 +150,15 @@ final class AttributionTest extends TestCase
         self::assertStringContainsString('Chrome/131', $record['user_agent']);
         self::assertSame('linkedin', $record['first_touch']['parameters']['utm_source']);
         self::assertSame($record, Attribution::decode(Attribution::encode($record)), 'Stored as JSON and read back unchanged');
+
+        // Another tab opened an article after the booking form: the Referer of the submit names the booking page.
+        $tabs = Attribution::visit($state, $this->request('/de/blog/artikel', 'https://www.example.test/de/'), $this->at('2026-11-16 08:06:00'));
+        self::assertSame('/de/blog/artikel', $tabs['page_url']);
+        self::assertSame('/de/erstgespraech-kmu-it', Attribution::record($tabs, $this->submit(), $this->at('2026-11-16 08:10:00'))['booking_page_url']);
+        self::assertSame('/de/blog/artikel', Attribution::record($tabs, $this->submit(['referrer' => '']), $this->at('2026-11-16 08:10:00'))['booking_page_url'],
+            'Without a Referer of the site the last page of the session counts');
+        self::assertSame('/de/blog/artikel', Attribution::record($tabs, $this->submit(['referrer' => 'https://evil.example.org/x']),
+            $this->at('2026-11-16 08:10:00'))['booking_page_url'], 'A Referer of another host is never the booking page');
 
         // Without a session (plugin off, session expired): what the submit itself tells, the page from its Referer.
         $bare = Attribution::record(null, $this->submit(['referrer' => 'https://www.example.test/de/erstgespraech-kmu-it?x=1']), $this->at('2026-11-16 08:10:00'));
