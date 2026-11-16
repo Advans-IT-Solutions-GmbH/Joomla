@@ -96,8 +96,13 @@ working unchanged. Without either, the profile's records block with `credential`
 - **Replacing a key** keeps already transferred records deliverable as long as the new key
   authenticates the same Close organisation. A key of another organisation blocks them with
   `organization_changed` before any personal data is sent.
-- **Changing the site secret** makes every stored key unreadable. Nothing fails: the tab shows that
-  the key must be entered again, and until then the profile variable applies, if there is one.
+- **Changing the site secret** makes every stored key unreadable. The key lookup itself never
+  throws: the tab shows that the key must be entered again, and new key lookups use the profile
+  variable, if there is one, until then. This covers the API key only. The same secret also
+  authenticates the existing Close delivery records and decrypts the stored bookings, so those
+  records stop with an integrity or decryption error after a secret change, and neither the profile
+  variable nor a re-entered key restores them. Do not change the site secret of an installation in
+  use (see "Signing keys" below).
 - **Permission.** Only users with `core.admin` on the component see the tab and can set or delete a
   key, also when they may edit the event type otherwise. Deleting an event type deletes its key.
 - **Rights of the key.** A Close API key always carries all rights of the Close user it was created
@@ -2016,7 +2021,8 @@ site secret deliberately invalidates existing signatures and changes derived roo
 The independently random subscription credentials and optional operator JWT signing secret are
 different capabilities and have their own rotation/configuration paths. The database holds only
 a keyed digest of each subscription credential, so changing the site secret also invalidates every
-subscription URL; rotate each feed afterwards to issue a new one.
+subscription URL; rotate each feed afterwards to issue a new one. The Close API keys stored per
+event type become unreadable too and have to be entered again (section "API key per booking page").
 
 ## Uninstall
 
