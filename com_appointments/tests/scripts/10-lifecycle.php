@@ -229,6 +229,9 @@ try {
     $check($reason !== null && trim($reason->textContent) === 'Kept reason', 'The entered cancellation reason is kept');
     // A failed notification is a partial success: its warning is part of the announced result,
     // not a system message above the component, where the landing would leave it out of view.
+    // Another browser opens the same cancellation form before the appointment is cancelled and keeps
+    // it open (its token is replayed below, after the cancellation).
+    $staleToken = $outsider->token($outsider->request($freshCancel));
     $hostEmail = $fixture->db->query("SELECT email FROM {$fixture->prefix}users WHERE id={$fixture->host}")->fetch_assoc()['email'];
     $fixture->db->query("UPDATE {$fixture->prefix}users SET email='not-an-address' WHERE id={$fixture->host}");
     try {
@@ -272,11 +275,11 @@ try {
     $check($outsider->status === 200 && str_contains($html, 'This appointment has already been cancelled.')
         && !str_contains($html, 'new-start') && !str_contains($html, 'booking.manage'),
         'The reschedule link of the cancelled version reports the cancellation instead of offering times');
-    // A form still open in another tab changes nothing and lands on the same notice.
+    // A form still open in another tab (opened before the cancellation, its token kept) changes
+    // nothing and lands on the same notice.
     parse_str((string) parse_url($freshCancel, PHP_URL_QUERY), $staleQuery);
-    $staleForm = $outsider->request($freshCancel);
     $html = $outsider->request('/index.php?option=com_appointments&task=booking.manage', array_replace($staleQuery, [
-        $outsider->token($staleForm) => 1, 'confirm' => 1,
+        $staleToken => 1, 'confirm' => 1,
     ]));
     $check($outsider->status === 200 && str_contains($html, 'This appointment has already been cancelled.')
         && (int) $fixture->row((int) $booking['id'])['sequence'] === 2,
