@@ -43,8 +43,10 @@ final class BookingInputTest extends TestCase
         $row = (new BookingInput())->validate(array_replace($this->input(), ['first_name' => $long, 'last_name' => $long]), [], 'en-GB');
         self::assertSame(255, mb_strlen($row['invitee_name']));
 
-        $error = $this->refusal(array_replace($this->input(), ['first_name' => $long . 'a']), []);
-        self::assertSame(['first_name' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIRST_NAME'], $error->fieldErrors);
+        // Release test 16.11.: a name that is too long is refused with the maximum, not as a missing name.
+        $error = $this->refusal(array_replace($this->input(), ['first_name' => $long . 'a', 'last_name' => $long . 'a']), []);
+        self::assertSame(['first_name' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH',
+            'last_name' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH'], $error->fieldErrors);
         $error = $this->refusal(array_replace($this->input(), ['last_name' => ['array']]), []);
         self::assertSame(['last_name' => 'COM_APPOINTMENTS_BOOKING_ERROR_LAST_NAME'], $error->fieldErrors);
     }
@@ -131,7 +133,7 @@ final class BookingInputTest extends TestCase
         self::assertSame(['field-5'], array_keys($error->fieldErrors));
         self::assertContains($error->fieldErrors['field-5'],
             ['COM_APPOINTMENTS_BOOKING_ERROR_FIELD_REQUIRED', 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_INVALID',
-                'COM_APPOINTMENTS_BOOKING_ERROR_PHONE_LENGTH']);
+                'COM_APPOINTMENTS_BOOKING_ERROR_PHONE_LENGTH', 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH']);
     }
 
     public static function badFields(): iterable
@@ -386,7 +388,7 @@ final class BookingInputTest extends TestCase
         self::assertSame(['field-4' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH'], $error->fieldErrors);
 
         $error = $this->refusal($this->input() + ['fields' => [4 => str_repeat('a', 8001)]], $fields);
-        self::assertSame(['field-4' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_INVALID'], $error->fieldErrors, 'Beyond the storage limit as before');
+        self::assertSame(['field-4' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH'], $error->fieldErrors, 'Beyond the storage limit the same message');
 
         // A form POST sends a textarea's line breaks as CRLF: one character each, as the field counts them.
         $ten = [['id' => 4, 'type' => 'textarea', 'required' => 0, 'options' => '[]', 'max_length' => 10]];
@@ -396,6 +398,26 @@ final class BookingInputTest extends TestCase
         $default = [['id' => 4, 'type' => 'textarea', 'required' => 0, 'options' => '[]']];
         $row = (new BookingInput())->validate($this->input() + ['fields' => [4 => str_repeat('a', 8000)]], $default, 'de-DE');
         self::assertSame(8000, mb_strlen(json_decode($row['custom_fields'], true)['4']));
+    }
+
+    /**
+     * Release test 16.11.: an answer longer than its field allows names the maximum (the form shows
+     * BookingInput::maxLength() or the address limit), also without an own maximum of the field.
+     */
+    public function testTooLongAnswersAreRefusedWithTheLengthMessage(): void
+    {
+        $text = [['id' => 6, 'type' => 'text', 'required' => 1, 'options' => '[]']];
+        $error = $this->refusal($this->input() + ['fields' => [6 => str_repeat('F', 256)]], $text);
+        self::assertSame(['field-6' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH'], $error->fieldErrors, 'A company of 256 characters');
+        $row = (new BookingInput())->validate($this->input() + ['fields' => [6 => str_repeat('F', 255)]], $text, 'de-DE');
+        self::assertSame(255, mb_strlen(json_decode($row['custom_fields'], true)['6']));
+
+        $textarea = [['id' => 7, 'type' => 'textarea', 'required' => 0, 'options' => '[]']];
+        $error = $this->refusal($this->input() + ['fields' => [7 => str_repeat('a', 8001)]], $textarea);
+        self::assertSame(['field-7' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH'], $error->fieldErrors);
+
+        $error = $this->refusal(array_replace($this->input(), ['email' => str_repeat('a', 244) . '@example.test']), []);
+        self::assertSame(['email' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH'], $error->fieldErrors, 'An address of 257 characters');
     }
 
     private function refusal(array $input, array $fields, bool $phoneRequired = false, int $maxGuests = 10): BookingValidationException
