@@ -352,8 +352,11 @@ final class BookingInputTest extends TestCase
         $error = $this->refusal(['first_name' => ['array'], 'last_name' => 'Person', 'email' => str_repeat('a', 300) . '@example.test', 'timezone' => 'UTC'], []);
         self::assertSame([
             'first_name' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIRST_NAME',
-            'email' => 'COM_APPOINTMENTS_BOOKING_ERROR_EMAIL',
+            // An address above 255 characters names the maximum (release test 16.11.).
+            'email' => 'COM_APPOINTMENTS_BOOKING_ERROR_FIELD_LENGTH',
         ], $error->fieldErrors);
+        $error = $this->refusal(array_replace($this->input(), ['email' => 'not-an-address']), []);
+        self::assertSame(['email' => 'COM_APPOINTMENTS_BOOKING_ERROR_EMAIL'], $error->fieldErrors);
     }
 
     public function testTamperedHiddenValuesAreAFormErrorWithoutFieldMessages(): void
