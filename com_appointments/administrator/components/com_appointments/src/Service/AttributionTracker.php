@@ -29,6 +29,11 @@ defined('_JEXEC') or die;
  * Off until the component option `attribution_capture` is switched on (default off): only a site
  * whose privacy notice names this processing may collect and store it.
  *
+ * Data minimisation: the session holds only what the booking needs (first visit with its one IP
+ * address, first and last touch, page count, last page), at most for the session lifetime. A
+ * stored booking takes it over encrypted and {@see self::forget()} removes it from the session at
+ * once; with the option off nothing is kept and an earlier state is removed.
+ *
  * @since  1.6.0
  */
 final class AttributionTracker
@@ -38,6 +43,20 @@ final class AttributionTracker
     public static function enabled(): bool
     {
         return (int) ComponentHelper::getParams('com_appointments')->get('attribution_capture', 0) === 1;
+    }
+
+    /** Removes the collected origin from the session (after a booking stored it, or with the option off). */
+    public static function forget(CMSApplicationInterface $app): void
+    {
+        try {
+            $session = $app->getSession();
+
+            if ($session->has(Attribution::SESSION_KEY)) {
+                $session->remove(Attribution::SESSION_KEY);
+            }
+        } catch (\Throwable $e) {
+            Log::add('Appointment attribution: the session could not be cleared (' . $e::class . ').', Log::WARNING, 'com_appointments');
+        }
     }
 
     /** Records one page view of the site in the session; never breaks a page. */
@@ -50,7 +69,13 @@ final class AttributionTracker
         self::$captured = true;
 
         try {
-            if (!$app->isClient('site') || !self::enabled()) {
+            if (!$app->isClient('site')) {
+                return;
+            }
+
+            if (!self::enabled()) {
+                self::forget($app);
+
                 return;
             }
 

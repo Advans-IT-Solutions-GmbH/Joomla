@@ -1563,7 +1563,12 @@ never render a value as markup.
 **Retention.** The record is one of the booking's personal fields: it is erased with them by the
 deletion link, a formal privacy request, the retention task (for example 30 days after the end of
 the appointment) and an erasure in the administrator, and it goes with the row in the delete mode.
-The session holds its values until the session ends.
+**In the session** the component keeps only what the booking needs: the first visit with its single
+IP address (never one per page view), the first and last touch, the page count and the last page.
+Joomla removes it with the session at the end of the configured session lifetime. A stored booking
+takes the values over encrypted, and the component removes them from the session at once, so a
+later booking in the same session starts anew. With the option off nothing is kept, and values of
+an earlier visit are removed at the next page view.
 
 **Campaign statistics without personal data.** Each booking with a record also gets a row in
 `#__appointments_campaign_stats`: booking ID, day of booking (UTC), event type and its title at that
@@ -1576,7 +1581,10 @@ mode, so the evaluation of a campaign stays possible after the bookings are anon
 number per state (pending, confirmed, cancelled) per day, event type and campaign, filtered by event
 type and by the day of booking (the list's from and to dates). The statistics of a deleted event
 type stay, named by its title at booking time, and only a component administrator exports them.
-Writing the row never fails a booking. Campaign names are whatever the link carried: never put
+Owner decision of 16.11.2026: these rows stay after the bookings are anonymised, so campaigns can be
+evaluated at any time, and the full origin of a booking is visible to whoever may open the booking,
+with the same permission as its personal data. Writing the row never fails a booking, except a
+database lock conflict that already rolled the booking back. Campaign names are whatever the link carried: never put
 personal data into `utm_*` values.
 
 ### Page markup and styling

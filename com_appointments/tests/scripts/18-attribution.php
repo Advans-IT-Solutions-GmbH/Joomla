@@ -268,6 +268,19 @@ try {
     $check(count($stats) === 1 && (int) $stats[0]['booking_id'] === $id && (int) $stats[0]['state'] === 2 && $stats[0]['utm_source'] === 'newsletter',
         'The campaign statistics outlive the erasure and count the booking as cancelled');
 
+    // A booking clears the capture data from the session: a second booking of the same visitor carries
+    // nothing of the visit before the first one (it is stored encrypted with the first booking only).
+    $visitor->headers = ['User-Agent: ' . $agent];
+    [$browser, $path, $form] = $visitor->bookingForm($event, $day . ' 14:00:00', ['email' => $address]);
+    sleep(2);
+    $browser->request($path, $form);
+    $time = $db->real_escape_string($day . ' 14:00:00');
+    $again = Attribution::decode(appointments_open_booking($db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event}"
+        . " AND start_utc='{$time}'")->fetch_assoc())['attribution'] ?? null);
+    $check($again !== null && $again['first_touch'] === null && $again['last_touch'] === null && !str_contains(json_encode($again), 'linkedin')
+        && !str_contains(json_encode($again), 'newsletter') && (int) $again['page_views'] <= 2,
+        'After a booking the session holds no capture data: the next booking starts from its own booking page');
+
     // A booking without a session: the request itself still tells the booking page, the address and the browser.
     $direct = new AppointmentsHttp($base, 'attribution-direct');
     $direct->headers = ['User-Agent: ' . $agent];
@@ -326,6 +339,19 @@ try {
     $offRow = $db->query("SELECT attribution FROM {$prefix}appointments_bookings WHERE eventtype_id={$event} AND start_utc='{$time}'")->fetch_assoc();
     $offStats = (int) $db->query("SELECT COUNT(*) AS n FROM {$prefix}appointments_campaign_stats WHERE utm_source='off-campaign'")->fetch_assoc()['n'];
     $check($offRow !== null && $offRow['attribution'] === null && $offStats === 0, 'With the option off neither the origin nor the statistics are written');
+
+    // Nothing was kept in the session while the option was off: switched on again, the same visitor's
+    // booking has no touch of the campaign visit made while it was off.
+    $params['attribution_capture'] = 1;
+    $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($params)) . "' WHERE element='com_appointments' AND type='component'");
+    [$browser, $path, $form] = $off->bookingForm($event, $day . ' 15:00:00', ['email' => $address]);
+    sleep(2);
+    $browser->request($path, $form);
+    $time = $db->real_escape_string($day . ' 15:00:00');
+    $afterOff = Attribution::decode(appointments_open_booking($db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event}"
+        . " AND start_utc='{$time}'")->fetch_assoc())['attribution'] ?? null);
+    $check($afterOff !== null && $afterOff['first_touch'] === null && !str_contains(json_encode($afterOff), 'off-campaign')
+        && (int) $afterOff['page_views'] === 1, 'With the option off nothing is kept in the session');
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($originalParams) . "' WHERE element='com_appointments' AND type='component'");
 
     // A deleted event type: its statistics stay, named by the title at booking time, for a component administrator.
