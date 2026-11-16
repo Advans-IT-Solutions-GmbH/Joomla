@@ -152,6 +152,7 @@ namespace Joomla\CMS\Table {
     {
         use NestedStoreFixture;
         const TABLE = '#__content';
+        public static bool $throwAfterInsert = false;
         public int $id = 0;
         private array $row = [];
         public function __construct(private object $db) {}
@@ -161,6 +162,9 @@ namespace Joomla\CMS\Table {
             // The row itself is inserted first, then its asset is stored under a table lock.
             $this->id = 42;
             $this->db->insertObject('#__content', (object) ($this->row + ['id' => $this->id]));
+            if (self::$throwAfterInsert) {
+                throw new \RuntimeException('Content fixture store failed after the insert');
+            }
             $this->lockForStore();
             $this->recordTableWrite('store', $this->id);
             return true;
@@ -219,6 +223,8 @@ namespace {
     {
         public string $from = '';
         public function from($table, $alias = null): self { $this->from = (string) $table; return $this; }
+        public array $binds = [];
+        public function bind($key, $value = null, ...$rest): self { $this->binds[$key] = $value; return $this; }
         public function __call(string $name, array $arguments): self { return $this; }
     }
     class AuthorizationDatabase
@@ -255,7 +261,18 @@ namespace {
         public function createQuery(): \Joomla\Database\QueryInterface { return new AuthorizationQuery(); }
         public function quoteName(string $name): string { return $name; }
         public function quote(string $value): string { return "'" . $value . "'"; }
-        public function setQuery($query): self { $this->query = is_object($query) ? $query : null; return $this; }
+        public function setQuery($query): self {
+            $this->query = is_object($query) ? $query : null;
+            if (($this->query->from ?? '') === '#__content' && isset($this->query->binds[':alias'])) {
+                $this->aliasLookups[] = $this->query->binds[':alias'];
+            }
+            return $this;
+        }
+        // Article alias lookups, the bound states of executed updates and queued descendant states.
+        public array $aliasLookups = [];
+        public array $executed = [];
+        public array $assocLists = [];
+        public function loadAssocList($key = null, $column = null): array { return $this->assocLists ? array_shift($this->assocLists) : []; }
         public function loadObject(): ?object {
             $this->objectLoads++;
             $result = $this->objectResults ? array_shift($this->objectResults) : $this->article;
@@ -275,7 +292,7 @@ namespace {
             $this->updateNulls[$table] = $nulls;
         }
         public function insertid(): int { return 42; }
-        public function execute(): bool { return true; }
+        public function execute(): bool { $this->executed[] = $this->query->binds ?? []; return true; }
         public function resetAuthorizationScenario(array $results, array $objects = []): void {
             $this->results = $results;
             $this->objectResults = $objects;
@@ -292,6 +309,9 @@ namespace {
             $this->menuLocations = [];
             $this->categoryLocations = [];
             $this->menuInsertions = 0;
+            $this->aliasLookups = [];
+            $this->executed = [];
+            $this->assocLists = [];
         }
     }
     class AuthorizationModel extends ImportModel
@@ -342,8 +362,13 @@ namespace {
     // Fails a step of the row after the category, article and menu item were written.
     class FailingRowModel extends AuthorizationModel
     {
+        // Runs right before the failure, for example to simulate a concurrent change.
+        public ?\Closure $beforeFailure = null;
         protected function importProductFiles(array $files, int $productId): void
         {
+            if ($this->beforeFailure) {
+                ($this->beforeFailure)();
+            }
             throw new \RuntimeException('Forced failure of a later row step');
         }
     }
@@ -618,6 +643,7 @@ namespace {
             public function quoteName($name) { return $name; }
             public function quote($value) { return $value; }
             public function setQuery($query): void {}
+            public function loadAssocList($key = null, $column = null): array { return []; }
             public function loadObject(): object { return (object) ['j2store_productquantity_id' => 1, 'quantity' => $this->quantity]; }
             public function loadResult(): int { return 42; }
             public function updateObject($table, $row, $key): void { $this->quantity = $row->quantity; }
@@ -1096,7 +1122,7 @@ namespace {
             'core.create:com_menus.menu.5' => true, 'core.edit:com_menus.menu.5' => true,
             'core.edit.state:com_menus.menu.5' => true,
         ];
-        $nativeTables = ['#__categories' => 0, '#__j2commerce_products' => 0, '#__menu_types' => 5];
+        $nativeTables = ['#__categories' => 0, '#__content' => 0, '#__j2commerce_products' => 0, '#__menu_types' => 5];
         $authDb->resetAuthorizationScenario([]);
         $authDb->tableResults = $nativeTables;
         $user->permissions = $nativePermissions;
@@ -1163,6 +1189,70 @@ namespace {
             && str_contains($failure->getMessage(), 'COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_CATEGORY: 42')
             && $failure->getPrevious()?->getMessage() === 'Forced failure of a later row step',
             'A category that cannot be removed again is reported with the row error');
+
+        // A category that a concurrent import already uses is kept and reported, not deleted.
+        $authDb->resetAuthorizationScenario([]);
+        $authDb->tableResults = ['#__content' => 1] + $nativeTables;
+        $failure = $runFailingRow();
+        check(str_contains($failure->getMessage(), 'COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_CATEGORY: 42')
+            && $deletes() === [['delete', '#__menu', 1], ['delete', '#__content', 42]],
+            'A failed row keeps and reports its new category when an article already uses it');
+
+        // A store that throws after writing its row is still undone.
+        \Joomla\CMS\Table\Content::$throwAfterInsert = true;
+        try {
+            $authDb->resetAuthorizationScenario([]);
+            $authDb->tableResults = $nativeTables;
+            $failure = $runFailingRow();
+        } finally {
+            \Joomla\CMS\Table\Content::$throwAfterInsert = false;
+        }
+        check($failure->getMessage() === 'Content fixture store failed after the insert'
+            && $deletes() === [['delete', '#__content', 42], ['delete', '#__categories', 42]],
+            'An article store that throws after its insert is removed again with the new category');
+
+        // An existing menu item changed again by someone else keeps that change and is reported.
+        $existingMenu = (object) [
+            'id' => 7, 'home' => 0, 'menutype' => 'fixture', 'title' => 'Previous menu title', 'alias' => 'previous-alias',
+            'path' => 'previous-alias', 'link' => 'index.php?option=com_content&view=article&id=42', 'type' => 'component',
+            'published' => 1, 'parent_id' => 1, 'component_id' => 42, 'access' => 1, 'language' => '*',
+            'params' => '{}', 'client_id' => 0,
+        ];
+        $authDb->resetAuthorizationScenario([]);
+        $authDb->tableResults = $nativeTables;
+        $authDb->inserted['#__menu'] = clone $existingMenu;
+        $failingModel->beforeFailure = function () use ($authDb): void {
+            $authDb->inserted['#__menu']->title = 'Changed by another import';
+        };
+        try {
+            $failure = $runFailingRow();
+        } finally {
+            $failingModel->beforeFailure = null;
+        }
+        check(str_contains($failure->getMessage(), 'COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_MENU_ITEM_CHANGED: 7')
+            && $authDb->inserted['#__menu']->title === 'Changed by another import',
+            'A menu item changed again after the failed row keeps the later change and is reported');
+
+        // Descendants that Joomla unpublished together with the menu item get their state back.
+        $authDb->resetAuthorizationScenario([]);
+        $authDb->tableResults = $nativeTables;
+        $authDb->inserted['#__menu'] = clone $existingMenu;
+        // Before the store, after the store, and when the undo runs.
+        $authDb->assocLists = [[11 => 1, 12 => 0], [11 => 0, 12 => 0], [11 => 0, 12 => 0]];
+        $failure = $runFailingRow();
+        check($failure->getMessage() === 'Forced failure of a later row step'
+            && in_array([':state' => 1, ':id' => 11, ':written' => 0], $authDb->executed, true)
+            && !in_array(12, array_column($authDb->executed, ':id'), true),
+            'A failed row restores the publication state Joomla cascaded to descendants of a changed menu item');
+
+        // Aliases are matched in the URL-safe form Joomla stores, then as supplied.
+        $authDb->resetAuthorizationScenario([], [null, null]);
+        $user->permissions = ['core.create:com_content.category.2' => true];
+        check($authModel->importArticleData(['title' => 'Summer Offer', 'alias' => 'Summer Offer'], 2, ['update_existing' => true]) === 42
+            && $authDb->aliasLookups === ['summer-offer', 'Summer Offer']
+            && $authDb->inserted['#__content']->alias === 'summer-offer',
+            'Article aliases are matched and stored in Joomla\'s URL-safe form, with a fallback to the supplied alias');
+        $user->permissions = $nativePermissions;
 
         // An authorization denial after the new category was stored removes it again.
         $authDb->resetAuthorizationScenario([]);

@@ -511,7 +511,27 @@ class ImportModelTest
 
                     return false;
                 });
+
+            // Joomla stores the alias URL-safe; a re-import with the alias as written updates that article.
+            $mixedSuffix = bin2hex(random_bytes(4));
+            $mixedAlias = array_replace($data, [
+                'title' => 'Native mixed alias ' . $mixedSuffix,
+                'alias' => 'Native Mixed Alias ' . $mixedSuffix,
+                'catid' => 2,
+            ]);
+            $mixedCleanup = array_replace($mixedAlias, ['alias' => 'native-mixed-alias-' . $mixedSuffix]);
+            $this->test('A re-import with an alias Joomla stored URL-safe updates the same article', function () use ($newModel, $mixedAlias, $mixedCleanup, $db) {
+                $created = $newModel(ImportModel::class)->importProductFull($mixedAlias, []);
+                $updated = $newModel(ImportModel::class)->importProductFull($mixedAlias, ['update_existing' => true]);
+
+                return (int) ($created['article_id'] ?? 0) > 0
+                    && (int) ($updated['article_id'] ?? 0) === (int) $created['article_id']
+                    && $this->countRows($db, '#__content', 'alias', $mixedCleanup['alias']) === 1;
+            });
         } finally {
+            if (isset($mixedCleanup)) {
+                $this->removeImportedRow($db, $mixedCleanup);
+            }
             foreach ([$second, $first, $afterMenu, $inTransaction] as $row) {
                 $this->removeImportedRow($db, $row);
             }
