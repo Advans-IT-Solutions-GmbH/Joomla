@@ -9,7 +9,6 @@
 
 namespace Advans\Component\DmarcReports\Administrator\View\Source;
 
-use Advans\Component\DmarcReports\Administrator\Helper\HelpTopics;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
@@ -57,6 +56,6 @@ class HtmlView extends BaseHtmlView
         $toolbar->apply('source.apply');
         $toolbar->save('source.save');
         $toolbar->cancel('source.cancel');
-        HelpTopics::addToolbarButton($toolbar);
+        $toolbar->help('COM_DMARCREPORTS_HELP_TITLE', false, 'index.php?option=com_dmarcreports&view=help&tmpl=component');
     }
 }

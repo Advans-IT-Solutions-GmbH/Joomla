@@ -7,12 +7,10 @@
  */
 
 // Renders tmpl/help/default.php outside Joomla with the real strings of one
-// language and prints the HTML, or (mode "toolbar") prints the arguments the
-// component passes to the toolbar Help button. HelpPageTest runs this file in
+// language and prints the HTML. HelpPageTest runs this file in
 // its own PHP process, so the Joomla stand-ins below never collide with the
 // stubs other unit tests define.
 // Usage: php render-help.php page <de-DE|en-GB|fr-FR> <1|0>   (1 = may open Options)
-//        php render-help.php toolbar
 
 namespace Joomla\CMS\Language {
     final class Text
@@ -42,19 +40,6 @@ namespace Joomla\CMS\Router {
     }
 }
 
-namespace Joomla\CMS\Toolbar {
-    final class Toolbar
-    {
-        /** @var array<int, array<int, mixed>> */
-        public array $calls = [];
-
-        public function help($ref, $useComponent = false, $url = null, $component = null): void
-        {
-            $this->calls[] = [$ref, $useComponent, $url, $component];
-        }
-    }
-}
-
 namespace {
     \define('_JEXEC', 1);
 
@@ -62,14 +47,6 @@ namespace {
 
     require_once $root . '/src/Helper/ActionPresenter.php';
     require_once $root . '/src/Helper/HelpTopics.php';
-
-    if (($argv[1] ?? 'page') === 'toolbar') {
-        $toolbar = new \Joomla\CMS\Toolbar\Toolbar();
-        \Advans\Component\DmarcReports\Administrator\Helper\HelpTopics::addToolbarButton($toolbar);
-        echo json_encode($toolbar->calls);
-
-        exit(0);
-    }
 
     $locale = $argv[2] ?? 'en-GB';
     $ini    = \dirname(__DIR__, 3) . "/administrator/language/{$locale}/com_dmarcreports.ini";

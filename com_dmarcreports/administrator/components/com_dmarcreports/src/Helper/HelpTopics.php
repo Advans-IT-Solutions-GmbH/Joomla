@@ -9,8 +9,6 @@
 
 namespace Advans\Component\DmarcReports\Administrator\Helper;
 
-use Joomla\CMS\Toolbar\Toolbar;
-
 defined('_JEXEC') or die;
 
 /**
@@ -29,8 +27,10 @@ final class HelpTopics
 
     /**
      * The help page without the administrator menu, for the toolbar Help button,
-     * which opens it in a small window. The module and plugin manifests name the
-     * same address in their <help> element.
+     * which opens it in a small window. Every view passes this address to
+     * $toolbar->help() literally, and the module and plugin manifests name a
+     * language key with this value in their <help url>, so the repository help
+     * lint finds the link; HelpPageTest keeps all of them equal to this constant.
      */
     public const POPUP_URL = 'index.php?option=com_dmarcreports&view=help&tmpl=component';
 
@@ -103,11 +103,4 @@ final class HelpTopics
         return $codes;
     }
 
-    /**
-     * Add the Help button that opens this help page to a component toolbar.
-     */
-    public static function addToolbarButton(Toolbar $toolbar): void
-    {
-        $toolbar->help('COM_DMARCREPORTS_HELP_TITLE', false, self::POPUP_URL);
-    }
 }

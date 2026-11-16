@@ -88,7 +88,7 @@
         </fields>
     </config>
 
-    <help key="DMARC_Reports_Help" url="index.php?option=com_dmarcreports&amp;view=help&amp;tmpl=component" />
+    <help key="DMARC_Reports_Help" url="MOD_DMARCREPORTS_HELP_URL" />
 
     <updateservers>
         <server type="extension" priority="1" name="DMARC Reports Dashboard Module Updates">

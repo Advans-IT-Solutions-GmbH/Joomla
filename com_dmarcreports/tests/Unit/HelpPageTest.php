@@ -206,17 +206,16 @@ class HelpPageTest extends TestCase
                 continue;
             }
 
-            $this->assertStringContainsString('HelpTopics::addToolbarButton(', (string) file_get_contents($file), basename(\dirname($file)) . ' view has no Help button');
+            $this->assertStringContainsString(
+                "->help('COM_DMARCREPORTS_HELP_TITLE', false, '" . HelpTopics::POPUP_URL . "')",
+                (string) file_get_contents($file),
+                basename(\dirname($file)) . ' view has no Help button that opens the help page'
+            );
         }
     }
 
-    public function testHelpButtonOpensTheHelpPage(): void
+    public function testHelpButtonAddressOpensTheHelpPageWithoutTheMenu(): void
     {
-        $calls = json_decode($this->renderFixture('toolbar'), true);
-
-        $this->assertCount(1, $calls);
-        $this->assertSame(HelpTopics::POPUP_URL, $calls[0][2]);
-
         parse_str((string) parse_url(HelpTopics::POPUP_URL, PHP_URL_QUERY), $query);
         $this->assertSame(['option' => 'com_dmarcreports', 'view' => 'help', 'tmpl' => 'component'], $query);
     }
@@ -242,9 +241,11 @@ class HelpPageTest extends TestCase
         $this->assertNotFalse($xml);
 
         // Toolbar Help button of the module/plugin edit screen.
+        // Joomla translates <help url> when it is a language key, as the core
+        // module and plugin edit views do.
         $help = $xml->xpath('/extension/help');
         $this->assertCount(1, $help, "{$manifest} has no <help> element");
-        $this->assertSame(HelpTopics::POPUP_URL, (string) $help[0]['url']);
+        $urlKey = (string) $help[0]['url'];
 
         // A note at the top of the main options tab with a link to the page.
         $fields = $xml->xpath('/extension/config/fields[@name="params"]/fieldset[@name="basic"]/field');
@@ -255,6 +256,7 @@ class HelpPageTest extends TestCase
 
         foreach (self::LOCALES as $locale) {
             $strings = self::strings(self::REPO . '/' . sprintf($ini, $locale));
+            $this->assertSame(HelpTopics::POPUP_URL, $strings[$urlKey] ?? null, "{$urlKey} in {$locale}");
             $this->assertArrayHasKey($noteKey, $strings, "{$noteKey} missing in {$locale}");
             $this->assertStringContainsString("href='index.php?option=com_dmarcreports&amp;view=help'", $strings[$noteKey]);
         }

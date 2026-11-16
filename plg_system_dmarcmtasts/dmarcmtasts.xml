@@ -39,7 +39,7 @@
         </fields>
     </config>
 
-    <help key="DMARC_Reports_Help" url="index.php?option=com_dmarcreports&amp;view=help&amp;tmpl=component" />
+    <help key="DMARC_Reports_Help" url="PLG_SYSTEM_DMARCMTASTS_HELP_URL" />
 
     <updateservers>
         <server type="extension" name="DMARC MTA-STS Policy">https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_system_dmarcmtasts/updates/update.xml</server>
