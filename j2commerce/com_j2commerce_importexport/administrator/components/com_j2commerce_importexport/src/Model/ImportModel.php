@@ -767,6 +767,26 @@ class ImportModel extends BaseDatabaseModel
     }
 
     /**
+     * Whether another article in the category already uses the alias.
+     */
+    protected function aliasTakenInCategory(string $alias, int $categoryId, int $articleId): bool
+    {
+        $db    = $this->getDatabase();
+        $query = $this->createDbQuery($db)
+            ->select('COUNT(*)')
+            ->from($db->quoteName('#__content'))
+            ->where($db->quoteName('alias') . ' = :alias')
+            ->where($db->quoteName('catid') . ' = :catid')
+            ->where($db->quoteName('id') . ' <> :id')
+            ->bind(':alias', $alias)
+            ->bind(':catid', $categoryId, \Joomla\Database\ParameterType::INTEGER)
+            ->bind(':id', $articleId, \Joomla\Database\ParameterType::INTEGER);
+        $db->setQuery($query);
+
+        return (int) $db->loadResult() > 0;
+    }
+
+    /**
      * Updates an existing article inside the row transaction.
      */
     protected function updateArticle(int $articleId, object $values): int
@@ -810,6 +830,13 @@ class ImportModel extends BaseDatabaseModel
 
         $permissions = $this->authorizeArticleImport($existing, $catId, $data);
         $schedule = $this->authorizeArticleSchedule($existing, $catId, $data, $now);
+
+        // An update is written inside the row transaction without Joomla's content table,
+        // so it applies the table's rule itself: an alias exists only once per category.
+        if ($existing && $this->aliasTakenInCategory($alias, $catId, (int) $existing->id)) {
+            $this->loadContentLanguage();
+            throw new \RuntimeException(Text::_('COM_CONTENT_ERROR_UNIQUE_ALIAS'));
+        }
 
         // The same filters the article form applies in the backend, so an import cannot
         // store markup that the importing user's group would not be allowed to save.

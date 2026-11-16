@@ -345,7 +345,7 @@ namespace {
                 && $this->transactionsStarted === $this->transactionsCommitted + $this->transactionsRolledBack;
         }
         public function createQuery(): \Joomla\Database\QueryInterface { return new AuthorizationQuery(); }
-        public function quoteName(string $name): string { return $name; }
+        public function quoteName(string $name, ?string $as = null): string { return $as === null ? $name : $name . ' AS ' . $as; }
         public function quote(string $value): string { return "'" . $value . "'"; }
         public function setQuery($query): self {
             $this->query = is_object($query) ? $query : null;
@@ -860,6 +860,8 @@ namespace {
         check($authModel->find(['variants' => [['sku' => 'ACTIVE-SKU']]], 'new-alias')?->id === 80,
             'SKU resolution accepts a product linked in the active shop');
         $user->permissions = ['core.edit.own:com_content.article.80' => true];
+        // No other article in the category uses the alias.
+        $authDb->tableResults = ['#__content' => 0];
         check($authModel->importArticleData(
             ['title' => 'Authorized update', 'alias' => 'existing', 'article_id' => 80],
             2,
@@ -1384,10 +1386,10 @@ namespace {
         $movedArticle = (object) ['id' => 81, 'asset_id' => 501, 'created_by' => 7, 'catid' => 2, 'state' => 1, 'access' => 1];
         $moveRow = ['title' => 'Moved article', 'alias' => 'moved-article', 'article_id' => 81, 'catid' => 3];
         $user->permissions = ['core.edit.own:com_content.article.81' => true, 'core.create:com_content.category.3' => true];
-        // '#__content' answers the asset ID of the committed category: 22 before the commit, 33 after it.
-        $moveTables = ['#__categories' => 3, '#__content' => 22, '#__j2commerce_products' => 1];
+        // '#__content AS a' answers the asset ID of the committed category: 22 before the commit, 33 after it.
+        $moveTables = ['#__content' => 0, '#__categories' => 3, '#__content AS a' => 22, '#__j2commerce_products' => 1];
         $commitMove = function (int $assetId) use ($authDb): void {
-            $authDb->afterCommit = function () use ($authDb, $assetId): void { $authDb->tableResults['#__content'] = $assetId; };
+            $authDb->afterCommit = function () use ($authDb, $assetId): void { $authDb->tableResults['#__content AS a'] = $assetId; };
         };
         $authDb->resetAuthorizationScenario([], [$movedArticle]);
         $authDb->tableResults = $moveTables;
@@ -1436,7 +1438,7 @@ namespace {
         \Joomla\CMS\Table\Asset::$failStore = true;
         try {
             $authDb->resetAuthorizationScenario([], [$movedArticle]);
-            $authDb->tableResults = ['#__content' => 33] + $moveTables;
+            $authDb->tableResults = ['#__content AS a' => 33] + $moveTables;
             $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
             $staleFailure = null;
             try {
@@ -1453,7 +1455,7 @@ namespace {
 
         // A stale asset is placed below the committed category before the article is authorized.
         $authDb->resetAuthorizationScenario([], [$movedArticle]);
-        $authDb->tableResults = ['#__content' => 33] + $moveTables;
+        $authDb->tableResults = ['#__content AS a' => 33] + $moveTables;
         $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
         $authModel->importProductFull($moveRow, ['update_existing' => true]);
         check($authDb->assetMoves === [[501, 33]] && $authDb->assetMoveStarts === [0],
@@ -1461,9 +1463,9 @@ namespace {
 
         // A concurrent move between reading the category and storing the asset is followed.
         $authDb->resetAuthorizationScenario([], [$movedArticle]);
-        $authDb->tableResults = ['#__content' => 33] + $moveTables;
+        $authDb->tableResults = ['#__content AS a' => 33] + $moveTables;
         $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
-        $authDb->afterAssetStore = function () use ($authDb): void { $authDb->tableResults['#__content'] = 44; };
+        $authDb->afterAssetStore = function () use ($authDb): void { $authDb->tableResults['#__content AS a'] = 44; };
         $authModel->importProductFull($moveRow, ['update_existing' => true]);
         check($authDb->assetMoves === [[501, 33], [501, 44]] && $authDb->assets['com_content.article.81']['parent_id'] === 44,
             'An asset sync reads the category again after each move and follows a concurrent move');
@@ -1473,11 +1475,11 @@ namespace {
             $authDb->resetAuthorizationScenario([], [$movedArticle]);
             $authDb->tableResults = $moveTables;
             $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
-            $authDb->afterCommit = function () use ($authDb): void { $authDb->tableResults['#__content'] = 33; };
+            $authDb->afterCommit = function () use ($authDb): void { $authDb->tableResults['#__content AS a'] = 33; };
             $queue = $targets;
             $rearm = function () use ($authDb, &$queue, &$rearm): void {
                 if ($queue) {
-                    $authDb->tableResults['#__content'] = array_shift($queue);
+                    $authDb->tableResults['#__content AS a'] = array_shift($queue);
                     $authDb->afterAssetStore = $rearm;
                 }
             };
@@ -1501,7 +1503,7 @@ namespace {
         $clearedBefore = \Joomla\CMS\Access\Access::$cleared;
         $user->permissions = ['core.edit.own:com_content.article.81' => true, 'core.create:com_content.category.3' => true];
         $authDb->resetAuthorizationScenario([3], [$movedArticle]);
-        $authDb->tableResults = ['#__content' => 22, '#__j2commerce_products' => 1, '#__assets' => 7];
+        $authDb->tableResults = ['#__content AS a' => 22, '#__j2commerce_products' => 1, '#__assets' => 7];
         $authDb->assets = ['com_content.article.81' => ['id' => 501, 'parent_id' => 22]];
         $commitMove(0);
         $authModel->importProductFull($moveRow, ['update_existing' => true]);
@@ -1592,6 +1594,21 @@ namespace {
             && str_contains($failure->getMessage(), 'COM_J2COMMERCE_IMPORTEXPORT_LEFTOVER_CATEGORY: 42')
             && !in_array('#__content', array_column($deletes(), 1), true),
             'A new article saved by an editor after the row created it is kept and reported');
+
+        // An update may not give an article an alias that another article in the category uses.
+        $user->permissions = ['core.edit.own:com_content.article.81' => true, 'core.create:com_content.category.3' => true];
+        $authDb->resetAuthorizationScenario([], [$movedArticle]);
+        $authDb->tableResults = ['#__content' => 1] + $moveTables;
+        check((function () use ($authModel, $moveRow): bool {
+            try {
+                $authModel->importProductFull($moveRow, ['update_existing' => true]);
+            } catch (\RuntimeException $e) {
+                return $e->getMessage() === 'COM_CONTENT_ERROR_UNIQUE_ALIAS';
+            }
+            return false;
+        })() && $authDb->updated === [] && $authDb->transactionsStarted === 0,
+            'An update to an alias another article in the category uses is refused before any write');
+        $user->permissions = $nativePermissions;
 
         // A blank alias is derived from the title, as Joomla does, also for matching.
         $authDb->resetAuthorizationScenario([], [null]);
