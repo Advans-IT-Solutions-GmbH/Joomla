@@ -202,7 +202,7 @@ try {
     $check(count($stats) === 1 && (int) $stats[0]['booking_id'] === $id && $stats[0]['utm_source'] === 'newsletter'
         && $stats[0]['utm_campaign'] === 'last-campaign' && $stats[0]['referrer_host'] === 'mail.example.org' && (int) $stats[0]['state'] === 1
         && $stats[0]['eventtype_title'] === $eventTitle, 'The campaign statistics count the booking under its last campaign');
-    $check(array_keys($stats[0] ?? []) === ['booking_id', 'day', 'eventtype_id', 'eventtype_title', 'utm_source', 'utm_medium', 'utm_campaign',
+    $check(array_keys($stats[0] ?? []) === ['id', 'booking_id', 'day', 'eventtype_id', 'eventtype_title', 'utm_source', 'utm_medium', 'utm_campaign',
         'referrer_host', 'state'], 'The campaign statistics have no column for a person, a URL, a click ID or an address');
 
     // Administrator: booking page, CSV export, campaign CSV.
@@ -265,8 +265,8 @@ try {
     $erased = $fixture->row($id);
     $check($erased['anonymised_utc'] !== null && $erased['attribution'] === null, 'Erasure removes the origin with the personal fields');
     $stats = $db->query("SELECT * FROM {$prefix}appointments_campaign_stats WHERE eventtype_id={$event}")->fetch_all(MYSQLI_ASSOC);
-    $check(count($stats) === 1 && (int) $stats[0]['booking_id'] === $id && (int) $stats[0]['state'] === 2 && $stats[0]['utm_source'] === 'newsletter',
-        'The campaign statistics outlive the erasure and count the booking as cancelled');
+    $check(count($stats) === 1 && $stats[0]['booking_id'] === null && (int) $stats[0]['state'] === 2 && $stats[0]['utm_source'] === 'newsletter',
+        'The campaign statistics outlive the erasure, count the booking as cancelled and are no longer linked to it');
 
     // A booking clears the capture data from the session: a second booking of the same visitor carries
     // nothing of the visit before the first one (it is stored encrypted with the first booking only).

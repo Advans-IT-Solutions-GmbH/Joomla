@@ -19,10 +19,11 @@ defined('_JEXEC') or die;
 /**
  * The campaign statistics without personal data: one row per booking with the day of booking
  * (UTC), the event type and its title at that time, utm_source, utm_medium, utm_campaign and
- * referrer host ({@see Attribution::campaign()}) and the current state. No name, address, URL,
- * click ID, IP address or device. The rows are not changed by anonymisation or erasure (only
- * the state follows a cancellation), so the evaluation of a campaign stays possible after the
- * bookings are anonymised or deleted. The export counts them per day, event type and campaign.
+ * referrer host ({@see Attribution::campaign()}, an e-mail address or telephone number never) and
+ * the current state. No name, address, URL, click ID, IP address or device. An erasure keeps the
+ * row (only the state follows a cancellation) and removes its link to the booking, so the
+ * evaluation of a campaign stays possible after the bookings are anonymised or deleted. The export
+ * counts them per day, event type and campaign.
  *
  * Written inside the booking's own transaction, under its host lock: the row and its state
  * always follow the booking in order. A failure is logged and does not fail the booking, except a
@@ -62,8 +63,11 @@ final class CampaignStats
         }
     }
 
-    /** The new state of a booking (inside the transaction of the change); no row, nothing to do. */
-    public static function moved(DatabaseInterface $db, int $bookingId, int $state): void
+    /**
+     * The new state of a booking (inside the transaction of the change); no row, nothing to do.
+     * $unlink (an erasure) also removes the link to the booking: the row is then a count only.
+     */
+    public static function moved(DatabaseInterface $db, int $bookingId, int $state, bool $unlink = false): void
     {
         if ($bookingId < 1 || !\in_array($state, [0, 1, 2], true)) {
             return;
@@ -80,6 +84,7 @@ final class CampaignStats
             }
 
             $db->setQuery('UPDATE ' . $db->quoteName(self::TABLE) . ' SET ' . $db->quoteName('state') . ' = ' . $state
+                . ($unlink ? ', ' . $db->quoteName('booking_id') . ' = NULL' : '')
                 . ' WHERE ' . $db->quoteName('booking_id') . ' = ' . $bookingId)->execute();
         } catch (\Throwable $e) {
             // A deadlock or lock wait rolled back the whole booking transaction: the caller must fail.

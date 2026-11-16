@@ -89,7 +89,7 @@ class InstallationTest
                     || $row['Collation'] === 'utf8mb4_bin');
             }
 
-            return $column && $column->num_rows === 1 && $names === ['booking_id', 'day', 'eventtype_id', 'eventtype_title', 'utm_source', 'utm_medium',
+            return $column && $column->num_rows === 1 && $names === ['id', 'booking_id', 'day', 'eventtype_id', 'eventtype_title', 'utm_source', 'utm_medium',
                 'utm_campaign', 'referrer_host', 'state'] && $binary;
         });
 

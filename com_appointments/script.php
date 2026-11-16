@@ -349,16 +349,24 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_campaign_stats')
-            . ' (`booking_id` INT UNSIGNED NOT NULL, `day` DATE NOT NULL, `eventtype_id` INT UNSIGNED NOT NULL,'
+            . ' (`id` INT UNSIGNED NOT NULL AUTO_INCREMENT, `booking_id` INT UNSIGNED DEFAULT NULL, `day` DATE NOT NULL, `eventtype_id` INT UNSIGNED NOT NULL,'
             . " `eventtype_title` VARCHAR(255) NOT NULL DEFAULT '',"
             . " `utm_source` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '', `utm_medium` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',"
             . " `utm_campaign` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '', `referrer_host` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',"
-            . ' `state` TINYINT NOT NULL, PRIMARY KEY (`booking_id`), KEY `idx_eventtype_day` (`eventtype_id`, `day`),'
+            . ' `state` TINYINT NOT NULL, PRIMARY KEY (`id`), UNIQUE KEY `idx_booking` (`booking_id`), KEY `idx_eventtype_day` (`eventtype_id`, `day`),'
             . ' KEY `idx_day` (`day`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
 
-        // A table of a test build before the release may differ: the campaign columns compare exactly.
+        // A table of a test build before the release may differ: its own row ID with the booking link
+        // that an erasure removes, and campaign columns that compare exactly.
         $stats = $db->replacePrefix('#__appointments_campaign_stats');
         $columns = $db->getTableColumns($stats, false);
+
+        if (!isset($columns['id'])) {
+            $db->setQuery('ALTER TABLE ' . $db->quoteName($stats) . ' DROP PRIMARY KEY, ADD COLUMN ' . $db->quoteName('id')
+                . ' INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST, MODIFY ' . $db->quoteName('booking_id') . ' INT UNSIGNED DEFAULT NULL,'
+                . ' ADD UNIQUE KEY ' . $db->quoteName('idx_booking') . ' (' . $db->quoteName('booking_id') . ')')->execute();
+            $columns = $db->getTableColumns($stats, false);
+        }
 
         foreach (['utm_source', 'utm_medium', 'utm_campaign', 'referrer_host'] as $column) {
             if (isset($columns[$column]) && (string) ($columns[$column]->Collation ?? '') !== 'utf8mb4_bin') {

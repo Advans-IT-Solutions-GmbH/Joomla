@@ -275,6 +275,23 @@ final class AttributionTest extends TestCase
         self::assertSame(['utm_source' => '', 'utm_medium' => '', 'utm_campaign' => '', 'referrer_host' => ''], Attribution::campaign(null));
     }
 
+    public function testTheStatisticsNeverKeepAnAddressOrANumberAVisitorPutIntoALink(): void
+    {
+        $state = Attribution::visit(null, $this->request('/lp?utm_source=' . rawurlencode('Anna.Muster@example.org') . '&utm_medium=sms'
+            . '&utm_campaign=' . rawurlencode('call +41 79 123 45 67') . '&utm_term=kept', 'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));
+        $campaign = Attribution::campaign(Attribution::record($state, $this->submit(), $this->at('2026-11-16 08:30:00')));
+
+        self::assertSame(Attribution::REDACTED, $campaign['utm_source'], 'An e-mail address is not kept');
+        self::assertSame('sms', $campaign['utm_medium']);
+        self::assertSame(Attribution::REDACTED, $campaign['utm_campaign'], 'A telephone number is not kept');
+        self::assertSame('www.linkedin.com', $campaign['referrer_host']);
+
+        $ordinary = Attribution::visit(null, $this->request('/lp?utm_source=linkedin&utm_campaign=kmu-it-2026-11', 'https://www.linkedin.com/'),
+            $this->at('2026-11-16 08:00:00'));
+        self::assertSame('kmu-it-2026-11', Attribution::campaign(Attribution::record($ordinary, $this->submit(), $this->at('2026-11-16 08:30:00')))['utm_campaign'],
+            'An ordinary campaign name with a date stays');
+    }
+
     public function testLinesForTheHostAreLabelledAndLeaveOutEmptyValues(): void
     {
         $state = Attribution::visit(null, $this->request('/lp?utm_source=linkedin&utm_campaign=c1', 'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));

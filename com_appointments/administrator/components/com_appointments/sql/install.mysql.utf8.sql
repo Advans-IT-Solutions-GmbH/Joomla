@@ -359,11 +359,14 @@ CREATE TABLE IF NOT EXISTS `#__appointments_audit` (
 -- the event type and its title at that time, utm_source, utm_medium, utm_campaign,
 -- referrer host and the current state. No name, address, URL, click ID, IP address
 -- or device, so the rows outlive the anonymisation and the deletion of the bookings
--- (Service\CampaignStats). Written in the booking's own transaction. The campaign
--- columns compare in binary, so «Launch» and «launch» stay separate campaigns.
+-- (Service\CampaignStats). Written in the booking's own transaction. `booking_id`
+-- links a row to its booking only while the booking is not erased; the erasure sets
+-- it to NULL. The campaign columns compare in binary, so «Launch» and «launch» stay
+-- separate campaigns.
 --
 CREATE TABLE IF NOT EXISTS `#__appointments_campaign_stats` (
-    `booking_id` INT UNSIGNED NOT NULL,
+    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `booking_id` INT UNSIGNED DEFAULT NULL,
     `day` DATE NOT NULL,
     `eventtype_id` INT UNSIGNED NOT NULL,
     `eventtype_title` VARCHAR(255) NOT NULL DEFAULT '',
@@ -372,7 +375,8 @@ CREATE TABLE IF NOT EXISTS `#__appointments_campaign_stats` (
     `utm_campaign` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
     `referrer_host` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
     `state` TINYINT NOT NULL,
-    PRIMARY KEY (`booking_id`),
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `idx_booking` (`booking_id`),
     KEY `idx_eventtype_day` (`eventtype_id`, `day`),
     KEY `idx_day` (`day`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

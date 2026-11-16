@@ -358,7 +358,7 @@ final class BookingStore
             Close\Queue::changed($db, $erased, true);
             // The campaign statistics keep the booking without personal data, now as cancelled when
             // the erasure cancelled it, also when the booking row itself is deleted.
-            CampaignStats::moved($db, $bookingId, (int) $erased['state']);
+            CampaignStats::moved($db, $bookingId, (int) $erased['state'], true);
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();

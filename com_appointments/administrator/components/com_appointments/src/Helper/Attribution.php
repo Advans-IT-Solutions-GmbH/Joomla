@@ -44,6 +44,9 @@ final class Attribution
     /** The longest stored value, in characters. */
     public const MAX_LENGTH = 2048;
 
+    /** What the statistics keep instead of a value that looks like an e-mail address or a telephone number. */
+    public const REDACTED = '(redacted)';
+
     /** The longest campaign value of the non-personal aggregate, in characters. */
     public const AGGREGATE_LENGTH = 100;
 
@@ -468,7 +471,13 @@ final class Attribution
     {
         $touch = $record['last_touch'] ?? $record['first_touch'] ?? null;
         $parameters = \is_array($touch) && \is_array($touch['parameters'] ?? null) ? $touch['parameters'] : [];
-        $cut = static fn (mixed $value): string => self::clean($value, self::AGGREGATE_LENGTH);
+        // A visitor can put anything into a link: an e-mail address or a telephone number never
+        // reaches the statistics, which are kept after the booking is anonymised.
+        $cut = static function (mixed $value): string {
+            $value = self::clean($value, self::AGGREGATE_LENGTH);
+
+            return preg_match('/@|(?:\+\s?)?\d(?:[ ().\/]?\d){6,}/u', $value) === 1 ? self::REDACTED : $value;
+        };
 
         return [
             'utm_source' => $cut($parameters['utm_source'] ?? ''),
