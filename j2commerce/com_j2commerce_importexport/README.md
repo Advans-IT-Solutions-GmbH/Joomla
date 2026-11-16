@@ -42,6 +42,8 @@ Products are matched and updated (instead of duplicated) using three methods:
 - Create menus through Joomla's validated nested-set table API, including required database defaults
 - Re-imports update the article's existing menu entry in the requested menu and parent instead of duplicating it
 - Set a default category when the record has no category ID or path
+- Create new categories and articles through Joomla's category and content tables: each gets its own permission asset without own rules, so it inherits the permissions of the Content component or its category, plus Joomla's defaults and unique-alias check. A `category_path` that does not exist creates a root-level Content category with `category_alias` (or the URL-safe `category_title`); later rows with the same missing path use that category again
+- Import each row as a unit: Joomla stores categories, permission assets and menu items under a table lock that ends an open database transaction, so these are written first and the product data afterwards in one transaction. If a later step of the row fails, that transaction is rolled back and the category, article and menu item created for the row are deleted again; a menu item the row changed gets its previous values back. Anything that cannot be undone is named in the row error
 - Import without stock management (unlimited inventory)
 - **Quantity Update Mode** - Choose how stock quantities are updated:
   - **Replace**: Overwrite existing stock with imported value (default)
@@ -271,7 +273,7 @@ title,alias,main_image
 | `quantity` | No | Stock quantity |
 | `manage_stock` | No | 1=track inventory, 0=unlimited stock |
 | `main_image` | No | Path relative to Joomla root, e.g., `images/products/img.jpg` |
-| `category_path` | No | Category path like `shop/electronics` (auto-creates if missing) |
+| `category_path` | No | Category path like `shop/electronics` (if missing, a root-level category is created, see Import Options) |
 
 ## Development
 
@@ -345,7 +347,7 @@ Order as in `tests/test.env`:
 1. **Installation** — component registration in DB, file deployment
 2. **Component Structure** — `php -l` lint of every shipped PHP file + reflection-based class/type checks
 3. **Export Model** — JSON, CSV, XML export output validation (J2Commerce 4 and 6)
-4. **Import Model** — full product import, duplicate detection, quantity modes (J2Commerce 4 and 6)
+4. **Import Model** — full product import, duplicate detection, quantity modes, permissions, assets and nested set of new categories and articles, and that a row failing after a nested-set store leaves nothing behind (J2Commerce 4 and 6)
 5. **Round-Trip** (`04b-roundtrip.php`) — imports a product via `importProductFull()`, exports it via `exportData('products_full')` and verifies the exported record matches the imported data
 6. **Export Controller** — `core.manage` access check and structure (reflection)
 7. **Export HTTP (CSRF)** — real authenticated HTTP CSV/JSON export with header + content assertions and CSRF rejection (J2Commerce 4 and 6)

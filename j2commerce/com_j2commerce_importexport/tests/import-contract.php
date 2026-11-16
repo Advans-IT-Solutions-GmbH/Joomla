@@ -312,7 +312,11 @@ namespace {
         }
         public function importArticleData(array $data, int $categoryId, array $options): int
         {
-            return $this->importArticle($data, $categoryId, $options);
+            $article = $this->prepareArticle($data, $categoryId, $options);
+
+            return $article['existing']
+                ? $this->updateArticle((int) $article['existing']->id, $article['values'])
+                : $this->createArticle($article['values']);
         }
         public function category(array $data, array $options = []): int
         {
