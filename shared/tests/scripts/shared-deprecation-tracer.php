@@ -81,8 +81,12 @@ if (!function_exists('advans_deprecation_tracer_record')) {
             $seen[$key] = true;
             $logFile    = advans_deprecation_tracer_file();
 
-            // Safety net against runaway logs (50 MB).
-            if (@filesize($logFile) > 52428800) {
+            // Safety net against runaway logs (200 MB). Every request records
+            // its deprecations again (the dedup set lives per process), so a
+            // full production-like lane with a shop can exceed 50 MB.
+            // Above the cap nothing is recorded, and the canary of
+            // shared-deprecations.php then fails.
+            if (@filesize($logFile) > 209715200) {
                 return;
             }
 

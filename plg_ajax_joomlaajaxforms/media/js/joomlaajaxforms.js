@@ -102,11 +102,105 @@ const JoomlaAjaxForms = {
     debug: false,
 
     /**
+     * Which forms the plugin options hand to AJAX, from the endpoint answer
+     * (task "texts"). Empty until known.
+     */
+    enabled: {},
+
+    /**
+     * Whether the plugin handles this form. A form whose option is switched
+     * off is submitted to com_users the normal way, so it keeps working.
+     * Unknown counts as on, the state of a fresh installation.
+     *
+     * @param {string} name - login, registration, reset, remind or profile
+     * @returns {boolean}
+     */
+    formEnabled: function(name) {
+        var opts = {};
+
+        try {
+            opts = Joomla.getOptions('plg_ajax_joomlaajaxforms') || {};
+        } catch (e) {
+            opts = {};
+        }
+
+        var map = (opts.enabled && typeof opts.enabled === 'object') ? opts.enabled : JoomlaAjaxForms.enabled;
+
+        return !(map && map[name] === false);
+    },
+
+    /**
+     * The server answers "disabled" for a form whose option is switched off.
+     * When the script did not know that yet (configuration still loading or
+     * not loadable), it submits the form to com_users the normal way instead
+     * of showing the message, and remembers the state for the page.
+     *
+     * @param {object} data - Unwrapped plugin answer
+     * @param {HTMLFormElement} form - The form that was sent
+     * @returns {boolean} True when the form was handed over
+     */
+    handOverIfDisabled: function(data, form) {
+        if (!data || data.success || data.disabled !== true) {
+            return false;
+        }
+
+        JoomlaAjaxForms.submitNatively(form);
+
+        return true;
+    },
+
+    /**
+     * Submit a form to com_users the normal way and remember that for the page.
+     *
+     * @param {HTMLFormElement} form - The form that was sent
+     */
+    submitNatively: function(form) {
+        form.dataset.joomlaajaxformsNative = '1';
+
+        // submit() sends no submit button. The core forms carry their task on
+        // the button (for example name="task" value="profile.save"), so the
+        // button that started the submission goes along as a hidden field.
+        var submitter = form.joomlaajaxformsSubmitter;
+
+        if (submitter && submitter.name && !submitter.disabled) {
+            var carried = document.createElement('input');
+            carried.type = 'hidden';
+            carried.name = submitter.name;
+            carried.value = submitter.value || '';
+            form.appendChild(carried);
+        }
+
+        // The prototype method, because a field named "submit" shadows form.submit.
+        HTMLFormElement.prototype.submit.call(form);
+    },
+
+    /**
+     * Remember the button that started a submission, for handOverIfDisabled().
+     *
+     * @param {HTMLFormElement} form - The form
+     * @param {SubmitEvent} e - The submit event
+     */
+    rememberSubmitter: function(form, e) {
+        form.joomlaajaxformsSubmitter = (e && e.submitter) ? e.submitter : null;
+    },
+
+    /**
      * Fetch the translated texts once when the page loaded the script without
      * them (script options missing). Read-only request without a token.
      */
     loadTexts: function() {
-        if (getFormsLang('ERROR_GENERIC') !== '') {
+        var opts = {};
+
+        try {
+            opts = Joomla.getOptions('plg_ajax_joomlaajaxforms') || {};
+        } catch (e) {
+            opts = {};
+        }
+
+        // Texts and the map of enabled forms are both needed. A template may
+        // supply the texts without the map, so the map alone also triggers the
+        // request.
+        if (getFormsLang('ERROR_GENERIC') !== '' && opts.enabled && typeof opts.enabled === 'object') {
             return;
         }
 
@@ -125,12 +219,16 @@ const JoomlaAjaxForms = {
         .then(function(rawData) {
             var data = JoomlaAjaxForms.unwrapResponse(rawData);
 
-            if (data && data.success && data.data && typeof data.data === 'object') {
+            if (data && data.success && data.data && typeof data.data === 'object' && getFormsLang('ERROR_GENERIC') === '') {
                 JoomlaAjaxForms.texts = data.data;
             }
 
             if (data && data.success) {
                 JoomlaAjaxForms.debug = !!data.debug;
+
+                if (data.enabled && typeof data.enabled === 'object') {
+                    JoomlaAjaxForms.enabled = data.enabled;
+                }
             }
         })
         .catch(function(error) {
@@ -391,6 +489,12 @@ const JoomlaAjaxForms = {
         const messageContainer = JoomlaAjaxForms.createMessageContainer(form);
 
         form.addEventListener('submit', function(e) {
+            if (!JoomlaAjaxForms.formEnabled('login')) {
+                return;
+            }
+
+            JoomlaAjaxForms.rememberSubmitter(form, e);
+
             e.preventDefault();
 
             const formData = new FormData(form);
@@ -416,12 +520,30 @@ const JoomlaAjaxForms = {
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: body.toString()
             })
-            .then(response => response.json())
+            .then(function(response) {
+                // Joomla answered with a redirect instead of the plugin's JSON.
+                // After the login of an account that must reset its password
+                // first, SiteApplication::login() redirects to the profile
+                // edit page: the user is signed in and has to go there. The
+                // browser opens the redirect target as a normal page.
+                if (response.redirected) {
+                    window.location.href = response.url;
+                    return null;
+                }
+
+                return response.json();
+            })
             .then(function(rawData) {
+                if (rawData === null) {
+                    return;
+                }
                 JoomlaAjaxForms.enableSubmit(submitBtn);
                 var serverErrorMsg = JoomlaAjaxForms.extractAndClearMessages(rawData);
                 JoomlaAjaxForms.clearSystemMessages();
                 const data = JoomlaAjaxForms.unwrapResponse(rawData);
+                if (JoomlaAjaxForms.handOverIfDisabled(data, form)) {
+                    return;
+                }
 
                 if (data.success) {
                     JoomlaAjaxForms.showMessage(messageContainer, data.message, 'success');
@@ -519,9 +641,11 @@ const JoomlaAjaxForms = {
         form.addEventListener('submit', function(e) {
             // A captcha whose answer cannot be renewed on this page: after a failed
             // attempt the form goes to com_users the normal way, which shows a new one.
-            if (form.dataset.joomlaajaxformsNative === '1') {
+            if (form.dataset.joomlaajaxformsNative === '1' || !JoomlaAjaxForms.formEnabled('registration')) {
                 return;
             }
+
+            JoomlaAjaxForms.rememberSubmitter(form, e);
 
             e.preventDefault();
 
@@ -574,6 +698,9 @@ const JoomlaAjaxForms = {
                 var serverErrorMsg = JoomlaAjaxForms.extractAndClearMessages(rawData);
                 JoomlaAjaxForms.clearSystemMessages();
                 const data = JoomlaAjaxForms.unwrapResponse(rawData);
+                if (JoomlaAjaxForms.handOverIfDisabled(data, form)) {
+                    return;
+                }
 
                 if (data.success) {
                     JoomlaAjaxForms.showMessage(messageContainer, data.message, 'success');
@@ -615,6 +742,14 @@ const JoomlaAjaxForms = {
         
         // Use capture phase to intercept before other handlers
         form.addEventListener('submit', function(e) {
+            // Switched off, or a captcha whose answer cannot be renewed on this
+            // page after an attempt: com_users handles the form the normal way.
+            if (form.dataset.joomlaajaxformsNative === '1' || !JoomlaAjaxForms.formEnabled(task)) {
+                return;
+            }
+
+            JoomlaAjaxForms.rememberSubmitter(form, e);
+
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
@@ -622,9 +757,20 @@ const JoomlaAjaxForms = {
             const formData = new FormData(form);
             const tokenName = JoomlaAjaxForms.getTokenName(form);
             const body = JoomlaAjaxForms.buildBaseParams(task, tokenName);
+            const handled = ['option', 'plugin', 'format', 'task', tokenName];
             fields.forEach(function(field) {
                 const value = formData.get('jform[' + field + ']') || formData.get(field) || '';
                 body.append(field, value);
+                handled.push(field, 'jform[' + field + ']');
+            });
+
+            // Every further field goes along unchanged, above all the answer of
+            // the captcha of com_users. The server validates it with the form
+            // of com_users.
+            formData.forEach(function(value, key) {
+                if (handled.indexOf(key) === -1 && typeof value === 'string') {
+                    body.append(key, value);
+                }
             });
 
             const submitBtn = JoomlaAjaxForms.disableSubmit(form);
@@ -641,6 +787,9 @@ const JoomlaAjaxForms = {
                 var serverErrorMsg = JoomlaAjaxForms.extractAndClearMessages(rawData);
                 JoomlaAjaxForms.clearSystemMessages();
                 const data = JoomlaAjaxForms.unwrapResponse(rawData);
+                if (JoomlaAjaxForms.handOverIfDisabled(data, form)) {
+                    return;
+                }
 
                 // Empty data[] from com_ajax means plugin was not reached (token/session issue)
                 if (rawData.data && Array.isArray(rawData.data) && rawData.data.length === 0) {
@@ -652,6 +801,12 @@ const JoomlaAjaxForms = {
                 } else {
                     var errorMsg = serverErrorMsg || JoomlaAjaxForms.getErrorMessage(data);
                     JoomlaAjaxForms.showMessage(messageContainer, errorMsg, 'error');
+                }
+
+                // A captcha answer is used up by the attempt. Renew it, or let the
+                // next submission go to com_users when the captcha offers no reset.
+                if (JoomlaAjaxForms.hasCaptcha(form) && !JoomlaAjaxForms.resetCaptcha(form)) {
+                    form.dataset.joomlaajaxformsNative = '1';
                 }
             })
             .catch(function(error) {
@@ -861,8 +1016,38 @@ const JoomlaAjaxForms = {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: body.toString()
         })
-        .then(response => response.json())
+        .then(function(response) {
+            // Joomla redirected the request instead of letting the endpoint
+            // answer, above all for an account with a forced password reset,
+            // which may only use com_users. Nothing was done, so the logout
+            // goes to com_users the normal way (task user.logout with the token).
+            if (response.redirected && tokenName) {
+                var root = '';
+                try {
+                    root = (Joomla.getOptions('system.paths') || {}).root || '';
+                } catch (e) {
+                    root = '';
+                }
+
+                var params = new URLSearchParams();
+                params.append('option', 'com_users');
+                params.append('task', 'user.logout');
+                params.append(tokenName, '1');
+                if (returnUrl) {
+                    params.append('return', returnUrl);
+                }
+
+                window.location.href = root + '/index.php?' + params.toString();
+
+                return { success: true, handedOver: true };
+            }
+
+            return response.json();
+        })
         .then(function(rawData) {
+            if (rawData && rawData.handedOver === true) {
+                return rawData;
+            }
             const data = JoomlaAjaxForms.unwrapResponse(rawData);
             if (data.success && data.data && data.data.redirect) {
                 window.location.href = data.data.redirect;
@@ -932,7 +1117,7 @@ const JoomlaAjaxForms = {
                 if (callback) callback(null, data);
             } else {
                 if (cartItem) cartItem.style.opacity = '1';
-                if (callback) callback(data.message || 'Error', null);
+                if (callback) callback(data.message || getFormsLang('ERROR_GENERIC'), null);
             }
         })
         .catch(function(error) {
@@ -960,6 +1145,12 @@ const JoomlaAjaxForms = {
                     form.classList.remove('form-validate');
                     form.setAttribute('novalidate', 'novalidate');
                     form.addEventListener('submit', function(e) {
+                        if (!JoomlaAjaxForms.formEnabled('profile')) {
+                            return;
+                        }
+
+                        JoomlaAjaxForms.rememberSubmitter(form, e);
+
                         e.preventDefault();
                         e.stopPropagation();
                         JoomlaAjaxForms.saveProfile(form);
@@ -968,6 +1159,33 @@ const JoomlaAjaxForms = {
                 }
             });
         });
+    },
+
+    /**
+     * Make sure a profile form handed to com_users carries its task.
+     *
+     * The core form carries the task on its submit button (task=profile.save),
+     * which submitNatively() sends along. Without that button, for example when
+     * saveProfile() is called through the API without a submit event, the task
+     * is added as a hidden field, so com_users saves instead of only showing
+     * the form again.
+     *
+     * @param {HTMLFormElement} form - The profile form
+     */
+    ensureProfileTask: function(form) {
+        var submitter = form.joomlaajaxformsSubmitter;
+        var carriesTask = !!(submitter && submitter.name === 'task' && !submitter.disabled)
+            || Array.prototype.some.call(form.elements, function(el) {
+                return el.name === 'task' && !el.disabled && el.type !== 'submit' && el.type !== 'button';
+            });
+
+        if (!carriesTask) {
+            var task = document.createElement('input');
+            task.type = 'hidden';
+            task.name = 'task';
+            task.value = 'profile.save';
+            form.appendChild(task);
+        }
     },
 
     /**
@@ -982,9 +1200,59 @@ const JoomlaAjaxForms = {
         // Collect all form fields
         var formData = new FormData(form);
         formData.forEach(function(value, key) {
-            if (key !== 'option' && key !== 'plugin' && key !== 'format' && key !== 'task') {
+            if (key !== 'option' && key !== 'plugin' && key !== 'format' && key !== 'task'
+                && key !== 'profile_rendered_fields[]' && key !== 'profile_rendered_plugin_fields[]') {
                 body.append(key, value);
             }
+        });
+
+        // The custom fields this form rendered: only these may be saved as
+        // cleared when they are missing from the request (all checkboxes
+        // unticked). A partial form keeps the values it does not show. A disabled
+        // control is not submitted by the browser and cannot be edited, so it is
+        // not counted as rendered either.
+        var rendered = [];
+        Array.prototype.forEach.call(form.elements, function(el) {
+            var match = /^jform\[com_fields\]\[([^\]]+)\]/.exec(el.name || '');
+
+            if (match && !el.disabled && !(el.matches && el.matches(':disabled')) && rendered.indexOf(match[1]) === -1) {
+                rendered.push(match[1]);
+            }
+        });
+        rendered.forEach(function(name) {
+            body.append('profile_rendered_fields[]', name);
+        });
+
+        // The same for the fields profile plugins add in a group of their own
+        // (for example jform[profile][address1] of the User - Profile plugin),
+        // as "group.name". The server validates a rendered field and leaves an
+        // unrendered one out, so its stored value stays.
+        var renderedPlugin = [];
+        Array.prototype.forEach.call(form.elements, function(el) {
+            var match = /^jform((?:\[[^\]]*\])+)$/.exec(el.name || '');
+
+            if (!match || el.disabled || (el.matches && el.matches(':disabled'))) {
+                return;
+            }
+
+            var keys = match[1].slice(1, -1).split('][');
+
+            if (keys[keys.length - 1] === '') {
+                keys.pop();
+            }
+
+            if (keys.length < 2 || keys[0] === 'com_fields') {
+                return;
+            }
+
+            var key = keys.join('.');
+
+            if (renderedPlugin.indexOf(key) === -1) {
+                renderedPlugin.push(key);
+            }
+        });
+        renderedPlugin.forEach(function(key) {
+            body.append('profile_rendered_plugin_fields[]', key);
         });
 
         var messageContainer = form.querySelector('.ajax-message') || JoomlaAjaxForms.createMessageContainer(form);
@@ -996,12 +1264,38 @@ const JoomlaAjaxForms = {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: body.toString()
         })
-        .then(function(response) { return response.json(); })
+        .then(function(response) {
+            // Joomla redirects a request it does not let through to the
+            // endpoint, above all every request of a signed-in user who must
+            // reset the password first (forced password reset): only the
+            // profile save of com_users is allowed then. fetch() follows the
+            // redirect and receives the HTML of the profile page, so nothing
+            // was saved. The form then goes to com_users the normal way
+            // (task profile.save), which applies the same rules.
+            if (response.redirected) {
+                return null;
+            }
+
+            return response.json();
+        })
         .then(function(rawData) {
             JoomlaAjaxForms.enableSubmit(submitBtn);
+            if (rawData === null) {
+                JoomlaAjaxForms.ensureProfileTask(form);
+                JoomlaAjaxForms.submitNatively(form);
+                return;
+            }
                 var serverErrorMsg = JoomlaAjaxForms.extractAndClearMessages(rawData);
                 JoomlaAjaxForms.clearSystemMessages();
             var data = JoomlaAjaxForms.unwrapResponse(rawData);
+            // A switched-off profile save is handed to com_users as well, and
+            // needs the same task when saveProfile() was called through the API.
+            if (data && !data.success && data.disabled === true) {
+                JoomlaAjaxForms.ensureProfileTask(form);
+            }
+            if (JoomlaAjaxForms.handOverIfDisabled(data, form)) {
+                return;
+            }
             if (data.success) {
                 var msg = data.message || getFormsLang('PROFILE_SAVED');
                 JoomlaAjaxForms.showMessage(messageContainer, msg, 'success');
