@@ -131,6 +131,104 @@ final class AttributionTest extends TestCase
         self::assertSame('', Attribution::visit(null, $this->request('/', '', 'not-an-ip'), $this->at('2026-11-16 08:00:00'))['landing_ip']);
     }
 
+    public function testCapabilitiesInAUrlAreNeverStoredWhateverTheyAreCalled(): void
+    {
+        $jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl';
+        $opaque = 'Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MDEyMzQ1Njc4OTA';
+        $clickId = 'Cj0KCQiA4L67BhDUARIsADWrl7G1a2b3c4d5e6f7g8h9i0';
+
+        self::assertSame('https://other.example.org/reset?page=2', Attribution::url('https://user:secret@other.example.org/reset?page=2'),
+            'A user name and password before the host are dropped');
+        self::assertSame('/lp?id=1&view=article', Attribution::url('/lp?x=' . $jwt . '&id=1&ref=' . $opaque . '&view=article', true),
+            'A JSON Web Token or an opaque token is dropped under any parameter name');
+        self::assertSame('/lp?design=keep', Attribution::url('/lp?jwt=a&sig=b&design=keep&invite=c&user_sig=d&reset=e&confirm=f', true),
+            'Parameter names that name a capability are dropped, similar ordinary names are kept');
+        self::assertSame('/lp?utm_source=linkedin&gclid=' . $clickId . '&q=some+words+longer+than+thirty-two+characters',
+            Attribution::url('/lp?utm_source=linkedin&gclid=' . $clickId . '&q=some+words+longer+than+thirty-two+characters', true),
+            'Click IDs and ordinary text stay');
+
+        $state = Attribution::visit(null, $this->request('/lp?utm_source=linkedin&gclid=' . $clickId . '&ref=' . $opaque,
+            'https://user:secret@other.example.org/x?t=' . $jwt), $this->at('2026-11-16 08:00:00'));
+        foreach (['secret', $jwt, $opaque] as $capability) {
+            self::assertStringNotContainsString($capability, json_encode($state), 'Never stored: ' . $capability);
+        }
+        self::assertSame($clickId, $state['first_touch']['parameters']['gclid']);
+    }
+
+    public function testOpaqueTokensOfEveryCommonShapeAreDroppedAndAPasswordWithAnAtSignGoesWhole(): void
+    {
+        $tokens = [
+            'hex' => 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+            'uuid' => '9f1c2d3e-4b5a-4c6d-8e7f-a1b2c3d4e5f6',
+            'base64url' => 'aB3_dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5bC7dE9',
+            'base64' => 'Zm9vYmFy+YmF6cXV4MTIzNDU2Nzg5MDEy/MzQ1Njc4OTA=',
+        ];
+
+        foreach ($tokens as $shape => $token) {
+            self::assertSame('/lp?view=article', Attribution::url('/lp?view=article&ref=' . rawurlencode($token), true),
+                'A ' . $shape . ' token is dropped under an ordinary parameter name');
+        }
+
+        self::assertSame('https://other.example.org/x', Attribution::url('https://user:p@ss@other.example.org/x'),
+            'A password with an unencoded «@» is dropped up to the host, nothing of it is left');
+        self::assertSame('//other.example.org/x?page=2', Attribution::url('//user:secret@other.example.org/x?page=2'),
+            'A scheme-relative address loses its user name and password too');
+        self::assertSame('/x?page=2', Attribution::url('//user:secret@other.example.org/x?page=2', true),
+            'A scheme-relative address keeps only path and query where only those are stored');
+        $state = Attribution::visit(null, $this->request('/lp', '//user:secret@other.example.org/x'), $this->at('2026-11-16 08:00:00'));
+        self::assertStringNotContainsString('secret', json_encode($state), 'A scheme-relative referrer keeps no password');
+        self::assertSame('https://other.example.org/x?page=a@b', Attribution::url('https://other.example.org/x?page=a@b'),
+            'An «@» in the query never counts as user information');
+        self::assertSame('https://other.example.org/p@th?page=2', Attribution::url('https://other.example.org/p@th?page=2'),
+            'An «@» in the path never counts as user information');
+    }
+
+    public function testCampaignParametersAndClickIdsAlwaysStayWithLongOpaqueValues(): void
+    {
+        $values = [
+            'utm_source' => 'linkedin',
+            'utm_medium' => 'paid-social',
+            'utm_campaign' => '2026q4linkedinretargetingswisspharmalabs',
+            'utm_term' => 'laboratory-it-support-2026-basel-zurich-bern',
+            'utm_content' => 'video4b2b2026carouselslide3variantb7',
+            'utm_id' => '7d3f9a2b1c8e4f6a9b0c2d4e6f8a1b3c',
+            'gclid' => 'Cj0KCQiA4L67BhDUARIsADWrl7G1a2b3c4d5e6f7g8h9i0_BwE',
+            'gbraid' => '0AAAAADkPq3x9Y2b7K1mN4pR8sT6vW0zA3cE5gH',
+            'wbraid' => 'CkEKCQiA4L67BhDUARIsADWrl7G1a2b3c4d5e6f7g8',
+            'fbclid' => 'IwAR2xYz9AbC3dEf4GhI5jKl6MnO7pQr8StU9vWx0Yz1AbC2dEf3GhI4jKl',
+            'msclkid' => '0c3f1e2d4b5a69788796a5b4c3d2e1f0',
+            'li_fat_id' => 'a1b2c3d4-e5f6-7a8b-9c0d-e1f2a3b4c5d6',
+            'ttclid' => 'E.C.P.Cs0BkL2a3B4c5D6e7F8g9H0i1J2k3L4m5N6o7P8q9R0s1T2u3V4w5X6y7Z8',
+            'twclid' => '2ab3cd4ef5gh6ij7kl8mn9op0qr1st2uv3wx4yz5',
+            'mc_cid' => '9a8b7c6d5e',
+            'mc_eid' => 'f1e2d3c4b5a6978877665544332211aa',
+        ];
+        self::assertSame(Attribution::PARAMETERS, array_keys($values), 'Every campaign parameter and click ID is covered');
+
+        $query = http_build_query($values, '', '&', PHP_QUERY_RFC3986);
+        self::assertSame('/lp?' . $query, Attribution::url('/lp?' . $query, true),
+            'Campaign parameters and click IDs are never dropped, whatever their names or values look like');
+
+        $state = Attribution::visit(null, $this->request('/lp?' . $query), $this->at('2026-11-16 08:00:00'));
+        self::assertSame($values, $state['first_touch']['parameters']);
+        self::assertSame('/lp?' . $query, $state['first_touch']['landing_url']);
+    }
+
+    public function testLongReadableValuesUnderOtherNamesAreKept(): void
+    {
+        foreach ([
+            'campaign=spring-2026-linkedin-retargeting-switzerland',
+            'ref=newsletter_2026_11_kmu_it_services_offer_basel',
+            'article=it-support-for-laboratories-in-basel-and-zurich-2026',
+            'promo=SUMMER2026-SWISS-PHARMA-LABS-RETARGETING-V2',
+            'source=partner.example.org~2026~q4~landingpage~variant~b',
+            'q=some+words+and+the+year+2026+longer+than+thirty-two+characters',
+            'lang=de-CH&Itemid=101&id=42:laboratory-it-services-for-swiss-pharma-2026',
+        ] as $query) {
+            self::assertSame('/lp?' . $query, Attribution::url('/lp?' . $query, true), 'Kept: ' . $query);
+        }
+    }
+
     public function testRecordForTheBookingCombinesTheSessionAndTheSubmit(): void
     {
         $state = Attribution::visit(null, $this->request('/de/it-services?utm_source=linkedin', 'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));
