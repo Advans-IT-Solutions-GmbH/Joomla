@@ -224,12 +224,13 @@ try {
                 && $helpXpath->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
                 'All fourteen native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
             $check($helpXpath->query('//section[@id="help-plugins"]//h2[normalize-space()="Bundled plugins"]')->length === 1
-                && $helpXpath->query('//section[@id="help-plugins"]//h3')->length === 5
+                && $helpXpath->query('//section[@id="help-plugins"]//h3')->length === 6
+                && $helpXpath->query('//section[@id="help-plugins"]//h3[normalize-space()="System - Appointments origin of bookings"]')->length === 1
                 && $helpXpath->query('//table[@id="help-tasks-table"]/tbody/tr')->length === 7
                 && $helpXpath->query('//section[@id="help-bookings"]')->length === 1
                 && $helpXpath->query('//section[@id="help-close"]')->length === 1
                 && str_contains($help, 'CalDAV address') && str_contains($help, 'Uncertain creation: reconcile before continuing'),
-                'Central help explains bookings, the Close transfer, all seven task routines and the five bundled plugins, enabled=' . $enabled);
+                'Central help explains bookings, the Close transfer, all seven task routines and the six bundled plugins, enabled=' . $enabled);
             if ($enabled === 0) {
                 // The toolbar Help button opens the page with tmpl=component in a popup: no links that leave the page.
                 $popup = $admin->request('/administrator/index.php?option=com_appointments&view=help&tmpl=component');
