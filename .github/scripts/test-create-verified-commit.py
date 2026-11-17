@@ -114,8 +114,11 @@ class CreateVerifiedCommitTest(unittest.TestCase):
         git(top, "init", "-q", "--bare", "-b", "main", str(self.remote))
         git(top, "init", "-q", "-b", "main", str(self.repo))
         for key, value in (("user.email", "fixture@example.invalid"), ("user.name", "Fixture"),
-                           ("core.autocrlf", "false")):
+                           ("core.autocrlf", "false"), ("commit.gpgsign", "false")):
             git(self.repo, "config", key, value)
+            # The fake API and remote_commit() create commits inside the bare remote.
+            git(self.remote, "config", key, value)
+        self.remote_commits = 0
         git(self.repo, "remote", "add", "origin", str(self.remote))
         self.write("com_x/VERSION", "1.0.0\n")
         self.write("com_x/x.xml", "<version>1.0.0</version>\n")
@@ -138,9 +141,11 @@ class CreateVerifiedCommitTest(unittest.TestCase):
         path.write_bytes(content.encode())
 
     def remote_commit(self, name: str) -> str:
-        """Create a commit on a remote branch, as if pushed by someone else."""
-        tree = git(self.remote, "rev-parse", f"{self.base}^{{tree}}")
-        oid = git(self.remote, "commit-tree", tree, "-p", self.base, "-m", "someone else")
+        """Advance (or create) a remote branch by a new, distinct commit, as if pushed by someone else."""
+        parent = ref(self.remote, name) or self.base
+        tree = git(self.remote, "rev-parse", f"{parent}^{{tree}}")
+        self.remote_commits += 1
+        oid = git(self.remote, "commit-tree", tree, "-p", parent, "-m", f"someone else {self.remote_commits}")
         git(self.remote, "update-ref", f"refs/heads/{name}", oid)
         return oid
 
@@ -187,10 +192,11 @@ class CreateVerifiedCommitTest(unittest.TestCase):
         self.assertEqual(ref(self.remote, BRANCH), oid)
 
     def test_branch_advanced_after_the_checkout_is_never_overwritten(self):
-        self.remote_commit(BRANCH)
+        seen = self.remote_commit(BRANCH)
         git(self.repo, "fetch", "-q", "origin")
         self.stage_release()
         newer = self.remote_commit(BRANCH)
+        self.assertNotEqual(newer, seen)
         with self.assertRaisesRegex(cvc.CommitError, "git push"):
             self.run_script(FakeGitHub(self.remote))
         self.assert_branch_untouched(newer)
