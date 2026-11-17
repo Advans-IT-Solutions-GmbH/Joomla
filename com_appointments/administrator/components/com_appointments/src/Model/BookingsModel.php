@@ -79,7 +79,9 @@ class BookingsModel extends ListModel
         $direction = strtoupper((string) $this->getState('list.direction')) === 'ASC' ? 'ASC' : 'DESC';
         // The CSV export pages by id: the name order of the page, which covers the newest bookings only, is left out.
         $byName = !$this->exporting && in_array($order, ['b.invitee_last_name', 'b.invitee_first_name'], true);
-        $query->order($db->quoteName($byName ? 'b.start_utc' : $order) . ' ' . $direction);
+        // The id breaks ties (same event type, status or start), so the pages never repeat or skip a booking.
+        $query->order($db->quoteName($byName ? 'b.start_utc' : $order) . ' ' . $direction)
+            ->order($db->quoteName('b.id') . ' ' . $direction);
         $search = (string) $this->getState('filter.search', '');
 
         if ($search === '' && !$byName) {

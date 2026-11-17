@@ -353,6 +353,15 @@ try {
         $paged[] = $ids($bookings($admin, [], ['limit' => 1], ['limitstart' => $start]));
     }
     $check(array_merge(...$paged) === [$k1, $k2, $k3], 'One booking per page: the pages cover every booking once');
+    // Two bookings share the event type and all three the status: the id must break the tie.
+    foreach (['e.title ASC', 'e.title DESC', 'b.state ASC', 'b.state DESC'] as $sort) {
+        $paged = [];
+        foreach ([0, 1, 2] as $start) {
+            $paged[] = $ids($bookings($admin, [], ['limit' => 1, 'fullordering' => $sort], ['limitstart' => $start]));
+        }
+        $check(array_map('count', $paged) === [1, 1, 1] && $sorted(array_merge(...$paged)) === [$k1, $k2, $k3],
+            'One booking per page sorted by ' . $sort . ': no booking repeats or goes missing');
+    }
     $bookings($admin, ['state' => '9']);
     $status = $admin->status;
     $after = $admin->request('/administrator/index.php?option=com_appointments&view=bookings');
