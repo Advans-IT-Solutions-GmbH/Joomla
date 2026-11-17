@@ -224,12 +224,13 @@ try {
                 && $helpXpath->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
                 'All fourteen native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
             $check($helpXpath->query('//section[@id="help-plugins"]//h2[normalize-space()="Bundled plugins"]')->length === 1
-                && $helpXpath->query('//section[@id="help-plugins"]//h3')->length === 5
+                && $helpXpath->query('//section[@id="help-plugins"]//h3')->length === 6
+                && $helpXpath->query('//section[@id="help-plugins"]//h3[normalize-space()="System - Appointments origin of bookings"]')->length === 1
                 && $helpXpath->query('//table[@id="help-tasks-table"]/tbody/tr')->length === 7
                 && $helpXpath->query('//section[@id="help-bookings"]')->length === 1
                 && $helpXpath->query('//section[@id="help-close"]')->length === 1
                 && str_contains($help, 'CalDAV address') && str_contains($help, 'Uncertain creation: reconcile before continuing'),
-                'Central help explains bookings, the Close transfer, all seven task routines and the five bundled plugins, enabled=' . $enabled);
+                'Central help explains bookings, the Close transfer, all seven task routines and the six bundled plugins, enabled=' . $enabled);
             if ($enabled === 0) {
                 // The toolbar Help button opens the page with tmpl=component in a popup: no links that leave the page.
                 $popup = $admin->request('/administrator/index.php?option=com_appointments&view=help&tmpl=component');
@@ -251,7 +252,8 @@ try {
                 && str_contains($help, 'fixed 12-month period') && !str_contains($help, 'COM_APPOINTMENTS_HELP_'),
                 'Central help renders the separate translated retention contracts, enabled=' . $enabled);
             $check($helpXpath->query('//section[@id="help-retention"]//h2[normalize-space()="Retention and deletion"]')->length === 1
-                && $helpXpath->query('//table[@id="help-retention-table"]/tbody/tr')->length === 11
+                && $helpXpath->query('//table[@id="help-retention-table"]/tbody/tr')->length === 12
+                && str_contains($help, 'Campaign statistics')
                 && str_contains($help, 'never deletes entries of your own') && str_contains($help, 'does not cancel the appointment')
                 && str_contains($help, 'Block only') && str_contains($help, 'catch up on the deletions at once')
                 && str_contains($help, 'Remove only the address') && str_contains($help, 'view=privacyreview')

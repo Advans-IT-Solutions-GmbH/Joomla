@@ -8,6 +8,7 @@
 
 namespace Advans\Plugin\Privacy\Appointments\Extension;
 
+use Advans\Component\Appointments\Administrator\Helper\Attribution;
 use Advans\Component\Appointments\Administrator\Helper\PrivacyAddress;
 use Advans\Component\Appointments\Administrator\Service\PrivacyService;
 use Advans\Component\Appointments\Administrator\Service\PrivacyOperationLock;
@@ -73,6 +74,15 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
                 $field->value = (isset($labels[$id]) ? $labels[$id] . ': ' : '')
                     . PrivacyAddress::readable($answer);
                 $item->addField($field);
+            }
+            // The origin of the booking (campaign, referrer, addresses, device), each value a field of its own.
+            foreach (Attribution::flatten(Attribution::decode($booking['attribution'] ?? null)) as $name => $value) {
+                if ($value !== '') {
+                    $field = new Field();
+                    $field->name = 'attribution_' . $name;
+                    $field->value = $value;
+                    $item->addField($field);
+                }
             }
             $domain->addItem($item);
         }
@@ -244,7 +254,7 @@ final class Appointments extends CMSPlugin implements SubscriberInterface
         // Staff data outside the internet calendars (absences, host record), whether or not they are on.
         $complete = $this->removeStaffData($staffId) && $complete;
         if ($team !== null) {
-            $complete = $team->remove((string) $event->getRequest()->email, $event->getUser(), $staffId, $requestId,
+            $complete = $team->remove((string) $event->getRequest()->email, $event->getUser(), $staffId, $requestId,
                 $this->teamMember($requestId, $staffId)) && $complete;
             if ($staffScope !== null && $staffId > 0 && $team->staffRemoved()) {
                 try {

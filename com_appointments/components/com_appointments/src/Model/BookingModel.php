@@ -24,10 +24,11 @@ class BookingModel extends BaseDatabaseModel
 {
     /**
      * $proof is the consent record of the consent mode (consent_utc, consent_version), stored
-     * with the booking; empty in the other modes.
+     * with the booking; empty in the other modes. $attribution is the origin of the visit as
+     * stored JSON (AttributionTracker::forBooking()), encrypted with the personal fields.
      */
     public function create(EventtypeModel $events, int $eventId, array $input, \DateTimeImmutable $start, \DateTimeImmutable $now,
-        array $proof = []): array
+        array $proof = [], ?string $attribution = null): array
     {
         $app = Factory::getApplication();
         $event = $events->getItem($eventId);
@@ -36,10 +37,15 @@ class BookingModel extends BaseDatabaseModel
             BookingInput::requiresPhone((string) $event->location_type),
             BookingInput::maxGuests($params->get('max_guests', BookingInput::DEFAULT_MAX_GUESTS)), BookingInput::fixedDialCode($params));
         $invitee += array_intersect_key($proof, array_flip(['consent_utc', 'consent_version']));
+        // Set here only, after validation: no input of the form can reach this column.
+        $invitee['attribution'] = $attribution;
 
         $booking = (new BookingStore($this->getDatabase()))->create(
             (array) $event, $invitee, $start, $now, $app->getIdentity()->getAuthorisedViewLevels(), $app->getLanguage()->getTag()
         );
+        // The booking is committed and holds the origin encrypted: nothing of it stays in the session,
+        // also when a later step (conference, mail) fails.
+        \Advans\Component\Appointments\Administrator\Service\AttributionTracker::forget($app);
         $booking = ConferenceService::forComponent($this->getDatabase())->provision($booking, $now);
         if (!isset($booking['id']) && (!empty($booking['_conference_missing']) || !empty($booking['_conference_error']))) {
             $app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'), 'warning');

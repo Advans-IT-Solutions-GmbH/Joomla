@@ -32,6 +32,7 @@ return [
     'plg_privacy_appointments' => ['type' => 'plugin', 'element' => 'appointments', 'group' => 'privacy', 'dependencies' => ['com_appointments', 'com_privacy'], 'routes' => [['com_appointments']]],
     'plg_content_appointmentsprivacy' => ['type' => 'plugin', 'element' => 'appointmentsprivacy', 'group' => 'content', 'dependencies' => ['com_appointments', 'com_privacy'], 'routes' => [['com_privacy']]],
     'plg_system_appointmentsdav' => ['type' => 'plugin', 'element' => 'appointmentsdav', 'group' => 'system', 'dependencies' => ['com_appointments'], 'php' => ['sodium'], 'routes' => [['com_appointments']]],
+    'plg_system_appointmentsattribution' => ['type' => 'plugin', 'element' => 'appointmentsattribution', 'group' => 'system', 'dependencies' => ['com_appointments'], 'routes' => [['com_appointments']]],
     'plg_user_appointments' => ['type' => 'plugin', 'element' => 'appointments', 'group' => 'user', 'dependencies' => ['com_appointments'], 'routes' => [['com_appointments']]],
     'plg_task_j2commerceprivacy' => ['type' => 'plugin', 'element' => 'j2commerceprivacy', 'group' => 'task', 'shop' => true, 'scheduler' => true],
     'plg_system_j2commerceprivacy' => ['type' => 'plugin', 'element' => 'j2commerceprivacy', 'group' => 'system', 'shop' => true],

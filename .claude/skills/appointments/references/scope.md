@@ -128,7 +128,9 @@ all three in version 1:
 - A retention task that anonymises or deletes bookings a configurable number of days after they
   ended.
 
-No IP address is stored at all. The anti-bot timing check persists nothing, and the rate limiter
+IP addresses are stored only inside the encrypted origin record of a booking (`attribution`, since
+1.6.0, component option `attribution_capture`, off by default): the address of the first page view and of the
+booking, erased with the booking. The anti-bot timing check persists nothing, and the rate limiter
 keeps only a keyed hash with a one-day retention.
 
 ## Explicitly out of scope for version 1

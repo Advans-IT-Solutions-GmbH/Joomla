@@ -17,6 +17,7 @@ use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\ManageMenuItem;
 use Advans\Component\Appointments\Administrator\Helper\SlotTakenException;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Administrator\Service\AttributionTracker;
 use Advans\Component\Appointments\Administrator\Service\FeedService;
 use Advans\Component\Appointments\Administrator\Service\RateLimiter;
 use Advans\Component\Appointments\Site\Helper\PrivacyLink;
@@ -122,13 +123,16 @@ class BookingController extends BaseController
         }
 
         try {
-            $booking = $this->getModel('Booking')->create($events, $eventId, $data, $start, $now, $proof);
+            // The origin of the visit, from the session and this request: never a form field.
+            $booking = $this->getModel('Booking')->create($events, $eventId, $data, $start, $now, $proof,
+                AttributionTracker::forBooking($this->app, $now));
         } catch (BookingValidationException $e) {
             return $this->refuse($eventId, $e->fieldErrors === [] ? $e->languageKey : '', $e->fieldErrors);
         } catch (SlotTakenException $e) {
             return $this->refuse($eventId, 'COM_APPOINTMENTS_BOOKING_ERROR_TAKEN');
         }
 
+        // The model removed the origin from the session as soon as the booking was committed.
         $this->app->setUserState('com_appointments.booking.' . $eventId, null);
         $this->app->setUserState('com_appointments.booking_errors.' . $eventId, null);
         $this->app->setUserState('com_appointments.confirmation.id', (int) $booking['id']);

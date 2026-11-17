@@ -315,8 +315,9 @@ final class FeedService
     {
         $db = $this->db;
 
-        return $this->query()->select($db->quoteName(array_merge(['b.id', 'b.eventtype_id', 'b.sequence', 'b.state',
-            'b.start_utc', 'b.end_utc', 'b.modified_utc'], BookingData::readColumns('b'))))
+        // The calendar entry needs no origin of the booking (BookingData::lightSelect()).
+        return $this->query()->select($db->quoteName(['b.id', 'b.eventtype_id', 'b.sequence', 'b.state',
+            'b.start_utc', 'b.end_utc', 'b.modified_utc']))->select(BookingData::lightSelect($db, 'b'))
             ->from($db->quoteName('#__appointments_bookings', 'b'));
     }
 

@@ -39,9 +39,36 @@ class BookingsController extends BaseController
     {
         $this->requireEditRequest();
         $model = $this->getModel('Bookings', 'Administrator', ['ignore_request' => false]);
+        // Appended after the columns of 1.5: event type ID, creation time and the origin of each
+        // booking, every field in a column of its own (Attribution::columns()).
+        $columns = array_merge(['id', 'eventtype_title', 'start_utc', 'end_utc', 'state', 'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email',
+            'invitee_phone', 'guest_emails', 'custom_fields', 'consent_utc', 'consent_version', 'sequence', 'conference_state', 'conference_error', 'anonymised_utc', 'unverified',
+            'eventtype_id', 'created_utc'], \Advans\Component\Appointments\Administrator\Helper\Attribution::columns());
+        $this->sendCsv('appointments.csv', $columns, $model->exportRows());
+    }
+
+    /**
+     * The non-personal campaign aggregate as CSV: bookings per day of booking, event type,
+     * campaign and referrer host, with the number per state. Same filters as the list (event
+     * type, from, to), applied to the day of booking. It outlives the anonymisation of the
+     * bookings, so a campaign can be evaluated at any time.
+     */
+    public function exportCampaigns(): void
+    {
+        $this->requireEditRequest();
+        $model = $this->getModel('Bookings', 'Administrator', ['ignore_request' => false]);
+        $this->sendCsv('appointments-campaigns.csv', ['day', 'eventtype_id', 'eventtype_title', 'utm_source', 'utm_medium', 'utm_campaign', 'referrer_host',
+            'bookings', 'pending', 'confirmed', 'cancelled'], $model->campaignRows());
+    }
+
+    /**
+     * Writes $rows as CSV (formula-safe cells, CsvCell) and sends it as a download.
+     *
+     * @param   list<string>  $columns
+     */
+    private function sendCsv(string $filename, array $columns, iterable $rows): void
+    {
         $db = Factory::getContainer()->get(DatabaseInterface::class);
-        $columns = ['id', 'eventtype_title', 'start_utc', 'end_utc', 'state', 'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email',
-            'invitee_phone', 'guest_emails', 'custom_fields', 'consent_utc', 'consent_version', 'sequence', 'conference_state', 'conference_error', 'anonymised_utc', 'unverified'];
         $output = tmpfile();
         if ($output === false) {
             throw new \RuntimeException(Text::_('COM_APPOINTMENTS_BOOKINGS_EXPORT_FAILED'), 503);
@@ -52,7 +79,7 @@ class BookingsController extends BaseController
                 if (fputcsv($output, $columns, ',', '"', '') === false) {
                     throw new \RuntimeException(Text::_('COM_APPOINTMENTS_BOOKINGS_EXPORT_FAILED'), 503);
                 }
-                foreach ($model->exportRows() as $row) {
+                foreach ($rows as $row) {
                     $values = array_map(static fn ($key) =>
                         \Advans\Component\Appointments\Administrator\Helper\CsvCell::safe(isset($row[$key]) ? (string) $row[$key] : null), $columns);
                     if (fputcsv($output, $values, ',', '"', '') === false) {
@@ -68,7 +95,7 @@ class BookingsController extends BaseController
                 throw new \RuntimeException(Text::_('COM_APPOINTMENTS_BOOKINGS_EXPORT_FAILED'), 503);
             }
             $this->app->setHeader('Content-Type', 'text/csv; charset=utf-8', true);
-            $this->app->setHeader('Content-Disposition', 'attachment; filename="appointments.csv"', true);
+            $this->app->setHeader('Content-Disposition', 'attachment; filename="' . $filename . '"', true);
             $this->app->setHeader('Cache-Control', 'private, no-store', true);
             $this->app->setHeader('X-Robots-Tag', 'noindex, nofollow', true);
             $this->app->sendHeaders();

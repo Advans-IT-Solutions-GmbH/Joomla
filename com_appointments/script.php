@@ -38,16 +38,19 @@ class Com_appointmentsInstallerScript extends InstallerScript
     private bool $hasLegacyFeedTokens = false;
 
     /**
-     * The plugins this package bundles: group => [element, enabled on first install].
+     * The plugins this package bundles: [group, element, enabled when first installed].
      * The team calendar plugins (CalDAV endpoint, key handling at sign-in) stay
      * disabled until an operator enables them: nothing is reachable by default.
+     * The attribution plugin only records the origin of a visit in the session
+     * (component option «Origin of bookings»).
      */
     private const BUNDLED_PLUGINS = [
-        'task'    => ['appointments', true],
-        'privacy' => ['appointments', true],
-        'content' => ['appointmentsprivacy', true],
-        'system'  => ['appointmentsdav', false],
-        'user'    => ['appointments', false],
+        ['task', 'appointments', true],
+        ['privacy', 'appointments', true],
+        ['content', 'appointmentsprivacy', true],
+        ['system', 'appointmentsdav', false],
+        ['system', 'appointmentsattribution', true],
+        ['user', 'appointments', false],
     ];
 
     private const APPOINTMENT_TABLES = [
@@ -81,6 +84,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
         'keyring',
         'ratelimit',
         'audit',
+        'campaign_totals',
+        'campaign_stats',
         'templates',
         'fields',
         'bookings',
@@ -234,6 +239,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $this->ensureUpdateSite();
+        // Before the first read of booking rows below (migration of clear rows, templates).
+        $this->ensureAttribution();
         $db = Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
         require_once JPATH_ADMINISTRATOR . '/components/com_appointments/src/Service/Close/Queue.php';
         \Advans\Component\Appointments\Administrator\Service\Close\Queue::install($db);
@@ -326,6 +333,77 @@ class Com_appointmentsInstallerScript extends InstallerScript
             . ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
     }
 
+    /**
+     * The origin of a booking (`attribution`) and the campaign aggregate (`campaign_stats`, see
+     * install.mysql.utf8.sql), also on an update from a version without them and on an
+     * installation over kept tables. Runs before anything reads the personal fields of a booking
+     * (BookingData::readColumns() names the column). Idempotent and independent of the schema
+     * version, like ensureDeviceRemovalMode().
+     */
+    private function ensureAttribution(): void
+    {
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $table = $db->replacePrefix('#__appointments_bookings');
+
+        if (\in_array($table, $db->getTableList(), true) && !\array_key_exists('attribution', $db->getTableColumns($table, false))) {
+            $db->setQuery('ALTER TABLE ' . $db->quoteName($table) . ' ADD COLUMN ' . $db->quoteName('attribution')
+                . ' MEDIUMTEXT AFTER ' . $db->quoteName('custom_fields'))->execute();
+        }
+
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_campaign_stats')
+            . ' (`id` INT UNSIGNED NOT NULL AUTO_INCREMENT, `booking_id` INT UNSIGNED DEFAULT NULL, `day` DATE NOT NULL, `eventtype_id` INT UNSIGNED NOT NULL,'
+            . " `eventtype_title` VARCHAR(255) NOT NULL DEFAULT '',"
+            . " `utm_source` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '', `utm_medium` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',"
+            . " `utm_campaign` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '', `referrer_host` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',"
+            . ' `state` TINYINT NOT NULL, PRIMARY KEY (`id`), UNIQUE KEY `idx_booking` (`booking_id`), KEY `idx_eventtype_day` (`eventtype_id`, `day`),'
+            . ' KEY `idx_day` (`day`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
+
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_campaign_totals')
+            . ' (`day` DATE NOT NULL, `eventtype_id` INT UNSIGNED NOT NULL, `eventtype_title` VARCHAR(255) NOT NULL DEFAULT \'\','
+            . ' `utm_source` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT \'\', `utm_medium` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT \'\','
+            . ' `utm_campaign` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT \'\', `referrer_host` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT \'\','
+            . ' `state` TINYINT NOT NULL, `bookings` INT UNSIGNED NOT NULL DEFAULT 0,'
+            . ' PRIMARY KEY (`day`, `eventtype_id`, `utm_source`, `utm_medium`, `utm_campaign`, `referrer_host`, `state`),'
+            . ' KEY `idx_eventtype_day` (`eventtype_id`, `day`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
+
+        // A table of a test build before the release may differ: its own row ID with the booking link,
+        // campaign columns that compare exactly, and rows of erased bookings (no booking link), which
+        // now belong to the counts.
+        $stats = $db->replacePrefix('#__appointments_campaign_stats');
+        $columns = $db->getTableColumns($stats, false);
+
+        if (!isset($columns['id'])) {
+            $db->setQuery('ALTER TABLE ' . $db->quoteName($stats) . ' DROP PRIMARY KEY, ADD COLUMN ' . $db->quoteName('id')
+                . ' INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST, MODIFY ' . $db->quoteName('booking_id') . ' INT UNSIGNED DEFAULT NULL,'
+                . ' ADD UNIQUE KEY ' . $db->quoteName('idx_booking') . ' (' . $db->quoteName('booking_id') . ')')->execute();
+            $columns = $db->getTableColumns($stats, false);
+        }
+
+        foreach (['utm_source', 'utm_medium', 'utm_campaign', 'referrer_host'] as $column) {
+            if (isset($columns[$column]) && (string) ($columns[$column]->Collation ?? '') !== 'utf8mb4_bin') {
+                $db->setQuery('ALTER TABLE ' . $db->quoteName($stats) . ' MODIFY ' . $db->quoteName($column)
+                    . " VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT ''")->execute();
+            }
+        }
+
+        // Counted and deleted together, or neither: a retry after a failure counts nothing twice.
+        $key = implode(', ', $db->quoteName(['day', 'eventtype_id', 'utm_source', 'utm_medium', 'utm_campaign', 'referrer_host']));
+        $db->transactionStart();
+
+        try {
+            $db->setQuery('INSERT INTO ' . $db->quoteName('#__appointments_campaign_totals') . ' (' . $key . ', ' . implode(', ', $db->quoteName(['eventtype_title', 'state', 'bookings']))
+                . ') SELECT ' . $key . ', MAX(' . $db->quoteName('eventtype_title') . '), ' . $db->quoteName('state') . ', COUNT(*) FROM ' . $db->quoteName($stats)
+                . ' WHERE ' . $db->quoteName('booking_id') . ' IS NULL GROUP BY ' . $key . ', ' . $db->quoteName('state')
+                . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('bookings') . ' = ' . $db->quoteName('bookings') . ' + VALUES(' . $db->quoteName('bookings') . ')')->execute();
+            $db->setQuery('DELETE FROM ' . $db->quoteName($stats) . ' WHERE ' . $db->quoteName('booking_id') . ' IS NULL')->execute();
+            $db->transactionCommit();
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+
+            throw $e;
+        }
+    }
+
     private function prepareUninstall(): bool
     {
         $app = Factory::getApplication();
@@ -357,7 +435,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $params = $this->componentParams($db, 'com_appointments') ?? [];
         $deleteData = ($params['uninstall_data_action'] ?? '') === 'delete';
 
-        foreach (self::BUNDLED_PLUGINS as $group => [$element]) {
+        foreach (self::BUNDLED_PLUGINS as [$group, $element]) {
             $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
                 ->from($db->quoteName('#__extensions'))
                 ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
@@ -602,8 +680,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
             $group = (string) $entry['group'];
             $element = (string) $entry['element'];
             $folder = (string) $entry['folder'];
-            if (!isset(self::BUNDLED_PLUGINS[$group]) || $element !== self::BUNDLED_PLUGINS[$group][0]
-                || $folder !== 'plugins/' . $group . '/' . $element
+            $bundled = array_values(array_filter(self::BUNDLED_PLUGINS,
+                static fn (array $plugin): bool => $plugin[0] === $group && $plugin[1] === $element));
+            if ($bundled === [] || $folder !== 'plugins/' . $group . '/' . $element
                 || !is_file($source . '/' . $folder . '/' . $element . '.xml')) {
                 throw new \RuntimeException('The bundled appointments plugin package is invalid.');
             }
@@ -618,7 +697,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
             if (!$installer->install($source . '/' . $folder)) {
                 throw new \RuntimeException('The bundled appointments plugin could not be installed.');
             }
-            if (!$existed && self::BUNDLED_PLUGINS[$group][1]) {
+            if (!$existed && $bundled[0][2]) {
                 $db->setQuery($this->createDbQuery($db)->update($db->quoteName('#__extensions'))
                     ->set($db->quoteName('enabled') . ' = 1')
                     ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))

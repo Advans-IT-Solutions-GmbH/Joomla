@@ -18,6 +18,8 @@ final class Anonymiser
         'invitee_language', 'guest_emails', 'custom_fields', 'cancel_reason',
         'conference_provider', 'conference_url', 'conference_room',
         'conference_state', 'conference_error',
+        // The origin of the booking (Attribution), including the visitor's addresses.
+        'attribution',
     ];
 
     /**

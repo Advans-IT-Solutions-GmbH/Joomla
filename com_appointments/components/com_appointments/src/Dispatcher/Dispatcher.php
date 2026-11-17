@@ -10,6 +10,7 @@
 namespace Advans\Component\Appointments\Site\Dispatcher;
 
 use Advans\Component\Appointments\Administrator\Helper\MenuViews;
+use Advans\Component\Appointments\Administrator\Service\AttributionTracker;
 use Joomla\CMS\Dispatcher\ComponentDispatcher;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Exception\RouteNotFoundException;
@@ -29,6 +30,10 @@ class Dispatcher extends ComponentDispatcher
 {
     public function dispatch()
     {
+        // The origin of the visit, also when the system plugin that records every page is disabled.
+        // Once per request: a page the plugin recorded already is not counted twice.
+        AttributionTracker::capture($this->app);
+
         // Controller and task exactly as ComponentDispatcher::dispatch() reads them.
         $command = $this->input->getCmd('task', 'display');
 
