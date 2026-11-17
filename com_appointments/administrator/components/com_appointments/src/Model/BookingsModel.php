@@ -172,8 +172,8 @@ class BookingsModel extends ListModel
     }
 
     /**
-     * The campaign statistics (CampaignStats: the rows of bookings and the counts of erased ones,
-     * added up in memory, one entry per group) counted per day of booking, event type and campaign,
+     * The campaign statistics (CampaignStats: the rows of bookings and the counts of erased ones)
+     * counted per day of booking, event type and campaign,
      * with the number per state, filtered by event type and by the day of booking (filters «from»
      * and «to»), oldest first. The event types this user may see; the statistics of a deleted
      * event type (named by its title at booking time) only for a component administrator.
@@ -201,29 +201,24 @@ class BookingsModel extends ListModel
             $scope[] = $db->quoteName('e.id') . ' IS NULL';
         }
 
-        // The rows of bookings not erased (one each) and the counts of erased ones, added up per group.
-        $count = static fn (int $state): string => 'SUM(CASE WHEN ' . $db->quoteName('s.state') . ' = ' . $state . ' THEN 1 ELSE 0 END)';
-        $sum = static fn (int $state): string => 'SUM(CASE WHEN ' . $db->quoteName('s.state') . ' = ' . $state . ' THEN '
-            . $db->quoteName('s.bookings') . ' ELSE 0 END)';
-        $groups = [];
-        $sources = [
-            [\Advans\Component\Appointments\Administrator\Service\CampaignStats::TABLE, 'COUNT(*)', $count],
-            [\Advans\Component\Appointments\Administrator\Service\CampaignStats::TOTALS, 'SUM(' . $db->quoteName('s.bookings') . ')', $sum],
-        ];
+        // The rows of bookings not erased (one each) and the counts of erased ones, added up per group
+        // by the database and read in ordered batches, so the export holds one batch at a time.
+        $stats = \Advans\Component\Appointments\Administrator\Service\CampaignStats::class;
+        $state = static fn (int $value, string $number): string => 'CASE WHEN ' . $db->quoteName('s.state') . ' = ' . $value
+            . ' THEN ' . $number . ' ELSE 0 END';
+        $parts = [];
 
-        foreach ($sources as [$table, $total, $perState]) {
-            $key = array_map(static fn (string $column): string => 's.' . $column, \Advans\Component\Appointments\Administrator\Service\CampaignStats::KEY);
+        foreach ([$stats::TABLE => '1', $stats::TOTALS => $db->quoteName('s.bookings')] as $table => $number) {
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-            $query->select($db->quoteName($key))
-                ->select('MAX(COALESCE(' . $db->quoteName('e.title') . ', ' . $db->quoteName('s.eventtype_title') . ')) AS ' . $db->quoteName('eventtype_title'))
-                ->select($total . ' AS ' . $db->quoteName('bookings'))
-                ->select($perState(0) . ' AS ' . $db->quoteName('pending'))
-                ->select($perState(1) . ' AS ' . $db->quoteName('confirmed'))
-                ->select($perState(2) . ' AS ' . $db->quoteName('cancelled'))
+            $query->select($db->quoteName(array_map(static fn (string $column): string => 's.' . $column, $stats::KEY)))
+                ->select('COALESCE(' . $db->quoteName('e.title') . ', ' . $db->quoteName('s.eventtype_title') . ') AS ' . $db->quoteName('eventtype_title'))
+                ->select($number . ' AS ' . $db->quoteName('bookings'))
+                ->select($state(0, $number) . ' AS ' . $db->quoteName('pending'))
+                ->select($state(1, $number) . ' AS ' . $db->quoteName('confirmed'))
+                ->select($state(2, $number) . ' AS ' . $db->quoteName('cancelled'))
                 ->from($db->quoteName($table, 's'))
                 ->join('LEFT', $db->quoteName('#__appointments_eventtypes', 'e') . ' ON ' . $db->quoteName('e.id') . ' = ' . $db->quoteName('s.eventtype_id'))
-                ->where('(' . implode(' OR ', $scope) . ')')
-                ->group($db->quoteName($key));
+                ->where('(' . implode(' OR ', $scope) . ')');
             $event = (string) $this->getState('filter.eventtype_id', '');
 
             if ($event !== '') {
@@ -238,28 +233,31 @@ class BookingsModel extends ListModel
                 }
             }
 
-            foreach ($db->setQuery($query)->loadAssocList() as $row) {
-                $id = implode("\0", array_map(static fn (string $column): string => (string) $row[$column],
-                    \Advans\Component\Appointments\Administrator\Service\CampaignStats::KEY));
+            $parts[] = (string) $query;
+        }
 
-                if (!isset($groups[$id])) {
-                    $groups[$id] = $row;
-                    continue;
-                }
+        $key = $db->quoteName(array_map(static fn (string $column): string => 'u.' . $column, $stats::KEY));
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($key)
+            ->select('MAX(' . $db->quoteName('u.eventtype_title') . ') AS ' . $db->quoteName('eventtype_title'));
 
-                foreach (['bookings', 'pending', 'confirmed', 'cancelled'] as $column) {
-                    $groups[$id][$column] = (int) $groups[$id][$column] + (int) $row[$column];
-                }
+        foreach (['bookings', 'pending', 'confirmed', 'cancelled'] as $column) {
+            $query->select('SUM(' . $db->quoteName('u.' . $column) . ') AS ' . $db->quoteName($column));
+        }
+
+        $query->from('(' . implode(' UNION ALL ', $parts) . ') AS ' . $db->quoteName('u'))
+            ->group($key)
+            ->order($key);
+        $offset = 0;
+
+        do {
+            $rows = $db->setQuery($query->setLimit(500, $offset))->loadAssocList();
+            $offset += 500;
+
+            foreach ($rows as $row) {
+                yield $row;
             }
-        }
-
-        // Oldest first, then event type and campaign; the campaign values compare exactly, like the columns.
-        uasort($groups, static fn (array $a, array $b): int => [$a['day'], (int) $a['eventtype_id'], $a['utm_source'], $a['utm_medium'],
-            $a['utm_campaign'], $a['referrer_host']] <=> [$b['day'], (int) $b['eventtype_id'], $b['utm_source'], $b['utm_medium'], $b['utm_campaign'], $b['referrer_host']]);
-
-        foreach ($groups as $row) {
-            yield $row;
-        }
+        } while (count($rows) === 500);
     }
 
     public function exportRows(): \Generator
