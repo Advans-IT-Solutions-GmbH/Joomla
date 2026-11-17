@@ -29,6 +29,7 @@ final class AnonymiserTest extends TestCase
             'reminder_sent_utc' => '[]', 'anonymised_utc' => null,
             'consent_utc' => '2026-10-10 10:00:00', 'consent_version' => str_repeat('a', 64),
             'created_utc' => '2026-10-10 10:00:00', 'modified_utc' => '2026-10-14 10:00:00',
+            'attribution' => '{"version":1,"booking_ip":"198.51.100.7"}',
         ];
     }
 
@@ -45,6 +46,7 @@ final class AnonymiserTest extends TestCase
             'invitee_name', 'invitee_first_name', 'invitee_last_name', 'invitee_email', 'invitee_phone', 'invitee_timezone',
             'invitee_language', 'guest_emails', 'custom_fields', 'cancel_reason',
             'conference_provider', 'conference_url', 'conference_room', 'conference_state', 'conference_error',
+            'attribution',
         ];
         self::assertSame($erased, Anonymiser::ERASED_FIELDS);
 

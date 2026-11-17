@@ -47,6 +47,15 @@ if (!empty($item->consent_utc)) {
         <dd class="col-sm-9"><?php echo nl2br($this->escape($answer['value'])); ?></dd>
     <?php endforeach; ?>
 </dl>
+<?php if ($this->origin !== []) : ?>
+    <h3 class="h4"><?php echo Text::_('COM_APPOINTMENTS_ATTRIBUTION_HEADING'); ?></h3>
+    <dl class="row com-appointments-booking-origin">
+        <?php foreach ($this->origin as [$label, $value]) : ?>
+            <dt class="col-sm-3"><?php echo $this->escape($label); ?></dt>
+            <dd class="col-sm-9 text-break"><?php echo $this->escape($value); ?></dd>
+        <?php endforeach; ?>
+    </dl>
+<?php endif; ?>
 <?php if ($item->conference_state === 'failed') : ?>
     <p class="alert alert-warning"><?php echo Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'); ?><br><?php echo $this->escape((string) $item->conference_error); ?></p>
 <?php elseif ($this->hostUrl !== null) : ?>

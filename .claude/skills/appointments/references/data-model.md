@@ -144,6 +144,7 @@ Index `(user_id, start_utc, end_utc)`.
 | `invitee_language` | `CHAR(7)` | language captured with the booking; mail delivery independently resolves each recipient's account language, else the site default |
 | `guest_emails` | `TEXT` | newline separated, at most the component option `max_guests` (0–50, default 10) addresses; a guest is matched exactly per line, never by substring |
 | `custom_fields` | `JSON` | answers, keyed by field id |
+| `attribution` | `MEDIUMTEXT NULL` | the origin of the booking (`Helper\Attribution`): JSON with first visit, landing URL, IP address of the first page view and of the booking, first and last touch (time, page, referrer, whitelisted `utm_*` and click-ID parameters), page views, booking page, Accept-Language, User-Agent with device, browser and OS. Sealed like the other personal fields (`BookingData::COLUMNS`) and erased with them (`Anonymiser::ERASED_FIELDS`). Shown in full to the host only, in the administrator and the CSV export; host mails and the host's calendar entry get only the campaign name (`Attribution::text()`). Added by `script.php` on update (`ensureAttribution()`) |
 | `consent_utc` | `DATETIME NULL` | set only in the consent mode of the booking form (`consent_mode = consent`): when the person consented; kept on anonymisation (proof, no data of the person) |
 | `consent_version` | `CHAR(64) NULL` | sha256 hex of mode, language tag and the exact plain label text (`ConsentMode::version()`); kept on anonymisation |
 | `conference_provider` | `VARCHAR(64) NULL` | |
@@ -174,11 +175,31 @@ There is deliberately **no `asset_id`** on this table. A booking inherits the pe
 event type; see `references/scope.md`, "Administration". Adding one later would mean an `#__assets`
 row per booking, an extra insert in the hot path and an orphan asset after every erasure.
 
-There is also deliberately **no IP address column**. The anti-bot timing check compares the render
-time of the form with the submission time and persists nothing, and the rate limiter keeps only a
-keyed hash in `#__appointments_ratelimit` with a one-day retention. A column here would keep the raw
-address for the life of the booking and break the promise in
-`references/privacy-and-deletion.md`.
+There is deliberately **no IP address column**. Since 1.6.0 the IP address of the first page view
+and of the booking is part of the encrypted `attribution` record (owner decision: complete campaign
+evaluation per booking), so it is sealed and erased with the other personal fields and never
+readable in the table. The anti-bot timing check persists nothing, and the rate limiter keeps only a
+keyed hash in `#__appointments_ratelimit` with a one-day retention.
+
+## `#__appointments_campaign_stats`
+
+The campaign statistics without personal data (`Service\CampaignStats`): primary key `id`,
+`booking_id` (unique), then the day of booking (UTC), `eventtype_id`, `eventtype_title` (at booking time),
+`utm_source`, `utm_medium`, `utm_campaign`, `referrer_host` (each at most 100 characters, from the
+last touch, else the first, binary collation so case variants stay separate campaigns, a value that
+looks like an e-mail address or a telephone number stored as `(redacted)`) and `state`. No name, address, URL, click ID, IP address or device.
+Written in the booking's own transaction (create, state change), only for bookings with a
+record of their origin. The erasure (also the delete mode) moves the row in its own transaction into
+`#__appointments_campaign_totals` (`CampaignStats::erased()`) and deletes it. The export adds both
+per day, event type and campaign. Created by `script.php` on update.
+
+## `#__appointments_campaign_totals`
+
+The counts of erased bookings: `day`, `eventtype_id`, `eventtype_title`, `utm_source`, `utm_medium`,
+`utm_campaign`, `referrer_host` (binary collation), `state` (after the erasure) and `bookings` (the
+number). Primary key over all columns but the title and the number, `ON DUPLICATE KEY UPDATE`
+adds one. No booking ID, no row ID: nothing per booking. `script.php` moves rows of a test build
+without booking link from the statistics into this table.
 
 ### Rescheduling updates the row
 

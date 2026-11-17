@@ -39,6 +39,7 @@ no contact form.
 | all custom field answers | erased |
 | guest e-mail addresses | erased |
 | `cancel_reason`, any free text | erased |
+| `attribution` (origin of the booking: campaign, referrer, landing and booking page, IP addresses, User-Agent) | erased; the non-personal row in `#__appointments_campaign_stats` (day, event type, campaign, state) becomes one more in the counts of `#__appointments_campaign_totals` and is deleted, in the erasure's transaction. Host mails and the host's calendar entry carry only the campaign name (`Attribution::text()`), never the rest: copies outside the website are neither encrypted nor anonymised |
 | conference room identifier and link | erased, and the room is torn down if the adapter supports it |
 | anti-bot timing data | never stored in the first place, so there is nothing to erase |
 | `start_utc`, `end_utc`, `eventtype_id`, `state`, `created_utc` | kept |
@@ -238,9 +239,12 @@ component gives the operator the mechanism; the legal text is theirs.
   start time, never the invitee's name, e-mail or phone number, unless the operator explicitly
   enables that for an adapter that needs it — and the setting states what is sent.
 - It never writes personal data to the Joomla log or to an error message.
-- **It stores no IP address at all.** The booking table has no column for one, and adding one would
-  break this promise. The anti-bot timing check compares the moment the form was rendered with the
-  moment it was submitted and persists nothing. The rate limiter stores only a keyed hash of the
+- **It stores an IP address only inside the encrypted origin record of a booking** (`attribution`,
+  since 1.6.0, owner decision for complete campaign evaluation): the address of the first page view
+  of the session and of the booking. The record is sealed with the personal fields, shown to the
+  host only, exported for a privacy request and erased with the booking on every path. The booking
+  table has no IP column of its own. The anti-bot timing check compares the moment the form was
+  rendered with the moment it was submitted and persists nothing. The rate limiter stores only a keyed hash of the
   address, in `#__appointments_ratelimit`, where the retention task deletes rows after a day: the
   hash is keyed with `KeyProvider`, so the table cannot be turned back into a list of visitors even
   by whoever reads it.

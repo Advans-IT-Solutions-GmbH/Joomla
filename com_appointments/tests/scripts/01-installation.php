@@ -58,6 +58,46 @@ class InstallationTest
                 && is_file('/var/www/html/plugins/task/appointments/LICENSE.txt');
         });
 
+        $this->test('The origin plugin is installed and enabled, with its license and language', function () {
+            $result = $this->db->query("SELECT enabled FROM {$this->dbPrefix}extensions WHERE element='appointmentsattribution' AND type='plugin' AND folder='system'");
+            $row = $result ? $result->fetch_assoc() : null;
+            // Joomla copies a language only when the site has it: the test site has en-GB only.
+            $files = [
+                '/var/www/html/plugins/system/appointmentsattribution/services/provider.php',
+                '/var/www/html/plugins/system/appointmentsattribution/LICENSE.txt',
+                '/var/www/html/administrator/language/en-GB/plg_system_appointmentsattribution.sys.ini',
+            ];
+            $missing = array_values(array_filter($files, static fn (string $file): bool => !is_file($file)));
+
+            if (!$row || (int) $row['enabled'] !== 1 || $missing !== []) {
+                echo '    origin plugin: enabled=' . ($row['enabled'] ?? 'missing') . ', missing files: ' . implode(', ', $missing) . "\n";
+            }
+
+            return $row && (int) $row['enabled'] === 1 && $missing === [];
+        });
+
+        $this->test('Bookings have the encrypted origin column and the campaign aggregate exists', function () {
+            $column = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}appointments_bookings LIKE 'attribution'");
+            $names = [];
+            $binary = true;
+
+            foreach (['campaign_stats', 'campaign_totals'] as $name) {
+                $stats = $this->db->query("SHOW FULL COLUMNS FROM {$this->dbPrefix}appointments_{$name}");
+
+                while ($stats && ($row = $stats->fetch_assoc())) {
+                    $names[$name][] = $row['Field'];
+                    // Campaign values compare exactly: «Launch» and «launch» are two campaigns.
+                    $binary = $binary && (!in_array($row['Field'], ['utm_source', 'utm_medium', 'utm_campaign', 'referrer_host'], true)
+                        || $row['Collation'] === 'utf8mb4_bin');
+                }
+            }
+
+            // The counts of erased bookings have no booking ID and no row ID: nothing per booking.
+            return $column && $column->num_rows === 1 && ($names['campaign_stats'] ?? []) === ['id', 'booking_id', 'day', 'eventtype_id', 'eventtype_title',
+                'utm_source', 'utm_medium', 'utm_campaign', 'referrer_host', 'state'] && ($names['campaign_totals'] ?? []) === ['day', 'eventtype_id',
+                'eventtype_title', 'utm_source', 'utm_medium', 'utm_campaign', 'referrer_host', 'state', 'bookings'] && $binary;
+        });
+
         $this->test('Team calendar plugins are installed and stay disabled until an operator enables them', function () {
             // Default deny: the CalDAV endpoint and the key handling at sign-in
             // are off after installation. Enabling them is a deliberate step.

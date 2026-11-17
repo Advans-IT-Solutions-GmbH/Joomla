@@ -89,6 +89,8 @@ final class BookingStore
                 throw new \RuntimeException('The encrypted booking could not be stored.');
             }
             Close\Queue::changed($db, $clear, created: true);
+            // Campaign statistics in the same transaction, so later state changes follow in order.
+            CampaignStats::booked($db, $clear, (string) ($event['title'] ?? ''));
             $db->transactionCommit();
             $this->mirror('saved', $clear);
 
@@ -180,6 +182,7 @@ final class BookingStore
                 'sequence' => $booking['sequence'], 'modified_utc' => $booking['modified_utc'], 'cancel_reason' => $booking['cancel_reason']] + $change);
             $db->updateObject('#__appointments_bookings', $row, 'id');
             Close\Queue::changed($db, $booking);
+            CampaignStats::moved($db, $bookingId, $state);
             $db->transactionCommit();
 
         } catch (\Throwable $e) {
@@ -353,6 +356,9 @@ final class BookingStore
                     . $db->quote($now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')) . ')')->execute();
             }
             Close\Queue::changed($db, $erased, true);
+            // The campaign statistics keep the erased booking as a count only (state after the erasure),
+            // also when the booking row itself is deleted: its own row goes.
+            CampaignStats::erased($db, $bookingId, (int) $erased['state']);
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();

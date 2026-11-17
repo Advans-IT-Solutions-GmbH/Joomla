@@ -170,6 +170,7 @@ namespace {
             'bundled' => [
                 'plg_content_appointmentsprivacy',
                 'plg_privacy_appointments',
+                'plg_system_appointmentsattribution',
                 'plg_system_appointmentsdav',
                 'plg_system_j2commerceprivacy',
                 'plg_task_appointments',
