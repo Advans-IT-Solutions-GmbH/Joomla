@@ -105,6 +105,19 @@ class ConsentKindsTest extends TestCase
         $this->assertNull(ConsentRepository::extractNewsletterOrderId(ConsentRepository::NEWSLETTER_MARKER . '<!-- j2commerce-order:ORD-42 -->'));
     }
 
+    public function testPendingMarkerHoldsOnlyAHashAndIsRemovedCompletely(): void
+    {
+        $hash   = hash_hmac('sha256', 'pending-removal|anna@example.com', 'secret');
+        $marker = ConsentRepository::pendingMarker($hash);
+
+        $this->assertSame('<!-- j2commerce-removal-pending:' . $hash . ' -->', $marker);
+        // Nothing but hexadecimal digits can end up in the comment.
+        $this->assertSame('<!-- j2commerce-removal-pending: -->', ConsentRepository::pendingMarker('--> <!-- x'));
+
+        $body = "Einwilligung: Newsletter\n" . ConsentRepository::NEWSLETTER_MARKER . "\n" . ConsentRepository::newsletterOrderMarker('ORD-1');
+        $this->assertSame($body, ConsentRepository::withoutPendingMarkers($body . "\n" . $marker . "\n" . ConsentRepository::pendingMarker(str_repeat('a', 64))));
+    }
+
     public function testPlaceholderAddressOfAPseudonymisedAccount(): void
     {
         $this->assertSame('userid42removed@email.invalid', AcymailingPlaceholders::placeholderAddress(42));

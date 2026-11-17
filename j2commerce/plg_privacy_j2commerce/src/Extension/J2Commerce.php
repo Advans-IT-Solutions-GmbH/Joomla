@@ -1676,6 +1676,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         try {
             $repository = new ConsentRepository($db);
+            $hashes     = array_map(fn (string $email): string => $this->pendingHash($email), $emails);
+
+            // Before any step that can fail: the guest checkout newsletter consents of the request
+            // carry a hashed marker until they are invalidated, so a retry finds them even if the
+            // cleanup task anonymized their order in the meantime.
+            $repository->markNewsletterOrderConsentsPending($orders, $hashes);
 
             if ($this->newsletterKept) {
                 Log::add('Newsletter subscriber kept: guest consent records of the request left unchanged until the removal is carried out again', Log::WARNING, 'plg_privacy_j2commerce');
@@ -1687,7 +1693,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 $repository->invalidateNewsletterOrderConsents($userId, $this->guestOrdersDueForAnonymization($orders));
             } else {
                 $repository->anonymizeRequestConsents($userId, $emails);
-                $repository->invalidateNewsletterOrderConsents($userId, $orders);
+                $repository->invalidateNewsletterOrderConsents($userId, $orders, $hashes);
             }
         } catch (\Throwable $e) {
             $failed = true;

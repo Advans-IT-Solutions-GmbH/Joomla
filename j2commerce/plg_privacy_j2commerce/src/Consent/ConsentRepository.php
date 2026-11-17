@@ -103,6 +103,9 @@ final class ConsentRepository
 
     private const NEWSLETTER_ORDER_PREFIX = '<!-- advans-newsletter-order:';
 
+    /** Prefix of a pending-removal marker (pendingMarker()). */
+    public const PENDING_MARKER_PREFIX = '<!-- j2commerce-removal-pending:';
+
     private const MARKER_PREFIX = '<!-- j2commerce-order:';
     private const MARKER_SUFFIX = ' -->';
 
@@ -536,24 +539,112 @@ final class ConsentRepository
     }
 
     /**
-     * Mark the checkout newsletter consents of a removal request as invalid (state -1): those of
-     * the account ($userId) and the guest records (user_id 0) of the request's guest orders. The
-     * subscriber is gone, so the consent no longer applies. Body, IP address and user agent stay
-     * until the order is anonymized (removeOrderEvidence()) as evidence for mails already sent.
+     * Pending-removal marker of a checkout newsletter consent: the HMAC hash (site secret) of a
+     * request address, never the address. A removal request writes it before any step that can
+     * fail and removes it when it invalidates the record, so that a retry still finds the record
+     * after its order lost the address (anonymized by the cleanup task in the meantime).
+     */
+    public static function pendingMarker(string $hash): string
+    {
+        return self::PENDING_MARKER_PREFIX . (string) preg_replace('/[^a-f0-9]/', '', strtolower($hash)) . self::MARKER_SUFFIX;
+    }
+
+    /** $body without any pending-removal marker. */
+    public static function withoutPendingMarkers(string $body): string
+    {
+        return (string) preg_replace('/\R?<!-- j2commerce-removal-pending:[a-f0-9]* -->/', '', $body);
+    }
+
+    /** The pending-removal markers of $body, in order. */
+    private static function pendingMarkers(string $body): array
+    {
+        preg_match_all('/<!-- j2commerce-removal-pending:[a-f0-9]* -->/', $body, $matches);
+
+        return $matches[0];
+    }
+
+    /**
+     * Write the pending-removal markers of $hashes into the guest checkout newsletter consents
+     * (user_id 0) of these orders that are still valid.
      *
-     * @param   int       $userId    Account of the request (0: none)
-     * @param   string[]  $orderIds  Guest orders of the request (J2Commerce 6, not shared with another order)
+     * @param   string[]  $orderIds  Guest orders of the request (J2Commerce 6)
+     * @param   string[]  $hashes    pendingMarker() hashes of the request addresses
      *
      * @return  int  Number of records changed
      */
-    public function invalidateNewsletterOrderConsents(int $userId, array $orderIds): int
+    public function markNewsletterOrderConsentsPending(array $orderIds, array $hashes): int
     {
-        $ids = [];
+        $markers = array_values(array_unique(array_map([self::class, 'pendingMarker'], $hashes)));
+        $changed = 0;
+
+        if ($markers === []) {
+            return 0;
+        }
 
         foreach ($this->findNewsletterOrderConsents($orderIds) as $row) {
-            if ((int) $row->user_id === 0 && (int) $row->state !== -1) {
-                $ids[] = (int) $row->id;
+            if ((int) $row->user_id !== 0 || (int) $row->state === -1) {
+                continue;
             }
+
+            $body = (string) $row->body;
+            $add  = array_values(array_filter($markers, static fn (string $marker): bool => !str_contains($body, $marker)));
+
+            if ($add !== []) {
+                $this->updateConsent((int) $row->id, $body . "\n" . implode("\n", $add));
+                $changed++;
+            }
+        }
+
+        return $changed;
+    }
+
+    /**
+     * Mark the checkout newsletter consents of a removal request as invalid (state -1): those of
+     * the account ($userId), the guest records (user_id 0) of the request's guest orders and the
+     * guest records carrying a pending-removal marker of the request ($pendingHashes). The
+     * subscriber is gone, so the consent no longer applies. Pending-removal markers are removed.
+     * Body, IP address and user agent stay until the order is anonymized (removeOrderEvidence())
+     * as evidence for mails already sent.
+     *
+     * @param   int       $userId         Account of the request (0: none)
+     * @param   string[]  $orderIds       Guest orders of the request (J2Commerce 6, not shared with another order)
+     * @param   string[]  $pendingHashes  pendingMarker() hashes of the request addresses
+     *
+     * @return  int  Number of records changed
+     */
+    public function invalidateNewsletterOrderConsents(int $userId, array $orderIds, array $pendingHashes = []): int
+    {
+        $rows = [];
+
+        foreach ($this->findNewsletterOrderConsents($orderIds) as $row) {
+            if ((int) $row->user_id === 0) {
+                $rows[(int) $row->id] = $row;
+            }
+        }
+
+        foreach (array_values(array_unique(array_map([self::class, 'pendingMarker'], $pendingHashes))) as $marker) {
+            $lastId = 0;
+
+            do {
+                $batch = $this->db->setQuery(
+                    $this->createQuery()
+                        ->select($this->db->quoteName(['id', 'user_id', 'state', 'body']))
+                        ->from($this->db->quoteName('#__privacy_consents'))
+                        ->where($this->db->quoteName('user_id') . ' = 0')
+                        ->where($this->db->quoteName('body') . ' LIKE ' . $this->likeText($marker))
+                        ->where($this->db->quoteName('id') . ' > ' . $lastId)
+                        ->order($this->db->quoteName('id') . ' ASC')
+                        ->setLimit(self::BATCH_SIZE)
+                )->loadObjectList() ?: [];
+
+                foreach ($batch as $row) {
+                    $lastId = max($lastId, (int) $row->id);
+
+                    if (self::extractNewsletterOrderId((string) $row->body) !== null) {
+                        $rows[(int) $row->id] = $row;
+                    }
+                }
+            } while (\count($batch) === self::BATCH_SIZE);
         }
 
         if ($userId > 0) {
@@ -562,10 +653,9 @@ final class ConsentRepository
             do {
                 $batch = $this->db->setQuery(
                     $this->createQuery()
-                        ->select($this->db->quoteName(['id', 'body']))
+                        ->select($this->db->quoteName(['id', 'user_id', 'state', 'body']))
                         ->from($this->db->quoteName('#__privacy_consents'))
                         ->where($this->db->quoteName('user_id') . ' = ' . $userId)
-                        ->where($this->db->quoteName('state') . ' <> -1')
                         ->where($this->db->quoteName('body') . ' LIKE ' . $this->likeText(self::NEWSLETTER_MARKER))
                         ->where($this->db->quoteName('id') . ' > ' . $lastId)
                         ->order($this->db->quoteName('id') . ' ASC')
@@ -576,24 +666,44 @@ final class ConsentRepository
                     $lastId = max($lastId, (int) $row->id);
 
                     if (self::extractNewsletterOrderId((string) $row->body) !== null) {
-                        $ids[] = (int) $row->id;
+                        $rows[(int) $row->id] = $row;
                     }
                 }
             } while (\count($batch) === self::BATCH_SIZE);
         }
 
-        $ids = array_values(array_unique($ids));
+        $changed = 0;
 
-        foreach (array_chunk($ids, self::BATCH_SIZE) as $chunk) {
-            $this->db->setQuery(
-                $this->createQuery()
-                    ->update($this->db->quoteName('#__privacy_consents'))
-                    ->set($this->db->quoteName('state') . ' = -1')
-                    ->whereIn($this->db->quoteName('id'), $chunk)
-            )->execute();
+        foreach ($rows as $id => $row) {
+            $body = (string) $row->body;
+            $new  = self::withoutPendingMarkers($body);
+
+            if ((int) $row->state === -1 && $new === $body) {
+                continue;
+            }
+
+            $this->updateConsent($id, $new, -1);
+            $changed++;
         }
 
-        return \count($ids);
+        return $changed;
+    }
+
+    /** Write the body (and optionally the state) of one consent record. */
+    private function updateConsent(int $id, string $body, ?int $state = null): void
+    {
+        $query = $this->createQuery()
+            ->update($this->db->quoteName('#__privacy_consents'))
+            ->set($this->db->quoteName('body') . ' = :body')
+            ->where($this->db->quoteName('id') . ' = :id')
+            ->bind(':body', $body)
+            ->bind(':id', $id, ParameterType::INTEGER);
+
+        if ($state !== null) {
+            $query->set($this->db->quoteName('state') . ' = ' . (int) $state);
+        }
+
+        $this->db->setQuery($query)->execute();
     }
 
     /**
@@ -878,8 +988,10 @@ final class ConsentRepository
 
         if ($result === null || $found['ip'] === 0 || $found['agent'] === 0) {
             [$text] = self::siteText($language, self::NEWSLETTER_BODY_REMOVED_KEY);
+            // Pending-removal markers stay: a removal request in progress still has to find the record.
             $result = sprintf($text, htmlspecialchars($orderId, ENT_QUOTES, 'UTF-8'))
-                . "\n" . self::NEWSLETTER_MARKER . "\n" . self::newsletterOrderMarker($orderId);
+                . "\n" . self::NEWSLETTER_MARKER . "\n" . self::newsletterOrderMarker($orderId)
+                . implode('', array_map(static fn (string $marker): string => "\n" . $marker, self::pendingMarkers($body)));
         }
 
         return $result . "\n" . self::NEWSLETTER_EVIDENCE_REMOVED_MARKER . self::EVIDENCE_REMOVED_MARKER;

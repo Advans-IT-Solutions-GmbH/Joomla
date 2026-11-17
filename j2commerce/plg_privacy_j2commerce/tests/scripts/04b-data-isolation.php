@@ -1405,7 +1405,8 @@ class DataIsolationTest
                     && str_contains($expiredK3->body, '<!-- advans-newsletter-evidence-removed -->')
                     && str_contains($expiredK3->body, '<!-- advans-newsletter-order:' . $orders['guest_expired'] . ' -->'), json_encode($expiredK3));
                 $this->test('Guest removal: checkout newsletter consent of the order within the retention period is invalid, IP address kept as evidence',
-                    (int) $recentK3->state === -1 && str_contains($recentK3->body, '203.0.113.81'), json_encode($recentK3));
+                    (int) $recentK3->state === -1 && str_contains($recentK3->body, '203.0.113.81')
+                    && !str_contains($recentK3->body, 'j2commerce-removal-pending'), json_encode($recentK3));
             } else {
                 $this->test('Guest removal (J2Store): checkout newsletter consents are J2Commerce 6 records and stay unchanged',
                     $expiredK3->body === $before['k3_guest_expired']->body && (int) $expiredK3->state === 1
@@ -1464,15 +1465,25 @@ class DataIsolationTest
                     (int) $keptExpired->state === 1 && str_contains($keptExpired->body, '203.0.113.85'), json_encode($keptExpired));
             }
 
+            if ($isJ6) {
+                $this->test('Kept newsletter subscriber: the waiting checkout newsletter consent carries a hashed retry marker, no address',
+                    str_contains($keptRecent->body, '<!-- j2commerce-removal-pending:') && stripos($keptRecent->body, $keptGuest) === false, $keptRecent->body);
+            }
+
+            // Before the retry, the cleanup task anonymizes the retained order (its retention ended).
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' SET user_email = ' . $this->db->quote('anonymized@deleted.invalid')
+                . ' WHERE order_id = ' . $this->db->quote($orders['kept_recent']))->execute();
+
             $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
                 'subject' => $this->guestTestRequest($keptGuest),
                 'user'    => null,
             ]));
             $this->test('Kept newsletter subscriber: carrying out the removal again anonymizes the form record',
                 (int) $this->kindRecord($ids['kept_form'])->state === -1);
-            $this->test('Kept newsletter subscriber: carrying out the removal again invalidates the checkout newsletter consent of the retained order'
+            $retried = $this->kindRecord($ids['kept_k3_recent']);
+            $this->test('Kept newsletter subscriber: the retry finds the checkout newsletter consent through its marker although the order lost the address, and invalidates it'
                 . ($isJ6 ? '' : ' (J2Store: unchanged)'),
-                (int) $this->kindRecord($ids['kept_k3_recent'])->state === ($isJ6 ? -1 : 1));
+                (int) $retried->state === ($isJ6 ? -1 : 1) && !str_contains($retried->body, 'j2commerce-removal-pending'), json_encode($retried));
 
             // A failing step is reported to the administrator as an incomplete removal.
             $warnPlugin = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry([])]) extends GuestRequestTestPlugin {
