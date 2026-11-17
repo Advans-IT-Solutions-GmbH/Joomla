@@ -385,12 +385,22 @@ class Com_appointmentsInstallerScript extends InstallerScript
             }
         }
 
+        // Counted and deleted together, or neither: a retry after a failure counts nothing twice.
         $key = implode(', ', $db->quoteName(['day', 'eventtype_id', 'utm_source', 'utm_medium', 'utm_campaign', 'referrer_host']));
-        $db->setQuery('INSERT INTO ' . $db->quoteName('#__appointments_campaign_totals') . ' (' . $key . ', ' . implode(', ', $db->quoteName(['eventtype_title', 'state', 'bookings']))
-            . ') SELECT ' . $key . ', MAX(' . $db->quoteName('eventtype_title') . '), ' . $db->quoteName('state') . ', COUNT(*) FROM ' . $db->quoteName($stats)
-            . ' WHERE ' . $db->quoteName('booking_id') . ' IS NULL GROUP BY ' . $key . ', ' . $db->quoteName('state')
-            . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('bookings') . ' = ' . $db->quoteName('bookings') . ' + VALUES(' . $db->quoteName('bookings') . ')')->execute();
-        $db->setQuery('DELETE FROM ' . $db->quoteName($stats) . ' WHERE ' . $db->quoteName('booking_id') . ' IS NULL')->execute();
+        $db->transactionStart();
+
+        try {
+            $db->setQuery('INSERT INTO ' . $db->quoteName('#__appointments_campaign_totals') . ' (' . $key . ', ' . implode(', ', $db->quoteName(['eventtype_title', 'state', 'bookings']))
+                . ') SELECT ' . $key . ', MAX(' . $db->quoteName('eventtype_title') . '), ' . $db->quoteName('state') . ', COUNT(*) FROM ' . $db->quoteName($stats)
+                . ' WHERE ' . $db->quoteName('booking_id') . ' IS NULL GROUP BY ' . $key . ', ' . $db->quoteName('state')
+                . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('bookings') . ' = ' . $db->quoteName('bookings') . ' + VALUES(' . $db->quoteName('bookings') . ')')->execute();
+            $db->setQuery('DELETE FROM ' . $db->quoteName($stats) . ' WHERE ' . $db->quoteName('booking_id') . ' IS NULL')->execute();
+            $db->transactionCommit();
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+
+            throw $e;
+        }
     }
 
     private function prepareUninstall(): bool
