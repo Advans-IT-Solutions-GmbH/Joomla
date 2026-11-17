@@ -1618,7 +1618,14 @@ class DataIsolationTest
                         . ' WHERE id = ' . $failUserId)->execute();
                 };
 
-                $failUser = new \Joomla\CMS\User\User($failUserId);
+                // The shared User object of com_privacy, with the stored params (built by hand:
+                // loading it needs the user table, which needs an application in this CLI script).
+                $failUser           = new \Joomla\CMS\User\User();
+                $failUser->id       = $failUserId;
+                $failUser->name     = $failRow->name;
+                $failUser->username = $failRow->username;
+                $failUser->email    = $failEmail;
+                $failUser->setParam('language', 'de-DE');
                 $failPlugin->onPrivacyCanRemoveData(null, $failUser);
 
                 if ($order === 'core_first') {
@@ -1660,7 +1667,10 @@ class DataIsolationTest
             ];
             $this->db->insertObject('#__users', $okRow, 'id');
             $failUsers[] = (int) $okRow->id;
-            $okUser = new \Joomla\CMS\User\User((int) $okRow->id);
+            $okUser           = new \Joomla\CMS\User\User();
+            $okUser->id       = (int) $okRow->id;
+            $okUser->username = $okRow->username;
+            $okUser->email    = $okRow->email;
             $plugin->onPrivacyCanRemoveData(null, $okUser);
             $plugin->onPrivacyRemoveData(null, $okUser);
             $okRegistry = new ReflectionProperty(\Joomla\CMS\User\User::class, '_params');
@@ -1721,6 +1731,33 @@ class DataIsolationTest
                 !str_contains($this->kindRecord($ids['k3_live_old'])->body, '203.0.113.93')
                 && str_contains($this->kindRecord($ids['k3_live'])->body, '203.0.113.92'));
             $this->test('Cleanup: a second run changes nothing', $repository->removeStaleNewsletterEvidence($cutoff, [$ordersTable]) === 0);
+
+            // Interleavings: every writer reads the row again under lock before it changes it.
+            $ids['race_a'] = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['account_recent'], '203.0.113.94'), 1, $recent);
+            $stale         = $repository->findNewsletterOrderConsents([$orders['account_recent']]);
+            $stale         = array_values(array_filter($stale, static fn (object $row): bool => (int) $row->id === $ids['race_a']));
+            $repository->markNewsletterOrderConsentsPending([$orders['account_recent']], [str_repeat('b', 64)]);
+            $strip = new ReflectionMethod($repository, 'stripNewsletterRecords');
+            $strip->setAccessible(true);
+            $strip->invoke($repository, $stale); // evidence removal with the row as read before the marker
+            $raceA = $this->kindRecord($ids['race_a']);
+            $this->test('Interleaving: evidence removal with a stale row keeps a pending marker written in between and removes the evidence',
+                str_contains($raceA->body, \Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository::pendingMarker(str_repeat('b', 64)))
+                && !str_contains($raceA->body, '203.0.113.94'), $raceA->body);
+
+            $ids['race_b'] = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['account_recent'], '203.0.113.95'), 1, $recent);
+            $transform     = new ReflectionMethod($repository, 'transformConsent');
+            $transform->setAccessible(true);
+            $seen          = '';
+            $repository->removeNewsletterOrderEvidence([$orders['account_recent']]); // evidence removed after an invalidation read the row
+            $transform->invoke($repository, $ids['race_b'], static function (string $body, int $state) use (&$seen): array {
+                $seen = $body;
+
+                return [\Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository::withoutPendingMarkers($body), -1];
+            });
+            $raceB = $this->kindRecord($ids['race_b']);
+            $this->test('Interleaving: invalidation works on the current row, a removed IP address is never written back',
+                !str_contains($seen, '203.0.113.95') && (int) $raceB->state === -1 && !str_contains($raceB->body, '203.0.113.95'), $raceB->body);
             $this->test('Cleanup: form and registration records are never changed by the cleanup',
                 $this->kindRecord($ids['k1_other_account'])->body === $before['k1_other_account']->body
                 && $this->kindRecord($ids['k1b_other'])->body === $before['k1b_other']->body);

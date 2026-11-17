@@ -582,17 +582,15 @@ final class ConsentRepository
         }
 
         foreach ($this->findNewsletterOrderConsents($orderIds) as $row) {
-            if ((int) $row->user_id !== 0 || (int) $row->state === -1) {
+            if ((int) $row->user_id !== 0) {
                 continue;
             }
 
-            $body = (string) $row->body;
-            $add  = array_values(array_filter($markers, static fn (string $marker): bool => !str_contains($body, $marker)));
+            $changed += (int) $this->transformConsent((int) $row->id, static function (string $body, int $state) use ($markers): ?array {
+                $add = array_values(array_filter($markers, static fn (string $marker): bool => !str_contains($body, $marker)));
 
-            if ($add !== []) {
-                $this->updateConsent((int) $row->id, $body . "\n" . implode("\n", $add));
-                $changed++;
-            }
+                return $state === -1 || $add === [] ? null : [$body . "\n" . implode("\n", $add), $state];
+            });
         }
 
         return $changed;
@@ -674,36 +672,63 @@ final class ConsentRepository
 
         $changed = 0;
 
-        foreach ($rows as $id => $row) {
-            $body = (string) $row->body;
-            $new  = self::withoutPendingMarkers($body);
-
-            if ((int) $row->state === -1 && $new === $body) {
-                continue;
-            }
-
-            $this->updateConsent($id, $new, -1);
-            $changed++;
+        foreach (array_keys($rows) as $id) {
+            $changed += (int) $this->transformConsent((int) $id, static fn (string $body, int $state): array => [self::withoutPendingMarkers($body), -1]);
         }
 
         return $changed;
     }
 
-    /** Write the body (and optionally the state) of one consent record. */
-    private function updateConsent(int $id, string $body, ?int $state = null): void
+    /**
+     * Change one consent record in a transaction: the row is read again and locked (FOR UPDATE),
+     * $change gets its current body and state and returns the new [body, state] or null (no
+     * change). Every writer of the checkout newsletter consents (pending markers, invalidation,
+     * evidence removal) goes through here, so none of them writes back a body another one has
+     * changed in the meantime: a stripped IP address is never restored and a pending marker is
+     * never lost.
+     *
+     * @param   callable(string, int): (array{0: string, 1: int}|null)  $change
+     *
+     * @return  bool  Whether the record was changed
+     */
+    private function transformConsent(int $id, callable $change): bool
     {
-        $query = $this->createQuery()
-            ->update($this->db->quoteName('#__privacy_consents'))
-            ->set($this->db->quoteName('body') . ' = :body')
-            ->where($this->db->quoteName('id') . ' = :id')
-            ->bind(':body', $body)
-            ->bind(':id', $id, ParameterType::INTEGER);
+        $this->db->transactionStart();
 
-        if ($state !== null) {
-            $query->set($this->db->quoteName('state') . ' = ' . (int) $state);
+        try {
+            $row = $this->db->setQuery(
+                'SELECT ' . $this->db->quoteName('body') . ', ' . $this->db->quoteName('state')
+                . ' FROM ' . $this->db->quoteName('#__privacy_consents')
+                . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $id . ' FOR UPDATE'
+            )->loadObject();
+
+            $result = \is_object($row) ? $change((string) $row->body, (int) $row->state) : null;
+
+            if ($result === null || ($result[0] === (string) $row->body && (int) $result[1] === (int) $row->state)) {
+                $this->db->transactionCommit();
+
+                return false;
+            }
+
+            [$body, $state] = [(string) $result[0], (int) $result[1]];
+            $this->db->setQuery(
+                $this->createQuery()
+                    ->update($this->db->quoteName('#__privacy_consents'))
+                    ->set($this->db->quoteName('body') . ' = :body')
+                    ->set($this->db->quoteName('state') . ' = :state')
+                    ->where($this->db->quoteName('id') . ' = :id')
+                    ->bind(':body', $body)
+                    ->bind(':state', $state, ParameterType::INTEGER)
+                    ->bind(':id', $id, ParameterType::INTEGER)
+            )->execute();
+            $this->db->transactionCommit();
+
+            return true;
+        } catch (\Throwable $e) {
+            $this->db->transactionRollback();
+
+            throw $e;
         }
-
-        $this->db->setQuery($query)->execute();
     }
 
     /**
@@ -942,25 +967,19 @@ final class ConsentRepository
         $language = null;
 
         foreach ($records as $record) {
-            $body = (string) $record->body;
+            $orderId = (string) $record->order_id;
 
-            if (str_contains($body, self::NEWSLETTER_EVIDENCE_REMOVED_MARKER) || str_contains($body, self::EVIDENCE_REMOVED_MARKER)) {
-                continue;
-            }
+            // The row is read again under lock: a marker or state written since $record was read stays.
+            $changed += (int) $this->transformConsent((int) $record->id, static function (string $body, int $state) use ($orderId, &$language): ?array {
+                if (str_contains($body, self::NEWSLETTER_EVIDENCE_REMOVED_MARKER) || str_contains($body, self::EVIDENCE_REMOVED_MARKER)
+                    || self::extractNewsletterOrderId($body) !== $orderId) {
+                    return null;
+                }
 
-            $language ??= self::loadSiteBodyLanguage();
-            $body       = self::stripNewsletterEvidence($body, (string) $record->order_id, $language);
-            $id         = (int) $record->id;
+                $language ??= self::loadSiteBodyLanguage();
 
-            $this->db->setQuery(
-                $this->createQuery()
-                    ->update($this->db->quoteName('#__privacy_consents'))
-                    ->set($this->db->quoteName('body') . ' = :body')
-                    ->where($this->db->quoteName('id') . ' = :id')
-                    ->bind(':body', $body)
-                    ->bind(':id', $id, ParameterType::INTEGER)
-            )->execute();
-            $changed++;
+                return [self::stripNewsletterEvidence($body, $orderId, $language), $state];
+            });
         }
 
         return $changed;
