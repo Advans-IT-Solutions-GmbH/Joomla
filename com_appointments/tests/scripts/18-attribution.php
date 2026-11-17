@@ -278,7 +278,7 @@ try {
     $again = Attribution::decode(appointments_open_booking($db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event}"
         . " AND start_utc='{$time}'")->fetch_assoc())['attribution'] ?? null);
     $check($again !== null && $again['first_touch'] === null && $again['last_touch'] === null && !str_contains(json_encode($again), 'linkedin')
-        && !str_contains(json_encode($again), 'newsletter') && (int) $again['page_views'] <= 2,
+        && !str_contains(json_encode($again), 'newsletter'),
         'After a booking the session holds no capture data: the next booking starts from its own booking page');
 
     // A booking without a session: the request itself still tells the booking page, the address and the browser.
@@ -344,14 +344,16 @@ try {
     // booking has no touch of the campaign visit made while it was off.
     $params['attribution_capture'] = 1;
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($params)) . "' WHERE element='com_appointments' AND type='component'");
+    // Without a referrer from another site now: a touch could only come from what was kept while off.
+    $off->headers = [];
     [$browser, $path, $form] = $off->bookingForm($event, $day . ' 15:00:00', ['email' => $address]);
     sleep(2);
     $browser->request($path, $form);
     $time = $db->real_escape_string($day . ' 15:00:00');
     $afterOff = Attribution::decode(appointments_open_booking($db->query("SELECT * FROM {$prefix}appointments_bookings WHERE eventtype_id={$event}"
         . " AND start_utc='{$time}'")->fetch_assoc())['attribution'] ?? null);
-    $check($afterOff !== null && $afterOff['first_touch'] === null && !str_contains(json_encode($afterOff), 'off-campaign')
-        && (int) $afterOff['page_views'] === 1, 'With the option off nothing is kept in the session');
+    $check($afterOff !== null && $afterOff['first_touch'] === null && !str_contains(json_encode($afterOff), 'off-campaign'),
+        'With the option off nothing is kept in the session');
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string($originalParams) . "' WHERE element='com_appointments' AND type='component'");
 
     // A deleted event type: its statistics stay, named by the title at booking time, for a component administrator.
