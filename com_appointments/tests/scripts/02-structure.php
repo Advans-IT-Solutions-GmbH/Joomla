@@ -27,6 +27,7 @@ class StructureTest
         'appointments_templates',
         'appointments_audit',
         'appointments_campaign_stats',
+        'appointments_campaign_totals',
         'appointments_ratelimit',
         'appointments_keyring',
         'appointments_user_keys',
@@ -1061,19 +1062,22 @@ class StructureTest
                 return $result && $result->num_rows === 1;
             };
             $statsTable = "{$this->dbPrefix}appointments_campaign_stats";
-            $stats = function () use ($statsTable): bool {
-                $result = $this->db->query("SHOW TABLES LIKE '{$statsTable}'");
+            $totalsTable = "{$this->dbPrefix}appointments_campaign_totals";
+            $exists = function (string $name): bool {
+                $result = $this->db->query("SHOW TABLES LIKE '{$name}'");
 
                 return $result && $result->num_rows === 1;
             };
+            $stats = static fn (): bool => $exists($statsTable) && $exists($totalsTable);
 
             try {
                 $this->db->query("ALTER TABLE {$table} DROP COLUMN cancelled_version_utc");
                 $this->db->query("ALTER TABLE {$fields} DROP COLUMN max_length");
                 $this->db->query("ALTER TABLE {$table} DROP COLUMN attribution");
                 $this->db->query("DROP TABLE {$statsTable}");
+                $this->db->query("DROP TABLE {$totalsTable}");
 
-                if ($column() !== null || $maxLength() !== null || $origin() || $stats()) {
+                if ($column() !== null || $maxLength() !== null || $origin() || $exists($statsTable) || $exists($totalsTable)) {
                     return false;
                 }
 
@@ -1114,7 +1118,16 @@ class StructureTest
                     $this->db->query("ALTER TABLE {$table} ADD COLUMN attribution MEDIUMTEXT AFTER custom_fields");
                 }
 
-                if (!$stats()) {
+                if (!$exists($totalsTable)) {
+                    $this->db->query("CREATE TABLE {$totalsTable} (`day` DATE NOT NULL, `eventtype_id` INT UNSIGNED NOT NULL,"
+                        . " `eventtype_title` VARCHAR(255) NOT NULL DEFAULT '', `utm_source` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',"
+                        . " `utm_medium` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '', `utm_campaign` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',"
+                        . " `referrer_host` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '', `state` TINYINT NOT NULL, `bookings` INT UNSIGNED NOT NULL DEFAULT 0,"
+                        . ' PRIMARY KEY (`day`, `eventtype_id`, `utm_source`, `utm_medium`, `utm_campaign`, `referrer_host`, `state`),'
+                        . ' KEY `idx_eventtype_day` (`eventtype_id`, `day`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+                }
+
+                if (!$exists($statsTable)) {
                     $this->db->query("CREATE TABLE {$statsTable} (`id` INT UNSIGNED NOT NULL AUTO_INCREMENT, `booking_id` INT UNSIGNED DEFAULT NULL, `day` DATE NOT NULL,"
                         . " `eventtype_id` INT UNSIGNED NOT NULL, `eventtype_title` VARCHAR(255) NOT NULL DEFAULT '',"
                         . " `utm_source` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '', `utm_medium` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',"

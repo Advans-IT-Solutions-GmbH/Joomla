@@ -356,9 +356,9 @@ final class BookingStore
                     . $db->quote($now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')) . ')')->execute();
             }
             Close\Queue::changed($db, $erased, true);
-            // The campaign statistics keep the booking without personal data, now as cancelled when
-            // the erasure cancelled it, also when the booking row itself is deleted.
-            CampaignStats::moved($db, $bookingId, (int) $erased['state'], true);
+            // The campaign statistics keep the erased booking as a count only (state after the erasure),
+            // also when the booking row itself is deleted: its own row goes.
+            CampaignStats::erased($db, $bookingId, (int) $erased['state']);
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();

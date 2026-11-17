@@ -831,7 +831,7 @@ its own deletion rules. State the waiting period in the privacy policy.
 | Calendars on a device set to **Clean up** | At the next synchronisation after removing the device, a block or a password reset. A device set to **Block only** is only refused and deletes nothing. | Only on the device. The server keeps everything. |
 | Whole internet calendar | At once when somebody deletes it with all its entries in the administrator. | Website. On devices depending on the program. |
 | Erasure record | After the erasure-audit retention in years. | Website. |
-| Campaign statistics | Never because of its age. It holds no personal data: per booking only the day, event type, campaign and state. | Website. |
+| Campaign statistics | Never because of its age. It holds no personal data: per booking only the day, event type, campaign and state, after the erasure of the booking only a count per day, event type, campaign and state. | Website. |
 | Internet calendar log | After twelve months. | Website. |
 | Backup of the website | After 30 days at most. | Backup storage. |
 | Data in Close | Never by the website. A booking with a pending transfer stays on the website for up to 30 more days. | Close, under the rules of the CRM. |
@@ -1572,19 +1572,23 @@ later booking in the same session starts anew. With the option off nothing is ke
 an earlier visit are removed at the next page view.
 
 **Campaign statistics without personal data.** Each booking with a record also gets a row in
-`#__appointments_campaign_stats`: booking ID (removed by the erasure of the booking), day of booking
+`#__appointments_campaign_stats`: booking ID, day of booking
 (UTC), event type and its title at that
 time, `utm_source`, `utm_medium`, `utm_campaign` and the referrer host of the last touch (else the
 first), each cut at 100 characters, a value that looks like an e-mail address or a telephone number (nine or more digits)
 replaced by `(redacted)`, compared exactly (`Launch` and `launch` are two campaigns), and the current state. No name, address, URL, click ID, IP
-address or device. The row is written in the booking's own transaction and follows its state
-(a cancellation, also one by an erasure). It is not erased with the booking, also not in the delete
-mode, so the evaluation of a campaign stays possible after the bookings are anonymised or deleted.
+address or device. The row is written in the booking's own transaction and follows its state.
+The erasure of the booking (also in the delete mode) moves it, in the same transaction, into
+`#__appointments_campaign_totals`: per day, event type, campaign, referrer host and state only the
+number of erased bookings, without booking ID or row ID, and deletes the row. Nothing per booking
+remains of an erased booking, and the evaluation of a campaign stays possible after the bookings are
+anonymised or deleted.
 **Export campaign statistics** in the bookings toolbar downloads the number of bookings and the
-number per state (pending, confirmed, cancelled) per day, event type and campaign, filtered by event
+number per state (pending, confirmed, cancelled) per day, event type and campaign (rows and counts
+added up), filtered by event
 type and by the day of booking (the list's from and to dates). The statistics of a deleted event
 type stay, named by its title at booking time, and only a component administrator exports them.
-Owner decision of 16.11.2026: these rows stay after the bookings are anonymised, so campaigns can be
+Owner decision of 16.11.2026: these statistics stay after the bookings are anonymised, so campaigns can be
 evaluated at any time, and the full origin of a booking is visible to whoever may open the booking,
 with the same permission as its personal data. Writing the row never fails a booking, except a
 database lock conflict that already rolled the booking back. Campaign names are whatever the link carried: never put

@@ -25,6 +25,7 @@ class UninstallTest
         'appointments_templates',
         'appointments_audit',
         'appointments_campaign_stats',
+        'appointments_campaign_totals',
         'appointments_ratelimit',
         'appointments_keyring',
         'appointments_user_keys',

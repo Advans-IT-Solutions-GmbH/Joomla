@@ -184,13 +184,22 @@ keyed hash in `#__appointments_ratelimit` with a one-day retention.
 ## `#__appointments_campaign_stats`
 
 The campaign statistics without personal data (`Service\CampaignStats`): primary key `id`,
-`booking_id` (unique, set to NULL by the erasure of the booking), then the day of booking (UTC), `eventtype_id`, `eventtype_title` (at booking time),
+`booking_id` (unique), then the day of booking (UTC), `eventtype_id`, `eventtype_title` (at booking time),
 `utm_source`, `utm_medium`, `utm_campaign`, `referrer_host` (each at most 100 characters, from the
 last touch, else the first, binary collation so case variants stay separate campaigns, a value that
 looks like an e-mail address or a telephone number stored as `(redacted)`) and `state`. No name, address, URL, click ID, IP address or device.
-Written in the booking's own transaction (create, state change, erasure), only for bookings with a
-record of their origin; anonymisation and erasure, also the delete mode, keep the row. The export
-groups it per day, event type and campaign. Created by `script.php` on update.
+Written in the booking's own transaction (create, state change), only for bookings with a
+record of their origin. The erasure (also the delete mode) moves the row in its own transaction into
+`#__appointments_campaign_totals` (`CampaignStats::erased()`) and deletes it. The export adds both
+per day, event type and campaign. Created by `script.php` on update.
+
+## `#__appointments_campaign_totals`
+
+The counts of erased bookings: `day`, `eventtype_id`, `eventtype_title`, `utm_source`, `utm_medium`,
+`utm_campaign`, `referrer_host` (binary collation), `state` (after the erasure) and `bookings` (the
+number). Primary key over all columns but the title and the number, `ON DUPLICATE KEY UPDATE`
+adds one. No booking ID, no row ID: nothing per booking. `script.php` moves rows of a test build
+without booking link from the statistics into this table.
 
 ### Rescheduling updates the row
 

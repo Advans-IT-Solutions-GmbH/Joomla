@@ -273,13 +273,19 @@ try {
         $db->query("UPDATE {$prefix}appointments_bookings SET attribution='" . $db->real_escape_string($sealedOrigin) . "' WHERE id={$id}");
     }
 
-    // Self-service erasure removes the origin; the aggregate stays, now as cancelled.
+    // Self-service erasure removes the origin; the booking stays in the statistics as a count only, now as cancelled.
     $html = $fixture->apply($visitor, $fixture->link($booking, 'erase'));
     $erased = $fixture->row($id);
     $check($erased['anonymised_utc'] !== null && $erased['attribution'] === null, 'Erasure removes the origin with the personal fields');
     $stats = $db->query("SELECT * FROM {$prefix}appointments_campaign_stats WHERE eventtype_id={$event}")->fetch_all(MYSQLI_ASSOC);
-    $check(count($stats) === 1 && $stats[0]['booking_id'] === null && (int) $stats[0]['state'] === 2 && $stats[0]['utm_source'] === 'newsletter',
-        'The campaign statistics outlive the erasure, count the booking as cancelled and are no longer linked to it');
+    $totals = $db->query("SELECT * FROM {$prefix}appointments_campaign_totals WHERE eventtype_id={$event}")->fetch_all(MYSQLI_ASSOC);
+    $check($stats === [] && count($totals) === 1 && (int) $totals[0]['state'] === 2 && (int) $totals[0]['bookings'] === 1
+        && $totals[0]['utm_source'] === 'newsletter' && $totals[0]['utm_campaign'] === 'last-campaign',
+        'The campaign statistics outlive the erasure as a count of cancelled bookings, without a row of the booking');
+    [, $erasedRows] = $csvRows($exportCsv($admin, 'exportCampaigns', 0));
+    $erasedRow = array_values(array_filter($erasedRows, static fn (array $row): bool => (int) $row['eventtype_id'] === $event && $row['utm_source'] === 'newsletter'));
+    $check(count($erasedRow) === 1 && $erasedRow[0]['bookings'] === '1' && $erasedRow[0]['cancelled'] === '1' && $erasedRow[0]['confirmed'] === '0',
+        'The campaign export counts the erased booking');
 
     // A booking clears the capture data from the session: a second booking of the same visitor carries
     // nothing of the visit before the first one (it is stored encrypted with the first booking only).
@@ -386,6 +392,7 @@ try {
 
     if ($event > 0) {
         $db->query("DELETE FROM {$prefix}appointments_campaign_stats WHERE eventtype_id={$event}");
+        $db->query("DELETE FROM {$prefix}appointments_campaign_totals WHERE eventtype_id={$event}");
     }
 
     $fixture->cleanup();

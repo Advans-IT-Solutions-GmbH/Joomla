@@ -83,6 +83,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         'keyring',
         'ratelimit',
         'audit',
+        'campaign_totals',
         'campaign_stats',
         'templates',
         'fields',
@@ -356,8 +357,17 @@ class Com_appointmentsInstallerScript extends InstallerScript
             . ' `state` TINYINT NOT NULL, PRIMARY KEY (`id`), UNIQUE KEY `idx_booking` (`booking_id`), KEY `idx_eventtype_day` (`eventtype_id`, `day`),'
             . ' KEY `idx_day` (`day`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
 
-        // A table of a test build before the release may differ: its own row ID with the booking link
-        // that an erasure removes, and campaign columns that compare exactly.
+        $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_campaign_totals')
+            . ' (`day` DATE NOT NULL, `eventtype_id` INT UNSIGNED NOT NULL, `eventtype_title` VARCHAR(255) NOT NULL DEFAULT \'\','
+            . ' `utm_source` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT \'\', `utm_medium` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT \'\','
+            . ' `utm_campaign` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT \'\', `referrer_host` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT \'\','
+            . ' `state` TINYINT NOT NULL, `bookings` INT UNSIGNED NOT NULL DEFAULT 0,'
+            . ' PRIMARY KEY (`day`, `eventtype_id`, `utm_source`, `utm_medium`, `utm_campaign`, `referrer_host`, `state`),'
+            . ' KEY `idx_eventtype_day` (`eventtype_id`, `day`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci')->execute();
+
+        // A table of a test build before the release may differ: its own row ID with the booking link,
+        // campaign columns that compare exactly, and rows of erased bookings (no booking link), which
+        // now belong to the counts.
         $stats = $db->replacePrefix('#__appointments_campaign_stats');
         $columns = $db->getTableColumns($stats, false);
 
@@ -374,6 +384,13 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     . " VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT ''")->execute();
             }
         }
+
+        $key = implode(', ', $db->quoteName(['day', 'eventtype_id', 'utm_source', 'utm_medium', 'utm_campaign', 'referrer_host']));
+        $db->setQuery('INSERT INTO ' . $db->quoteName('#__appointments_campaign_totals') . ' (' . $key . ', ' . implode(', ', $db->quoteName(['eventtype_title', 'state', 'bookings']))
+            . ') SELECT ' . $key . ', MAX(' . $db->quoteName('eventtype_title') . '), ' . $db->quoteName('state') . ', COUNT(*) FROM ' . $db->quoteName($stats)
+            . ' WHERE ' . $db->quoteName('booking_id') . ' IS NULL GROUP BY ' . $key . ', ' . $db->quoteName('state')
+            . ' ON DUPLICATE KEY UPDATE ' . $db->quoteName('bookings') . ' = ' . $db->quoteName('bookings') . ' + VALUES(' . $db->quoteName('bookings') . ')')->execute();
+        $db->setQuery('DELETE FROM ' . $db->quoteName($stats) . ' WHERE ' . $db->quoteName('booking_id') . ' IS NULL')->execute();
     }
 
     private function prepareUninstall(): bool
