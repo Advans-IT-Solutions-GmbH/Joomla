@@ -259,6 +259,19 @@ try {
     $exported = serialize($export->getArgument('result')[0][0] ?? null);
     $check(str_contains($exported, 'attribution_first_utm_source') && str_contains($exported, 'LI-CLICK-1')
         && str_contains($exported, 'attribution_booking_ip'), 'The privacy export contains the origin, field by field');
+    $check(!str_contains(serialize($export->getArgument('result')), 'appointments_bookings_incomplete'), 'A readable origin leaves the export complete');
+
+    // An origin that cannot be opened (another key, a changed byte) is missing from the export: the export says so.
+    $sealedOrigin = (string) $db->query("SELECT attribution FROM {$prefix}appointments_bookings WHERE id={$id}")->fetch_assoc()['attribution'];
+    $db->query("UPDATE {$prefix}appointments_bookings SET attribution='" . $db->real_escape_string('v2:' . str_repeat('A', 80)) . "' WHERE id={$id}");
+    try {
+        $broken = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', ['subject' => $request, 'user' => null]);
+        $plugin->onPrivacyExportRequest($broken);
+        $check(str_contains(serialize($broken->getArgument('result')), 'appointments_bookings_incomplete'),
+            'An unreadable origin marks the privacy export as incomplete');
+    } finally {
+        $db->query("UPDATE {$prefix}appointments_bookings SET attribution='" . $db->real_escape_string($sealedOrigin) . "' WHERE id={$id}");
+    }
 
     // Self-service erasure removes the origin; the aggregate stays, now as cancelled.
     $html = $fixture->apply($visitor, $fixture->link($booking, 'erase'));

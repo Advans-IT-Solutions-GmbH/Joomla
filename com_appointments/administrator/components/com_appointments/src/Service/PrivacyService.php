@@ -132,9 +132,19 @@ final class PrivacyService
         // The markers of an opened row are no booking data: they never reach the export.
         // The markers of an opened row are no booking data and never reach the export; a booking of
         // 1.3 still in clear text after the migration window is exported as not verified.
-        return array_map(static function (array $row) use ($data): array {
+        return array_map(function (array $row) use ($data): array {
+            $stored = $row['attribution'] ?? null;
             $row = $data->openLenient($row);
             $unverified = !empty($row[BookingData::UNVERIFIED]);
+
+            // An origin that is stored but cannot be opened or read is missing from the export: the
+            // export says it is incomplete (unreadable()), the log names the booking ID only.
+            if ($stored !== null && \array_key_exists('attribution', $row)
+                && \Advans\Component\Appointments\Administrator\Helper\Attribution::decode($row['attribution']) === null) {
+                $this->unreadable++;
+                Log::add('Appointment privacy request: the origin of booking ' . (int) $row['id'] . ' could not be read and is missing from the export.',
+                    Log::WARNING, 'com_appointments');
+            }
 
             return array_diff_key($row, [BookingData::OPENED => true, BookingData::CLEAR => true, BookingData::UNVERIFIED => true])
                 + ['unverified' => $unverified ? 1 : 0];
