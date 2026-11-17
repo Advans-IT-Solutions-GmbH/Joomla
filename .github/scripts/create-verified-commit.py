@@ -12,12 +12,15 @@ The script mirrors the old local commit and force push exactly:
 * the file changes are the staged changes of the index, read from the index blobs, so the
   commit contains exactly what `git commit` would have committed;
 * the message is the given subject, without a body or trailers;
-* the branch ends up at that one commit, whether it existed before or not.
+* the branch ends up at that one commit, whether it existed before or not, but only with the
+  lease of the former force push: the remote branch must still be where the checkout saw it
+  (`refs/remotes/<remote>/<branch>`), or must not exist if the checkout saw no such branch.
 
 The commit is first created on a temporary branch. Only after GitHub confirms that its tree
 equals the local index tree (`git write-tree`), its parent is the base, its message is the
-subject and its signature is verified does the release branch move to it. The temporary
-branch is always deleted again.
+subject and its signature is verified is that very commit fetched and pushed to the release
+branch with `git push --force-with-lease=refs/heads/<branch>:<expected>`. Pushing an existing
+commit keeps GitHub's signature. The temporary branch is always deleted again.
 
 The GraphQL API cannot set file modes, so a staged executable file, symbolic link or
 submodule is refused instead of being committed with a different mode.
@@ -95,8 +98,35 @@ def staged_changes() -> tuple:
     return additions, deletions
 
 
+def lease(remote: str, branch: str) -> str:
+    """Where the checkout last saw the remote branch; empty if it saw no such branch.
+
+    This is the value the former `git push --force-with-lease` compared against.
+    """
+    result = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{branch}"],
+                            capture_output=True, text=True)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def push_with_lease(remote: str, temp_branch: str, oid: str, branch: str, expected: str) -> None:
+    """Fetch the verified API commit and push that same commit (signature intact) with a lease."""
+    steps = [
+        ["fetch", "--quiet", "--no-tags", remote, f"+refs/heads/{temp_branch}:refs/verified-commit/{temp_branch}"],
+        ["push", "--quiet", f"--force-with-lease=refs/heads/{branch}:{expected}", remote, f"{oid}:refs/heads/{branch}"],
+    ]
+    for step in steps:
+        result = subprocess.run(["git", *step], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise CommitError(f"git {' '.join(step)} failed: {result.stderr.strip()}")
+        if step[0] == "fetch":
+            fetched = git("rev-parse", f"refs/verified-commit/{temp_branch}").strip()
+            git("update-ref", "-d", f"refs/verified-commit/{temp_branch}")
+            if fetched != oid:
+                raise CommitError(f"The temporary branch points at {fetched}, not at the verified commit {oid}.")
+
+
 def create_verified_commit(repo: str, branch: str, message: str, base: str, temp_branch: str,
-                           api=gh_api) -> str:
+                           api=gh_api, remote: str = "origin") -> str:
     if not message or "\n" in message:
         raise CommitError("The commit message must be a single, non-empty subject line.")
     head = git("rev-parse", "HEAD").strip()
@@ -107,6 +137,7 @@ def create_verified_commit(repo: str, branch: str, message: str, base: str, temp
     if not additions and not deletions:
         raise CommitError("No staged changes to commit.")
     expected_tree = git("write-tree").strip()
+    expected_head = lease(remote, branch)
 
     api(["--method", "POST", f"repos/{repo}/git/refs", "-f", f"ref=refs/heads/{temp_branch}",
          "-f", f"sha={base}"])
@@ -134,12 +165,9 @@ def create_verified_commit(repo: str, branch: str, message: str, base: str, temp
         if problems:
             raise CommitError(f"The API commit {oid} does not match the staged changes: " + "; ".join(problems))
 
-        # Same outcome as `git push --force-with-lease`: the branch points at exactly this commit.
-        if api([ref_path(repo, branch)], allow_missing=True) is None:
-            api(["--method", "POST", f"repos/{repo}/git/refs", "-f", f"ref=refs/heads/{branch}",
-                 "-f", f"sha={oid}"])
-        else:
-            api(["--method", "PATCH", ref_path(repo, branch), "-f", f"sha={oid}", "-F", "force=true"])
+        # The former force push with its lease, now of the verified API commit: the push is
+        # rejected if the release branch moved (or appeared) after the checkout.
+        push_with_lease(remote, temp_branch, oid, branch, expected_head)
         return oid
     finally:
         api(["--method", "DELETE", ref_path(repo, temp_branch)], allow_missing=True)

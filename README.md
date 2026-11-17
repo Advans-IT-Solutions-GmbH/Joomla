@@ -266,7 +266,7 @@ Releases use a **two-stage, PR-based flow** so that no commit reaches `main` wit
 
 1. Go to **Actions** → select the **Release - …** workflow for the extension
 2. Click **Run workflow** and choose a bump level (or leave empty for auto-detect from commits)
-3. The workflow bumps the version files on a `release/<prefix>-v<version>` branch and opens a **pull request** titled `release: <prefix> v<version>` — it does **not** push to `main`. The version commit is created through the GitHub API with the workflow's `GITHUB_TOKEN` (`.github/scripts/create-verified-commit.py`), so GitHub signs it and it shows as **Verified**, as the ruleset requires for every commit of a pull request; the script checks the tree, parent, message and signature of that commit before the release branch points to it
+3. The workflow bumps the version files on a `release/<prefix>-v<version>` branch and opens a **pull request** titled `release: <prefix> v<version>` — it does **not** push to `main`. The version commit is created through the GitHub API with the workflow's `GITHUB_TOKEN` (`.github/scripts/create-verified-commit.py`), so GitHub signs it and it shows as **Verified**, as the ruleset requires for every commit of a pull request; the script checks the tree, parent, message and signature of that commit and only then pushes that same commit to the release branch with the lease of the former force push (rejected if the branch moved after the checkout)
 4. **Review and merge** that pull request into `main` (squash)
 5. On merge, the matching **Publish - …** workflow triggers automatically: it builds the package, creates and pushes the tag, generates the changelog and creates the GitHub release
 

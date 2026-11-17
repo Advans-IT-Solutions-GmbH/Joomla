@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Offline tests for create-verified-commit.py and the Release workflow contract.
 
-A fake GitHub API applies the createCommitOnBranch file changes to the base tree in the
-fixture repository itself, so the tests prove that the API commit reproduces exactly the
-staged tree that a local `git commit` would have produced.
+A bare fixture repository plays the GitHub remote. A fake GitHub API applies the
+createCommitOnBranch file changes to the base tree inside that remote, so the tests prove
+that the API commit reproduces exactly the staged tree that a local `git commit` would have
+produced, and the real `git fetch` and `git push --force-with-lease` move the release branch.
 """
 
 import base64
@@ -22,6 +23,8 @@ cvc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cvc)
 
 REPO = "owner/repo"
+BRANCH = "release/x-v1.1.0"
+TEMP = f"{BRANCH}-api-commit-1-1"
 
 
 def git(repo: Path, *args: str, env=None, stdin=None) -> str:
@@ -29,20 +32,20 @@ def git(repo: Path, *args: str, env=None, stdin=None) -> str:
                           input=stdin, env=env).stdout.decode().strip()
 
 
-class FakeGitHub:
-    """Just enough of the refs, GraphQL and git commits API, backed by the fixture repo."""
+def ref(repo: Path, name: str) -> str:
+    result = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{name}"],
+                            cwd=repo, capture_output=True, text=True)
+    return result.stdout.strip()
 
-    def __init__(self, repo: Path, refs=None, verified=True, corrupt=False):
-        self.repo = repo
-        self.refs = dict(refs or {})
+
+class FakeGitHub:
+    """Just enough of the refs, GraphQL and git commits API, backed by the bare remote."""
+
+    def __init__(self, remote: Path, verified=True, corrupt=False):
+        self.remote = remote
         self.verified = verified
         self.corrupt = corrupt
         self.calls = []
-
-    def ref_name(self, path: str) -> str:
-        prefix = f"repos/{REPO}/git/refs/heads/"
-        assert path.startswith(prefix), path
-        return path[len(prefix):]
 
     def __call__(self, args, payload=None, allow_missing=False):
         self.calls.append((list(args), payload))
@@ -52,67 +55,68 @@ class FakeGitHub:
         fields = dict(f.split("=", 1) for f in rest[1:] if "=" in f)
         if target == "graphql":
             return self.graphql(payload)
-        if target.startswith(f"repos/{REPO}/git/commits/"):
+        if method == "GET" and target.startswith(f"repos/{REPO}/git/commits/"):
             return self.commit(target.rsplit("/", 1)[1])
         if method == "POST" and target == f"repos/{REPO}/git/refs":
-            name = fields["ref"][len("refs/heads/"):]
-            assert name not in self.refs, f"ref {name} already exists"
-            self.refs[name] = fields["sha"]
+            assert not ref(self.remote, fields["ref"][len("refs/heads/"):]), "ref already exists"
+            git(self.remote, "update-ref", fields["ref"], fields["sha"])
             return {}
-        name = self.ref_name(target)
-        if method == "GET":
-            if name not in self.refs:
+        if method == "DELETE" and target.startswith(f"repos/{REPO}/git/refs/heads/"):
+            name = target[len(f"repos/{REPO}/git/refs/heads/"):]
+            if not ref(self.remote, name):
                 if allow_missing:
                     return None
                 raise cvc.CommitError("HTTP 404")
-            return {"object": {"sha": self.refs[name]}}
-        if method == "PATCH":
-            assert fields.get("force") == "true"
-            self.refs[name] = fields["sha"]
-            return {}
-        if method == "DELETE":
-            if self.refs.pop(name, None) is None and not allow_missing:
-                raise cvc.CommitError("HTTP 404")
+            git(self.remote, "update-ref", "-d", f"refs/heads/{name}")
             return None
-        raise AssertionError(f"unexpected call {args}")
+        raise AssertionError(f"unexpected API call {args}")
 
     def graphql(self, payload):
         data = payload["variables"]["input"]
         branch = data["branch"]["branchName"]
         assert data["branch"]["repositoryNameWithOwner"] == REPO
-        assert self.refs[branch] == data["expectedHeadOid"], "expectedHeadOid must be the branch head"
+        assert ref(self.remote, branch) == data["expectedHeadOid"], "expectedHeadOid must be the branch head"
         assert set(data["message"]) == {"headline"}, "no body, no trailers"
-        index = Path(self.repo) / ".git" / "fake-api-index"
-        env = {**os.environ, "GIT_INDEX_FILE": str(index)}
-        git(self.repo, "read-tree", data["expectedHeadOid"], env=env)
+        index = self.remote / "fake-api-index"
+        # update-index refuses to run in a bare repository without a work tree. An empty
+        # sibling directory serves; it is never read, and the cwd lies outside it (no prefix).
+        worktree = self.remote.parent / "fake-api-worktree"
+        worktree.mkdir(exist_ok=True)
+        env = {**os.environ, "GIT_INDEX_FILE": str(index), "GIT_WORK_TREE": str(worktree)}
+        git(self.remote, "read-tree", data["expectedHeadOid"], env=env)
         for addition in data["fileChanges"]["additions"]:
             content = base64.b64decode(addition["contents"])
             if self.corrupt:
                 content += b"corrupted"
-            blob = git(self.repo, "hash-object", "-w", "--stdin", stdin=content)
-            git(self.repo, "update-index", "--add", "--cacheinfo", f"100644,{blob},{addition['path']}", env=env)
+            blob = git(self.remote, "hash-object", "-w", "--stdin", stdin=content)
+            git(self.remote, "update-index", "--add", "--cacheinfo", f"100644,{blob},{addition['path']}", env=env)
         for deletion in data["fileChanges"]["deletions"]:
-            git(self.repo, "update-index", "--force-remove", deletion["path"], env=env)
-        tree = git(self.repo, "write-tree", env=env)
+            git(self.remote, "update-index", "--force-remove", deletion["path"], env=env)
+        tree = git(self.remote, "write-tree", env=env)
         index.unlink()
-        oid = git(self.repo, "commit-tree", tree, "-p", data["expectedHeadOid"], "-m", data["message"]["headline"])
-        self.refs[branch] = oid
+        oid = git(self.remote, "commit-tree", tree, "-p", data["expectedHeadOid"], "-m", data["message"]["headline"])
+        git(self.remote, "update-ref", f"refs/heads/{branch}", oid)
         return {"data": {"createCommitOnBranch": {"commit": {"oid": oid}}}}
 
     def commit(self, oid):
-        tree, parents, message = git(self.repo, "show", "-s", "--format=%T%x00%P%x00%B", oid).split("\0")
+        tree, parents, message = git(self.remote, "show", "-s", "--format=%T%x00%P%x00%B", oid).split("\0")
         return {"tree": {"sha": tree}, "parents": [{"sha": p} for p in parents.split()],
-                "message": message + "\n", "verification": {"verified": self.verified, "reason": "valid" if self.verified else "unsigned"}}
+                "message": message + "\n",
+                "verification": {"verified": self.verified, "reason": "valid" if self.verified else "unsigned"}}
 
 
 class CreateVerifiedCommitTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.repo = Path(self.temp.name)
-        git(self.repo, "init", "-q", "-b", "main")
-        git(self.repo, "config", "user.email", "fixture@example.invalid")
-        git(self.repo, "config", "user.name", "Fixture")
-        git(self.repo, "config", "core.autocrlf", "false")
+        top = Path(self.temp.name)
+        self.remote = top / "remote.git"
+        self.repo = top / "work"
+        git(top, "init", "-q", "--bare", "-b", "main", str(self.remote))
+        git(top, "init", "-q", "-b", "main", str(self.repo))
+        for key, value in (("user.email", "fixture@example.invalid"), ("user.name", "Fixture"),
+                           ("core.autocrlf", "false")):
+            git(self.repo, "config", key, value)
+        git(self.repo, "remote", "add", "origin", str(self.remote))
         self.write("com_x/VERSION", "1.0.0\n")
         self.write("com_x/x.xml", "<version>1.0.0</version>\n")
         self.write("com_x/obsolete.txt", "old\n")
@@ -120,6 +124,7 @@ class CreateVerifiedCommitTest(unittest.TestCase):
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-q", "-m", "feat(x): first")
         self.base = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "push", "-q", "origin", "main")
         self.cwd = os.getcwd()
         os.chdir(self.repo)
 
@@ -132,7 +137,15 @@ class CreateVerifiedCommitTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content.encode())
 
+    def remote_commit(self, name: str) -> str:
+        """Create a commit on a remote branch, as if pushed by someone else."""
+        tree = git(self.remote, "rev-parse", f"{self.base}^{{tree}}")
+        oid = git(self.remote, "commit-tree", tree, "-p", self.base, "-m", "someone else")
+        git(self.remote, "update-ref", f"refs/heads/{name}", oid)
+        return oid
+
     def stage_release(self):
+        git(self.repo, "switch", "-q", "-C", BRANCH, "origin/main")
         self.write("com_x/VERSION", "1.1.0\n")
         self.write("com_x/x.xml", "<version>1.1.0</version>\n")
         self.write("com_x/updates/update.xml", "<updates/>\n")
@@ -142,18 +155,22 @@ class CreateVerifiedCommitTest(unittest.TestCase):
         self.write("com_x/VERSION", "9.9.9\n")
         return git(self.repo, "write-tree")
 
-    def run_script(self, api, branch="release/x-v1.1.0"):
-        return cvc.create_verified_commit(REPO, branch, "release: x v1.1.0", self.base, "tmp-branch", api=api)
+    def run_script(self, api):
+        return cvc.create_verified_commit(REPO, BRANCH, "release: x v1.1.0", self.base, TEMP, api=api)
+
+    def assert_branch_untouched(self, expected=""):
+        self.assertEqual(ref(self.remote, BRANCH), expected)
+        self.assertEqual(ref(self.remote, TEMP), "", "the temporary branch is deleted")
 
     def test_new_branch_gets_the_exact_staged_tree_as_one_verified_commit(self):
         staged = self.stage_release()
-        api = FakeGitHub(self.repo, refs={"main": self.base})
+        api = FakeGitHub(self.remote)
         oid = self.run_script(api)
-        self.assertEqual(api.refs["release/x-v1.1.0"], oid)
-        self.assertNotIn("tmp-branch", api.refs, "the temporary branch is deleted")
-        self.assertEqual(git(self.repo, "rev-parse", f"{oid}^{{tree}}"), staged)
-        self.assertEqual(git(self.repo, "rev-parse", f"{oid}^"), self.base)
-        self.assertEqual(git(self.repo, "log", "-1", "--format=%B", oid), "release: x v1.1.0")
+        self.assertEqual(ref(self.remote, BRANCH), oid)
+        self.assertEqual(ref(self.remote, TEMP), "", "the temporary branch is deleted")
+        self.assertEqual(git(self.remote, "rev-parse", f"{oid}^{{tree}}"), staged)
+        self.assertEqual(git(self.remote, "rev-parse", f"{oid}^"), self.base)
+        self.assertEqual(git(self.remote, "log", "-1", "--format=%B", oid), "release: x v1.1.0")
         payload = next(p for a, p in api.calls if a == ["graphql"])
         changes = payload["variables"]["input"]["fileChanges"]
         self.assertEqual(changes["deletions"], [{"path": "com_x/obsolete.txt"}])
@@ -161,50 +178,63 @@ class CreateVerifiedCommitTest(unittest.TestCase):
         self.assertEqual(contents["com_x/VERSION"], b"1.1.0\n", "index content, not the working tree")
         self.assertEqual(set(contents), {"com_x/VERSION", "com_x/x.xml", "com_x/updates/update.xml"})
 
-    def test_existing_branch_is_reset_like_a_force_push(self):
+    def test_existing_branch_seen_by_the_checkout_is_reset_like_the_former_force_push(self):
+        old = self.remote_commit(BRANCH)
+        git(self.repo, "fetch", "-q", "origin")
         self.stage_release()
-        api = FakeGitHub(self.repo, refs={"main": self.base, "release/x-v1.1.0": "0" * 40})
-        oid = self.run_script(api)
-        self.assertEqual(api.refs["release/x-v1.1.0"], oid)
-        self.assertTrue(any("PATCH" in a for a, _ in api.calls))
+        oid = self.run_script(FakeGitHub(self.remote))
+        self.assertNotEqual(oid, old)
+        self.assertEqual(ref(self.remote, BRANCH), oid)
+
+    def test_branch_advanced_after_the_checkout_is_never_overwritten(self):
+        self.remote_commit(BRANCH)
+        git(self.repo, "fetch", "-q", "origin")
+        self.stage_release()
+        newer = self.remote_commit(BRANCH)
+        with self.assertRaisesRegex(cvc.CommitError, "git push"):
+            self.run_script(FakeGitHub(self.remote))
+        self.assert_branch_untouched(newer)
+
+    def test_branch_created_after_the_checkout_is_never_overwritten(self):
+        self.stage_release()
+        newer = self.remote_commit(BRANCH)
+        with self.assertRaisesRegex(cvc.CommitError, "git push"):
+            self.run_script(FakeGitHub(self.remote))
+        self.assert_branch_untouched(newer)
 
     def test_tree_mismatch_never_moves_the_release_branch(self):
         self.stage_release()
-        api = FakeGitHub(self.repo, refs={"main": self.base}, corrupt=True)
         with self.assertRaisesRegex(cvc.CommitError, "differs from the staged tree"):
-            self.run_script(api)
-        self.assertNotIn("release/x-v1.1.0", api.refs)
-        self.assertNotIn("tmp-branch", api.refs)
+            self.run_script(FakeGitHub(self.remote, corrupt=True))
+        self.assert_branch_untouched()
 
     def test_unverified_commit_never_moves_the_release_branch(self):
         self.stage_release()
-        api = FakeGitHub(self.repo, refs={"main": self.base}, verified=False)
         with self.assertRaisesRegex(cvc.CommitError, "not verified"):
-            self.run_script(api)
-        self.assertNotIn("release/x-v1.1.0", api.refs)
-        self.assertNotIn("tmp-branch", api.refs)
+            self.run_script(FakeGitHub(self.remote, verified=False))
+        self.assert_branch_untouched()
 
     def test_executable_file_is_refused_before_any_api_call(self):
         self.stage_release()
         git(self.repo, "update-index", "--chmod=+x", "com_x/x.xml")
-        api = FakeGitHub(self.repo, refs={"main": self.base})
+        api = FakeGitHub(self.remote)
         with self.assertRaisesRegex(cvc.CommitError, "100755"):
             self.run_script(api)
         self.assertEqual(api.calls, [])
 
     def test_nothing_staged_is_an_error(self):
-        api = FakeGitHub(self.repo, refs={"main": self.base})
+        api = FakeGitHub(self.remote)
         with self.assertRaisesRegex(cvc.CommitError, "No staged changes"):
             self.run_script(api)
         self.assertEqual(api.calls, [])
 
     def test_base_must_be_head_and_message_one_line(self):
         self.stage_release()
-        api = FakeGitHub(self.repo, refs={"main": self.base})
+        api = FakeGitHub(self.remote)
         with self.assertRaisesRegex(cvc.CommitError, "single"):
-            cvc.create_verified_commit(REPO, "b", "release: x v1.1.0\n\nbody", self.base, "t", api=api)
+            cvc.create_verified_commit(REPO, BRANCH, "release: x v1.1.0\n\nbody", self.base, TEMP, api=api)
         with self.assertRaisesRegex(cvc.CommitError, "is not the base"):
-            cvc.create_verified_commit(REPO, "b", "release: x v1.1.0", "1" * 40, "t", api=api)
+            cvc.create_verified_commit(REPO, BRANCH, "release: x v1.1.0", "1" * 40, TEMP, api=api)
         self.assertEqual(api.calls, [])
 
 
