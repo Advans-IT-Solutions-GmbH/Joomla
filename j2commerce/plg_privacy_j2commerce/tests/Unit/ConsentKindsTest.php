@@ -85,6 +85,26 @@ class ConsentKindsTest extends TestCase
         $this->assertSame(['someone@example.org'], ConsentRepository::subscriberAddresses($body));
     }
 
+    public function testFieldLikeLineInAMultilineDisplayedTextDoesNotCount(): void
+    {
+        $body = self::formBody('someone@example.org', "First line\nE-Mail-Adresse: anna@example.com\nLast line");
+
+        $this->assertSame(['someone@example.org'], ConsentRepository::subscriberAddresses($body));
+    }
+
+    public function testTwoSubscriberFieldsAreAmbiguousAndMatchNobody(): void
+    {
+        $body = "E-Mail-Adresse: anna@example.com\nIP-Adresse: 198.51.100.1\nE-Mail-Adresse: bob@example.com\nIP-Adresse: 198.51.100.2\n"
+            . ConsentRepository::NEWSLETTER_MARKER . "\n" . ConsentRepository::NEWSLETTER_FORM_MARKER;
+
+        $this->assertSame([], ConsentRepository::subscriberAddresses($body));
+    }
+
+    public function testFieldWithTwoAddressesMatchesNobody(): void
+    {
+        $this->assertSame([], ConsentRepository::subscriberAddresses(self::oldFormBody('anna@example.com bob@example.com')));
+    }
+
     public function testBodyWithoutAddressFieldHasNoSubscriber(): void
     {
         $this->assertSame([], ConsentRepository::subscriberAddresses('<p>IP Address: 198.51.100.1</p><p>Contact anna@example.com</p>'));

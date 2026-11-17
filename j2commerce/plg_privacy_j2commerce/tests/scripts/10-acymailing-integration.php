@@ -974,6 +974,7 @@ class AcyMailingIntegrationTest
         $userId      = (int) $row->id;
         $placeholder = 'userid' . $userId . 'removed@email.invalid';
         $contact     = 0;
+        $second      = 0;
         $seen        = [];
         $name        = \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::EVENT_BEFORE_NEWSLETTER_REMOVAL;
         $listener    = function ($event) use (&$seen): void {
@@ -986,6 +987,10 @@ class AcyMailingIntegrationTest
             $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET cms_id = ' . $userId . ' WHERE id = ' . $contact)->execute();
             $this->db->setQuery('INSERT IGNORE INTO ' . $this->db->quoteName($prefix . 'user_has_list')
                 . " (user_id, list_id, status, subscription_date) VALUES ($contact, 1, 1, NOW())")->execute();
+            // A second contact linked to the account with another real address (not the placeholder).
+            $otherEmail = 'acym-linked-other-' . random_int(1000, 9999) . '@example.com';
+            $second     = $this->insertSubscriber($prefix, $otherEmail, 'Linked Other');
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET cms_id = ' . $userId . ' WHERE id = ' . $second)->execute();
 
             $user           = new User();
             $user->id       = $userId;
@@ -1015,11 +1020,20 @@ class AcyMailingIntegrationTest
             $this->test('Synced subscriber of the account deleted with its list rows although its address was changed',
                 $this->countRows($prefix . 'user', 'id', $contact) === 0 && $this->countRows($prefix . 'user_has_list', 'user_id', $contact) === 0,
                 json_encode($messages));
-            $this->test('The removal listener gets the original address, not the placeholder', $seen === [$email], json_encode($seen));
+            $sorted = $seen;
+            sort($sorted);
+            $expected = [$email, $otherEmail];
+            sort($expected);
+            $this->test('The removal listener gets the original address in place of the placeholder, and the stored address of a linked contact with another address',
+                $sorted === $expected && $this->countRows($prefix . 'user', 'id', $second) === 0, json_encode($seen));
         } catch (\Throwable $e) {
             $this->test('synced subscriber ran without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         } finally {
             $this->app->getDispatcher()->removeListener($name, $listener);
+
+            if ($second > 0) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . $second)->execute();
+            }
 
             if ($contact > 0) {
                 $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user_has_list') . ' WHERE user_id = ' . $contact)->execute();

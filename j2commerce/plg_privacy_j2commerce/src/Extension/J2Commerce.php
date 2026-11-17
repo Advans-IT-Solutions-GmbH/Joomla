@@ -954,19 +954,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         foreach ($acymIds as $acymId) {
-            $this->removeAcyMailingSubscriber(
-                $prefix,
-                $acymId,
-                $accountId > 0 ? $accountId : (int) ($user->id ?? 0),
-                \in_array($acymId, $linked, true) ? $originalEmail : ''
-            );
+            $this->removeAcyMailingSubscriber($prefix, $acymId, $accountId > 0 ? $accountId : (int) ($user->id ?? 0), $originalEmail);
         }
     }
 
     /**
-     * @param   string  $listenerEmail  Address for the removal listener ('' : the subscriber's stored address)
+     * @param   string  $originalEmail  Original address of the account ($userId); the removal listener
+     *                                  gets it only in place of that account's pseudonymisation
+     *                                  placeholder, any other stored address is passed unchanged
      */
-    private function removeAcyMailingSubscriber(string $prefix, int $acymId, int $userId, string $listenerEmail = ''): void
+    private function removeAcyMailingSubscriber(string $prefix, int $acymId, int $userId, string $originalEmail = ''): void
     {
         $db = $this->getDatabase();
 
@@ -974,12 +971,18 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // list rows (unsubscribed included) and its history go, so it can keep a suppression
         // record. If that fails, the subscriber stays and the administrator is told.
         try {
-            $email = trim($listenerEmail) !== '' ? $listenerEmail : (string) $db->setQuery(
+            $email = (string) $db->setQuery(
                 $this->createDbQuery()
                     ->select($db->quoteName('email'))
                     ->from($db->quoteName($prefix . 'user'))
                     ->where($db->quoteName('id') . ' = ' . $acymId)
             )->loadResult();
+
+            // The synchronisation moved the subscriber to the placeholder: suppress the real address.
+            if (trim($originalEmail) !== '' && $userId > 0
+                && ConsentRepository::normaliseAddress($email) === AcymailingPlaceholders::placeholderAddress($userId)) {
+                $email = $originalEmail;
+            }
 
             $this->dispatchBeforeNewsletterRemoval($email, $acymId);
         } catch (\Throwable $e) {
@@ -1445,6 +1448,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return $status;
         }
 
+        // The retry marker is stored now, before any plugin removes or pseudonymises anything: a
+        // retry after a failed step arrives without account and finds it only through the marker.
+        // Without a durable marker the request is refused (fail-closed).
+        if (!$this->markPendingAccount((int) $user->id, self::requestEmails([$requestEmail, (string) $user->email]), $user)) {
+            $status->canRemove = false;
+            $status->reason    = $this->pluginStrings(self::currentLanguage())->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_MARKER_FAILED');
+
+            return $status;
+        }
+
         $this->accountsBeforeRemoval[(int) $user->id] = [
             'username' => (string) $user->username,
             'email'    => (string) $user->email,
@@ -1796,14 +1809,21 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * account addresses of a removal request in progress. Written directly, without saving the
      * user (no user events), and set in the User object of the request as well: Joomla's privacy
      * plugin for user accounts may save that same object after this plugin, and a save writes the
-     * params of the object. A failure is logged: the removal then goes on, but a retry after a
-     * failed step could not find the account again.
+     * params of the object. Called in onPrivacyCanRemoveData(), which refuses the request if it
+     * fails, and again (idempotent) in processDataRemoval().
      *
      * @param   string[]  $emails
+     *
+     * @return  bool  Whether the marker is stored (true as well when the account does not exist)
      */
-    protected function markPendingAccount(int $userId, array $emails, ?User $user = null): void
+    protected function markPendingAccount(int $userId, array $emails, ?User $user = null): bool
     {
         $hashes = array_values(array_unique(array_map(fn (string $email): string => $this->pendingHash($email), $emails)));
+
+        // No valid address: a retry without account could not match one either.
+        if ($hashes === []) {
+            return true;
+        }
 
         if ($user !== null && (int) $user->id === $userId) {
             $user->setParam(self::PENDING_PARAM, $hashes);
@@ -1817,7 +1837,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             });
         } catch (\Throwable $e) {
             Log::add('Removal request: the account could not be marked for a retry: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+
+            return false;
         }
+
+        return true;
     }
 
     /**
@@ -1856,11 +1880,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return null;
         }
 
+        self::loadHelperClasses();
         $db     = $this->getDatabase();
         $wanted = array_map(fn (string $email): string => $this->pendingHash($email), $emails);
         $rows   = $db->setQuery(
             $this->createDbQuery()
-                ->select($db->quoteName(['id', 'params']))
+                ->select($db->quoteName(['id', 'email', 'params']))
                 ->from($db->quoteName('#__users'))
                 ->where($db->quoteName('params') . ' LIKE ' . $db->quote('%' . $db->escape(self::PENDING_PARAM, true) . '%', false))
         )->loadObjectList() ?: [];
@@ -1868,6 +1893,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $found = [];
 
         foreach ($rows as $row) {
+            // Only a pseudonymised account: the marker is written before the removal, so an account
+            // whose request was refused or never carried out keeps its own address and is found by
+            // Joomla itself; it is never taken over through a stale marker.
+            if (ConsentRepository::normaliseAddress((string) $row->email) !== AcymailingPlaceholders::placeholderAddress((int) $row->id)) {
+                continue;
+            }
+
             $params = json_decode((string) $row->params, true);
 
             foreach (\is_array($params) ? (array) ($params[self::PENDING_PARAM] ?? []) : [] as $hash) {

@@ -1308,6 +1308,8 @@ class DataIsolationTest
             $ids['form_guest']       = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Formular', self::kindFormBody($guest), 1, gmdate('Y-m-d H:i:s', strtotime('-11 years')));
             $ids['form_text_only']   = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Formular', self::kindFormBody($other, 'Questions: ' . $guest));
             $ids['form_apostrophe']  = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Formular', self::kindFormBody("o'" . $guest));
+            // A multiline displayed text with a line that looks like the subscriber field.
+            $ids['form_multiline']   = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Formular', self::kindFormBody($other, "Text\nE-Mail-Adresse: " . $guest . "\nMore text"));
             $ids['form_account']     = $this->insertKindRecord($accountId, 'Newsletter-Einwilligung im Formular', self::kindFormBody('someone.else.' . $suffix . '@example.com'));
             $ids['form_other_acct']  = $this->insertKindRecord($otherAccountId, 'Newsletter-Einwilligung im Formular', self::kindFormBody($guest));
             // (3) checkout newsletter consents.
@@ -1387,6 +1389,7 @@ class DataIsolationTest
 
             foreach (['k1b_other' => 'old header-form record of another address', 'k1b_similar' => 'old header-form record of a longer address',
                 'form_text_only' => 'form record naming the address only in the displayed text', 'form_apostrophe' => "form record of an address with an apostrophe prefix",
+                'form_multiline' => 'form record whose multiline displayed text has a line like the subscriber field',
                 'form_other_acct' => 'form record of another account naming the guest address', 'k1_other_account' => 'registration consent of another account',
                 'k1_account' => 'registration consent of an account (guest request)', 'form_account' => 'form record of an account (guest request)',
                 'k3_other' => 'checkout newsletter consent of another guest', 'k3_account' => 'checkout newsletter consent of an account',
@@ -1671,7 +1674,22 @@ class DataIsolationTest
             $okUser->id       = (int) $okRow->id;
             $okUser->username = $okRow->username;
             $okUser->email    = $okRow->email;
-            $plugin->onPrivacyCanRemoveData(null, $okUser);
+            $okStatus         = $plugin->onPrivacyCanRemoveData(null, $okUser);
+            $this->test('Can-remove phase: the retry marker is stored durably before any plugin removes anything',
+                $okStatus->canRemove === true
+                && str_contains((string) $this->db->setQuery('SELECT params FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . (int) $okRow->id)->loadResult(), 'plg_privacy_j2commerce_pending'));
+
+            // The marker cannot be stored: the request is refused, nothing is removed.
+            $noMarker = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry([])]) extends GuestRequestTestPlugin {
+                protected function markPendingAccount(int $userId, array $emails, ?\Joomla\CMS\User\User $user = null): bool
+                {
+                    return false;
+                }
+            };
+            $noMarker->setDatabase($this->db);
+            $refused = $noMarker->onPrivacyCanRemoveData(null, $okUser);
+            $this->test('Can-remove phase: without a durable retry marker the removal request is refused with a reason',
+                $refused->canRemove === false && $refused->reason !== '' && !str_starts_with((string) $refused->reason, 'PLG_'), (string) $refused->reason);
             $plugin->onPrivacyRemoveData(null, $okUser);
             $okRegistry = new ReflectionProperty(\Joomla\CMS\User\User::class, '_params');
             $okRegistry->setAccessible(true);
@@ -1684,6 +1702,17 @@ class DataIsolationTest
             $plain->setDatabase($this->db);
             $this->test('Another address finds no unfinished removal', $plain->call('pendingAccount', ['someone.else.' . $suffix . '@example.com']) === null);
 
+            // A stale marker on an account that was never pseudonymised (request refused elsewhere) is never taken over.
+            $staleAddress = 'kinds.stale.' . $suffix . '@example.com';
+            $staleRow     = (object) [
+                'name' => 'Kinds stale', 'username' => 'kinds-stale-' . $suffix, 'email' => 'kinds.stale.account.' . $suffix . '@example.com',
+                'password' => '', 'block' => 0, 'sendEmail' => 0, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+            ];
+            $this->db->insertObject('#__users', $staleRow, 'id');
+            $failUsers[] = (int) $staleRow->id;
+            $plain->call('markPendingAccount', (int) $staleRow->id, [$staleAddress]);
+            $this->test('A retry marker on an account that is not pseudonymised is never used', $plain->call('pendingAccount', [$staleAddress]) === null);
+
             // Two accounts marked for the same address: ambiguous, the lookup refuses.
             $ambiguous = 'kinds.ambiguous.' . $suffix . '@example.com';
             foreach ([1, 2] as $n) {
@@ -1694,6 +1723,9 @@ class DataIsolationTest
                 $this->db->insertObject('#__users', $row, 'id');
                 $failUsers[] = (int) $row->id;
                 $plain->call('markPendingAccount', (int) $row->id, [$ambiguous]);
+                // Both pseudonymised, as after an unfinished removal.
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = ' . $this->db->quote('UserID' . (int) $row->id . 'removed@email.invalid')
+                    . ' WHERE id = ' . (int) $row->id)->execute();
             }
 
             try {

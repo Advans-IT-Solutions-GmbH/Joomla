@@ -376,32 +376,46 @@ final class ConsentRepository
     }
 
     /**
-     * The complete e-mail address tokens of the subscriber's address field of a consent body: the
-     * line "E-Mail-Adresse: …" of the newsletter form records or the paragraph "Email: …" of the
-     * old header form records (one field per line or paragraph). Other addresses in the body, for
-     * example a contact address in the displayed consent text, never count. A body without such a
-     * field has no subscriber address (fail-closed).
+     * The address in the subscriber's address field of a consent body, as the writers lay it out:
+     * the line "E-Mail-Adresse: …" of the newsletter form records or the paragraph "Email: …" of
+     * the old header form records, each directly followed by the IP address field ("IP-Adresse:",
+     * "IP address:", "IP:"). Fail-closed: a body without exactly one such field, or with a field
+     * that does not hold exactly one complete address, has no subscriber address. So a line of the
+     * displayed consent text that looks like the field (no IP field after it) never counts, and a
+     * body with two candidate fields is ambiguous and matches nobody.
      *
-     * @return  string[]  Lower case
+     * @return  string[]  The one address, lower case, or none
      */
     public static function subscriberAddresses(string $body): array
     {
-        $lines     = preg_split('/\R/u', (string) preg_replace('~<\s*/\s*p\s*>|<\s*br\s*/?\s*>~iu', "\n", $body)) ?: [];
-        $addresses = [];
+        $lines  = preg_split('/\R/u', (string) preg_replace('~<\s*/\s*p\s*>|<\s*br\s*/?\s*>~iu', "\n", $body)) ?: [];
+        $plain  = [];
+        $fields = [];
 
         foreach ($lines as $line) {
-            $plain = trim(html_entity_decode(strip_tags($line), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+            $text = trim(html_entity_decode(strip_tags($line), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
 
-            if (preg_match('/^(?:e-?mail(?:[- ]?(?:adresse|address))?|adresse e-?mail)\s*:/iu', $plain) !== 1) {
-                continue;
-            }
-
-            foreach (self::addressTokens($line) as $token) {
-                $addresses[$token] = true;
+            if ($text !== '') {
+                $plain[] = [$text, $line];
             }
         }
 
-        return array_map('strval', array_keys($addresses));
+        foreach ($plain as $index => [$text, $line]) {
+            $next = $plain[$index + 1][0] ?? '';
+
+            if (preg_match('/^(?:e-?mail(?:[- ]?(?:adresse|address))?|adresse e-?mail)\s*:/iu', $text) === 1
+                && preg_match('/^(?:ip-adresse|ip address|ip)\s*:/iu', $next) === 1) {
+                $fields[] = $line;
+            }
+        }
+
+        if (\count($fields) !== 1) {
+            return [];
+        }
+
+        $tokens = array_values(array_unique(self::addressTokens($fields[0])));
+
+        return \count($tokens) === 1 ? $tokens : [];
     }
 
     /**
