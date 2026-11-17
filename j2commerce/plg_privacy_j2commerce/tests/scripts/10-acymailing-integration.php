@@ -1030,6 +1030,97 @@ class AcyMailingIntegrationTest
         }
     }
 
+    /**
+     * A synchronised subscriber whose removal listener fails is kept; the account keeps its retry
+     * marker, and the retry without account (pseudonymised) removes the subscriber by cms_id.
+     */
+    private function testSyncedSubscriberRetryAfterFailedListener(): void
+    {
+        echo "\n--- Synchronised subscriber kept by a failing listener, then a retry without account ---\n";
+
+        $prefix = $this->getAcymPrefix();
+        $plugin = $this->createPlugin();
+
+        if ($prefix === null || $plugin === null || !class_exists(\Joomla\Component\Privacy\Administrator\Table\RequestTable::class)) {
+            $this->strictSkip('synced subscriber retry', 'AcyMailing tables, plugin or com_privacy missing');
+
+            return;
+        }
+
+        $email = 'acym-retry-' . random_int(1000, 9999) . '@example.com';
+        $row   = (object) [
+            'name' => 'Retry test', 'username' => 'acym-retry-' . bin2hex(random_bytes(4)), 'email' => $email,
+            'password' => '', 'block' => 0, 'sendEmail' => 0, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+        ];
+        $this->db->insertObject('#__users', $row, 'id');
+        $userId      = (int) $row->id;
+        $placeholder = 'userid' . $userId . 'removed@email.invalid';
+        $contact     = 0;
+        $name        = \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::EVENT_BEFORE_NEWSLETTER_REMOVAL;
+        $failing     = function (): void {
+            throw new \RuntimeException('suppression record not stored');
+        };
+        $marker = fn (): bool => str_contains((string) $this->db->setQuery(
+            'SELECT params FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $userId
+        )->loadResult(), 'plg_privacy_j2commerce_pending');
+
+        try {
+            $contact = $this->insertSubscriber($prefix, $email, 'Retry Subscriber');
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET cms_id = ' . $userId . ' WHERE id = ' . $contact)->execute();
+            $this->db->setQuery('INSERT IGNORE INTO ' . $this->db->quoteName($prefix . 'user_has_list')
+                . " (user_id, list_id, status, subscription_date) VALUES ($contact, 1, 1, NOW())")->execute();
+
+            $user           = new User();
+            $user->id       = $userId;
+            $user->name     = $row->name;
+            $user->username = $row->username;
+            $user->email    = $email;
+            $request = (new \ReflectionClass(\Joomla\Component\Privacy\Administrator\Table\RequestTable::class))->newInstanceWithoutConstructor();
+            $request->id           = 0;
+            $request->email        = $email;
+            $request->request_type = 'remove';
+            $request->status       = 1;
+
+            $dispatcher = new \Joomla\Event\Dispatcher();
+            $dispatcher->addSubscriber($plugin);
+            $dispatcher->addListener('onPrivacyRemoveData', function () use ($user, $userId, $placeholder, $prefix, $contact): void {
+                $user->email = 'UserID' . $userId . 'removed@email.invalid';
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = ' . $this->db->quote($user->email) . ' WHERE id = ' . $userId)->execute();
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET email = ' . $this->db->quote($placeholder) . ' WHERE id = ' . $contact)->execute();
+            });
+
+            $this->app->getDispatcher()->addListener($name, $failing);
+
+            try {
+                $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $request, 'user' => $user]));
+                $dispatcher->dispatch('onPrivacyRemoveData', new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => $user]));
+            } finally {
+                $this->app->getDispatcher()->removeListener($name, $failing);
+            }
+
+            $this->takeMessages();
+            $this->test('Failing listener: the synchronised subscriber is kept with its list rows',
+                $this->countRows($prefix . 'user', 'id', $contact) === 1 && $this->countRows($prefix . 'user_has_list', 'user_id', $contact) === 1);
+            $this->test('Failing listener: the account keeps its retry marker', $marker());
+
+            // The retry: Joomla finds no account for the address any more (user = null).
+            $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => null]));
+            $this->takeMessages();
+            $this->test('Retry without account: the kept subscriber is removed by cms_id with its list rows',
+                $this->countRows($prefix . 'user', 'id', $contact) === 0 && $this->countRows($prefix . 'user_has_list', 'user_id', $contact) === 0);
+            $this->test('Retry without account: the retry marker is removed', !$marker());
+        } catch (\Throwable $e) {
+            $this->test('synced subscriber retry ran without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            if ($contact > 0) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user_has_list') . ' WHERE user_id = ' . $contact)->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . $contact)->execute();
+            }
+
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $userId)->execute();
+        }
+    }
+
     private function testGracefulSkip(): void
     {
         echo "\n--- Without AcyMailing ---\n";
@@ -1104,6 +1195,7 @@ class AcyMailingIntegrationTest
         $this->testPseudonymisationPlaceholders();
         $this->testPlaceholderAfterUserPluginInBothOrders();
         $this->testSyncedSubscriberOfTheAccount();
+        $this->testSyncedSubscriberRetryAfterFailedListener();
         $this->testGracefulSkip();
 
         echo "\n=== AcyMailing Integration Test Summary ===\n";

@@ -1618,7 +1618,9 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $consentsDone = $this->processRequestConsents($userId, $emails, $newsletterOrders);
             $this->removeShopData($userId, $emails, $requestId, $consentsDone);
 
-            if ($userId > 0 && $consentsDone) {
+            // Only once nothing is left for a retry: consent records processed and no newsletter
+            // subscriber kept (a retry finds a kept subscriber of the account only by cms_id).
+            if ($userId > 0 && $consentsDone && !$this->newsletterKept) {
                 $this->clearPendingAccount($userId, $user);
             }
 
