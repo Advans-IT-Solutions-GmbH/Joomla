@@ -26,7 +26,9 @@ use Joomla\Database\DatabaseInterface;
  * - its cms_id names an existing Joomla account whose e-mail is exactly the placeholder address
  *   of that account ID (the account is pseudonymised),
  * - its own e-mail is exactly the same placeholder address,
- * - it has no list rows (subscribed, unsubscribed or pending): a contact with list rows is kept.
+ * - it has no list rows (subscribed, unsubscribed or pending): a contact with list rows is kept,
+ * - the account has no unfinished removal request (PENDING_PARAM in its params): that request
+ *   removes the contact itself on its retry, through the removal listener first.
  *
  * Addresses are compared after ConsentRepository::normaliseAddress(), never by the database.
  * Without AcyMailing, without its cms_id column or without its list table nothing is deleted.
@@ -35,6 +37,9 @@ final class AcymailingPlaceholders
 {
     /** Tables referencing the contact (acym_user.id) through user_id, deleted before the contact. */
     public const RELATED_TABLES = ['user_has_field', 'user_stat', 'url_click', 'history', 'queue'];
+
+    /** Params key of an account whose removal request is unfinished (J2Commerce::PENDING_PARAM). */
+    public const PENDING_PARAM = 'plg_privacy_j2commerce_pending';
 
     /** Contacts per batch. */
     private const BATCH_SIZE = 200;
@@ -78,6 +83,21 @@ final class AcymailingPlaceholders
         return null;
     }
 
+    /**
+     * Whether account params carry the marker of an unfinished removal request (fail-closed: params
+     * that mention the key but cannot be read count as pending).
+     */
+    public static function removalPending(string $params): bool
+    {
+        if (!str_contains($params, self::PENDING_PARAM)) {
+            return false;
+        }
+
+        $decoded = json_decode($params, true);
+
+        return !\is_array($decoded) || !empty($decoded[self::PENDING_PARAM]);
+    }
+
     /** E-mail address Joomla gives an account when it pseudonymises it, as compared (lower case). */
     public static function placeholderAddress(int $userId): string
     {
@@ -87,11 +107,13 @@ final class AcymailingPlaceholders
     /**
      * Delete the placeholder contacts of pseudonymised accounts.
      *
-     * @param   int[]|null  $userIds  Only contacts of these Joomla account IDs (null: all)
+     * @param   int[]|null  $userIds     Only contacts of these Joomla account IDs (null: all)
+     * @param   bool        $ownRequest  Called by the removal request that set the pending marker of
+     *                                   these accounts (its own marker does not block it)
      *
-     * @return  array{removed: int, kept: int}  Contacts deleted; placeholder contacts kept because they have list rows
+     * @return  array{removed: int, kept: int}  Contacts deleted; placeholder contacts kept (list rows, changed meanwhile)
      */
-    public function remove(?array $userIds = null): array
+    public function remove(?array $userIds = null, bool $ownRequest = false): array
     {
         $result = ['removed' => 0, 'kept' => 0];
         $prefix = self::tablePrefix($this->db);
@@ -154,14 +176,14 @@ final class AcymailingPlaceholders
                 }
             }
 
-            $pseudonymised = $this->pseudonymisedAccounts(array_values(array_unique($candidates)));
+            $pseudonymised = $this->pseudonymisedAccounts(array_values(array_unique($candidates)), $ownRequest);
 
             foreach ($candidates as $contactId => $cmsId) {
                 if (!isset($pseudonymised[$cmsId])) {
                     continue;
                 }
 
-                if ($this->deleteContact($prefix, $contactId, $cmsId, $related)) {
+                if ($this->deleteContact($prefix, $contactId, $cmsId, $related, $ownRequest)) {
                     $result['removed']++;
                 } else {
                     $result['kept']++;
@@ -182,7 +204,7 @@ final class AcymailingPlaceholders
      *
      * @return  bool  Whether the contact was deleted (false: kept)
      */
-    private function deleteContact(string $prefix, int $contactId, int $cmsId, array $related): bool
+    private function deleteContact(string $prefix, int $contactId, int $cmsId, array $related, bool $ownRequest = false): bool
     {
         $this->db->transactionStart();
 
@@ -193,9 +215,9 @@ final class AcymailingPlaceholders
                 . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $contactId . ' FOR UPDATE'
             )->loadObject();
             $account = $this->db->setQuery(
-                'SELECT ' . $this->db->quoteName('email') . ' FROM ' . $this->db->quoteName('#__users')
+                'SELECT ' . $this->db->quoteName('email') . ', ' . $this->db->quoteName('params') . ' FROM ' . $this->db->quoteName('#__users')
                 . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $cmsId . ' FOR UPDATE'
-            )->loadResult();
+            )->loadObject();
             $lists = $this->db->setQuery(
                 'SELECT ' . $this->db->quoteName('user_id') . ' FROM ' . $this->db->quoteName($prefix . 'user_has_list')
                 . ' WHERE ' . $this->db->quoteName('user_id') . ' = ' . $contactId . ' FOR UPDATE'
@@ -205,7 +227,8 @@ final class AcymailingPlaceholders
 
             if (!\is_object($contact) || (int) $contact->cms_id !== $cmsId || $lists !== []
                 || ConsentRepository::normaliseAddress((string) $contact->email) !== $placeholder
-                || ConsentRepository::normaliseAddress((string) $account) !== $placeholder) {
+                || !\is_object($account) || ConsentRepository::normaliseAddress((string) $account->email) !== $placeholder
+                || (!$ownRequest && self::removalPending((string) $account->params))) {
                 $this->db->transactionRollback();
 
                 return false;
@@ -250,14 +273,14 @@ final class AcymailingPlaceholders
      *
      * @return  array<int, true>
      */
-    private function pseudonymisedAccounts(array $userIds): array
+    private function pseudonymisedAccounts(array $userIds, bool $ownRequest = false): array
     {
         $found = [];
 
         foreach (array_chunk($userIds, self::BATCH_SIZE) as $chunk) {
             $rows = $this->db->setQuery(
                 $this->createQuery()
-                    ->select($this->db->quoteName(['id', 'email']))
+                    ->select($this->db->quoteName(['id', 'email', 'params']))
                     ->from($this->db->quoteName('#__users'))
                     ->whereIn($this->db->quoteName('id'), $chunk)
             )->loadObjectList() ?: [];
@@ -265,7 +288,8 @@ final class AcymailingPlaceholders
             foreach ($rows as $row) {
                 $id = (int) $row->id;
 
-                if (ConsentRepository::normaliseAddress((string) $row->email) === self::placeholderAddress($id)) {
+                if (ConsentRepository::normaliseAddress((string) $row->email) === self::placeholderAddress($id)
+                    && ($ownRequest || !self::removalPending((string) $row->params))) {
                     $found[$id] = true;
                 }
             }

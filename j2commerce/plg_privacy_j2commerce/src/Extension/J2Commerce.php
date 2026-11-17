@@ -1747,9 +1747,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             Log::add('Consent records of the request could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
         }
 
-        if ($userId > 0) {
+        // Not while a subscriber of the request is kept: the retry removes it through the normal
+        // path (listener first), and the helper never deletes a contact of an account whose
+        // removal is still pending (PENDING_PARAM).
+        if ($userId > 0 && !$this->newsletterKept) {
             try {
-                (new AcymailingPlaceholders($db))->remove([$userId]);
+                // This request owns the account's pending marker, so it may remove the placeholder.
+                (new AcymailingPlaceholders($db))->remove([$userId], true);
             } catch (\Throwable $e) {
                 $failed = true;
                 Log::add('AcyMailing placeholder contact not removed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');

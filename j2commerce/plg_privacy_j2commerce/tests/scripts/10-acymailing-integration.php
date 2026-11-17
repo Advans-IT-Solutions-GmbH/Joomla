@@ -1034,9 +1034,10 @@ class AcyMailingIntegrationTest
      * A synchronised subscriber whose removal listener fails is kept; the account keeps its retry
      * marker, and the retry without account (pseudonymised) removes the subscriber by cms_id.
      */
-    private function testSyncedSubscriberRetryAfterFailedListener(): void
+    private function testSyncedSubscriberRetryAfterFailedListener(bool $withList): void
     {
-        echo "\n--- Synchronised subscriber kept by a failing listener, then a retry without account ---\n";
+        $case = $withList ? 'with list rows' : 'without list rows';
+        echo "\n--- Synchronised subscriber ($case) kept by a failing listener, then cleanup and a retry without account ---\n";
 
         $prefix = $this->getAcymPrefix();
         $plugin = $this->createPlugin();
@@ -1067,8 +1068,11 @@ class AcyMailingIntegrationTest
         try {
             $contact = $this->insertSubscriber($prefix, $email, 'Retry Subscriber');
             $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET cms_id = ' . $userId . ' WHERE id = ' . $contact)->execute();
-            $this->db->setQuery('INSERT IGNORE INTO ' . $this->db->quoteName($prefix . 'user_has_list')
-                . " (user_id, list_id, status, subscription_date) VALUES ($contact, 1, 1, NOW())")->execute();
+
+            if ($withList) {
+                $this->db->setQuery('INSERT IGNORE INTO ' . $this->db->quoteName($prefix . 'user_has_list')
+                    . " (user_id, list_id, status, subscription_date) VALUES ($contact, 1, 1, NOW())")->execute();
+            }
 
             $user           = new User();
             $user->id       = $userId;
@@ -1099,16 +1103,21 @@ class AcyMailingIntegrationTest
             }
 
             $this->takeMessages();
-            $this->test('Failing listener: the synchronised subscriber is kept with its list rows',
-                $this->countRows($prefix . 'user', 'id', $contact) === 1 && $this->countRows($prefix . 'user_has_list', 'user_id', $contact) === 1);
-            $this->test('Failing listener: the account keeps its retry marker', $marker());
+            $this->test("[$case] Failing listener: the synchronised subscriber is kept, also by the request's own placeholder sweep",
+                $this->countRows($prefix . 'user', 'id', $contact) === 1 && $this->countRows($prefix . 'user_has_list', 'user_id', $contact) === ($withList ? 1 : 0));
+            $this->test("[$case] Failing listener: the account keeps its retry marker", $marker());
+
+            // The cleanup task runs before the retry: the account's removal is pending, the contact stays.
+            (new \Advans\Plugin\Privacy\J2Commerce\Newsletter\AcymailingPlaceholders($this->db))->remove();
+            $this->test("[$case] Cleanup task before the retry: the contact of the pending removal is kept",
+                $this->countRows($prefix . 'user', 'id', $contact) === 1);
 
             // The retry: Joomla finds no account for the address any more (user = null).
             $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => null]));
             $this->takeMessages();
-            $this->test('Retry without account: the kept subscriber is removed by cms_id with its list rows',
+            $this->test("[$case] Retry without account: the kept subscriber is removed by cms_id with its list rows",
                 $this->countRows($prefix . 'user', 'id', $contact) === 0 && $this->countRows($prefix . 'user_has_list', 'user_id', $contact) === 0);
-            $this->test('Retry without account: the retry marker is removed', !$marker());
+            $this->test("[$case] Retry without account: the retry marker is removed", !$marker());
         } catch (\Throwable $e) {
             $this->test('synced subscriber retry ran without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
         } finally {
@@ -1195,7 +1204,8 @@ class AcyMailingIntegrationTest
         $this->testPseudonymisationPlaceholders();
         $this->testPlaceholderAfterUserPluginInBothOrders();
         $this->testSyncedSubscriberOfTheAccount();
-        $this->testSyncedSubscriberRetryAfterFailedListener();
+        $this->testSyncedSubscriberRetryAfterFailedListener(true);
+        $this->testSyncedSubscriberRetryAfterFailedListener(false);
         $this->testGracefulSkip();
 
         echo "\n=== AcyMailing Integration Test Summary ===\n";
