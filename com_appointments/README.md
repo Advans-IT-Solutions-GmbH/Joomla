@@ -2176,6 +2176,12 @@ ordinary reconciliation form interaction without horizontal scrolling. It uses t
 seven viewport widths, three locales and both themes; it makes no network requests or Joomla writes.
 This isolated layout regression complements, but does not replace, installed-site browser acceptance.
 
+The CI job «List tools in Chromium and Firefox (J6)» runs `tests/browser/list-filters.spec.cjs`
+against an installed Joomla 6 test site at 1600 and 375 px: it drags booking fields within their
+event type, filtered and unfiltered, and checks that the other event type keeps its order, and it
+saves a schedule with «Hide past dates» switched on and checks that every date is still stored.
+`tests/browser/list-filters-fixture.php` creates the synthetic administrator session and data.
+
 PHPUnit covers the pure helpers without Joomla or a database, including DST, buffers, the slot
 grid, minimum notice, booking horizons and caps. CI treats skipped integration assertions as
 failures.
