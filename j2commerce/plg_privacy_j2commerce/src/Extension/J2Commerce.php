@@ -12,6 +12,7 @@ namespace Advans\Plugin\Privacy\J2Commerce\Extension;
 defined('_JEXEC') or die;
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
+use Advans\Plugin\Privacy\J2Commerce\Newsletter\AcymailingPlaceholders;
 use Advans\Plugin\Privacy\J2Commerce\Retention\LifetimeLicenses;
 use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
 use Advans\Plugin\Privacy\J2Commerce\Security\ConfirmAttempts;
@@ -43,6 +44,7 @@ use Joomla\Database\DatabaseAwareTrait;
 use Joomla\Database\ParameterType;
 use Joomla\Event\DispatcherInterface;
 use Joomla\Event\Event;
+use Joomla\Event\Priority;
 use Joomla\Event\SubscriberInterface;
 use Joomla\Utilities\IpHelper;
 
@@ -70,6 +72,18 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     /** A newsletter subscriber of the removal request being reported was kept (listener failed). */
     private bool $newsletterKept = false;
+
+    /**
+     * The consent step of the removal request being reported failed: its orders were not
+     * anonymized and the request has to be carried out again (no completion notices).
+     */
+    private bool $consentsIncomplete = false;
+    /**
+     * Key in the params of an account whose removal request is in progress or did not finish:
+     * HMAC hashes (site secret) of the request and account addresses. A retry arrives without
+     * account after Joomla pseudonymised it and finds the account through this marker.
+     */
+    public const PENDING_PARAM = 'plg_privacy_j2commerce_pending';
 
     /** Order e-mail of anonymized orders; never matched as a customer address. */
     public const ANONYMIZED_EMAIL = 'anonymized@deleted.invalid';
@@ -319,6 +333,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ConfirmAttempts::class => '/../Security/ConfirmAttempts.php',
             J2CommerceStack::class => '/../Support/J2CommerceStack.php',
             ConsentRepository::class => '/../Consent/ConsentRepository.php',
+            AcymailingPlaceholders::class => '/../Newsletter/AcymailingPlaceholders.php',
         ];
 
         foreach ($classes as $class => $file) {
@@ -353,7 +368,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             // Privacy Component Events (Joomla 5 style)
             'onPrivacyExportRequest'   => 'onPrivacyExportRequest',
             'onPrivacyCanRemoveData'   => 'onPrivacyCanRemoveData',
-            'onPrivacyRemoveData'      => 'onPrivacyRemoveData',
+            // After every other privacy plugin, whatever their ordering: Joomla's plugin for user
+            // accounts pseudonymises and saves the account first, so the AcyMailing placeholder
+            // contact that save creates already exists when this plugin removes it, and the
+            // account seen here is already pseudonymised (see accountsBeforeRemoval).
+            'onPrivacyRemoveData'      => ['onPrivacyRemoveData', Priority::MIN],
             // System Events for Checkout
             // onAfterRender removed: frontend rendering is handled via
             // template overrides shipped with the plugin (overrides/com_j2store/).
@@ -440,6 +459,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $legacy = $this->createLegacyGuestConsentsDomain($emails);
         if ($legacy !== null) {
             $domains[] = $legacy;
+        }
+
+        // Newsletter consents of guests (user_id 0): from the newsletter form with the request or
+        // account address, and from the checkout of the guest orders. Records of the account
+        // (user_id) are exported by Joomla's consent plugin.
+        $newsletter = $this->createNewsletterConsentsDomain($emails);
+        if ($newsletter !== null) {
+            $domains[] = $newsletter;
         }
 
         if ($user && $this->params->get('include_joomla_data', 1)) {
@@ -572,6 +599,62 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         return $domain;
     }
 
+    /**
+     * Newsletter consent records of guests (user_id 0), null if none: records of the newsletter
+     * form whose subscriber address field names one of $emails as a complete address (current
+     * kind and old header-form kind), and checkout newsletter consents of the guest orders placed
+     * with one of $emails (J2Commerce 6 orders, like the checkout consents). Every state.
+     *
+     * @param   string[]  $emails
+     */
+    protected function createNewsletterConsentsDomain(array $emails): ?Domain
+    {
+        if ($emails === []) {
+            return null;
+        }
+
+        self::loadHelperClasses();
+        $repository = new ConsentRepository($this->getDatabase());
+        $records    = [];
+
+        foreach ($repository->findNewsletterFormConsents($emails) as $record) {
+            $record->source   = 'form';
+            $record->order_id = '';
+            $records[(int) $record->id] = $record;
+        }
+
+        $orderIds = $this->guestOrderIds($emails, true);
+
+        foreach ($orderIds === [] ? [] : $repository->findNewsletterOrderConsents($orderIds) as $record) {
+            if ((int) $record->user_id === 0) {
+                $record->source = 'checkout';
+                $records[(int) $record->id] = $record;
+            }
+        }
+
+        if ($records === []) {
+            return null;
+        }
+
+        ksort($records);
+        $domain = $this->createDomain('newsletter_consents', Text::_('PLG_PRIVACY_J2COMMERCE_DOMAIN_NEWSLETTER_CONSENTS'));
+
+        foreach ($records as $id => $record) {
+            $text = trim(strip_tags(str_replace(['</p>', '<br>', '<br />', '<br/>'], "\n", (string) $record->body)));
+
+            $domain->addItem($this->createItemFromArray([
+                'source'   => (string) $record->source,
+                'order_id' => (string) $record->order_id,
+                'state'    => (int) $record->state,
+                'created'  => (string) $record->created,
+                'subject'  => Text::_((string) $record->subject),
+                'consent'  => preg_replace("/\n{2,}/", "\n", html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8')),
+            ], $id));
+        }
+
+        return $domain;
+    }
+
     // =========================================================================
     // ACYMAILING INTEGRATION
     // =========================================================================
@@ -585,31 +668,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     protected function getAcymTablePrefix(): ?string
     {
-        $db = $this->getDatabase();
+        self::loadHelperClasses();
 
-        // AcyMailing always creates a table named <joomla_prefix>acym_configuration
-        // Try the standard Joomla table prefix first, then scan for any acym_configuration table.
-        $joomlaPrefix = $db->getPrefix();
-        $candidate    = $joomlaPrefix . 'acym_configuration';
-
-        try {
-            $tables = $db->getTableList();
-        } catch (\Exception $e) {
-            return null;
-        }
-
-        if (in_array($candidate, $tables, true)) {
-            return $joomlaPrefix . 'acym_';
-        }
-
-        // Fallback: scan all tables for *acym_configuration
-        foreach ($tables as $table) {
-            if (str_ends_with($table, 'acym_configuration')) {
-                return substr($table, 0, -strlen('configuration'));
-            }
-        }
-
-        return null;
+        // AcyMailing always creates a table named <joomla_prefix>acym_configuration.
+        return AcymailingPlaceholders::tablePrefix($this->getDatabase());
     }
 
     /**
@@ -661,10 +723,34 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             }
         }
 
+        // The subscribers linked to the verified account (cms_id), whatever their address: a
+        // removal request deletes them too (removeAcyMailingData()), so the export shows them.
+        $accountId = (int) ($user->id ?? 0);
+
+        if ($accountId > 0) {
+            try {
+                $columns = array_change_key_case($db->getTableColumns($prefix . 'user'), CASE_LOWER);
+
+                if (isset($columns['cms_id'])) {
+                    $query = $this->createDbQuery()
+                        ->select(['id', 'email', 'name', 'confirmed', 'creation_date'])
+                        ->from($db->quoteName($prefix . 'user'))
+                        ->where($db->quoteName('cms_id') . ' = ' . $accountId);
+
+                    foreach ($db->setQuery($query)->loadObjectList() ?: [] as $row) {
+                        $acymUsers[(int) $row->id] = $row;
+                    }
+                }
+            } catch (\Exception $e) {
+                return null;
+            }
+        }
+
         if ($acymUsers === []) {
             return null;
         }
 
+        ksort($acymUsers);
         $domain = $this->createDomain('newsletter_subscriptions', Text::_('PLG_PRIVACY_J2COMMERCE_ACYM_DOMAIN'));
 
         foreach ($acymUsers as $acymUser) {
@@ -829,11 +915,19 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * Deletes the subscriber record and all list associations.
      * Uses raw SQL for version-independence — no AcyMailing PHP classes required.
      *
-     * @param   User|null  $user    The user of the request (null: guest customer without account)
-     * @param   string[]   $emails  Addresses to look up, captured before Joomla's privacy user plugin
-     *                              pseudonymised $user->email; default: $user->email
+     * Subscribers linked to the verified account of the request (cms_id) are removed as well:
+     * with AcyMailing's user synchronisation, the save of Joomla's privacy plugin for user accounts
+     * has already changed their address to the account's placeholder address, so the lookup by
+     * address would miss them. The listener of EVENT_BEFORE_NEWSLETTER_REMOVAL then gets the
+     * original address ($originalEmail), not the placeholder.
+     *
+     * @param   User|null  $user           The user of the request (null: guest customer without account)
+     * @param   string[]   $emails         Addresses to look up, captured before Joomla's privacy user plugin
+     *                                     pseudonymised $user->email; default: $user->email
+     * @param   int        $accountId      Verified account of the request (0: none), also from a retry marker
+     * @param   string     $originalEmail  Original address of that account for the removal listener
      */
-    protected function removeAcyMailingData(?User $user, ?array $emails = null): void
+    protected function removeAcyMailingData(?User $user, ?array $emails = null, int $accountId = 0, string $originalEmail = ''): void
     {
         $prefix = $this->getAcymTablePrefix();
         if ($prefix === null) {
@@ -847,13 +941,15 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             'strlen'
         )));
 
-        if ($emails === []) {
+        if ($emails === [] && $accountId <= 0) {
             return;
         }
 
+        $linked = [];
+
         try {
             // The address is decided in PHP (see ownerCondition()).
-            $values  = ConsentRepository::addressValues($db, $prefix . 'user', 'id', 'email', $emails);
+            $values  = $emails === [] ? [] : ConsentRepository::addressValues($db, $prefix . 'user', 'id', 'email', $emails);
             $acymIds = [];
 
             if ($values !== []) {
@@ -862,6 +958,18 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     ->from($db->quoteName($prefix . 'user'))
                     ->where(ConsentRepository::exactValuesCondition($db, $db->quoteName('email'), $values));
                 $acymIds = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
+            }
+
+            $columns = $accountId > 0 ? array_change_key_case($db->getTableColumns($prefix . 'user'), CASE_LOWER) : [];
+
+            if (isset($columns['cms_id'])) {
+                $linked  = array_map('intval', $db->setQuery(
+                    $this->createDbQuery()
+                        ->select($db->quoteName('id'))
+                        ->from($db->quoteName($prefix . 'user'))
+                        ->where($db->quoteName('cms_id') . ' = ' . $accountId)
+                )->loadColumn() ?: []);
+                $acymIds = array_values(array_unique(array_merge($acymIds, $linked)));
             }
         } catch (\Exception $e) {
             Log::add('AcyMailing privacy lookup failed (' . \get_class($e) . '); removal remains unverified.',
@@ -876,11 +984,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         foreach ($acymIds as $acymId) {
-            $this->removeAcyMailingSubscriber($prefix, $acymId, (int) ($user->id ?? 0));
+            $this->removeAcyMailingSubscriber($prefix, $acymId, $accountId > 0 ? $accountId : (int) ($user->id ?? 0), $originalEmail);
         }
     }
 
-    private function removeAcyMailingSubscriber(string $prefix, int $acymId, int $userId): void
+    /**
+     * @param   string  $originalEmail  Original address of the account ($userId); the removal listener
+     *                                  gets it only in place of that account's pseudonymisation
+     *                                  placeholder, any other stored address is passed unchanged
+     */
+    private function removeAcyMailingSubscriber(string $prefix, int $acymId, int $userId, string $originalEmail = ''): void
     {
         $db = $this->getDatabase();
 
@@ -894,6 +1007,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     ->from($db->quoteName($prefix . 'user'))
                     ->where($db->quoteName('id') . ' = ' . $acymId)
             )->loadResult();
+
+            // The synchronisation moved the subscriber to the placeholder: suppress the real address.
+            if (trim($originalEmail) !== '' && $userId > 0
+                && ConsentRepository::normaliseAddress($email) === AcymailingPlaceholders::placeholderAddress($userId)) {
+                $email = $originalEmail;
+            }
 
             $this->dispatchBeforeNewsletterRemoval($email, $acymId);
         } catch (\Throwable $e) {
@@ -949,7 +1068,15 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
             $this->logActivity('acymailing_subscriber_deleted', $userId);
         } catch (\Exception $e) {
+            // The subscriber may still exist: the request reports it as kept, and the newsletter
+            // consents of the request stay unchanged until the removal is carried out again.
             Log::add('AcyMailing subscriber deletion failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            $this->newsletterKept = true;
+            $app = $this->feedbackApplication();
+
+            if ($app !== null && method_exists($app, 'enqueueMessage')) {
+                $app->enqueueMessage($this->pluginStrings(self::currentLanguage())->_('PLG_PRIVACY_J2COMMERCE_ACYM_REMOVAL_KEPT'), 'warning');
+            }
         }
     }
 
@@ -1351,6 +1478,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return $status;
         }
 
+        // The retry marker is stored now, before any plugin removes or pseudonymises anything: a
+        // retry after a failed step arrives without account and finds it only through the marker.
+        // Without a durable marker the request is refused (fail-closed).
+        if (!$this->markPendingAccount((int) $user->id, self::requestEmails([$requestEmail, (string) $user->email]), $user)) {
+            $status->canRemove = false;
+            $status->reason    = $this->pluginStrings(self::currentLanguage())->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_MARKER_FAILED');
+
+            return $status;
+        }
+
         $this->accountsBeforeRemoval[(int) $user->id] = [
             'username' => (string) $user->username,
             'email'    => (string) $user->email,
@@ -1441,6 +1578,33 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return;
         }
 
+        // A removal of this address that did not finish (marked below) is continued with its
+        // account: Joomla pseudonymised the account in that run, so the retry arrives without one.
+        // If that lookup fails or is ambiguous, an unfinished account removal could be missed: the
+        // request is then reported as incomplete and the orders keep their address for a retry.
+        $pendingFailed = false;
+
+        if ($user === null) {
+            try {
+                $pending = $this->pendingAccount($emails);
+            } catch (\Throwable $e) {
+                Log::add('Removal request: unfinished removals could not be determined: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+                $pending       = null;
+                $pendingFailed = true;
+            }
+
+            if ($pending !== null) {
+                Log::add('Continuing an unfinished removal request with its pseudonymised account ' . $pending, Log::INFO, 'plg_privacy_j2commerce');
+                $userId = $pending;
+            }
+        }
+
+        // The verified association of request and account is stored on the account before any
+        // work that can fail, and removed once everything is done.
+        if ($userId > 0) {
+            $this->markPendingAccount($userId, $emails, $user);
+        }
+
         $customerEmail = $requestEmail !== '' ? $requestEmail : $accountEmail;
         $check         = $this->retentionOverDataSets($userId, $emails);
         $languageTag   = $user
@@ -1472,9 +1636,74 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             }
         }
 
-        // Addresses, carts and expired orders in every J2Commerce data set (a migration keeps the
-        // #__j2store_* copies; personal data must not survive there).
-        $this->forEachDataSet(function () use ($userId, $emails): void {
+        // Guest orders of the request whose checkout newsletter consents become invalid below. Found
+        // before the orders are anonymized: anonymization replaces the e-mail they are found by.
+        // null: the lookup failed (reported as an incomplete consent removal).
+        $newsletterOrders = null;
+
+        try {
+            $newsletterOrders = $pendingFailed ? null : $this->guestOrderIds($emails, true);
+        } catch (\Throwable $e) {
+            Log::add('Guest orders of the newsletter consents could not be read: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+        }
+
+        // The newsletter subscriber goes first (request and account e-mail as captured above):
+        // whether it was kept decides what happens to the newsletter consents. The consents are
+        // processed before the orders, because anonymizing an order removes the address a retry
+        // would find it by: if consent processing fails, the orders are not anonymized now, and
+        // carrying out the removal again does both. A kept subscriber (see
+        // removeAcyMailingSubscriber()) is named in the messages below.
+        $this->newsletterKept = false;
+        $this->guestRequest   = $user === null;
+
+        try {
+            $this->removeAcyMailingData($user, array_unique(array_filter([$requestEmail, $accountEmail])), $userId, $accountEmail !== '' ? $accountEmail : $requestEmail);
+            $consentsDone = $this->processRequestConsents($userId, $emails, $newsletterOrders);
+            $this->removeShopData($userId, $emails, $requestId, $consentsDone);
+
+            // Only once nothing is left for a retry: consent records processed and no newsletter
+            // subscriber kept (a retry finds a kept subscriber of the account only by cms_id).
+            if ($userId > 0 && $consentsDone && !$this->newsletterKept) {
+                $this->clearPendingAccount($userId, $user);
+            }
+
+            // Consent records of an earlier template override (also guest records with the user's
+            // e-mail addresses): anonymized, never assigned to an order.
+            try {
+                self::loadHelperClasses();
+                (new ConsentRepository($this->getDatabase()))->anonymizeLegacyConsents($userId, [$requestEmail, $accountEmail]);
+            } catch (\Throwable $e) {
+                Log::add('Legacy consent records could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            }
+
+            $this->consentsIncomplete = !$consentsDone;
+            $this->reportRetainedOrders($retained, $check['lifetime_expired'] ?? [], $customerEmail, $languageTag);
+        } finally {
+            $this->guestRequest       = false;
+            $this->newsletterKept     = false;
+            $this->consentsIncomplete = false;
+        }
+    }
+
+    /**
+     * Addresses, carts and expired orders of a removal request in every J2Commerce data set (a
+     * migration keeps the #__j2store_* copies; personal data must not survive there).
+     *
+     * @param   int       $userId          Account of the request (0: none)
+     * @param   string[]  $emails          Request and account addresses
+     * @param   int       $requestId       ID of the privacy request (0: unknown), named in the action log
+     * @param   bool      $anonymizeOrders False while the consent records of the request are not
+     *                                     processed: the orders keep the address a retry needs
+     */
+    protected function removeShopData(int $userId, array $emails, int $requestId, bool $anonymizeOrders = true): void
+    {
+        $anonymize = $anonymizeOrders && $this->params->get('anonymize_orders', 1);
+
+        if (!$anonymizeOrders && $this->params->get('anonymize_orders', 1)) {
+            Log::add('Consent records of the request not processed: orders not anonymized until the removal is carried out again', Log::WARNING, 'plg_privacy_j2commerce');
+        }
+
+        $this->forEachDataSet(function () use ($userId, $emails, $anonymize): void {
             // Delete address book entries while Delete Addresses is on
             if ($this->params->get('delete_addresses', 1)) {
                 $this->deleteAddresses($userId, $emails);
@@ -1488,7 +1717,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
             // Anonymize only orders OUTSIDE retention period
             // Orders within retention period are kept intact for legal compliance
-            if ($this->params->get('anonymize_orders', 1)) {
+            if ($anonymize) {
                 $this->anonymizeOrders($userId, $emails);
             }
         });
@@ -1497,31 +1726,317 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $this->logActivity('all_addresses_deleted', $userId, '', ['requestid' => $requestId > 0 ? (string) $requestId : '-']);
         }
 
-        if ($this->params->get('anonymize_orders', 1)) {
+        if ($anonymize) {
             $this->logActivity('orders_anonymized', $userId, '', ['requestid' => $requestId > 0 ? (string) $requestId : '-']);
         }
+    }
 
-        // Consent records of an earlier template override (also guest records with the user's
-        // e-mail addresses): anonymized, never assigned to an order.
+    /**
+     * Consent records of a removal request that the order anonymization does not cover:
+     *
+     * - Joomla's registration consents of the account and the newsletter form records (account,
+     *   or guest records naming a request address in the subscriber field) are anonymized at once.
+     * - Checkout newsletter consents of the account and of the request's guest orders become
+     *   invalid (state -1); their IP address and user agent stay until the order is anonymized.
+     * - The AcyMailing placeholder contact Joomla's pseudonymisation of the account created is
+     *   deleted (AcymailingPlaceholders guards).
+     *
+     * Runs before the orders are anonymized. While a newsletter subscriber of the request was
+     * kept (lookup, listener or deletion failed) the newsletter is still running, so the guest
+     * records, which a retry finds again by the address, stay unchanged: carrying out the removal
+     * again processes them together with the subscriber. Records a retry could no longer
+     * attribute are processed all the same: those of the account (Joomla pseudonymises it in the
+     * same request, so a retry arrives without account) and the checkout newsletter consents of
+     * guest orders this request is about to anonymize (guestOrdersDueForAnonymization()).
+     *
+     * A step that fails is logged and reported to the administrator as a warning; the caller then
+     * leaves the orders as they are, so that carrying out the removal again finds everything.
+     *
+     * @param   int            $userId            Account of the request (0: none)
+     * @param   string[]       $emails            Request and account addresses (requestEmails())
+     * @param   string[]|null  $newsletterOrders  Guest orders of the request (guestOrderIds(), before
+     *                                            anonymization); null: the lookup failed
+     *
+     * @return  bool  Whether every step succeeded
+     */
+    protected function processRequestConsents(int $userId, array $emails, ?array $newsletterOrders): bool
+    {
+        self::loadHelperClasses();
+        $db     = $this->getDatabase();
+        $failed = $newsletterOrders === null;
+        $orders = $newsletterOrders ?? [];
+
         try {
-            self::loadHelperClasses();
-            (new ConsentRepository($this->getDatabase()))->anonymizeLegacyConsents($userId, [$requestEmail, $accountEmail]);
+            $repository = new ConsentRepository($db);
+            $hashes     = array_map(fn (string $email): string => $this->pendingHash($email), $emails);
+
+            // Before any step that can fail: the guest checkout newsletter consents of the request
+            // carry a hashed marker until they are invalidated, so a retry finds them even if the
+            // cleanup task anonymized their order in the meantime.
+            $repository->markNewsletterOrderConsentsPending($orders, $hashes);
+
+            if ($this->newsletterKept) {
+                Log::add('Newsletter subscriber kept: guest consent records of the request left unchanged until the removal is carried out again', Log::WARNING, 'plg_privacy_j2commerce');
+
+                if ($userId > 0) {
+                    $repository->anonymizeRequestConsents($userId, []);
+                }
+
+                $repository->invalidateNewsletterOrderConsents($userId, $this->guestOrdersDueForAnonymization($orders));
+            } else {
+                $repository->anonymizeRequestConsents($userId, $emails);
+                $repository->invalidateNewsletterOrderConsents($userId, $orders, $hashes);
+            }
         } catch (\Throwable $e) {
-            Log::add('Legacy consent records could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            $failed = true;
+            Log::add('Consent records of the request could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
         }
 
-        // Remove AcyMailing subscriber data (request and account e-mail as captured above). A kept
-        // subscriber (see removeAcyMailingSubscriber()) is named in the messages below.
-        $this->newsletterKept = false;
-        $this->guestRequest   = $user === null;
+        // Not while a subscriber of the request is kept: the retry removes it through the normal
+        // path (listener first), and the helper never deletes a contact of an account whose
+        // removal is still pending (PENDING_PARAM).
+        if ($userId > 0 && !$this->newsletterKept) {
+            try {
+                // This request owns the account's pending marker, so it may remove the placeholder.
+                (new AcymailingPlaceholders($db))->remove([$userId], true);
+            } catch (\Throwable $e) {
+                $failed = true;
+                Log::add('AcyMailing placeholder contact not removed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            }
+        }
+
+        if ($failed) {
+            $app = $this->feedbackApplication();
+
+            if ($app !== null && method_exists($app, 'enqueueMessage')) {
+                $app->enqueueMessage($this->pluginStrings(self::currentLanguage())->_('PLG_PRIVACY_J2COMMERCE_CONSENTS_INCOMPLETE'), 'warning');
+            }
+        }
+
+        return !$failed;
+    }
+
+    /**
+     * Site secret for the hashes of the pending-removal marker ('' without application).
+     */
+    protected function pendingSecret(): string
+    {
+        try {
+            $app = $this->getApplication() ?? Factory::getApplication();
+
+            return (string) $app->get('secret', '');
+        } catch (\Throwable $e) {
+            return '';
+        }
+    }
+
+    /** HMAC of a request address for the pending-removal marker (never the address itself). */
+    private function pendingHash(string $email): string
+    {
+        return hash_hmac('sha256', 'pending-removal|' . ConsentRepository::normaliseAddress($email), $this->pendingSecret());
+    }
+
+    /**
+     * Store on the account, in its params (PENDING_PARAM), the HMAC hashes of the request and
+     * account addresses of a removal request in progress. Written directly, without saving the
+     * user (no user events), and set in the User object of the request as well: Joomla's privacy
+     * plugin for user accounts may save that same object after this plugin, and a save writes the
+     * params of the object. Called in onPrivacyCanRemoveData(), which refuses the request if it
+     * fails, and again (idempotent) in processDataRemoval().
+     *
+     * @param   string[]  $emails
+     *
+     * @return  bool  Whether the marker is stored (true as well when the account does not exist)
+     */
+    protected function markPendingAccount(int $userId, array $emails, ?User $user = null): bool
+    {
+        $hashes = array_values(array_unique(array_map(fn (string $email): string => $this->pendingHash($email), $emails)));
+
+        // No valid address: a retry without account could not match one either.
+        if ($hashes === []) {
+            return true;
+        }
+
+        if ($user !== null && (int) $user->id === $userId) {
+            $user->setParam(self::PENDING_PARAM, $hashes);
+        }
 
         try {
-            $this->removeAcyMailingData($user, array_unique(array_filter([$requestEmail, $accountEmail])));
-            $this->reportRetainedOrders($retained, $check['lifetime_expired'] ?? [], $customerEmail, $languageTag);
-        } finally {
-            $this->guestRequest   = false;
-            $this->newsletterKept = false;
+            $this->updateAccountParams($userId, static function (array $params) use ($hashes): array {
+                $params[self::PENDING_PARAM] = $hashes;
+
+                return $params;
+            });
+        } catch (\Throwable $e) {
+            Log::add('Removal request: the account could not be marked for a retry: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+
+            return false;
         }
+
+        return true;
+    }
+
+    /**
+     * Remove the pending-removal marker of an account (its removal request is done), in the
+     * database and in the User object of the request, so that a later save keeps it removed.
+     */
+    protected function clearPendingAccount(int $userId, ?User $user = null): void
+    {
+        if ($user !== null && (int) $user->id === $userId) {
+            $user->setParam(self::PENDING_PARAM, null);
+        }
+
+        try {
+            $this->updateAccountParams($userId, static function (array $params): array {
+                unset($params[self::PENDING_PARAM]);
+
+                return $params;
+            });
+        } catch (\Throwable $e) {
+            Log::add('Removal request: the retry marker of the account could not be removed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+        }
+    }
+
+    /**
+     * The account of an unfinished removal request of one of $emails (markPendingAccount()), or
+     * null: none. Throws if the accounts cannot be read or more than one matches (ambiguous): the
+     * caller then reports the removal as incomplete instead of treating the request as a guest's.
+     *
+     * @param   string[]  $emails
+     *
+     * @throws  \RuntimeException
+     */
+    protected function pendingAccount(array $emails): ?int
+    {
+        if ($emails === []) {
+            return null;
+        }
+
+        self::loadHelperClasses();
+        $db     = $this->getDatabase();
+        $wanted = array_map(fn (string $email): string => $this->pendingHash($email), $emails);
+        $rows   = $db->setQuery(
+            $this->createDbQuery()
+                ->select($db->quoteName(['id', 'email', 'params']))
+                ->from($db->quoteName('#__users'))
+                ->where($db->quoteName('params') . ' LIKE ' . $db->quote('%' . $db->escape(self::PENDING_PARAM, true) . '%', false))
+        )->loadObjectList() ?: [];
+
+        $found = [];
+
+        foreach ($rows as $row) {
+            // Only a pseudonymised account: the marker is written before the removal, so an account
+            // whose request was refused or never carried out keeps its own address and is found by
+            // Joomla itself; it is never taken over through a stale marker.
+            if (ConsentRepository::normaliseAddress((string) $row->email) !== AcymailingPlaceholders::placeholderAddress((int) $row->id)) {
+                continue;
+            }
+
+            $params = json_decode((string) $row->params, true);
+
+            foreach (\is_array($params) ? (array) ($params[self::PENDING_PARAM] ?? []) : [] as $hash) {
+                foreach ($wanted as $candidate) {
+                    if (\is_string($hash) && hash_equals($hash, $candidate)) {
+                        $found[(int) $row->id] = true;
+                    }
+                }
+            }
+        }
+
+        if (\count($found) > 1) {
+            throw new \RuntimeException('several unfinished removals match the address, none continued');
+        }
+
+        return $found === [] ? null : (int) array_key_first($found);
+    }
+
+    /**
+     * Change the params of an account in the database (read, change, write back in one
+     * transaction), without loading or saving the user.
+     */
+    private function updateAccountParams(int $userId, callable $change): void
+    {
+        $db = $this->getDatabase();
+        $db->transactionStart();
+
+        try {
+            $current = $db->setQuery(
+                'SELECT ' . $db->quoteName('params') . ' FROM ' . $db->quoteName('#__users')
+                . ' WHERE ' . $db->quoteName('id') . ' = ' . $userId . ' FOR UPDATE'
+            )->loadResult();
+
+            if ($current === null) {
+                $db->transactionRollback();
+
+                return;
+            }
+
+            $params  = json_decode((string) $current, true);
+            $params  = $change(\is_array($params) ? $params : []);
+            $encoded = json_encode($params === [] ? new \stdClass() : $params);
+
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->update($db->quoteName('#__users'))
+                    ->set($db->quoteName('params') . ' = :params')
+                    ->where($db->quoteName('id') . ' = :id')
+                    ->bind(':params', $encoded)
+                    ->bind(':id', $userId, ParameterType::INTEGER)
+            )->execute();
+            $db->transactionCommit();
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+
+            throw $e;
+        }
+    }
+
+    /**
+     * The guest orders among $orderIds (J2Commerce 6) that anonymizeOrders() is about to anonymize
+     * with their address: outside the retention period, Anonymize Orders on, no lifetime license
+     * (those keep their address and stay findable).
+     *
+     * @param   string[]  $orderIds
+     *
+     * @return  string[]
+     */
+    protected function guestOrdersDueForAnonymization(array $orderIds): array
+    {
+        $orderIds = array_values(array_unique(array_map('strval', $orderIds)));
+
+        if ($orderIds === [] || !$this->params->get('anonymize_orders', 1)) {
+            return [];
+        }
+
+        $db  = $this->getDatabase();
+        $due = [];
+
+        foreach ($this->forEachDataSet(function () use ($db, $orderIds): array {
+            if ($this->isJ2Commerce4()) {
+                return [];
+            }
+
+            $numbers = [];
+
+            foreach (array_chunk($orderIds, 500) as $chunk) {
+                $db->setQuery(
+                    $this->createDbQuery()
+                        ->select($db->quoteName('order_id'))
+                        ->from($db->quoteName('#__j2commerce_orders'))
+                        ->where($db->quoteName('user_id') . ' = 0')
+                        ->whereIn($db->quoteName('order_id'), $chunk, ParameterType::STRING)
+                        ->where($db->quoteName('created_on') . ' <= ' . $db->quote($this->retentionCutoff()))
+                );
+                array_push($numbers, ...array_map('strval', $db->loadColumn() ?: []));
+            }
+
+            // Same lookup as anonymizeOrders() in this data set (fail-closed: all keep their address).
+            return $numbers === [] ? [] : array_values(array_diff($numbers, $this->lifetimeOrderIds($numbers)));
+        }) as $numbers) {
+            array_push($due, ...$numbers);
+        }
+
+        return array_values(array_unique($due));
     }
 
     /**
@@ -1661,6 +2176,26 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $app = $this->feedbackApplication();
 
         if ($app === null) {
+            return;
+        }
+
+        // Unfinished request (consent step failed, orders not anonymized): no completion e-mail
+        // to the customer and no completion message. The administrator gets the orders that
+        // will be kept; the warning PLG_PRIVACY_J2COMMERCE_CONSENTS_INCOMPLETE asks for a retry,
+        // which then sends the e-mail.
+        if ($this->consentsIncomplete) {
+            if (($retained !== [] || $lifetime !== []) && method_exists($app, 'isClient') && $app->isClient('administrator')) {
+                $strings = $this->pluginStrings(self::currentLanguage());
+                $app->enqueueMessage(
+                    nl2br(htmlspecialchars(
+                        sprintf($strings->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_INCOMPLETE_RETAINED'), $customerEmail) . "\n\n" . $this->formatRetainedOrders($retained, $lifetime, $strings),
+                        ENT_QUOTES,
+                        'UTF-8'
+                    )),
+                    'warning'
+                );
+            }
+
             return;
         }
 
@@ -2205,9 +2740,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             )->execute();
         }
 
-        // Checkout consents are recorded for J2Commerce 6 orders only and name the order number:
-        // their IP address and user agent are removed in the J2Commerce 6 data set. A J2Store
-        // order number could belong to another customer's J2Commerce 6 order.
+        // Checkout consents (and the checkout newsletter consents) are recorded for J2Commerce 6
+        // orders and name the order number: their IP address and user agent are removed in the
+        // J2Commerce 6 data set. A J2Store order number could belong to another customer's
+        // J2Commerce 6 order; the cleanup task removes the evidence of such records once their
+        // order is anonymized everywhere (ConsentRepository::removeStaleEvidence()).
         if (!$isJ4 && $ownNumbers !== []) {
             (new ConsentRepository($db))->removeOrderEvidence($ownNumbers);
         }

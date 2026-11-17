@@ -20,6 +20,10 @@ J2Commerce extends CMSPlugin implements SubscriberInterface
 │   └── collectExportDomains()
 │       ├── createOrdersDomain()
 │       ├── createAddressesDomain()
+│       ├── createGuestConsentsDomain()     — checkout consents of J2Commerce 6 guest orders
+│       ├── createLegacyGuestConsentsDomain() — earlier template override, guest records by address
+│       ├── createNewsletterConsentsDomain() — guest newsletter consents: form kinds by subscriber field,
+│       │                                     checkout newsletter consents of the guest orders
 │       ├── createJoomlaUserDomain()        — if include_joomla_data
 │       ├── createJoomlaProfileDomain()     — if include_joomla_data
 │       ├── createJoomlaActionLogsDomain()  — if include_joomla_data
@@ -28,14 +32,24 @@ J2Commerce extends CMSPlugin implements SubscriberInterface
 │   └── checkCanRemoveData()
 ├── onPrivacyRemoveData()         — anonymize/delete
 │   └── processDataRemoval()      — uses the captured account data and the request e-mail
+│       ├── pendingAccount()         — user = null: continue the one account whose retry marker matches an address
+│       ├── markPendingAccount()     — account params PENDING_PARAM: HMAC hashes of the addresses (cleared when done)
 │       ├── checkRetentionPeriod()   — retained orders (+ lifetime flag), expired lifetime orders
 │       │   └── lifetimeOrderIds()   — Retention\LifetimeLicenses (fail-closed)
-│       ├── deleteAddresses()        — if delete_addresses
-│       ├── deleteCartData()
-│       ├── anonymizeOrders()        — if anonymize_orders; cutoff Retention\RetentionPeriod;
-│       │                              lifetime orders keep user_email; consent IP/UA removed
-│       ├── removeAcyMailingData()   — lookup by captured e-mails; fires onJ2CommercePrivacyBeforeNewsletterRemoval
-│       │                              (group j2commerce, email/acymId) before each subscriber, keeps it if a listener throws
+│       ├── guestOrderIds()          — J2Commerce 6 guest orders of the request, read before anonymization
+│       ├── removeAcyMailingData()   — first: lookup by captured e-mails; fires onJ2CommercePrivacyBeforeNewsletterRemoval
+│       │                              (group j2commerce, email/acymId) before each subscriber, keeps it (newsletterKept)
+│       │                              if a listener throws or the deletion fails
+│       ├── processRequestConsents() — before the orders: registration + form consents anonymized (anonymizeRequestConsents),
+│       │                              checkout newsletter consents state -1 (invalidateNewsletterOrderConsents); with a kept
+│       │                              subscriber only account records and guestOrdersDueForAnonymization(); AcymailingPlaceholders
+│       │                              ::remove([account]); a failed step enqueues PLG_PRIVACY_J2COMMERCE_CONSENTS_INCOMPLETE
+│       ├── removeShopData()         — every data set (orders only anonymized if the consent step succeeded):
+│       │   ├── deleteAddresses()    — if delete_addresses
+│       │   ├── deleteCartData()
+│       │   └── anonymizeOrders()    — if anonymize_orders; cutoff Retention\RetentionPeriod; lifetime orders keep
+│       │                              user_email; consent IP/UA removed (checkout + checkout newsletter consents)
+│       ├── anonymizeLegacyConsents()
 │       └── reportRetainedOrders()   — customer e-mail first, then administrator message
 └── onAjaxJ2commercePrivacy()     — com_ajax entry (result via $event->addResult())
     ├── handleAccountTask()      — deleteAddress (logged-in, form token)
@@ -51,7 +65,9 @@ J2CommercePrivacy extends CMSPlugin implements SubscriberInterface — separate 
     ├── anonymizeUserData()             — partialAnonymizeUserData() is an alias
     │   └── anonymizeOrderTables()      — lifetime orders keep user_email (per order)
     ├── ordersWithLifetimeLicense()     — Retention\LifetimeLicenses, fail-closed
-    └── removeConsentEvidenceForOrders()  — Consent\ConsentRepository
+    ├── removeConsentEvidenceForOrders()  — Consent\ConsentRepository (checkout + checkout newsletter consents)
+    ├── removeStaleEvidence()           — checkout: J2Commerce 6 tables; checkout newsletter: every data set
+    └── AcymailingPlaceholders::remove() — placeholder contacts of pseudonymised accounts (guards in the class)
     Status KNOCKOUT if guest orders failed or all users failed.
 ```
 

@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS ${DB_PREFIX}acym_user (
     name          VARCHAR(255) DEFAULT NULL,
     confirmed     TINYINT(1)   NOT NULL DEFAULT 0,
     creation_date DATETIME     DEFAULT NULL,
+    cms_id        INT          NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
     UNIQUE KEY uq_acym_user_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

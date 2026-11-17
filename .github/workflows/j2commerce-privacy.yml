@@ -132,6 +132,7 @@ jobs:
         run: |
           composer install --no-interaction --no-progress
           vendor/bin/phpunit --no-configuration --bootstrap ../../.github/scripts/phpunit-bootstrap.php --fail-on-warning --fail-on-risky --fail-on-skipped tests/Unit/RetentionPeriodTest.php
+          vendor/bin/phpunit --no-configuration --bootstrap ../../.github/scripts/phpunit-bootstrap.php --fail-on-warning --fail-on-risky --fail-on-skipped tests/Unit/ConsentKindsTest.php
 
   language-lint:
     name: Language Files

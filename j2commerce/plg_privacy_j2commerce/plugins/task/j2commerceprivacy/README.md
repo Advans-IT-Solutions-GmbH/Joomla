@@ -10,7 +10,8 @@
 
 - Anonymises eligible expired account and guest orders across every existing J2Commerce/J2Store data set.
 - Keeps the order email for detected lifetime-license orders under the documented provisional rule.
-- Anonymises legacy consent content and removes stale consent IP/user-agent evidence.
+- Anonymises legacy consent content and removes stale consent IP/user-agent evidence of checkout consents and checkout newsletter consents (outside the retention period, or the order no longer exists with personal data in any data set).
+- Deletes AcyMailing placeholder contacts that Joomla's pseudonymisation of an account created (cms_id of a pseudonymised account, exactly its placeholder address, no list rows); real contacts are never touched. See the [parent AcyMailing section](../../../README.md#privacy-suite-what-is-exported-and-deleted).
 - Purges expired guest-confirmation attempt counters.
 
 ## Requirements

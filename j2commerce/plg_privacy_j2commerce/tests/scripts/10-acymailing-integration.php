@@ -724,6 +724,436 @@ class AcyMailingIntegrationTest
         }
     }
 
+    /**
+     * Owner decision 2026-11-17: AcyMailing's user synchronisation creates a contact with the
+     * placeholder address when Joomla pseudonymises an account ("UserIDnremoved@email.invalid",
+     * cms_id n). Only such a contact of a pseudonymised account without list rows is deleted, by
+     * the removal request of that account and by the cleanup step; real contacts never.
+     */
+    private function testPseudonymisationPlaceholders(): void
+    {
+        echo "\n--- AcyMailing placeholder contacts of pseudonymised accounts ---\n";
+
+        $prefix = $this->getAcymPrefix();
+        $plugin = $this->createPlugin();
+
+        if ($prefix === null || $plugin === null) {
+            $this->strictSkip('placeholder contacts', 'AcyMailing tables or plugin missing');
+
+            return;
+        }
+
+        $class = \Advans\Plugin\Privacy\J2Commerce\Newsletter\AcymailingPlaceholders::class;
+        $file  = JPATH_BASE . '/plugins/privacy/j2commerce/src/Newsletter/AcymailingPlaceholders.php';
+
+        if (!class_exists($class) && is_file($file)) {
+            require_once $file;
+        }
+
+        if (!$this->test('Placeholder helper installed with the plugin', class_exists($class))) {
+            return;
+        }
+
+        $columns = array_change_key_case($this->db->getTableColumns($prefix . 'user'), CASE_LOWER);
+
+        if (!$this->test('Test schema has the AcyMailing column cms_id', isset($columns['cms_id']))) {
+            return;
+        }
+
+        $users    = [];
+        $contacts = [];
+        $created  = [];
+
+        $addUser = function (string $email) use (&$users): int {
+            $row = (object) [
+                'name' => 'Placeholder test', 'username' => 'acym-placeholder-' . bin2hex(random_bytes(5)),
+                'email' => $email, 'password' => '', 'block' => 1, 'sendEmail' => 0,
+                'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+            ];
+            $this->db->insertObject('#__users', $row, 'id');
+            $users[] = (int) $row->id;
+
+            return (int) $row->id;
+        };
+        $setUserEmail = function (int $id, string $email): void {
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = ' . $this->db->quote($email) . ' WHERE id = ' . $id)->execute();
+        };
+        $addContact = function (string $email, int $cmsId) use ($prefix, &$contacts): int {
+            $id = $this->insertSubscriber($prefix, $email, 'User ID ' . $cmsId);
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET cms_id = ' . $cmsId . ' WHERE id = ' . $id)->execute();
+            $contacts[] = $id;
+
+            return $id;
+        };
+        $exists = fn (int $id): bool => $this->countRows($prefix . 'user', 'id', $id) === 1;
+
+        try {
+            if (!in_array($prefix . 'history', $this->db->getTableList(), true)) {
+                $this->db->setQuery('CREATE TABLE ' . $this->db->quoteName($prefix . 'history')
+                    . ' (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL) ENGINE=InnoDB')->execute();
+                $created[] = $prefix . 'history';
+            }
+
+            $pseudo     = $addUser('acym-placeholder-a-' . random_int(1000, 9999) . '@example.com');
+            $pseudoList = $addUser('acym-placeholder-b-' . random_int(1000, 9999) . '@example.com');
+            $real       = $addUser('acym-placeholder-real-' . random_int(1000, 9999) . '@example.com');
+            // Joomla's pseudonymisation (plg_privacy_user) as it stores the accounts.
+            $setUserEmail($pseudo, 'UserID' . $pseudo . 'removed@email.invalid');
+            $setUserEmail($pseudoList, 'UserID' . $pseudoList . 'removed@email.invalid');
+
+            $placeholder     = $addContact('userid' . $pseudo . 'removed@email.invalid', $pseudo);
+            $this->db->setQuery('INSERT INTO ' . $this->db->quoteName($prefix . 'history') . " (user_id) VALUES ($placeholder)")->execute();
+            $withList        = $addContact('UserID' . $pseudoList . 'removed@email.invalid', $pseudoList);
+            $this->db->setQuery('INSERT IGNORE INTO ' . $this->db->quoteName($prefix . 'user_has_list')
+                . " (user_id, list_id, status, subscription_date) VALUES ($withList, 1, 0, NOW())")->execute();
+            // The account is not pseudonymised: a contact with a placeholder-like address stays.
+            $notPseudo       = $addContact('userid' . $real . 'removed@email.invalid', $real);
+            // A real contact linked to the pseudonymised account stays.
+            $realLinked      = $addContact('acym-placeholder-linked-' . random_int(1000, 9999) . '@example.com', $pseudo);
+            // The placeholder address of another pseudonymised account, linked to $pseudo.
+            $pseudoOther     = $addUser('acym-placeholder-c-' . random_int(1000, 9999) . '@example.com');
+            $setUserEmail($pseudoOther, 'UserID' . $pseudoOther . 'removed@email.invalid');
+            $mismatch        = $addContact('userid' . $pseudoOther . 'removed@email.invalid', $pseudo);
+            // An address that only starts with a placeholder address.
+            $prefixed        = $addContact('userid' . $pseudo . 'removed@email.invalid.example', $pseudo);
+            // A longer address that contains the placeholder address.
+            $longer          = $addContact('xuserid' . $pseudo . 'removed@email.invalid', $pseudo);
+
+            $helper = new $class($this->db);
+            $scoped = $helper->remove([$real]);
+            $this->test('Scoped to another account: nothing removed', $scoped['removed'] === 0 && $exists($placeholder), json_encode($scoped));
+
+            // The removal request of the pseudonymised account deletes its placeholder at once.
+            $method = new \ReflectionMethod($plugin, 'processRequestConsents');
+            $method->setAccessible(true);
+            $method->invoke($plugin, $pseudo, [], []);
+            $this->test('Removal request: the placeholder contact of the pseudonymised account is deleted', !$exists($placeholder));
+            $this->test('Removal request: the history rows of the placeholder are deleted', $this->countRows($prefix . 'history', 'user_id', $placeholder) === 0);
+            $this->test('Removal request: a real contact linked to the account is kept', $exists($realLinked));
+            $this->test('Removal request: a longer address containing the placeholder is kept', $exists($longer));
+
+            $all = $helper->remove();
+            $this->test('Cleanup: placeholder with a list row is kept and counted', $exists($withList) && $all['kept'] >= 1, json_encode($all));
+            $this->test('Cleanup: placeholder-like address of an account that is not pseudonymised is kept', $exists($notPseudo));
+            $this->test('Cleanup: placeholder address of another account ID is kept', $exists($mismatch));
+            $this->test('Cleanup: an address that only starts with a placeholder address is kept', $exists($prefixed));
+            $this->test('Cleanup: real contacts are kept', $exists($realLinked) && (int) $this->db->setQuery(
+                'SELECT COUNT(*) FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE email = ' . $this->db->quote(self::TEST_EMAIL)
+            )->loadResult() === 1);
+
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user_has_list') . ' WHERE user_id = ' . $withList)->execute();
+            $again = $helper->remove();
+            $this->test('Cleanup: the placeholder is deleted once its list rows are gone', !$exists($withList) && $again['removed'] === 1, json_encode($again));
+        } catch (\Throwable $e) {
+            $this->test('placeholder contacts ran without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            foreach ($contacts as $id) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user_has_list') . ' WHERE user_id = ' . (int) $id)->execute();
+
+                if (in_array($prefix . 'history', $this->db->getTableList(), true)) {
+                    $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'history') . ' WHERE user_id = ' . (int) $id)->execute();
+                }
+
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . (int) $id)->execute();
+            }
+
+            foreach ($users as $id) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . (int) $id)->execute();
+            }
+
+            foreach ($created as $table) {
+                $this->db->setQuery('DROP TABLE IF EXISTS ' . $this->db->quoteName($table))->execute();
+            }
+        }
+    }
+
+    /**
+     * The placeholder is created by the save of Joomla's privacy plugin for user accounts. The
+     * removal handler of this plugin is registered with the lowest priority, so it runs after
+     * that save in either registration order and deletes the placeholder in the same request.
+     */
+    private function testPlaceholderAfterUserPluginInBothOrders(): void
+    {
+        echo "\n--- Placeholder created by the user plugin, both registration orders ---\n";
+
+        $prefix = $this->getAcymPrefix();
+        $plugin = $this->createPlugin();
+
+        if ($prefix === null || $plugin === null || !class_exists(\Joomla\Component\Privacy\Administrator\Table\RequestTable::class)) {
+            $this->strictSkip('placeholder in both orders', 'AcyMailing tables, plugin or com_privacy missing');
+
+            return;
+        }
+
+        foreach (['privacy plugin registered first', 'user plugin registered first'] as $index => $label) {
+            $email = 'acym-order-' . $index . '-' . random_int(1000, 9999) . '@example.com';
+            $row   = (object) [
+                'name' => 'Order test', 'username' => 'acym-order-' . $index . '-' . bin2hex(random_bytes(4)), 'email' => $email,
+                'password' => '', 'block' => 0, 'sendEmail' => 0, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+            ];
+            $this->db->insertObject('#__users', $row, 'id');
+            $userId      = (int) $row->id;
+            $placeholder = 'UserID' . $userId . 'removed@email.invalid';
+
+            try {
+                $user           = new User();
+                $user->id       = $userId;
+                $user->name     = $row->name;
+                $user->username = $row->username;
+                $user->email    = $email;
+
+                $request = (new \ReflectionClass(\Joomla\Component\Privacy\Administrator\Table\RequestTable::class))->newInstanceWithoutConstructor();
+                $request->id           = 0;
+                $request->email        = $email;
+                $request->request_type = 'remove';
+                $request->status       = 1;
+
+                // What plg_privacy_user and AcyMailing's user synchronisation do: pseudonymise and
+                // save the account, which creates the placeholder contact.
+                $userPlugin = function () use ($user, $userId, $placeholder, $prefix): void {
+                    $user->name  = 'User ID ' . $userId;
+                    $user->email = $placeholder;
+                    $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = ' . $this->db->quote($placeholder)
+                        . ', name = ' . $this->db->quote($user->name) . ' WHERE id = ' . $userId)->execute();
+                    $contact = $this->insertSubscriber($prefix, strtolower($placeholder), 'User ID ' . $userId);
+                    $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET cms_id = ' . $userId . ' WHERE id = ' . $contact)->execute();
+                };
+
+                $dispatcher = new \Joomla\Event\Dispatcher();
+
+                if ($index === 0) {
+                    $dispatcher->addSubscriber($plugin);
+                    $dispatcher->addListener('onPrivacyRemoveData', $userPlugin);
+                } else {
+                    $dispatcher->addListener('onPrivacyRemoveData', $userPlugin);
+                    $dispatcher->addSubscriber($plugin);
+                }
+
+                $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $request, 'user' => $user]));
+                $dispatcher->dispatch('onPrivacyRemoveData', new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => $user]));
+                $this->takeMessages();
+
+                $left = (int) $this->db->setQuery(
+                    'SELECT COUNT(*) FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE email = ' . $this->db->quote(strtolower($placeholder))
+                )->loadResult();
+                $this->test("[$label] the placeholder created by the user plugin is deleted in the same request", $left === 0, "left $left");
+            } catch (\Throwable $e) {
+                $this->test("[$label] removal through the dispatcher ran without error", false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+            } finally {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE email = ' . $this->db->quote(strtolower($placeholder)))->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $userId)->execute();
+            }
+        }
+    }
+
+    /**
+     * With user synchronisation, the user plugin's save changes the address of the account's
+     * existing subscriber to the placeholder before this plugin runs. The subscriber is found by
+     * cms_id of the verified account, removed with its list rows, and the removal listener gets
+     * the original address.
+     */
+    private function testSyncedSubscriberOfTheAccount(): void
+    {
+        echo "\n--- Existing subscriber whose address the user synchronisation changed ---\n";
+
+        $prefix = $this->getAcymPrefix();
+        $plugin = $this->createPlugin();
+
+        if ($prefix === null || $plugin === null || !class_exists(\Joomla\Component\Privacy\Administrator\Table\RequestTable::class)) {
+            $this->strictSkip('synced subscriber', 'AcyMailing tables, plugin or com_privacy missing');
+
+            return;
+        }
+
+        $email = 'acym-synced-' . random_int(1000, 9999) . '@example.com';
+        $row   = (object) [
+            'name' => 'Synced test', 'username' => 'acym-synced-' . bin2hex(random_bytes(4)), 'email' => $email,
+            'password' => '', 'block' => 0, 'sendEmail' => 0, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+        ];
+        $this->db->insertObject('#__users', $row, 'id');
+        $userId      = (int) $row->id;
+        $placeholder = 'userid' . $userId . 'removed@email.invalid';
+        $contact     = 0;
+        $second      = 0;
+        $seen        = [];
+        $name        = \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::EVENT_BEFORE_NEWSLETTER_REMOVAL;
+        $listener    = function ($event) use (&$seen): void {
+            $seen[] = (string) $event->getArgument('email', '');
+        };
+        $this->app->getDispatcher()->addListener($name, $listener);
+
+        try {
+            $contact = $this->insertSubscriber($prefix, $email, 'Synced Subscriber');
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET cms_id = ' . $userId . ' WHERE id = ' . $contact)->execute();
+            $this->db->setQuery('INSERT IGNORE INTO ' . $this->db->quoteName($prefix . 'user_has_list')
+                . " (user_id, list_id, status, subscription_date) VALUES ($contact, 1, 1, NOW())")->execute();
+            // A second contact linked to the account with another real address (not the placeholder).
+            $otherEmail = 'acym-linked-other-' . random_int(1000, 9999) . '@example.com';
+            $second     = $this->insertSubscriber($prefix, $otherEmail, 'Linked Other');
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET cms_id = ' . $userId . ' WHERE id = ' . $second)->execute();
+
+            $user           = new User();
+            $user->id       = $userId;
+            $user->name     = $row->name;
+            $user->username = $row->username;
+            $user->email    = $email;
+            $request = (new \ReflectionClass(\Joomla\Component\Privacy\Administrator\Table\RequestTable::class))->newInstanceWithoutConstructor();
+            $request->id           = 0;
+            $request->email        = $email;
+            $request->request_type = 'remove';
+            $request->status       = 1;
+
+            // The export of the account shows every subscriber the removal will delete, also the
+            // linked contact with another address.
+            $export = new \ReflectionMethod($plugin, 'createAcyMailingDomain');
+            $export->setAccessible(true);
+            $domain  = $export->invoke($plugin, $user, [$email]);
+            $itemIds = $domain ? array_map(static fn ($item): string => (string) $item->id, $domain->getItems()) : [];
+            $this->test('Account export contains the subscriber of the address and the linked contact with another address',
+                in_array('subscriber_' . $contact . '_subscriber', $itemIds, true) && in_array('subscriber_' . $second . '_subscriber', $itemIds, true),
+                json_encode($itemIds));
+
+            $dispatcher = new \Joomla\Event\Dispatcher();
+            $dispatcher->addSubscriber($plugin);
+            // plg_privacy_user saves the pseudonymised account; AcyMailing's synchronisation moves
+            // the existing subscriber to the placeholder address.
+            $dispatcher->addListener('onPrivacyRemoveData', function () use ($user, $userId, $placeholder, $prefix, $contact): void {
+                $user->email = 'UserID' . $userId . 'removed@email.invalid';
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = ' . $this->db->quote($user->email) . ' WHERE id = ' . $userId)->execute();
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET email = ' . $this->db->quote($placeholder) . ' WHERE id = ' . $contact)->execute();
+            });
+
+            $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $request, 'user' => $user]));
+            $dispatcher->dispatch('onPrivacyRemoveData', new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => $user]));
+            $messages = $this->takeMessages();
+
+            $this->test('Synced subscriber of the account deleted with its list rows although its address was changed',
+                $this->countRows($prefix . 'user', 'id', $contact) === 0 && $this->countRows($prefix . 'user_has_list', 'user_id', $contact) === 0,
+                json_encode($messages));
+            $sorted = $seen;
+            sort($sorted);
+            $expected = [$email, $otherEmail];
+            sort($expected);
+            $this->test('The removal listener gets the original address in place of the placeholder, and the stored address of a linked contact with another address',
+                $sorted === $expected && $this->countRows($prefix . 'user', 'id', $second) === 0, json_encode($seen));
+        } catch (\Throwable $e) {
+            $this->test('synced subscriber ran without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            $this->app->getDispatcher()->removeListener($name, $listener);
+
+            if ($second > 0) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . $second)->execute();
+            }
+
+            if ($contact > 0) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user_has_list') . ' WHERE user_id = ' . $contact)->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . $contact)->execute();
+            }
+
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $userId)->execute();
+        }
+    }
+
+    /**
+     * A synchronised subscriber whose removal listener fails is kept; the account keeps its retry
+     * marker, and the retry without account (pseudonymised) removes the subscriber by cms_id.
+     */
+    private function testSyncedSubscriberRetryAfterFailedListener(bool $withList): void
+    {
+        $case = $withList ? 'with list rows' : 'without list rows';
+        echo "\n--- Synchronised subscriber ($case) kept by a failing listener, then cleanup and a retry without account ---\n";
+
+        $prefix = $this->getAcymPrefix();
+        $plugin = $this->createPlugin();
+
+        if ($prefix === null || $plugin === null || !class_exists(\Joomla\Component\Privacy\Administrator\Table\RequestTable::class)) {
+            $this->strictSkip('synced subscriber retry', 'AcyMailing tables, plugin or com_privacy missing');
+
+            return;
+        }
+
+        $email = 'acym-retry-' . random_int(1000, 9999) . '@example.com';
+        $row   = (object) [
+            'name' => 'Retry test', 'username' => 'acym-retry-' . bin2hex(random_bytes(4)), 'email' => $email,
+            'password' => '', 'block' => 0, 'sendEmail' => 0, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+        ];
+        $this->db->insertObject('#__users', $row, 'id');
+        $userId      = (int) $row->id;
+        $placeholder = 'userid' . $userId . 'removed@email.invalid';
+        $contact     = 0;
+        $name        = \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::EVENT_BEFORE_NEWSLETTER_REMOVAL;
+        $failing     = function (): void {
+            throw new \RuntimeException('suppression record not stored');
+        };
+        $marker = fn (): bool => str_contains((string) $this->db->setQuery(
+            'SELECT params FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $userId
+        )->loadResult(), 'plg_privacy_j2commerce_pending');
+
+        try {
+            $contact = $this->insertSubscriber($prefix, $email, 'Retry Subscriber');
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET cms_id = ' . $userId . ' WHERE id = ' . $contact)->execute();
+
+            if ($withList) {
+                $this->db->setQuery('INSERT IGNORE INTO ' . $this->db->quoteName($prefix . 'user_has_list')
+                    . " (user_id, list_id, status, subscription_date) VALUES ($contact, 1, 1, NOW())")->execute();
+            }
+
+            $user           = new User();
+            $user->id       = $userId;
+            $user->name     = $row->name;
+            $user->username = $row->username;
+            $user->email    = $email;
+            $request = (new \ReflectionClass(\Joomla\Component\Privacy\Administrator\Table\RequestTable::class))->newInstanceWithoutConstructor();
+            $request->id           = 0;
+            $request->email        = $email;
+            $request->request_type = 'remove';
+            $request->status       = 1;
+
+            $dispatcher = new \Joomla\Event\Dispatcher();
+            $dispatcher->addSubscriber($plugin);
+            $dispatcher->addListener('onPrivacyRemoveData', function () use ($user, $userId, $placeholder, $prefix, $contact): void {
+                $user->email = 'UserID' . $userId . 'removed@email.invalid';
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = ' . $this->db->quote($user->email) . ' WHERE id = ' . $userId)->execute();
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET email = ' . $this->db->quote($placeholder) . ' WHERE id = ' . $contact)->execute();
+            });
+
+            $this->app->getDispatcher()->addListener($name, $failing);
+
+            try {
+                $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $request, 'user' => $user]));
+                $dispatcher->dispatch('onPrivacyRemoveData', new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => $user]));
+            } finally {
+                $this->app->getDispatcher()->removeListener($name, $failing);
+            }
+
+            $this->takeMessages();
+            $this->test("[$case] Failing listener: the synchronised subscriber is kept, also by the request's own placeholder sweep",
+                $this->countRows($prefix . 'user', 'id', $contact) === 1 && $this->countRows($prefix . 'user_has_list', 'user_id', $contact) === ($withList ? 1 : 0));
+            $this->test("[$case] Failing listener: the account keeps its retry marker", $marker());
+
+            // The cleanup task runs before the retry: the account's removal is pending, the contact stays.
+            (new \Advans\Plugin\Privacy\J2Commerce\Newsletter\AcymailingPlaceholders($this->db))->remove();
+            $this->test("[$case] Cleanup task before the retry: the contact of the pending removal is kept",
+                $this->countRows($prefix . 'user', 'id', $contact) === 1);
+
+            // The retry: Joomla finds no account for the address any more (user = null).
+            $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => null]));
+            $this->takeMessages();
+            $this->test("[$case] Retry without account: the kept subscriber is removed by cms_id with its list rows",
+                $this->countRows($prefix . 'user', 'id', $contact) === 0 && $this->countRows($prefix . 'user_has_list', 'user_id', $contact) === 0);
+            $this->test("[$case] Retry without account: the retry marker is removed", !$marker());
+        } catch (\Throwable $e) {
+            $this->test('synced subscriber retry ran without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            if ($contact > 0) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user_has_list') . ' WHERE user_id = ' . $contact)->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . $contact)->execute();
+            }
+
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $userId)->execute();
+        }
+    }
+
     private function testGracefulSkip(): void
     {
         echo "\n--- Without AcyMailing ---\n";
@@ -795,6 +1225,11 @@ class AcyMailingIntegrationTest
         $this->testRemovalAfterPseudonymisation();
         $this->testExportBothAddresses();
         $this->testCollationPairs();
+        $this->testPseudonymisationPlaceholders();
+        $this->testPlaceholderAfterUserPluginInBothOrders();
+        $this->testSyncedSubscriberOfTheAccount();
+        $this->testSyncedSubscriberRetryAfterFailedListener(true);
+        $this->testSyncedSubscriberRetryAfterFailedListener(false);
         $this->testGracefulSkip();
 
         echo "\n=== AcyMailing Integration Test Summary ===\n";
