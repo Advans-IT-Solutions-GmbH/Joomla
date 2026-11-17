@@ -867,6 +867,85 @@ class AcyMailingIntegrationTest
         }
     }
 
+    /**
+     * The placeholder is created by the save of Joomla's privacy plugin for user accounts. The
+     * removal handler of this plugin is registered with the lowest priority, so it runs after
+     * that save in either registration order and deletes the placeholder in the same request.
+     */
+    private function testPlaceholderAfterUserPluginInBothOrders(): void
+    {
+        echo "\n--- Placeholder created by the user plugin, both registration orders ---\n";
+
+        $prefix = $this->getAcymPrefix();
+        $plugin = $this->createPlugin();
+
+        if ($prefix === null || $plugin === null || !class_exists(\Joomla\Component\Privacy\Administrator\Table\RequestTable::class)) {
+            $this->strictSkip('placeholder in both orders', 'AcyMailing tables, plugin or com_privacy missing');
+
+            return;
+        }
+
+        foreach (['privacy plugin registered first', 'user plugin registered first'] as $index => $label) {
+            $email = 'acym-order-' . $index . '-' . random_int(1000, 9999) . '@example.com';
+            $row   = (object) [
+                'name' => 'Order test', 'username' => 'acym-order-' . $index . '-' . bin2hex(random_bytes(4)), 'email' => $email,
+                'password' => '', 'block' => 0, 'sendEmail' => 0, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+            ];
+            $this->db->insertObject('#__users', $row, 'id');
+            $userId      = (int) $row->id;
+            $placeholder = 'UserID' . $userId . 'removed@email.invalid';
+
+            try {
+                $user           = new User();
+                $user->id       = $userId;
+                $user->name     = $row->name;
+                $user->username = $row->username;
+                $user->email    = $email;
+
+                $request = (new \ReflectionClass(\Joomla\Component\Privacy\Administrator\Table\RequestTable::class))->newInstanceWithoutConstructor();
+                $request->id           = 0;
+                $request->email        = $email;
+                $request->request_type = 'remove';
+                $request->status       = 1;
+
+                // What plg_privacy_user and AcyMailing's user synchronisation do: pseudonymise and
+                // save the account, which creates the placeholder contact.
+                $userPlugin = function () use ($user, $userId, $placeholder, $prefix): void {
+                    $user->name  = 'User ID ' . $userId;
+                    $user->email = $placeholder;
+                    $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = ' . $this->db->quote($placeholder)
+                        . ', name = ' . $this->db->quote($user->name) . ' WHERE id = ' . $userId)->execute();
+                    $contact = $this->insertSubscriber($prefix, strtolower($placeholder), 'User ID ' . $userId);
+                    $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET cms_id = ' . $userId . ' WHERE id = ' . $contact)->execute();
+                };
+
+                $dispatcher = new \Joomla\Event\Dispatcher();
+
+                if ($index === 0) {
+                    $dispatcher->addSubscriber($plugin);
+                    $dispatcher->addListener('onPrivacyRemoveData', $userPlugin);
+                } else {
+                    $dispatcher->addListener('onPrivacyRemoveData', $userPlugin);
+                    $dispatcher->addSubscriber($plugin);
+                }
+
+                $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $request, 'user' => $user]));
+                $dispatcher->dispatch('onPrivacyRemoveData', new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => $user]));
+                $this->takeMessages();
+
+                $left = (int) $this->db->setQuery(
+                    'SELECT COUNT(*) FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE email = ' . $this->db->quote(strtolower($placeholder))
+                )->loadResult();
+                $this->test("[$label] the placeholder created by the user plugin is deleted in the same request", $left === 0, "left $left");
+            } catch (\Throwable $e) {
+                $this->test("[$label] removal through the dispatcher ran without error", false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+            } finally {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE email = ' . $this->db->quote(strtolower($placeholder)))->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $userId)->execute();
+            }
+        }
+    }
+
     private function testGracefulSkip(): void
     {
         echo "\n--- Without AcyMailing ---\n";
@@ -939,6 +1018,7 @@ class AcyMailingIntegrationTest
         $this->testExportBothAddresses();
         $this->testCollationPairs();
         $this->testPseudonymisationPlaceholders();
+        $this->testPlaceholderAfterUserPluginInBothOrders();
         $this->testGracefulSkip();
 
         echo "\n=== AcyMailing Integration Test Summary ===\n";

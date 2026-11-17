@@ -44,6 +44,7 @@ use Joomla\Database\DatabaseAwareTrait;
 use Joomla\Database\ParameterType;
 use Joomla\Event\DispatcherInterface;
 use Joomla\Event\Event;
+use Joomla\Event\Priority;
 use Joomla\Event\SubscriberInterface;
 use Joomla\Utilities\IpHelper;
 
@@ -361,7 +362,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             // Privacy Component Events (Joomla 5 style)
             'onPrivacyExportRequest'   => 'onPrivacyExportRequest',
             'onPrivacyCanRemoveData'   => 'onPrivacyCanRemoveData',
-            'onPrivacyRemoveData'      => 'onPrivacyRemoveData',
+            // After every other privacy plugin, whatever their ordering: Joomla's plugin for user
+            // accounts pseudonymises and saves the account first, so the AcyMailing placeholder
+            // contact that save creates already exists when this plugin removes it, and the
+            // account seen here is already pseudonymised (see accountsBeforeRemoval).
+            'onPrivacyRemoveData'      => ['onPrivacyRemoveData', Priority::MIN],
             // System Events for Checkout
             // onAfterRender removed: frontend rendering is handled via
             // template overrides shipped with the plugin (overrides/com_j2store/).
