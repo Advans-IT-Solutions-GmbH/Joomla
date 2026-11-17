@@ -945,19 +945,32 @@ final class ConsentRepository
      * and policy version stay as evidence. If one of the two lines is not found the body is
      * replaced by a neutral note with the order number (fail-closed: no unknown evidence remains).
      *
+     * Called when these orders lost their personal data (anonymized): the records can no longer
+     * be attributed to anyone, so they also become invalid (state -1) and lose any pending-removal
+     * marker. A removal request or a retry could not reach them any more, and a valid consent
+     * nobody can be named for must not remain.
+     *
      * @param   string[]  $orderIds
      *
      * @return  int  Number of records changed
      */
     public function removeNewsletterOrderEvidence(array $orderIds): int
     {
-        return $this->stripNewsletterRecords($this->findNewsletterOrderConsents($orderIds));
+        $records = $this->findNewsletterOrderConsents($orderIds);
+
+        foreach ($records as $record) {
+            $record->invalidate = true;
+        }
+
+        return $this->stripNewsletterRecords($records);
     }
 
     /**
-     * Remove IP address and user agent from exactly these checkout newsletter consent records.
+     * Remove IP address and user agent from exactly these checkout newsletter consent records;
+     * records with the property invalidate = true also become invalid (state -1) without
+     * pending-removal markers, also when their evidence was removed before.
      *
-     * @param   object[]  $records  Rows with id, body and order_id
+     * @param   object[]  $records  Rows with id, body, order_id and optionally invalidate
      *
      * @return  int  Number of records changed
      */
@@ -967,18 +980,21 @@ final class ConsentRepository
         $language = null;
 
         foreach ($records as $record) {
-            $orderId = (string) $record->order_id;
+            $orderId    = (string) $record->order_id;
+            $invalidate = !empty($record->invalidate);
 
             // The row is read again under lock: a marker or state written since $record was read stays.
-            $changed += (int) $this->transformConsent((int) $record->id, static function (string $body, int $state) use ($orderId, &$language): ?array {
-                if (str_contains($body, self::NEWSLETTER_EVIDENCE_REMOVED_MARKER) || str_contains($body, self::EVIDENCE_REMOVED_MARKER)
-                    || self::extractNewsletterOrderId($body) !== $orderId) {
+            $changed += (int) $this->transformConsent((int) $record->id, static function (string $body, int $state) use ($orderId, $invalidate, &$language): ?array {
+                if (self::extractNewsletterOrderId($body) !== $orderId) {
                     return null;
                 }
 
-                $language ??= self::loadSiteBodyLanguage();
+                if (!str_contains($body, self::NEWSLETTER_EVIDENCE_REMOVED_MARKER) && !str_contains($body, self::EVIDENCE_REMOVED_MARKER)) {
+                    $language ??= self::loadSiteBodyLanguage();
+                    $body       = self::stripNewsletterEvidence($body, $orderId, $language);
+                }
 
-                return [self::stripNewsletterEvidence($body, $orderId, $language), $state];
+                return $invalidate ? [self::withoutPendingMarkers($body), -1] : [$body, $state];
             });
         }
 
@@ -1453,12 +1469,13 @@ final class ConsentRepository
         do {
             $records = $this->db->setQuery(
                 $this->createQuery()
-                    ->select($this->db->quoteName(['id', 'created', 'body']))
+                    ->select($this->db->quoteName(['id', 'created', 'state', 'body']))
                     ->from($this->db->quoteName('#__privacy_consents'))
                     ->where($this->db->quoteName('body') . ' LIKE ' . $this->likeText(self::NEWSLETTER_MARKER))
                     ->where($this->db->quoteName('body') . ' LIKE ' . $this->likeText(self::NEWSLETTER_ORDER_PREFIX))
-                    ->where($this->db->quoteName('body') . ' NOT LIKE ' . $this->likeText(self::NEWSLETTER_EVIDENCE_REMOVED_MARKER))
-                    ->where($this->db->quoteName('body') . ' NOT LIKE ' . $this->likeText(self::EVIDENCE_REMOVED_MARKER))
+                    ->where('((' . $this->db->quoteName('body') . ' NOT LIKE ' . $this->likeText(self::NEWSLETTER_EVIDENCE_REMOVED_MARKER)
+                        . ' AND ' . $this->db->quoteName('body') . ' NOT LIKE ' . $this->likeText(self::EVIDENCE_REMOVED_MARKER) . ')'
+                        . ' OR ' . $this->db->quoteName('state') . ' <> -1)')
                     ->where($this->db->quoteName('id') . ' > ' . $lastId)
                     ->order($this->db->quoteName('id') . ' ASC')
                     ->setLimit(self::BATCH_SIZE)
@@ -1482,11 +1499,22 @@ final class ConsentRepository
             $done = [];
 
             // Only the records that are due themselves: another record of the same order number
-            // (a newer consent, or another order sharing the number) keeps its evidence.
+            // (a newer consent, or another order sharing the number) keeps its evidence. A record
+            // whose order no longer exists with personal data can no longer be attributed to
+            // anyone: it also becomes invalid. Age alone only removes the evidence.
             foreach ($records as $record) {
                 $record->order_id = self::extractNewsletterOrderId((string) $record->body);
 
-                if ($record->order_id !== null && ((string) $record->created <= $cutoff || !isset($live[$record->order_id]))) {
+                if ($record->order_id === null) {
+                    continue;
+                }
+
+                $body              = (string) $record->body;
+                $stripped          = str_contains($body, self::NEWSLETTER_EVIDENCE_REMOVED_MARKER) || str_contains($body, self::EVIDENCE_REMOVED_MARKER);
+                $record->invalidate = !isset($live[$record->order_id]);
+
+                if (($record->invalidate && (int) $record->state !== -1)
+                    || (!$stripped && ($record->invalidate || (string) $record->created <= $cutoff))) {
                     $done[] = $record;
                 }
             }

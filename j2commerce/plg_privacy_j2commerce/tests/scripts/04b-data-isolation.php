@@ -1723,14 +1723,38 @@ class DataIsolationTest
             $repository->removeStaleNewsletterEvidence($cutoff, [$ordersTable]);
             $this->test('Cleanup: checkout newsletter consent outside the retention period loses IP address and user agent',
                 !str_contains($this->kindRecord($ids['k3_old_live'])->body, '203.0.113.90'));
-            $this->test('Cleanup: checkout newsletter consent of a deleted order loses IP address and user agent',
-                !str_contains($this->kindRecord($ids['k3_missing'])->body, '203.0.113.91'));
+            $this->test('Cleanup: checkout newsletter consent of a deleted order loses IP address and user agent and becomes invalid (nobody can be named for it)',
+                !str_contains($this->kindRecord($ids['k3_missing'])->body, '203.0.113.91') && (int) $this->kindRecord($ids['k3_missing'])->state === -1);
+            $this->test('Cleanup: checkout newsletter consent outside the retention period of a live order keeps its state (age alone)',
+                (int) $this->kindRecord($ids['k3_old_live'])->state === 1);
             $this->test('Cleanup: checkout newsletter consent of an order within the retention period keeps its evidence',
                 str_contains($this->kindRecord($ids['k3_live'])->body, '203.0.113.92'));
             $this->test('Cleanup: only the expired record of a live order loses its evidence, the newer record of the same order keeps it',
                 !str_contains($this->kindRecord($ids['k3_live_old'])->body, '203.0.113.93')
                 && str_contains($this->kindRecord($ids['k3_live'])->body, '203.0.113.92'));
             $this->test('Cleanup: a second run changes nothing', $repository->removeStaleNewsletterEvidence($cutoff, [$ordersTable]) === 0);
+
+            // A failed lookup, then a cleanup run anonymizes the order before the retry: the consent
+            // without any marker becomes invalid with the order, it never stays valid unattributed.
+            $cleanGuest = 'kinds.cleanup.' . $suffix . '@example.com';
+            $orders['clean_expired'] = $this->insertGuestTestOrder('KIND-CEX-' . $suffix, 0, $cleanGuest, $expired, 'Clara');
+            $ids['clean_k3']         = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['clean_expired'], '203.0.113.96'), 1, $expired);
+            $lookupPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest($cleanGuest),
+                'user'    => null,
+            ]));
+            $this->test('Failed lookup: no retry marker could be written, the consent is still valid',
+                (int) $this->kindRecord($ids['clean_k3'])->state === 1 && !str_contains($this->kindRecord($ids['clean_k3'])->body, 'j2commerce-removal-pending'));
+            // What the cleanup task does with the expired guest order.
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' SET user_email = ' . $this->db->quote('anonymized@deleted.invalid')
+                . ', ip_address = ' . $this->db->quote('') . ' WHERE order_id = ' . $this->db->quote($orders['clean_expired']))->execute();
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__' . $this->tp . '_orderinfos') . ' SET billing_first_name = ' . $this->db->quote('Anonymized')
+                . ' WHERE order_id = ' . $this->db->quote($orders['clean_expired']))->execute();
+            $repository->removeStaleNewsletterEvidence($cutoff, [$ordersTable]);
+            $cleanK3 = $this->kindRecord($ids['clean_k3']);
+            $this->test('Cleanup between failure and retry: the consent of the anonymized order is invalid and without evidence',
+                (int) $cleanK3->state === -1 && !str_contains($cleanK3->body, '203.0.113.96'), json_encode($cleanK3));
+            $this->test('Cleanup: a run after that changes nothing', $repository->removeStaleNewsletterEvidence($cutoff, [$ordersTable]) === 0);
 
             // Interleavings: every writer reads the row again under lock before it changes it.
             $ids['race_a'] = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['account_recent'], '203.0.113.94'), 1, $recent);
