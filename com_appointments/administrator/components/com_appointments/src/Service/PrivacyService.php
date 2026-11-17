@@ -104,12 +104,12 @@ final class PrivacyService
      * @param string[] $columns
      * @param bool     $light   Add the personal fields without the origin (BookingData::lightSelect()).
      *
-     * @return array<int, array<string, mixed>>
+     * @return \Generator<array<string, mixed>>
      */
-    private function rows(array $ids, array $columns, bool $light = false): array
+    private function rows(array $ids, array $columns, bool $light = false): \Generator
     {
         if ($ids === []) {
-            return [];
+            return;
         }
 
         $db = $this->db;
@@ -128,27 +128,33 @@ final class PrivacyService
             ->where($db->quoteName('b.id') . ' IN (' . implode(',', array_map('intval', $ids)) . ')')
             ->order($db->quoteName('b.id') . ' ASC');
         $data = BookingData::fromApplication();
+        $stored = $db->setQuery($query)->loadAssocList();
 
-        // The markers of an opened row are no booking data: they never reach the export.
+        // Opened one row at a time: the sealed row is released before the next one is opened, so a
+        // batch never holds its ciphertext and all its opened rows (with their origins) at once.
         // The markers of an opened row are no booking data and never reach the export; a booking of
         // 1.3 still in clear text after the migration window is exported as not verified.
-        return array_map(function (array $row) use ($data): array {
-            $stored = $row['attribution'] ?? null;
+        foreach (array_keys($stored) as $index) {
+            $row = $stored[$index];
+            unset($stored[$index]);
+            $sealedOrigin = $row['attribution'] ?? null;
             $row = $data->openLenient($row);
             $unverified = !empty($row[BookingData::UNVERIFIED]);
 
             // An origin that is stored but cannot be opened or read is missing from the export: the
             // export says it is incomplete (unreadable()), the log names the booking ID only.
-            if ($stored !== null && \array_key_exists('attribution', $row)
+            if ($sealedOrigin !== null && \array_key_exists('attribution', $row)
                 && \Advans\Component\Appointments\Administrator\Helper\Attribution::decode($row['attribution']) === null) {
                 $this->unreadable++;
                 Log::add('Appointment privacy request: the origin of booking ' . (int) $row['id'] . ' could not be read and is missing from the export.',
                     Log::WARNING, 'com_appointments');
             }
 
-            return array_diff_key($row, [BookingData::OPENED => true, BookingData::CLEAR => true, BookingData::UNVERIFIED => true])
+            unset($sealedOrigin);
+
+            yield array_diff_key($row, [BookingData::OPENED => true, BookingData::CLEAR => true, BookingData::UNVERIFIED => true])
                 + ['unverified' => $unverified ? 1 : 0];
-        }, $db->setQuery($query)->loadAssocList());
+        }
     }
 
     /**

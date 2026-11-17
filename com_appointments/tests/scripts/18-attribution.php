@@ -273,6 +273,56 @@ try {
         $db->query("UPDATE {$prefix}appointments_bookings SET attribution='" . $db->real_escape_string($sealedOrigin) . "' WHERE id={$id}");
     }
 
+    // The largest export: many bookings of the address, each with the largest origin the capture budget
+    // allows (Attribution::MAX_RECORD_BYTES). The export reads them in small batches and opens one row at
+    // a time, so what it holds besides its result stays small and far below a 128 MiB memory limit.
+    $long = str_repeat("\u{1F600}", 5000);
+    $query = array_fill_keys(Attribution::PARAMETERS, $long);
+    $uri = '/' . str_repeat('p', 9000) . '?' . http_build_query($query);
+    $largestAt = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    $largestState = Attribution::visit(null, ['uri' => $uri, 'referrer' => 'https://a.example.org/' . $long, 'host' => 'www.example.test',
+        'query' => $query, 'ip' => '2001:db8::1'], $largestAt);
+    $largest = Attribution::encode(Attribution::record($largestState, ['user_agent' => $long, 'accept_language' => $long, 'ip' => '2001:db8::2',
+        'referrer' => 'https://www.example.test/' . $long, 'host' => 'www.example.test'], $largestAt));
+    $check(strlen($largest) > Attribution::MAX_RECORD_BYTES / 2 && strlen($largest) <= Attribution::MAX_RECORD_BYTES,
+        'The largest origin fills the capture budget');
+    $largestIds = [];
+    $largestCount = 120;
+    try {
+        for ($n = 0; $n < $largestCount; $n++) {
+            // Cancelled, so the copies take no slot; the same address, a UID of their own.
+            $start = gmdate('Y-m-d H:i:s', strtotime($day . ' 00:00:00') - 86400 * ($n + 1));
+            $end = gmdate('Y-m-d H:i:s', strtotime($start) + 1800);
+            $uid = bin2hex(random_bytes(32));
+            $db->query("INSERT INTO {$prefix}appointments_bookings (uid,eventtype_id,host_user_id,start_utc,end_utc,state,created_utc,modified_utc)"
+                . " VALUES ('{$uid}',{$event},{$fixture->host},'{$start}','{$end}',2,'{$now}','{$now}')");
+            $largestIds[] = (int) $db->insert_id;
+            $fixture->update((int) $db->insert_id, ['invitee_name' => 'Largest export', 'invitee_email' => $address, 'attribution' => $largest]);
+        }
+        gc_collect_cycles();
+        $baseline = memory_get_usage();
+        if (function_exists('memory_reset_peak_usage')) {
+            memory_reset_peak_usage();
+        }
+        $largestExport = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', ['subject' => $request, 'user' => null]);
+        $plugin->onPrivacyExportRequest($largestExport);
+        $held = memory_get_usage() - $baseline;
+        $working = memory_get_peak_usage() - $baseline - $held;
+        $domain = $largestExport->getArgument('result')[0][0] ?? null;
+        $items = is_object($domain) && method_exists($domain, 'getItems') ? count($domain->getItems()) : 0;
+        echo '    largest export: ' . $items . ' bookings, result ' . round($held / 1048576, 1) . ' MiB, working memory '
+            . round($working / 1048576, 1) . " MiB\n";
+        $check($items === $largestCount + 1 && !str_contains(serialize($largestExport->getArgument('result')), 'appointments_bookings_incomplete'),
+            'The privacy export contains every booking of the address with the largest origin');
+        $check(function_exists('memory_reset_peak_usage') && $working < 32 * 1048576 && $held + $working < 96 * 1048576,
+            'The largest privacy export opens the rows in small batches, one row at a time, far below 128 MiB');
+        unset($largestExport, $domain);
+    } finally {
+        if ($largestIds !== []) {
+            $db->query("DELETE FROM {$prefix}appointments_bookings WHERE id IN (" . implode(',', $largestIds) . ')');
+        }
+    }
+
     // Self-service erasure removes the origin; the booking stays in the statistics as a count only, now as cancelled.
     $html = $fixture->apply($visitor, $fixture->link($booking, 'erase'));
     $erased = $fixture->row($id);
