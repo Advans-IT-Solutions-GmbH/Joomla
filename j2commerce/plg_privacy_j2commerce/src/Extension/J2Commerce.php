@@ -1514,7 +1514,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // The verified association of request and account is stored on the account before any
         // work that can fail, and removed once everything is done.
         if ($userId > 0) {
-            $this->markPendingAccount($userId, $emails);
+            $this->markPendingAccount($userId, $emails, $user);
         }
 
         $customerEmail = $requestEmail !== '' ? $requestEmail : $accountEmail;
@@ -1574,7 +1574,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $this->removeShopData($userId, $emails, $requestId, $consentsDone);
 
             if ($userId > 0 && $consentsDone) {
-                $this->clearPendingAccount($userId);
+                $this->clearPendingAccount($userId, $user);
             }
 
             // Consent records of an earlier template override (also guest records with the user's
@@ -1737,16 +1737,24 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     /**
      * Store on the account, in its params (PENDING_PARAM), the HMAC hashes of the request and
      * account addresses of a removal request in progress. Written directly, without saving the
-     * user (no user events). A failure is logged: the removal then goes on, but a retry after a
+     * user (no user events), and set in the User object of the request as well: Joomla's privacy
+     * plugin for user accounts may save that same object after this plugin, and a save writes the
+     * params of the object. A failure is logged: the removal then goes on, but a retry after a
      * failed step could not find the account again.
      *
      * @param   string[]  $emails
      */
-    protected function markPendingAccount(int $userId, array $emails): void
+    protected function markPendingAccount(int $userId, array $emails, ?User $user = null): void
     {
+        $hashes = array_values(array_unique(array_map(fn (string $email): string => $this->pendingHash($email), $emails)));
+
+        if ($user !== null && (int) $user->id === $userId) {
+            $user->setParam(self::PENDING_PARAM, $hashes);
+        }
+
         try {
-            $this->updateAccountParams($userId, function (array $params) use ($emails): array {
-                $params[self::PENDING_PARAM] = array_values(array_unique(array_map(fn (string $email): string => $this->pendingHash($email), $emails)));
+            $this->updateAccountParams($userId, static function (array $params) use ($hashes): array {
+                $params[self::PENDING_PARAM] = $hashes;
 
                 return $params;
             });
@@ -1755,9 +1763,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
     }
 
-    /** Remove the pending-removal marker of an account (its removal request is done). */
-    protected function clearPendingAccount(int $userId): void
+    /**
+     * Remove the pending-removal marker of an account (its removal request is done), in the
+     * database and in the User object of the request, so that a later save keeps it removed.
+     */
+    protected function clearPendingAccount(int $userId, ?User $user = null): void
     {
+        if ($user !== null && (int) $user->id === $userId) {
+            $user->setParam(self::PENDING_PARAM, null);
+        }
+
         try {
             $this->updateAccountParams($userId, static function (array $params): array {
                 unset($params[self::PENDING_PARAM]);
