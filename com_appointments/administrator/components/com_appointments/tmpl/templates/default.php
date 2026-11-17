@@ -9,6 +9,7 @@
 use Joomla\CMS\Factory;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Layout\LayoutHelper;
 use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
@@ -49,34 +50,31 @@ $purposeKeys = [
     'team_calendar_deleted' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_CALENDAR_DELETED',
     'team_account_locked' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_ACCOUNT_LOCKED',
 ];
+$listOrder = $this->escape((string) $this->state->get('list.ordering'));
+$listDirn = strtolower((string) $this->state->get('list.direction')) === 'desc' ? 'desc' : 'asc';
 ?>
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=templates'); ?>" method="post" name="adminForm" id="adminForm">
-    <div class="mb-3">
-        <label for="filter_eventtype_id"><?php echo Text::_('COM_APPOINTMENTS_TEMPLATE_SCOPE'); ?></label>
-        <input type="number" name="filter_eventtype_id" id="filter_eventtype_id" min="-1"
-               value="<?php echo (int) $this->state->get('filter.eventtype_id', -1); ?>">
-        <span><?php echo Text::_('COM_APPOINTMENTS_TEMPLATE_FILTER_DESC'); ?></span>
-        <button type="submit" class="btn btn-secondary"><?php echo Text::_('JSEARCH_FILTER_SUBMIT'); ?></button>
-    </div>
+    <?php echo LayoutHelper::render('joomla.searchtools.default', ['view' => $this]); ?>
     <?php if (!$this->items) : ?>
-        <p class="alert alert-info"><?php echo Text::_('COM_APPOINTMENTS_TEMPLATES_EMPTY'); ?></p>
+        <p class="alert alert-info"><?php echo Text::_($this->activeFilters ? 'JGLOBAL_NO_MATCHING_RESULTS' : 'COM_APPOINTMENTS_TEMPLATES_EMPTY'); ?></p>
     <?php else : ?>
         <div class="table-responsive">
-        <table class="table">
+        <table class="table" id="templateList">
             <caption class="visually-hidden"><?php echo Text::_('COM_APPOINTMENTS_TEMPLATES_TITLE'); ?></caption>
             <thead><tr>
-                <td><?php echo HTMLHelper::_('grid.checkall'); ?></td>
-                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEMPLATE_SUBJECT'); ?></th>
-                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEMPLATE_SCOPE'); ?></th>
-                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEMPLATE_PURPOSE'); ?></th>
-                <th scope="col"><?php echo Text::_('JFIELD_LANGUAGE_LABEL'); ?></th>
-                <th scope="col"><?php echo Text::_('JSTATUS'); ?></th>
+                <td class="w-1 text-center"><?php echo HTMLHelper::_('grid.checkall'); ?></td>
+                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_TEMPLATE_SUBJECT', 't.subject', $listDirn, $listOrder); ?></th>
+                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_TEMPLATE_SCOPE', 'e.title', $listDirn, $listOrder); ?></th>
+                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_TEMPLATE_PURPOSE', 't.purpose', $listDirn, $listOrder); ?></th>
+                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'JFIELD_LANGUAGE_LABEL', 't.language', $listDirn, $listOrder); ?></th>
+                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'JSTATUS', 't.published', $listDirn, $listOrder); ?></th>
+                <th scope="col" class="w-1"><?php echo HTMLHelper::_('searchtools.sort', 'JGRID_HEADING_ID', 't.id', $listDirn, $listOrder); ?></th>
             </tr></thead>
             <tbody>
             <?php foreach ($this->items as $i => $item) : ?>
                 <?php $canEdit = (int) $item->eventtype_id === 0 ? $siteEdit : $user->authorise('core.edit', 'com_appointments.eventtype.' . (int) $item->eventtype_id); ?>
                 <tr>
-                    <td><?php echo HTMLHelper::_('grid.id', $i, (int) $item->id); ?></td>
+                    <td class="text-center"><?php echo HTMLHelper::_('grid.id', $i, (int) $item->id); ?></td>
                     <td>
                     <?php if ($canEdit) : ?>
                         <a href="<?php echo Route::_('index.php?option=com_appointments&task=template.edit&id=' . (int) $item->id); ?>"><?php echo $this->escape((string) $item->subject); ?></a>
@@ -88,6 +86,7 @@ $purposeKeys = [
                     <td><?php echo $this->escape(isset($purposeKeys[$item->purpose]) ? Text::_($purposeKeys[$item->purpose]) : (string) $item->purpose); ?></td>
                     <td><?php echo $this->escape((string) $item->language); ?></td>
                     <td><?php echo Text::_((int) $item->published === 1 ? 'JPUBLISHED' : 'JUNPUBLISHED'); ?></td>
+                    <td><?php echo (int) $item->id; ?></td>
                 </tr>
             <?php endforeach; ?>
             </tbody>

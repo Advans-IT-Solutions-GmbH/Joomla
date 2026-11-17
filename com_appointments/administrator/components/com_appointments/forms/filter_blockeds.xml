@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
+<form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
+    <fields name="filter">
+        <field name="search" type="text" inputmode="search" label="COM_APPOINTMENTS_FILTER_SEARCH_LABEL" hint="COM_APPOINTMENTS_BLOCKEDS_FILTER_SEARCH_HINT" maxlength="200" />
+        <field name="user_id" type="Hostfilter" source="blocked" label="COM_APPOINTMENTS_BLOCKED_FIELD_USER" onchange="this.form.submit();">
+            <option value="">COM_APPOINTMENTS_FILTER_SELECT_HOST</option>
+        </field>
+        <field name="period" type="list" label="COM_APPOINTMENTS_FILTER_PERIOD" onchange="this.form.submit();">
+            <option value="">COM_APPOINTMENTS_FILTER_SELECT_PERIOD</option>
+            <option value="upcoming">COM_APPOINTMENTS_FILTER_PERIOD_UPCOMING</option>
+            <option value="past">COM_APPOINTMENTS_FILTER_PERIOD_PAST</option>
+        </field>
+    </fields>
+    <fields name="list">
+        <field name="fullordering" type="list" label="JGLOBAL_SORT_BY" default="b.start_utc DESC" onchange="this.form.submit();" validate="options">
+            <option value="">JGLOBAL_SORT_BY</option>
+            <option value="b.start_utc ASC">COM_APPOINTMENTS_SORT_START_ASC</option>
+            <option value="b.start_utc DESC">COM_APPOINTMENTS_SORT_START_DESC</option>
+            <option value="b.end_utc ASC">COM_APPOINTMENTS_SORT_END_ASC</option>
+            <option value="b.end_utc DESC">COM_APPOINTMENTS_SORT_END_DESC</option>
+            <option value="b.title ASC">COM_APPOINTMENTS_SORT_NOTE_ASC</option>
+            <option value="b.title DESC">COM_APPOINTMENTS_SORT_NOTE_DESC</option>
+            <option value="u.name ASC">COM_APPOINTMENTS_SORT_HOST_ASC</option>
+            <option value="u.name DESC">COM_APPOINTMENTS_SORT_HOST_DESC</option>
+            <option value="b.id ASC">JGRID_HEADING_ID_ASC</option>
+            <option value="b.id DESC">JGRID_HEADING_ID_DESC</option>
+        </field>
+        <field name="limit" type="limitbox" label="JGLOBAL_LIST_LIMIT" default="25" onchange="this.form.submit();" />
+    </fields>
+</form>
