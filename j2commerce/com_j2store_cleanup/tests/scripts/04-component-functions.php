@@ -156,8 +156,12 @@ class ComponentFunctionsTest
         $apis = array_column($patterns['joomla'], 'api');
         $this->test('JPlugin pattern present',        in_array('JPlugin', $apis, true));
         $this->test('JModel pattern present',         in_array('JModel', $apis, true));
-        $this->test('Every pattern names the Joomla version that removes the API',
-            array_filter(array_column($patterns['joomla'], 'removedIn'), fn ($v) => !in_array($v, [4, 6], true)) === []);
+        // Joomla 6.2 still provides every listed API (aliases through the
+        // backward-compatibility plugins); removal is announced for 7.0.
+        $this->test('Every Joomla pattern names the announced removal version',
+            array_filter(array_column($patterns['joomla'], 'removedIn'), fn ($v) => $v !== 7) === []);
+        $this->test('Every pattern says how its availability is checked',
+            array_filter(array_merge($patterns['joomla'], $patterns['j2store']), fn ($p) => !in_array($p['probe'] ?? '', ['class', 'factory', 'j2store', 'pluginApp'], true)) === []);
     }
 
     private function testScanForIssues(): void
@@ -322,7 +326,7 @@ class ComponentFunctionsTest
         $this->test('Wide tables scroll within responsive containers rather than the page',
             str_contains($styles, '.j2cleanup .table-responsive')
             && preg_match('/\.j2cleanup \.table-responsive\s*\{[^}]*overflow-x:\s*auto/s', $styles) === 1
-            && substr_count($source, '<div class="table-responsive">') === 3);
+            && substr_count($source, '<div class="table-responsive">') === 4);
     }
 
     /**
@@ -1374,8 +1378,12 @@ class ComponentFunctionsTest
 
             $patterns = getIssuePatterns();
 
-            $issue = describeIssue(['type' => 'joomla', 'detail' => 'JFactory', 'removedIn' => 6]);
-            $this->test('A finding is described in German', $issue === 'JFactory (entfernt in Joomla 6)', $issue);
+            $issue = describeIssue(['type' => 'joomla', 'detail' => 'JSession', 'removedIn' => 7, 'probe' => 'class', 'available' => false]);
+            $this->test('A missing API is described in German', $issue === 'JSession (auf dieser Website nicht verfügbar)', $issue);
+
+            $issue = describeIssue(['type' => 'joomla', 'detail' => 'Factory::getDbo()', 'removedIn' => 7, 'probe' => 'factory', 'available' => true]);
+            $this->test('A deprecated API is described in German',
+                $issue === 'Factory::getDbo() (veraltet, Entfernung in Joomla 7 angekündigt)', $issue);
 
             $core = classifyExtension((object) ['version' => '4.0.20', 'author' => 'J2Commerce'],
                 (object) ['element' => 'com_j2store', 'type' => 'component', 'folder' => '', 'client_id' => 1], $patterns);

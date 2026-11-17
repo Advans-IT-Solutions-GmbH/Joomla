@@ -72,10 +72,11 @@ The component has a help page in the administrator (en-GB, de-DE, fr-FR). The **
 ### Interface Overview
 The component displays:
 
-1. **Compatibility scan box** ("Compatibility scan for Joomla X") - Explains what is checked on the running Joomla version and the four result types
-2. **Incompatible Extensions** - Extensions whose PHP files use APIs removed in the running Joomla version (selectable for removal)
+1. **Compatibility scan box** ("Compatibility scan for Joomla X") - Explains what is checked on the running site and the five result types
+2. **Incompatible Extensions** - Extensions whose PHP code uses at least one API that is not available on the running site (selectable for removal)
 3. **No Files Found** - Extensions registered in `#__extensions` whose folder is missing on disk; for components the administrator, site and API folders must all be missing (selectable for removal)
-4. **Compatible Extensions** - Extensions without findings, plus the core component (not selectable)
+4. **Deprecated APIs** - Extensions that work on the running site but use deprecated APIs or APIs provided only by a backward-compatibility plugin (not selectable)
+5. **Compatible Extensions** - Extensions without findings, plus the core component (not selectable)
 
 Only J2Store/J2Commerce-related components, plugins, modules, templates and libraries in the supported extension namespaces can be removed. File extensions are out of scope: they have no single install path, so missing files cannot be verified and a database-only removal could leave their files behind. Protected or locked records (Joomla's uninstaller refuses both), records whose element or folder is not a plain extension name, the shop core components, this cleanup component, other extension types, compatible extensions and out-of-scope records are rejected even when submitted directly. A mixed valid/invalid selection is rejected without removing any item.
 
@@ -97,6 +98,7 @@ Each selected extension is processed separately. If a later uninstall fails, ear
 |-------|---------|
 | Incompatible Extensions | Checkbox, Name, Type, Element, Enabled, Issues found |
 | No Files Found | Checkbox, Name, Type, Element, Details |
+| Deprecated APIs | Name, Type, Element, Enabled, Issues found |
 | Compatible Extensions | Name, Type, Element, Enabled, Details |
 
 ⚠️ **Always create a full backup (Akeeba Backup) before removing extensions!**
@@ -152,7 +154,7 @@ that the page never scrolls sideways while wide tables scroll inside their conta
 Order as in `tests/test.env`:
 
 1. **Installation** - Component registration, file deployment
-2. **Scanning** - Version detection, authorUrl/authorEmail checks, protected extensions
+2. **Scanning** - Runs the real scanner functions with stubbed Joomla classes (no Docker needed: `php tests/scripts/02-scanning.php`): matches in comments, strings and HTML, `$this->app` outside plugins, available and unavailable class aliases and Factory methods, J2Store classes with and without `com_j2store`
 3. **Cleanup** - Extension removal, batch removal, isolation tests, and a real
    register-extension → cleanup → verify round trip that confirms the installed
    core component (`com_j2store` on J5, `com_j2commerce` on J6) is protected
@@ -264,7 +266,7 @@ com_j2store_cleanup/
 
 ### J2Commerce Extensions Listed or Flagged
 **Problem:** J2Commerce plugins or modules appear in the list or are marked incompatible  
-**Solution:** This is expected. The list contains every extension matching the search patterns (see *Extension Detection*), and the classification is based only on the code scan. Review the reported issues before removing anything.
+**Solution:** Being listed is expected: the list contains every extension matching the search patterns (see *Extension Detection*). A current J2Commerce extension should be *Compatible* or *Deprecated*. If one is marked *Incompatible*, check the listed APIs against its code before removing anything.
 
 ### Cannot Access Component After Installation
 **Problem:** Menu item missing or permission denied  
@@ -330,20 +332,23 @@ Each listed extension is classified in this order:
 |--------|-----------|
 | **Core** | Element is `com_j2store` or `com_j2commerce` |
 | **No files** | No extension folder on disk (registered but missing, or an extension type without a single folder, e.g. `file` or `package`) |
-| **Compatible** | No removed APIs found in the PHP files |
-| **Incompatible** | At least one removed API found |
+| **Incompatible** | At least one API found that is not available on the running site |
+| **Deprecated** | APIs found, all still available on the running site |
+| **Compatible** | No legacy APIs found in the PHP code |
 
-All PHP files in the extension folder are scanned recursively (with `/* */` and `//` comments stripped) for APIs removed in the running Joomla version:
+All PHP files in the extension folder are scanned recursively. The scan works on the PHP tokens and looks at class references only: a name before `::` (not `::class`), after `new`, `extends` or `implements`. Comments, strings, inline HTML, type hints and `instanceof` (false for a missing class, no error) never match, and an import statement is a declaration, not a reference: an unused import loads nothing. Each reference is resolved to its absolute class name the way PHP resolves it, with the namespace block and the `use` imports in force at that place (renamed imports and group imports with `function` or `const` entries included). Only references to the global legacy classes count: `JSession::` without import, `\JSession::` and `use JFactory as LegacyFactory; LegacyFactory::` are findings, a class imported as `JSession`, `Vendor\JSession` or `Acme\JSession` in namespace `Acme` are not. For every API found, the scanner checks on the running site whether it still works:
 
-| Running Joomla | Flagged APIs |
-|----------------|--------------|
-| 5 | J3 legacy classes: `JPlugin`, `JModel`/`JModelLegacy`, `JTable`, `JView`/`JViewLegacy`, `JController`/`JControllerLegacy`, `JForm` |
-| 6 | All of the above, plus `JFactory`, `JText`, `JHtml`, `JRoute`, `JUri`, `JSession`, `Factory::getUser()`, `Factory::getDbo()`, `Factory::getSession()`, `Factory::getDocument()` and `$this->app` |
+| API | Still available when | Removal |
+|-----|----------------------|---------|
+| Class aliases `JPlugin`, `JModelLegacy`, `JTable`, `JViewLegacy`, `JControllerLegacy`, `JForm`, `JFactory`, `JText`, `JHtml`, `JRoute`, `JUri`, `JSession` | The alias resolves, i.e. a backward-compatibility plugin (`behaviour/compat` or, on Joomla 6, `behaviour/compat6`) has its class aliases option enabled | Announced for Joomla 7 |
+| `Factory::getUser()`, `Factory::getDbo()`, `Factory::getSession()`, `Factory::getDocument()` as static calls on `Joomla\CMS\Factory` or `JFactory` (not on any other `...Factory`) | The method exists on `Joomla\CMS\Factory` | Announced for Joomla 7 (deprecated since 4.3) |
+| `$this->app` read as a property (not `$this->app()`) in a plugin class (its parent's name ends in `Plugin`) that declares a non-private `$app` itself and does not initialize it (assignment, `??=` or a promoted constructor parameter): the class relies on `CMSPlugin` filling it. Each class of a file is judged on its own | Joomla major version below 7 | Announced for Joomla 7 (deprecated since 4.3). Without an own declaration `$app` comes from elsewhere (trait, parent class, `__get()`) or is only checked with `isset()`, which one file cannot prove: no finding, and no parent class is ever loaded. Module dispatchers or console commands own their `$app` and are not reported |
+| J2Store classes `J2Store::`, `J2Html::` and the `J2Store...Plugin` base classes | `com_j2store` (J2Store or J2Commerce 4) is installed. J2Commerce 6 does not provide these classes | Reported only when unavailable |
 
-The result therefore depends on the Joomla version: an extension that still uses `JFactory` or `JText` is shown as *Compatible* on Joomla 5, where these classes still work, but as *Incompatible* on Joomla 6. On Joomla versions below 6 the scan box shows a note about this. Version numbers, author data and the enabled status are not evaluated, and there are currently no J2Store-specific patterns.
+An API that is unavailable makes the extension *Incompatible*: the code fails as soon as it runs. An API that still works is listed under *Deprecated APIs*, with the announced removal, and is not offered for removal. Version numbers, author data and the enabled status are not evaluated.
 
 ### False Positives
-The scan is a text pattern match, so a class name inside a string, for example, is also flagged. If a working extension is flagged:
+A finding means the code names the API, not that the code path runs. If a working extension is listed as *Incompatible*:
 1. Do not remove it
 2. Check the listed issues against the extension's code
 3. Check whether an updated version of the extension is available
@@ -359,7 +364,7 @@ This extension supports the following languages:
 - **German (de-DE)**
 - **French (fr-FR)**
 
-Every text of the component page comes from a language key: headings, table columns, status badges, scan results ("JFactory (removed in Joomla 6)"), messages, the confirmation before removal (passed to the browser with `Text::script()`) and the copyright/licence line in the footer. Generic words use Joomla core keys. The shipped files use this layout; a further locale requires the repository-wide maintainer decision described in [Languages](../../README.md#languages):
+Every text of the component page comes from a language key: headings, table columns, status badges, scan results ("JSession (not available on this site)"), messages, the confirmation before removal (passed to the browser with `Text::script()`) and the copyright/licence line in the footer. Generic words use Joomla core keys. The shipped files use this layout; a further locale requires the repository-wide maintainer decision described in [Languages](../../README.md#languages):
 ```
 administrator/language/{language-tag}/com_j2store_cleanup.ini
 administrator/language/{language-tag}/com_j2store_cleanup.sys.ini
