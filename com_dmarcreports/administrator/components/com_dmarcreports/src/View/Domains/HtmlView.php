@@ -68,5 +68,7 @@ class HtmlView extends BaseHtmlView
             ->url('index.php?option=com_dmarcreports&view=dashboard')
             ->icon('icon-arrow-left')
             ->text(Text::_('COM_DMARCREPORTS_TOOLBAR_DASHBOARD'));
+
+        $toolbar->help('COM_DMARCREPORTS_HELP_TITLE', false, 'index.php?option=com_dmarcreports&view=help&tmpl=component');
     }
 }

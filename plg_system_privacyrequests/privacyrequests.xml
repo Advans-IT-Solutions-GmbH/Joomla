@@ -23,12 +23,95 @@
     <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
     <php_minimum>8.1</php_minimum>
     <config>
-        <fields name="params">
+        <fields name="params" addfieldprefix="Advans\Plugin\System\PrivacyRequests\Field">
             <fieldset name="basic">
+                <field name="help_note" type="note" class="alert alert-info" description="PLG_SYSTEM_PRIVACYREQUESTS_HELP_NOTE"/>
                 <field name="contact_route" type="text" filter="string" required="true" maxlength="2048"
                     validate="regex" validate_regex="^index\.php(?:\?[^\x00-\x20\x7f\\#]*)?$" validate_modifier="D"
                     label="PLG_SYSTEM_PRIVACYREQUESTS_CONTACT_ROUTE"
                     description="PLG_SYSTEM_PRIVACYREQUESTS_CONTACT_ROUTE_DESC" />
+            </fieldset>
+            <fieldset name="help" label="PLG_SYSTEM_PRIVACYREQUESTS_HELP_TAB">
+                <field name="helppage" type="helppage" hiddenLabel="true">
+                    <section title="PLG_SYSTEM_PRIVACYREQUESTS_HELP_WHAT_TITLE">
+                        <p>PLG_SYSTEM_PRIVACYREQUESTS_HELP_WHAT_P1</p>
+                        <ul>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_WHAT_LI1</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_WHAT_LI2</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_WHAT_LI3</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_WHAT_LI4</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_WHAT_LI5</li>
+                        </ul>
+                        <note>PLG_SYSTEM_PRIVACYREQUESTS_HELP_WHAT_NOTE1</note>
+                    </section>
+                    <section title="PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETUP_TITLE">
+                        <ol>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETUP_STEP1</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETUP_STEP2</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETUP_STEP3</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETUP_STEP4</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETUP_STEP5</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETUP_STEP6</li>
+                        </ol>
+                    </section>
+                    <section title="PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETTING_TITLE">
+                        <p>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETTING_P1</p>
+                        <ul>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETTING_LI1</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETTING_LI2</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETTING_LI3</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETTING_LI4</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_SYSTEM_PRIVACYREQUESTS_HELP_FLOW_TITLE">
+                        <ol>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_FLOW_STEP1</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_FLOW_STEP2</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_FLOW_STEP3</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_FLOW_STEP4</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_FLOW_STEP5</li>
+                        </ol>
+                        <ul>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_FLOW_LI1</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_FLOW_LI2</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_FLOW_LI3</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_SYSTEM_PRIVACYREQUESTS_HELP_LIMITS_TITLE">
+                        <ul>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_LIMITS_LI1</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_LIMITS_LI2</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_LIMITS_LI3</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_LIMITS_LI4</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_LIMITS_LI5</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_LIMITS_LI6</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_LIMITS_LI7</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_LIMITS_LI8</li>
+                        </ul>
+                        <note>PLG_SYSTEM_PRIVACYREQUESTS_HELP_LIMITS_NOTE1</note>
+                    </section>
+                    <section title="PLG_SYSTEM_PRIVACYREQUESTS_HELP_OTHERS_TITLE">
+                        <ul>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_OTHERS_LI1</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_OTHERS_LI2</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_OTHERS_LI3</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_OTHERS_LI4</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_OTHERS_LI5</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_OTHERS_LI6</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_SYSTEM_PRIVACYREQUESTS_HELP_PROBLEMS_TITLE">
+                        <ul>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_PROBLEMS_LI1</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_PROBLEMS_LI2</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_PROBLEMS_LI3</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_PROBLEMS_LI4</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_PROBLEMS_LI5</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_PROBLEMS_LI6</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_PROBLEMS_LI7</li>
+                        </ul>
+                    </section>
+                </field>
             </fieldset>
         </fields>
     </config>

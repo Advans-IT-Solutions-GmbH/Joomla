@@ -11,6 +11,7 @@ namespace Advans\Component\DmarcReports\Administrator\View\Detail;
 
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
+use Joomla\CMS\Toolbar\Toolbar;
 use Joomla\CMS\Toolbar\ToolbarHelper;
 
 defined('_JEXEC') or die;
@@ -62,6 +63,7 @@ class HtmlView extends BaseHtmlView
             Text::_('COM_DMARCREPORTS_TOOLBAR_DASHBOARD'),
             'icon-arrow-left'
         );
+        Toolbar::getInstance('toolbar')->help('COM_DMARCREPORTS_HELP_TITLE', false, 'index.php?option=com_dmarcreports&view=help&tmpl=component');
 
         return parent::display($tpl);
     }

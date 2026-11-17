@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
+<form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
+    <fields name="filter">
+        <field name="search" type="text" inputmode="search" label="COM_APPOINTMENTS_FILTER_SEARCH_LABEL" hint="COM_APPOINTMENTS_TEMPLATES_FILTER_SEARCH_HINT" maxlength="200" />
+        <field name="eventtype_id" type="Eventscope" sitewide="true" label="COM_APPOINTMENTS_TEMPLATE_SCOPE" onchange="this.form.submit();">
+            <option value="">COM_APPOINTMENTS_FILTER_SELECT_SCOPE</option>
+        </field>
+        <field name="purpose" type="Formoptions" source_form="template" source_field="purpose" label="COM_APPOINTMENTS_TEMPLATE_PURPOSE" onchange="this.form.submit();">
+            <option value="">COM_APPOINTMENTS_FILTER_SELECT_PURPOSE</option>
+        </field>
+        <field name="language" type="Templatelanguage" label="JFIELD_LANGUAGE_LABEL" onchange="this.form.submit();">
+            <option value="">JOPTION_SELECT_LANGUAGE</option>
+        </field>
+        <field name="published" type="list" label="JSTATUS" onchange="this.form.submit();">
+            <option value="">JOPTION_SELECT_PUBLISHED</option>
+            <option value="1">JPUBLISHED</option>
+            <option value="0">JUNPUBLISHED</option>
+        </field>
+    </fields>
+    <fields name="list">
+        <field name="fullordering" type="list" label="JGLOBAL_SORT_BY" default="t.id ASC" onchange="this.form.submit();" validate="options">
+            <option value="">JGLOBAL_SORT_BY</option>
+            <option value="t.subject ASC">COM_APPOINTMENTS_SORT_SUBJECT_ASC</option>
+            <option value="t.subject DESC">COM_APPOINTMENTS_SORT_SUBJECT_DESC</option>
+            <option value="e.title ASC">COM_APPOINTMENTS_SORT_EVENTTYPE_ASC</option>
+            <option value="e.title DESC">COM_APPOINTMENTS_SORT_EVENTTYPE_DESC</option>
+            <option value="t.purpose ASC">COM_APPOINTMENTS_SORT_PURPOSE_ASC</option>
+            <option value="t.purpose DESC">COM_APPOINTMENTS_SORT_PURPOSE_DESC</option>
+            <option value="t.language ASC">JGRID_HEADING_LANGUAGE_ASC</option>
+            <option value="t.language DESC">JGRID_HEADING_LANGUAGE_DESC</option>
+            <option value="t.published ASC">JSTATUS_ASC</option>
+            <option value="t.published DESC">JSTATUS_DESC</option>
+            <option value="t.id ASC">JGRID_HEADING_ID_ASC</option>
+            <option value="t.id DESC">JGRID_HEADING_ID_DESC</option>
+        </field>
+        <field name="limit" type="limitbox" label="JGLOBAL_LIST_LIMIT" default="25" onchange="this.form.submit();" />
+    </fields>
+</form>

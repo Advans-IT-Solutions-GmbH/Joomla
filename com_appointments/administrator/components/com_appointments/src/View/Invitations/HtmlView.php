@@ -83,6 +83,7 @@ class HtmlView extends BaseHtmlView
             Toolbar::getInstance('toolbar')->linkButton('invitations')->url('index.php?option=com_appointments&view=invitations')
                 ->text(Text::_('COM_APPOINTMENTS_TEAM_C_BACK_TO_LIST'))->icon('icon-arrow-left');
         }
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
 
         return parent::display($tpl);
     }

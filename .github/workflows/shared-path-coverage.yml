@@ -56,3 +56,5 @@ jobs:
           php-version: '8.1'
       - name: Check supported locales, Swiss spelling and bundled language files
         run: python .github/scripts/test-language-delivery.py
+      - name: Check that every extension of the repository has reachable help
+        run: php shared/tests/help-lint.php

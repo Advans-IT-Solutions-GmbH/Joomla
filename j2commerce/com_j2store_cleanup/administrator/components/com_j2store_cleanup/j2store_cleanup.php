@@ -499,74 +499,399 @@ function getExtensionCodePaths($ext): array
 }
 
 /**
- * Get deprecated API patterns grouped by the Joomla version that removes them.
+ * Legacy API patterns the scanner looks for.
  *
- * Each entry: pattern => ['api' => name of the API, 'removedIn' => Joomla
- * major version]. The page builds the visible text from these values with a
- * language key, so the patterns carry no text of their own. Only patterns
- * relevant to the running Joomla version (and above) are returned.
+ * Each entry: pattern => [
+ *   'api'       => name of the API (a capture group in the pattern, when
+ *                  present, names the exact class found, e.g. JModelLegacy),
+ *   'removedIn' => Joomla major version that removes the API (0: not a
+ *                  Joomla API, reported only when unavailable),
+ *   'probe'     => how isIssueAvailable() checks the running site and what
+ *                  the pattern is matched against:
+ *                  class, j2store  the absolute name of a class reference,
+ *                  factory         "Class::method" of a static call,
+ *                  pluginApp       each plugin class of a file that reads
+ *                                  $this->app without setting it,
+ * ].
+ *
+ * Class references come from getClassStructure(), resolved the way PHP
+ * resolves them, so imported, renamed and qualified names are covered and an
+ * unused import is not. Whether an API still works is decided on the running
+ * site, not from the version number alone: Joomla 6 still ships every
+ * J-prefixed class alias (backward-compatibility plugins, removal announced
+ * for 7.0) and still has the Factory methods below (deprecated since 4.3,
+ * removal announced for 7.0). The page builds the visible text from these
+ * values with a language key, so the patterns carry no text of their own.
  *
  * @return array ['joomla' => [...], 'j2store' => [...]]
  */
 function getIssuePatterns() {
-    $joomlaMajor = (int) JVERSION;
+    $factory = '(?:Joomla\\\\CMS\\\\Factory|JFactory)';
 
-    // Patterns grouped by the Joomla version that REMOVES them.
-    // On Joomla 4 these are available; on 5 deprecated; on 6 removed.
-    $joomlaByVersion = [
-        // Removed in Joomla 4 (J3 legacy classes without namespace)
-        4 => [
-            '/\bJPlugin\b/'              => 'JPlugin',
-            '/\bJModel(Legacy)?\b/'      => 'JModel',
-            '/\bJTable\b/'               => 'JTable',
-            '/\bJView(Legacy)?\b/'       => 'JView',
-            '/\bJController(Legacy)?\b/' => 'JController',
-            '/\bJForm\b/'               => 'JForm',
-        ],
-        // Removed in Joomla 6 (deprecated since 4/5, B/C plugin removed in 6)
-        6 => [
-            '/\bJFactory\b/'             => 'JFactory',
-            '/\bJText\b/'               => 'JText',
-            '/\bJHtml\b/'               => 'JHtml',
-            '/\bJRoute\b/'              => 'JRoute',
-            '/\bJUri\b/'                => 'JUri',
-            '/\bJSession\b/'            => 'JSession',
-            '/Factory::getUser\s*\(/'   => 'Factory::getUser()',
-            '/Factory::getDbo\s*\(/'    => 'Factory::getDbo()',
-            '/Factory::getSession\s*\(/' => 'Factory::getSession()',
-            '/Factory::getDocument\s*\(/' => 'Factory::getDocument()',
-            '/\$this->app\b(?!lication)/' => '$this->app',
-        ],
+    $joomla = [
+        // Class aliases of J3 names in the global namespace; only the
+        // backward-compatibility plugin ("classes_aliases") registers them.
+        '/^(JPlugin)$/i'                      => ['api' => 'JPlugin', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JModel(?:Legacy)?)$/i'            => ['api' => 'JModel', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JTable)$/i'                       => ['api' => 'JTable', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JView(?:Legacy)?)$/i'             => ['api' => 'JView', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JController(?:Legacy)?)$/i'       => ['api' => 'JController', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JForm)$/i'                        => ['api' => 'JForm', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JFactory)$/i'                     => ['api' => 'JFactory', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JText)$/i'                        => ['api' => 'JText', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JHtml)$/i'                        => ['api' => 'JHtml', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JRoute)$/i'                       => ['api' => 'JRoute', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JUri)$/i'                         => ['api' => 'JUri', 'removedIn' => 7, 'probe' => 'class'],
+        '/^(JSession)$/i'                     => ['api' => 'JSession', 'removedIn' => 7, 'probe' => 'class'],
+        // Methods of Joomla's Factory, deprecated since 4.3.
+        '/^' . $factory . '::getUser$/i'      => ['api' => 'Factory::getUser()', 'removedIn' => 7, 'probe' => 'factory'],
+        '/^' . $factory . '::getDbo$/i'       => ['api' => 'Factory::getDbo()', 'removedIn' => 7, 'probe' => 'factory'],
+        '/^' . $factory . '::getSession$/i'   => ['api' => 'Factory::getSession()', 'removedIn' => 7, 'probe' => 'factory'],
+        '/^' . $factory . '::getDocument$/i'  => ['api' => 'Factory::getDocument()', 'removedIn' => 7, 'probe' => 'factory'],
+        // CMSPlugin fills a declared $app property, deprecated since 4.3.
+        // Other classes (module dispatchers, commands) own their $app.
+        '/\$this->app\b(?!lication)/'         => ['api' => '$this->app', 'removedIn' => 7, 'probe' => 'pluginApp'],
     ];
 
-    // Only include patterns for APIs removed in the current or earlier version.
-    // On Joomla 5: only J4 removals apply (J6 removals are deprecated but work).
-    // On Joomla 6: both J4 and J6 removals apply.
-    $joomlaPatterns = [];
-    foreach ($joomlaByVersion as $removedIn => $patterns) {
-        if ($joomlaMajor >= $removedIn) {
-            foreach ($patterns as $pattern => $api) {
-                $joomlaPatterns[$pattern] = ['api' => $api, 'removedIn' => $removedIn];
-            }
-        }
-    }
+    // J2Store classes exist only while com_j2store (J2Store / J2Commerce 4)
+    // is installed. J2Commerce 6 (com_j2commerce) does not provide them.
+    $j2store = [
+        '/^(J2Store)$/i'                      => ['api' => 'J2Store', 'removedIn' => 0, 'probe' => 'j2store'],
+        '/^(J2Html)$/i'                       => ['api' => 'J2Html', 'removedIn' => 0, 'probe' => 'j2store'],
+        '/^(J2Store\w*Plugin)$/i'             => ['api' => 'J2StoreAppPlugin', 'removedIn' => 0, 'probe' => 'j2store'],
+    ];
 
-    // J2Store/J2Commerce patterns — these are NOT version-dependent.
-    // J2Commerce 4.x still ships F0F and the old plugin base classes,
-    // so these are NOT incompatible with J2Commerce 4.x.
-    // Only flag patterns that indicate a plugin predates J2Store 3.x entirely.
-    $j2Patterns = [];
-
-    return ['joomla' => $joomlaPatterns, 'j2store' => $j2Patterns];
+    return ['joomla' => $joomla, 'j2store' => $j2store];
 }
 
 /**
- * Scan PHP files in a directory for deprecated/incompatible patterns.
+ * Read the class structure of a PHP file from its tokens.
+ *
+ * refs: the class references PHP resolves when the code runs: a name before
+ * `::` (static call, constant or property, not `::class`), after `new`,
+ * `extends` or `implements`. Each is resolved to the absolute class name the
+ * way PHP resolves it, with the namespace block and the `use` imports in force
+ * at that place (renamed and grouped imports included). Import statements are
+ * declarations (an unused import loads nothing), `instanceof` against a
+ * missing class is just false, and type hints load nothing: none of them is a
+ * reference here. Comments and strings are no tokens of these kinds.
+ *
+ * classes: per class declaration (named or anonymous) its parent and how it
+ * deals with `$this->app`: whether its own methods read it, declare it as a
+ * property (and whether private), or initialize it themselves (assignment,
+ * `??=` or a promoted constructor parameter).
+ *
+ * @return array{refs: array<int, array{name: string, call: string}>,
+ *               classes: array<int, array{parent: string, uses: bool, declared: bool, private: bool, initialized: bool}>}
+ *         ref name: absolute class name, call: "Class::method" for a static
+ *         method call, else ''
+ */
+function getClassStructure(string $source): array
+{
+    $tokens = array_values(array_filter(
+        token_get_all($source),
+        static fn ($t): bool => !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)
+    ));
+    $nameTypes = [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE];
+    $isName    = static fn ($t): bool => is_array($t) && in_array($t[0], $nameTypes, true);
+    $id        = static fn ($t) => is_array($t) ? $t[0] : $t;
+    $namespace = '';
+    $imports   = [];
+    $depth     = 0;
+    $parens    = 0;
+    $useDepth  = 0;
+    $heritage  = '';
+    $pending   = null;
+    $stack     = [];
+    $refs      = [];
+    $classes   = [];
+    $count     = count($tokens);
+
+    $resolve = static function (array $token) use (&$namespace, &$imports): ?string {
+        $text = $token[1];
+
+        if ($token[0] === T_NAME_FULLY_QUALIFIED) {
+            return ltrim($text, '\\');
+        }
+
+        if ($token[0] === T_NAME_RELATIVE) {
+            $rest = substr($text, strlen('namespace\\'));
+
+            return $namespace === '' ? $rest : $namespace . '\\' . $rest;
+        }
+
+        if (in_array(strtolower($text), ['self', 'static', 'parent'], true)) {
+            return null;
+        }
+
+        $first = strtolower(strtok($text, '\\'));
+        $rest  = (string) substr($text, strlen($first));
+
+        if (isset($imports[$first])) {
+            return $imports[$first] . $rest;
+        }
+
+        return $namespace === '' ? $text : $namespace . '\\' . $text;
+    };
+
+    // One import entry: Name [as Alias]. Returns [absolute name, local alias].
+    $importEntry = static function (array $slice, string $prefix) use ($isName, $id): ?array {
+        if (!$isName($slice[0] ?? null)) {
+            return null;
+        }
+
+        $name  = ($prefix === '' ? '' : $prefix . '\\') . ltrim($slice[0][1], '\\');
+        $alias = substr(strrchr('\\' . $name, '\\'), 1);
+
+        if ($id($slice[1] ?? null) === T_AS && $isName($slice[2] ?? null)) {
+            $alias = $slice[2][1];
+        }
+
+        return [$name, $alias];
+    };
+
+    for ($i = 0; $i < $count; $i++) {
+        $token = $tokens[$i];
+        $kind  = $id($token);
+
+        if ($token === '(') {
+            $parens++;
+            continue;
+        }
+
+        if ($token === ')') {
+            $parens--;
+            continue;
+        }
+
+        if ($token === '{' || $kind === T_CURLY_OPEN || $kind === T_DOLLAR_OPEN_CURLY_BRACES) {
+            $depth++;
+            $heritage = '';
+
+            if ($pending !== null && $token === '{') {
+                $pending['body'] = $depth;
+                $stack[]         = $pending;
+                $pending         = null;
+            }
+            continue;
+        }
+
+        if ($token === '}') {
+            if ($stack !== [] && end($stack)['body'] === $depth) {
+                $done = array_pop($stack);
+                unset($done['body']);
+                $classes[] = $done;
+            }
+            $depth--;
+            continue;
+        }
+
+        // A namespace declaration starts a new block with its own imports.
+        if ($kind === T_NAMESPACE && ($isName($tokens[$i + 1] ?? null) || ($tokens[$i + 1] ?? null) === '{')) {
+            $named     = $isName($tokens[$i + 1]);
+            $namespace = $named ? ltrim($tokens[$i + 1][1], '\\') : '';
+            $imports   = [];
+            $useDepth  = $depth + (($tokens[$i + ($named ? 2 : 1)] ?? null) === '{' ? 1 : 0);
+            $i        += $named ? 1 : 0;
+            continue;
+        }
+
+        // Import statement: read it up to its ";" as a whole, so braces of a
+        // group import never count as code blocks. A trait use inside a class
+        // body and a closure's "use (" are no imports.
+        if ($kind === T_USE && $depth === $useDepth && $stack === [] && ($tokens[$i + 1] ?? null) !== '(') {
+            $end = $i + 1;
+            while ($end < $count && $tokens[$end] !== ';') {
+                $end++;
+            }
+
+            $slice = array_slice($tokens, $i + 1, $end - $i - 1);
+            $i     = $end;
+
+            // "use function ..." / "use const ...": no classes.
+            if (in_array($id($slice[0] ?? null), [T_FUNCTION, T_CONST], true)) {
+                continue;
+            }
+
+            $open = array_search('{', $slice, true);
+
+            if ($open !== false) {
+                // Group: Prefix\{A, function f, const C, B\C as D}
+                $prefix = ltrim((string) ($slice[0][1] ?? ''), '\\');
+                $inner  = array_slice($slice, $open + 1, (int) array_search('}', $slice, true) - $open - 1);
+                $entry  = [];
+
+                foreach (array_merge($inner, [',']) as $part) {
+                    if ($part !== ',') {
+                        $entry[] = $part;
+                        continue;
+                    }
+
+                    if (!in_array($id($entry[0] ?? null), [T_FUNCTION, T_CONST], true) && ($pair = $importEntry($entry, $prefix)) !== null) {
+                        $imports[strtolower($pair[1])] = $pair[0];
+                    }
+                    $entry = [];
+                }
+                continue;
+            }
+
+            $entry = [];
+            foreach (array_merge($slice, [',']) as $part) {
+                if ($part !== ',') {
+                    $entry[] = $part;
+                    continue;
+                }
+
+                if (($pair = $importEntry($entry, '')) !== null) {
+                    $imports[strtolower($pair[1])] = $pair[0];
+                }
+                $entry = [];
+            }
+            continue;
+        }
+
+        // A class declaration (named or anonymous): its body starts at the next "{".
+        if ($kind === T_CLASS && $id($tokens[$i - 1] ?? null) !== T_DOUBLE_COLON) {
+            $pending = ['parent' => '', 'uses' => false, 'declared' => false, 'private' => false, 'initialized' => false];
+            continue;
+        }
+
+        if ($kind === T_EXTENDS || $kind === T_IMPLEMENTS) {
+            $heritage = $kind === T_EXTENDS ? 'extends' : 'implements';
+            continue;
+        }
+
+        // $this->app inside a class: read, assigned (= or ??=) or neither.
+        if ($kind === T_VARIABLE && $token[1] === '$this' && $stack !== []
+            && in_array($id($tokens[$i + 1] ?? null), [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR], true)
+            && $id($tokens[$i + 2] ?? null) === T_STRING && $tokens[$i + 2][1] === 'app') {
+            $current = count($stack) - 1;
+            $after   = $tokens[$i + 3] ?? null;
+
+            if ($after === '(') {
+                // $this->app() calls a method, the property is not involved.
+            } elseif ($after === '=' || $id($after) === T_COALESCE_EQUAL) {
+                $stack[$current]['initialized'] = true;
+            } else {
+                $stack[$current]['uses'] = true;
+            }
+            $i += 2;
+            continue;
+        }
+
+        // The property $app, declared in the class body or promoted in a
+        // constructor parameter list.
+        if ($kind === T_VARIABLE && $token[1] === '$app' && $stack !== [] && $depth === end($stack)['body']) {
+            $modifiers = [];
+            for ($k = $i - 1; $k >= 0; $k--) {
+                $before = $tokens[$k];
+                if (in_array($before, [';', '{', '}', '(', ','], true)) {
+                    break;
+                }
+                $modifiers[] = $id($before);
+            }
+
+            $visibility = array_intersect($modifiers, [T_PUBLIC, T_PROTECTED, T_PRIVATE, T_VAR, T_READONLY]);
+            $current    = count($stack) - 1;
+
+            if ($parens === 0) {
+                $stack[$current]['declared'] = true;
+                $stack[$current]['private']  = in_array(T_PRIVATE, $modifiers, true);
+            } elseif ($visibility !== []) {
+                $stack[$current]['declared']    = true;
+                $stack[$current]['initialized'] = true;
+            }
+            continue;
+        }
+
+        if (!$isName($token)) {
+            continue;
+        }
+
+        $prev = $id($tokens[$i - 1] ?? null);
+        $next = $id($tokens[$i + 1] ?? null);
+
+        // Members, declarations and type checks are no references.
+        if (in_array($prev, [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION, T_CONST, T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM, T_GOTO, T_INSTANCEOF], true)) {
+            continue;
+        }
+
+        $call = '';
+
+        if ($next === T_DOUBLE_COLON) {
+            $member = $tokens[$i + 2] ?? null;
+
+            if ($id($member) === T_CLASS) {
+                continue;
+            }
+
+            if ($id($member) === T_STRING && ($tokens[$i + 3] ?? null) === '(') {
+                $call = $member[1];
+            }
+        } elseif ($prev !== T_NEW && $heritage === '') {
+            continue;
+        }
+
+        $name = $resolve($token);
+
+        if ($name === null) {
+            continue;
+        }
+
+        if ($heritage === 'extends' && $pending !== null && $pending['parent'] === '') {
+            $pending['parent'] = $name;
+        }
+
+        $refs[] = ['name' => $name, 'call' => $call === '' ? '' : $name . '::' . $call];
+    }
+
+    // An unbalanced file: keep what was read.
+    foreach ($stack as $open) {
+        unset($open['body']);
+        $classes[] = $open;
+    }
+
+    return ['refs' => $refs, 'classes' => $classes];
+}
+
+/**
+ * Whether the API of a finding still works on this site.
+ *
+ * @param array $issue  One finding (see scanForIssues())
+ */
+function isIssueAvailable(array $issue): bool
+{
+    switch ($issue['probe'] ?? '') {
+        case 'class':
+            // The class the name resolves to in its file. For a J-prefixed
+            // legacy name this goes through JLoader, which resolves the alias
+            // when a backward-compatibility plugin has registered it.
+            return class_exists((string) ($issue['class'] ?? $issue['detail']));
+
+        case 'pluginApp':
+            // CMSPlugin fills a declared non-private $app until Joomla 7
+            // (deprecated since 4.3). Only that case is a finding.
+            return (int) JVERSION < (int) ($issue['removedIn'] ?? 0);
+
+        case 'factory':
+            return preg_match('/^Factory::(\w+)\(\)$/', (string) $issue['detail'], $m) === 1
+                && method_exists('Joomla\\CMS\\Factory', $m[1]);
+
+        case 'j2store':
+            return is_dir(JPATH_ADMINISTRATOR . '/components/com_j2store');
+    }
+
+    return false;
+}
+
+/**
+ * Scan PHP files in a directory for legacy APIs.
  *
  * @param string $path      Directory to scan
  * @param array  $patterns  From getIssuePatterns()
- * @return array  List of issues found, each with 'type', 'detail' (API name)
- *                and 'removedIn' (Joomla major version); see describeIssue()
+ * @return array  List of findings, each with 'type' (joomla|j2store),
+ *                'detail' (API name), 'removedIn', 'probe' and 'available'
+ *                (the API still works on this site); see describeIssue()
  */
 function scanForIssues($path, $patterns) {
     if (!is_dir($path)) {
@@ -588,19 +913,81 @@ function scanForIssues($path, $patterns) {
             continue;
         }
 
-        // Strip comments to reduce false positives
-        $stripped = preg_replace('#/\*.*?\*/#s', '', $content);
-        $stripped = preg_replace('#//.*$#m', '', $stripped);
+        $structure = getClassStructure($content);
 
-        foreach ($patterns['joomla'] as $pattern => $info) {
-            if (preg_match($pattern, $stripped)) {
-                $issues[] = ['type' => 'joomla', 'detail' => $info['api'], 'removedIn' => $info['removedIn']];
+        // Files below a com_j2store folder (template overrides an extension
+        // ships for J2Store sites) are loaded only by com_j2store itself.
+        $relative   = str_replace('\\', '/', substr($file->getPathname(), strlen(rtrim($path, '/\\'))));
+        $forJ2Store = str_contains($relative, '/com_j2store/');
+
+        foreach (['joomla', 'j2store'] as $type) {
+            if ($type === 'j2store' && $forJ2Store) {
+                continue;
             }
-        }
 
-        foreach ($patterns['j2store'] as $pattern => $info) {
-            if (preg_match($pattern, $stripped)) {
-                $issues[] = ['type' => 'j2store', 'detail' => $info['api'], 'removedIn' => $info['removedIn'] ?? 0];
+            foreach ($patterns[$type] ?? [] as $pattern => $info) {
+                $probe = $info['probe'] ?? '';
+
+                // What the pattern is matched against (see getIssuePatterns()):
+                // [subject, class or plugin class info].
+                $subjects = [];
+                if ($probe === 'pluginApp') {
+                    // The deprecated CMSPlugin mechanism: a plugin class declares a
+                    // non-private $app, does not set it itself and reads it, so it
+                    // relies on CMSPlugin filling it. Without an own declaration $app
+                    // comes from elsewhere (trait, parent, __get) or is only checked
+                    // with isset(); that is not provable from one file and no finding.
+                    // Module dispatchers and console commands own their $app.
+                    foreach ($structure['classes'] as $class) {
+                        if ($class['uses'] && $class['declared'] && !$class['private'] && !$class['initialized']
+                            && preg_match('/Plugin$/i', $class['parent']) === 1) {
+                            $subjects[] = [$info['api'], $class];
+                        }
+                    }
+                } else {
+                    foreach ($structure['refs'] as $ref) {
+                        $subjects[] = [$probe === 'factory' ? $ref['call'] : $ref['name'], $ref['name']];
+                    }
+                }
+
+                // One finding per API and file; it counts as available only if
+                // every reference to it is.
+                $found = [];
+                foreach ($subjects as [$subject, $target]) {
+                    $m = [];
+                    if ($probe !== 'pluginApp' && ($subject === '' || preg_match($pattern, $subject, $m) !== 1)) {
+                        continue;
+                    }
+
+                    // Class names are case-insensitive: J2html is J2Html.
+                    $detail = !isset($m[1]) || strcasecmp($m[1], $info['api']) === 0 ? $info['api'] : $m[1];
+                    $issue  = [
+                        'type'      => $type,
+                        'detail'    => $detail,
+                        'removedIn' => (int) ($info['removedIn'] ?? 0),
+                        'probe'     => $probe,
+                    ];
+
+                    if ($probe !== 'pluginApp') {
+                        $issue['class'] = $target;
+                    }
+
+                    $issue['available'] = isIssueAvailable($issue);
+
+                    if (!isset($found[strtolower($detail)]) || !$issue['available']) {
+                        $found[strtolower($detail)] = $issue;
+                    }
+                }
+
+                foreach ($found as $issue) {
+                    // A non-Joomla API without an announced removal is a
+                    // problem only when it is missing.
+                    if ($issue['available'] && $issue['removedIn'] === 0) {
+                        continue;
+                    }
+
+                    $issues[] = $issue;
+                }
             }
         }
     }
@@ -609,32 +996,32 @@ function scanForIssues($path, $patterns) {
 }
 
 /**
- * Keep the first finding per issue type and API, across any number of scans.
+ * One finding per issue type and API, across any number of files and scans.
+ * An unavailable finding wins over an available one of the same API, so an
+ * API that fails in one file is never reported as merely deprecated.
  */
 function uniqueIssues(array $issues): array
 {
-    $seen = [];
     $unique = [];
     foreach ($issues as $issue) {
-        $key = $issue['type'] . ':' . $issue['detail'];
-        if (!isset($seen[$key])) {
-            $seen[$key] = true;
-            $unique[] = $issue;
+        $key = $issue['type'] . ':' . strtolower($issue['detail']);
+        if (!isset($unique[$key]) || (!empty($unique[$key]['available']) && empty($issue['available']))) {
+            $unique[$key] = $issue;
         }
     }
 
-    return $unique;
+    return array_values($unique);
 }
 
 /**
  * Classify a J2Store/J2Commerce extension's compatibility.
  *
- * Scans extension files for APIs that are removed in the running Joomla version.
- * On Joomla 4/5: most old J2Store plugins will show as compatible (old APIs still work).
- * On Joomla 6+: plugins using JFactory, JText etc. will show as incompatible.
+ * Scans extension files for legacy APIs and checks each one on the running
+ * site: "incompatible" when at least one is unavailable here (it fails at run
+ * time), "deprecated" when all still work but are deprecated or provided only
+ * by a backward-compatibility plugin, otherwise "compatible".
  *
- * J2Commerce 4.x itself ships F0F and the old plugin base classes, so
- * F0FModel/F0FTable usage is NOT flagged as incompatible.
+ * F0F is a library of its own and is not flagged.
  *
  * @param object $manifest  Decoded manifest_cache from #__extensions
  * @param object $ext       Extension record from database
@@ -685,21 +1072,36 @@ function classifyExtension($manifest, $ext, $patterns) {
         $parts[] = Text::sprintf('COM_J2STORE_CLEANUP_REASON_JOOMLA_ISSUES', count($joomlaIssues));
     }
 
+    $unavailable = array_filter($issues, static fn (array $i): bool => empty($i['available']));
+
     return [
-        'status'  => 'incompatible',
+        'status'  => $unavailable === [] ? 'deprecated' : 'incompatible',
         'reason'  => Text::sprintf('COM_J2STORE_CLEANUP_REASON_INCOMPATIBLE', implode(', ', $parts), $info),
         'issues'  => $issues,
     ];
 }
 
 /**
- * Visible text of one scan finding, e.g. "JFactory (removed in Joomla 6)".
+ * Visible text of one scan finding, e.g. "JSession (not available on this
+ * site)" or "Factory::getDbo() (deprecated, removal announced for Joomla 7)".
  *
  * @param array $issue  One entry of scanForIssues()
  */
 function describeIssue(array $issue): string
 {
-    return Text::sprintf('COM_J2STORE_CLEANUP_ISSUE_REMOVED_IN', $issue['detail'], (int) ($issue['removedIn'] ?? 0));
+    $detail = (string) ($issue['detail'] ?? '');
+
+    if (empty($issue['available'])) {
+        return ($issue['type'] ?? '') === 'j2store'
+            ? Text::sprintf('COM_J2STORE_CLEANUP_ISSUE_J2STORE_MISSING', $detail)
+            : Text::sprintf('COM_J2STORE_CLEANUP_ISSUE_UNAVAILABLE', $detail);
+    }
+
+    return Text::sprintf(
+        ($issue['probe'] ?? '') === 'class' ? 'COM_J2STORE_CLEANUP_ISSUE_COMPAT' : 'COM_J2STORE_CLEANUP_ISSUE_DEPRECATED',
+        $detail,
+        (int) ($issue['removedIn'] ?? 0)
+    );
 }
 
 /**
@@ -734,6 +1136,10 @@ if (!canAccessCleanup($app->getIdentity())) {
     throw new \Joomla\CMS\Access\Exception\NotAllowed(Text::_('JERROR_ALERTNOAUTHOR'), 403);
 }
 
+// The help page (view=help) needs exactly the access checked above and nothing
+// more. It renders tmpl/help/default.php in the same page and runs no scan.
+$showHelp = strtolower((string) $app->getInput()->getCmd('view', '')) === 'help';
+
 // Handle cleanup action
 if ($task === 'cleanup' && Session::checkToken()) {
     $user = $app->getIdentity();
@@ -765,19 +1171,39 @@ if ($task === 'cleanup' && Session::checkToken()) {
     $app->redirect('index.php?option=com_j2store_cleanup');
 }
 
-// The same candidate predicate is used here and by the mutation path.
-$query = createDbQuery($db)
-    ->select($db->quoteName(['extension_id', 'name', 'type', 'element', 'folder', 'enabled', 'client_id', 'protected', 'locked', 'package_id', 'manifest_cache']))
-    ->from('#__extensions')
-    ->order('type, name');
+if ($showHelp) {
+    // No scan: the help page lists no extensions.
+    $extensions = [];
+    ToolbarHelper::title(Text::_('COM_J2STORE_CLEANUP_HELP_TITLE'), 'info-circle');
+    ToolbarHelper::link('index.php?option=com_j2store_cleanup', 'JTOOLBAR_BACK', 'arrow-left');
+} else {
+    // The same candidate predicate is used here and by the mutation path.
+    $query = createDbQuery($db)
+        ->select($db->quoteName(['extension_id', 'name', 'type', 'element', 'folder', 'enabled', 'client_id', 'protected', 'locked', 'package_id', 'manifest_cache']))
+        ->from('#__extensions')
+        ->order('type, name');
 
-$db->setQuery($query);
-$extensions = array_values(array_filter(
-    $db->loadObjectList(),
-    static fn ($ext) => isCleanupCandidate($ext) || isShopCoreExtension($ext)
-));
+    $db->setQuery($query);
+    $extensions = array_values(array_filter(
+        $db->loadObjectList(),
+        static fn ($ext) => isCleanupCandidate($ext) || isShopCoreExtension($ext)
+    ));
+}
 $canRemoveExtensions = canRemoveExtensions($app->getIdentity());
 addCleanupPreferences($app->getIdentity());
+
+if (!$showHelp) {
+    // The help button is offered to every user who can open the page.
+    ToolbarHelper::help('', false, 'index.php?option=com_j2store_cleanup&view=help&tmpl=component');
+}
+
+// Values the help layout reads: the Options link needs core.admin or
+// core.options, and in Joomla's help popup (tmpl=component) links that would
+// navigate the popup away are hidden.
+$helpCanOptions = is_object($app->getIdentity())
+    && ($app->getIdentity()->authorise('core.admin', 'com_j2store_cleanup')
+        || $app->getIdentity()->authorise('core.options', 'com_j2store_cleanup'));
+$helpIsPopup = $app->getInput()->getCmd('tmpl', '') === 'component';
 
 // Texts the page script needs (confirmation before removal) and the
 // version shown in the footer.
@@ -877,6 +1303,10 @@ $cleanupVersion = getCleanupVersion($db);
         .j2cleanup .incompatible { 
             background: var(--danger-bg-subtle, var(--bs-danger-bg-subtle, #f8d7da)) !important;
             border-left: 3px solid #dc3545;
+        }
+        .j2cleanup .deprecated {
+            background: var(--warning-bg-subtle, var(--bs-warning-bg-subtle, #fff3cd)) !important;
+            border-left: 3px solid #ffc107;
         }
         .j2cleanup .compatible {
             background: var(--success-bg-subtle, var(--bs-success-bg-subtle, #d1e7dd)) !important;
@@ -1003,21 +1433,23 @@ $cleanupVersion = getCleanupVersion($db);
 </head>
 <body>
 <div class="j2cleanup">
+<?php if ($showHelp): ?>
+    <?php require __DIR__ . '/tmpl/help/default.php'; ?>
+<?php else: ?>
     <h1><?php echo Text::_('COM_J2STORE_CLEANUP'); ?></h1>
     <p style="color: var(--secondary-color, var(--bs-secondary-color, #6c757d)); margin-bottom: 20px;"><?php echo Text::_('COM_J2STORE_CLEANUP_SUBTITLE'); ?></p>
+    <p><a href="index.php?option=com_j2store_cleanup&amp;view=help"><?php echo Text::_('COM_J2STORE_CLEANUP_HELP_LINK'); ?></a></p>
 
     <div class="detection-info">
         <h3><?php echo Text::sprintf('COM_J2STORE_CLEANUP_SCAN_TITLE', JVERSION); ?></h3>
         <p style="margin-bottom: 10px;"><?php echo Text::sprintf('COM_J2STORE_CLEANUP_SCAN_DESC', (int) JVERSION); ?></p>
         <ul>
             <li><span class="badge badge-success"><?php echo Text::_('COM_J2STORE_CLEANUP_BADGE_COMPATIBLE'); ?></span> — <?php echo Text::_('COM_J2STORE_CLEANUP_BADGE_COMPATIBLE_DESC'); ?></li>
+            <li><span class="badge badge-warning"><?php echo Text::_('COM_J2STORE_CLEANUP_BADGE_DEPRECATED'); ?></span> — <?php echo Text::_('COM_J2STORE_CLEANUP_BADGE_DEPRECATED_DESC'); ?></li>
             <li><span class="badge badge-danger"><?php echo Text::_('COM_J2STORE_CLEANUP_BADGE_INCOMPATIBLE'); ?></span> — <?php echo Text::_('COM_J2STORE_CLEANUP_BADGE_INCOMPATIBLE_DESC'); ?></li>
             <li><span class="badge badge-secondary"><?php echo Text::_('COM_J2STORE_CLEANUP_BADGE_NO_FILES'); ?></span> — <?php echo Text::_('COM_J2STORE_CLEANUP_BADGE_NO_FILES_DESC'); ?></li>
             <li><span class="badge badge-info"><?php echo Text::_('COM_J2STORE_CLEANUP_BADGE_CORE'); ?></span> — <?php echo Text::_('COM_J2STORE_CLEANUP_BADGE_CORE_DESC'); ?></li>
         </ul>
-        <?php if ((int) JVERSION < 6): ?>
-        <p style="margin-top: 10px; color: var(--warning-text-emphasis, var(--bs-warning-text-emphasis, #664d03));"><?php echo Text::sprintf('COM_J2STORE_CLEANUP_NOTE_DEPRECATED', (int) JVERSION); ?></p>
-        <?php endif; ?>
     </div>
 
     <?php if (empty($extensions)): ?>
@@ -1032,7 +1464,7 @@ $cleanupVersion = getCleanupVersion($db);
 
         <form action="index.php?option=com_j2store_cleanup" method="post">
             <?php
-            $groups = ['incompatible' => [], 'no-files' => [], 'compatible' => [], 'core' => []];
+            $groups = ['incompatible' => [], 'no-files' => [], 'deprecated' => [], 'compatible' => [], 'core' => []];
             $patterns = getIssuePatterns();
 
             foreach ($extensions as $ext) {
@@ -1049,8 +1481,8 @@ $cleanupVersion = getCleanupVersion($db);
                     // removed here (package children), so the page never reports
                     // a clean result while orphaned records remain.
                     $groups[$result['status']][] = $ext;
-                } elseif ($result['status'] === 'compatible') {
-                    $groups['compatible'][] = $ext;
+                } elseif ($result['status'] === 'compatible' || $result['status'] === 'deprecated') {
+                    $groups[$result['status']][] = $ext;
                 }
             }
 
@@ -1067,6 +1499,20 @@ $cleanupVersion = getCleanupVersion($db);
                 return $ext->enabled
                     ? '<span class="badge badge-success">' . Text::_('JENABLED') . '</span>'
                     : '<span class="badge badge-warning">' . Text::_('JDISABLED') . '</span>';
+            };
+            // Findings of one extension: red when the API is unavailable here,
+            // amber when it still works.
+            $issueList = static function ($ext): string {
+                $html = '<details><summary>' . htmlspecialchars($ext->_reason) . '</summary>'
+                    . '<ul style="margin: 5px 0; padding-left: 20px; font-size: 12px;">';
+
+                foreach ($ext->_issues as $issue) {
+                    $html .= '<li><span class="badge ' . (empty($issue['available']) ? 'badge-danger' : 'badge-warning') . '">'
+                        . Text::_($issue['type'] === 'j2store' ? 'COM_J2STORE_CLEANUP_ISSUE_ORIGIN_J2STORE' : 'COM_J2STORE_CLEANUP_ISSUE_ORIGIN_JOOMLA')
+                        . '</span> ' . htmlspecialchars(describeIssue($issue)) . '</li>';
+                }
+
+                return $html . '</ul></details>';
             };
             $selectAll = '<input type="checkbox" aria-label="' . htmlspecialchars(Text::_('JGLOBAL_CHECK_ALL'), ENT_QUOTES, 'UTF-8') . '"'
                 . ' onclick="this.closest(\'table\').querySelectorAll(\'input[type=checkbox]\').forEach(cb => cb.checked = this.checked)">';
@@ -1096,19 +1542,7 @@ $cleanupVersion = getCleanupVersion($db);
                         <td><?php echo htmlspecialchars($ext->type); ?></td>
                         <td><code><?php echo htmlspecialchars($ext->element); ?></code></td>
                         <td><?php echo $enabledBadge($ext); ?></td>
-                        <td>
-                            <details>
-                                <summary><?php echo htmlspecialchars($ext->_reason); ?></summary>
-                                <ul style="margin: 5px 0; padding-left: 20px; font-size: 12px;">
-                                <?php foreach ($ext->_issues as $issue): ?>
-                                    <li>
-                                        <span class="badge <?php echo $issue['type'] === 'j2store' ? 'badge-danger' : 'badge-warning'; ?>"><?php echo Text::_($issue['type'] === 'j2store' ? 'COM_J2STORE_CLEANUP_ISSUE_ORIGIN_J2STORE' : 'COM_J2STORE_CLEANUP_ISSUE_ORIGIN_JOOMLA'); ?></span>
-                                        <?php echo htmlspecialchars(describeIssue($issue)); ?>
-                                    </li>
-                                <?php endforeach; ?>
-                                </ul>
-                            </details>
-                        </td>
+                        <td><?php echo $issueList($ext); ?></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -1154,6 +1588,36 @@ $cleanupVersion = getCleanupVersion($db);
             </button>
             <?php endif; ?>
 
+            <?php if (!empty($groups['deprecated'])): ?>
+            <h2><?php echo Text::sprintf('COM_J2STORE_CLEANUP_SECTION_DEPRECATED', count($groups['deprecated'])); ?></h2>
+            <p><?php echo Text::_('COM_J2STORE_CLEANUP_SECTION_DEPRECATED_DESC'); ?></p>
+
+            <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th><?php echo Text::_('COM_J2STORE_CLEANUP_COL_NAME'); ?></th>
+                        <th><?php echo Text::_('COM_J2STORE_CLEANUP_COL_TYPE'); ?></th>
+                        <th><?php echo Text::_('COM_J2STORE_CLEANUP_COL_ELEMENT'); ?></th>
+                        <th><?php echo Text::_('COM_J2STORE_CLEANUP_COL_ENABLED'); ?></th>
+                        <th><?php echo Text::_('COM_J2STORE_CLEANUP_COL_ISSUES'); ?></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($groups['deprecated'] as $ext): ?>
+                    <tr class="deprecated">
+                        <td><?php echo htmlspecialchars(getExtensionName($ext)); ?></td>
+                        <td><?php echo htmlspecialchars($ext->type); ?></td>
+                        <td><code><?php echo htmlspecialchars($ext->element); ?></code></td>
+                        <td><?php echo $enabledBadge($ext); ?></td>
+                        <td><?php echo $issueList($ext); ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+            </div>
+            <?php endif; ?>
+
             <?php if (!empty($groups['compatible']) || !empty($groups['core'])): ?>
             <h2><?php echo Text::sprintf('COM_J2STORE_CLEANUP_SECTION_COMPATIBLE', count($groups['compatible']) + count($groups['core'])); ?></h2>
 
@@ -1193,6 +1657,7 @@ $cleanupVersion = getCleanupVersion($db);
             <?php endif; ?>
         </form>
     <?php endif; ?>
+<?php endif; ?>
 
     <div class="j2cleanup-footer">
         <div class="logo">Advans IT Solutions GmbH</div>

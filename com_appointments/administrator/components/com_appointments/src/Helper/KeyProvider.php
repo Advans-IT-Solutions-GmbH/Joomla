@@ -78,6 +78,12 @@ final class KeyProvider
     public const PURPOSE_BOOKING_DATA = 'booking-data';
 
     /**
+     * Seals the Close API key of an event type (CloseKeyCipher). Changing the
+     * site secret makes every stored key unreadable; it is then entered again.
+     */
+    public const PURPOSE_CLOSE_API_KEY = 'close-api-key';
+
+    /**
      * @var  string
      */
     private $siteSecret;

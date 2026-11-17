@@ -22,6 +22,67 @@
         <filename>LICENSE.txt</filename>
     </files>
 
+    <config>
+        <fields name="params" addfieldprefix="Advans\Plugin\Task\J2CommercePrivacy\Field">
+            <fieldset name="basic">
+                <field name="help_note" type="note" class="alert alert-info" description="PLG_TASK_J2COMMERCEPRIVACY_HELP_NOTE"/>
+            </fieldset>
+            <fieldset name="help" label="PLG_TASK_J2COMMERCEPRIVACY_HELP_TAB">
+                <field name="helppage" type="helppage" hiddenLabel="true">
+                    <section title="PLG_TASK_J2COMMERCEPRIVACY_HELP_WHAT_TITLE">
+                        <p>PLG_TASK_J2COMMERCEPRIVACY_HELP_WHAT_P1</p>
+                        <ul>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_WHAT_LI1</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_WHAT_LI2</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_WHAT_LI3</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_WHAT_LI4</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_WHAT_LI5</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_WHAT_LI6</li>
+                        </ul>
+                        <p>PLG_TASK_J2COMMERCEPRIVACY_HELP_WHAT_P2</p>
+                    </section>
+                    <section title="PLG_TASK_J2COMMERCEPRIVACY_HELP_SETTINGS_TITLE">
+                        <p>PLG_TASK_J2COMMERCEPRIVACY_HELP_SETTINGS_P1</p>
+                        <ul>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_SETTINGS_LI1</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_SETTINGS_LI2</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_SETTINGS_LI3</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_SETTINGS_LI4</li>
+                        </ul>
+                        <p>PLG_TASK_J2COMMERCEPRIVACY_HELP_SETTINGS_P2</p>
+                    </section>
+                    <section title="PLG_TASK_J2COMMERCEPRIVACY_HELP_SETUP_TITLE">
+                        <ol>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_SETUP_STEP1</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_SETUP_STEP2</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_SETUP_STEP3</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_SETUP_STEP4</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_SETUP_STEP5</li>
+                        </ol>
+                        <note>PLG_TASK_J2COMMERCEPRIVACY_HELP_SETUP_NOTE1</note>
+                    </section>
+                    <section title="PLG_TASK_J2COMMERCEPRIVACY_HELP_INSTALL_TITLE">
+                        <ul>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_INSTALL_LI1</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_INSTALL_LI2</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_INSTALL_LI3</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_INSTALL_LI4</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_TASK_J2COMMERCEPRIVACY_HELP_PROBLEMS_TITLE">
+                        <ul>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_PROBLEMS_LI1</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_PROBLEMS_LI2</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_PROBLEMS_LI3</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_PROBLEMS_LI4</li>
+                            <li>PLG_TASK_J2COMMERCEPRIVACY_HELP_PROBLEMS_LI5</li>
+                        </ul>
+                    </section>
+                </field>
+            </fieldset>
+        </fields>
+    </config>
+
     <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
     <php_minimum>8.1</php_minimum>
 </extension>

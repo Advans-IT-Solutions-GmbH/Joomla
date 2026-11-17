@@ -91,6 +91,57 @@ try {
     $http->submit('eventtype', $event);
     $edited = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$eventId}")->fetch_assoc();
     $check($edited && $edited['title'] === $tag . '-edited' && $edited['feed_token'] === $row['feed_token'], 'Edit preserves feed token and persists content');
+    unset($event['feed_token']);
+
+    // Close API key per event type. Synthetic dummy values only; no real credential is ever used.
+    $closeKey = 'api_SyntheticSuiteKey0123456789.DummyOnlyQrSt';
+    $otherKey = 'api_SyntheticSuiteKey9876543210.DummyOnlyUvWx';
+    $storedKey = static fn (): ?string => $db->query("SELECT secret FROM {$prefix}appointments_close_credentials WHERE eventtype_id={$eventId}")
+        ->fetch_assoc()['secret'] ?? null;
+    // Nothing may hold the key in clear: not the event type, the options, the session, the action log or the audit rows.
+    $leaks = static function () use ($db, $prefix, $eventId): array {
+        $found = [];
+        foreach (["appointments_eventtypes WHERE id={$eventId}", "extensions WHERE element='com_appointments'", 'session', 'action_logs',
+            'appointments_audit', 'appointments_close_delivery'] as $source) {
+            $rows = $db->query("SELECT * FROM {$prefix}{$source}");
+            if ($rows !== false && str_contains(json_encode($rows->fetch_all(MYSQLI_ASSOC), JSON_INVALID_UTF8_SUBSTITUTE), 'DummyOnly')) {
+                $found[] = $source;
+            }
+        }
+        return $found;
+    };
+    $form = $http->request('/administrator/index.php?option=com_appointments&task=eventtype.edit&id=' . $eventId);
+    $check(preg_match('/<input[^>]+type="password"[^>]+name="jform\[close_api_secret\]"[^>]+value=""/', $form) === 1
+        && str_contains($form, 'all rights of the Close user it was created for') && str_contains($form, 'No key is saved for this booking page'),
+        'The edit form offers a masked, empty Close API key field with its warning about the full rights of the key');
+    $http->request('/administrator/index.php?option=com_appointments&task=eventtype.cancel&id=' . $eventId, [$http->token($form) => 1]);
+    $html = $http->submit('eventtype', $event + ['close_api_secret' => $closeKey]);
+    $sealed = $storedKey();
+    $check($sealed !== null && str_starts_with($sealed, 'v1:') && !str_contains($sealed, 'DummyOnly')
+        && !str_contains((string) base64_decode(substr($sealed, 3)), 'DummyOnly') && str_contains($html, 'The Close API key was saved encrypted.')
+        && !str_contains($html, 'DummyOnly') && $leaks() === [],
+        'The Close API key is stored encrypted, and only there');
+    $form = $http->request('/administrator/index.php?option=com_appointments&task=eventtype.edit&id=' . $eventId);
+    $check(!str_contains($form, 'DummyOnly') && !str_contains($form, $sealed) && str_contains($form, 'Saved, ends in QrSt')
+        && preg_match('/name="jform\[close_api_secret\]"[^>]+value=""/', $form) === 1 && str_contains($form, 'name="jform[close_api_secret_delete]"'),
+        'After saving, the form shows only that a key is saved and its last four characters, never the key');
+    $http->request('/administrator/index.php?option=com_appointments&task=eventtype.cancel&id=' . $eventId, [$http->token($form) => 1]);
+    $http->submit('eventtype', $event + ['close_api_secret' => '']);
+    $check($storedKey() === $sealed, 'An empty submit keeps the stored key unchanged');
+    $invalid = array_replace($event, ['duration_minutes' => 0]);
+    $html = $http->submit('eventtype', $invalid + ['close_api_secret' => $otherKey]);
+    $check($storedKey() === $sealed && !str_contains($html, 'DummyOnly') && $leaks() === [],
+        'A refused save neither stores the key nor keeps it in the session or the re-displayed form');
+    $http->request('/administrator/index.php?option=com_appointments&task=eventtype.cancel&id=' . $eventId, [$http->token($html) => 1]);
+    $http->submit('eventtype', $event + ['close_api_secret' => 'api_with:colon']);
+    $check($storedKey() === $sealed, 'A key that cannot be used for authentication is refused and the stored key is kept');
+    $html = $http->submit('eventtype', $event + ['close_api_secret' => $otherKey]);
+    $form = $http->request('/administrator/index.php?option=com_appointments&task=eventtype.edit&id=' . $eventId);
+    $check($storedKey() !== null && $storedKey() !== $sealed && str_contains($form, 'Saved, ends in UvWx') && !str_contains($form, 'DummyOnly'),
+        'Entering a new key replaces the stored one');
+    $http->request('/administrator/index.php?option=com_appointments&task=eventtype.cancel&id=' . $eventId, [$http->token($form) => 1]);
+    $html = $http->submit('eventtype', $event + ['close_api_secret_delete' => 1]);
+    $check($storedKey() === null && str_contains($html, 'The Close API key was deleted.'), 'The stored key can be deleted');
 
     $event['info_layout'] = 'bogus';
     $http->submit('eventtype', $event);
@@ -163,6 +214,7 @@ try {
 } finally {
     if ($eventId) {
         $db->query("DELETE FROM {$prefix}appointments_fields WHERE eventtype_id={$eventId}");
+        $db->query("DELETE FROM {$prefix}appointments_close_credentials WHERE eventtype_id={$eventId}");
         $db->query("DELETE FROM {$prefix}appointments_eventtypes WHERE id={$eventId}");
         $db->query("DELETE FROM {$prefix}assets WHERE name='com_appointments.eventtype.{$eventId}'");
     }

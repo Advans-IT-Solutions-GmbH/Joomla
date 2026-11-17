@@ -53,7 +53,179 @@
     </media>
 
     <config>
-        <fields name="params">
+        <fields name="params" addfieldprefix="Advans\Plugin\Privacy\J2Commerce\Field">
+            <fieldset name="basic">
+                <field name="help_note" type="note" class="alert alert-info" description="PLG_PRIVACY_J2COMMERCE_HELP_NOTE"/>
+            </fieldset>
+
+            <fieldset name="help" label="PLG_PRIVACY_J2COMMERCE_HELP_TAB">
+                <field name="helppage" type="helppage" hiddenLabel="true">
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_WHAT_TITLE">
+                        <p>PLG_PRIVACY_J2COMMERCE_HELP_WHAT_P1</p>
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_WHAT_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_WHAT_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_WHAT_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_WHAT_LI4</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_WHAT_LI5</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_WHAT_LI6</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_WHAT_LI7</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_WHAT_LI8</li>
+                        </ul>
+                        <note>PLG_PRIVACY_J2COMMERCE_HELP_WHAT_NOTE1</note>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_REQUIREMENTS_TITLE">
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_REQUIREMENTS_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_REQUIREMENTS_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_REQUIREMENTS_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_REQUIREMENTS_LI4</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_REQUIREMENTS_LI5</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_REQUIREMENTS_LI6</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_SETUP_TITLE">
+                        <ol>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETUP_STEP1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETUP_STEP2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETUP_STEP3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETUP_STEP4</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETUP_STEP5</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETUP_STEP6</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETUP_STEP7</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETUP_STEP8</li>
+                        </ol>
+                        <note>PLG_PRIVACY_J2COMMERCE_HELP_SETUP_NOTE1</note>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_OVERRIDES_TITLE">
+                        <p>PLG_PRIVACY_J2COMMERCE_HELP_OVERRIDES_P1</p>
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_OVERRIDES_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_OVERRIDES_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_OVERRIDES_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_OVERRIDES_LI4</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_OVERRIDES_LI5</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_PRIVACY_TITLE">
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_PRIVACY_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_PRIVACY_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_PRIVACY_LI3</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_RETENTION_TITLE">
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_RETENTION_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_RETENTION_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_RETENTION_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_RETENTION_LI4</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_CHECKOUT_TITLE">
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_CHECKOUT_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_CHECKOUT_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_CHECKOUT_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_CHECKOUT_LI4</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_CHECKOUT_LI5</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_CHECKOUT_LI6</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_FRONTEND_TITLE">
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_FRONTEND_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_FRONTEND_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_FRONTEND_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_FRONTEND_LI4</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_FRONTEND_LI5</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_FRONTEND_LI6</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_FRONTEND_LI7</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_NOTIFICATIONS_TITLE">
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_NOTIFICATIONS_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_NOTIFICATIONS_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_NOTIFICATIONS_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_NOTIFICATIONS_LI4</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_RETENTION_TITLE">
+                        <p>PLG_PRIVACY_J2COMMERCE_HELP_RETENTION_P1</p>
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_RETENTION_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_RETENTION_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_RETENTION_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_RETENTION_LI4</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_RETENTION_LI5</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_DATA_TITLE">
+                        <p>PLG_PRIVACY_J2COMMERCE_HELP_DATA_P1</p>
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_DATA_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_DATA_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_DATA_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_DATA_LI4</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_DATA_LI5</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_DATA_LI6</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_DATA_LI7</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_DATA_LI8</li>
+                        </ul>
+                        <note>PLG_PRIVACY_J2COMMERCE_HELP_DATA_NOTE1</note>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_LIFETIME_TITLE">
+                        <p>PLG_PRIVACY_J2COMMERCE_HELP_LIFETIME_P1</p>
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_LIFETIME_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_LIFETIME_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_LIFETIME_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_LIFETIME_LI4</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_LIFETIME_LI5</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_GUESTS_TITLE">
+                        <p>PLG_PRIVACY_J2COMMERCE_HELP_GUESTS_P1</p>
+                        <ol>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_GUESTS_STEP1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_GUESTS_STEP2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_GUESTS_STEP3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_GUESTS_STEP4</li>
+                        </ol>
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_GUESTS_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_GUESTS_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_GUESTS_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_GUESTS_LI4</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_GUESTS_LI5</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_DISABLE_TITLE">
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_DISABLE_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_DISABLE_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_DISABLE_LI3</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_PROBLEMS_TITLE">
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PROBLEMS_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PROBLEMS_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PROBLEMS_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PROBLEMS_LI4</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PROBLEMS_LI5</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PROBLEMS_LI6</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PROBLEMS_LI7</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PROBLEMS_LI8</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PROBLEMS_LI9</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PROBLEMS_LI10</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PROBLEMS_LI11</li>
+                        </ul>
+                    </section>
+                </field>
+            </fieldset>
+
             <!-- Privacy Settings -->
             <fieldset name="privacy" label="PLG_PRIVACY_J2COMMERCE_FIELDSET_PRIVACY">
                 <field

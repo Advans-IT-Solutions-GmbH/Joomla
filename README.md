@@ -178,10 +178,11 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 | `build/**`, `installer/**` | every extension workflow (the DMARC package also stages the support and verifies its assembled bundle) |
 | `tests/installer-*.php` | Infrastructure Tests: offline destination, translation, backup and approval regressions |
 | `tests/run-tests.sh` | every extension workflow (the local runners delegate here) |
-| `tests/lang-lint.php`, `tests/requirements-check.php`, `tests/deprecated-api-scan.php` | every extension workflow (job `Language Files`) |
+| `tests/lang-lint.php`, `tests/help-lint.php`, `tests/requirements-check.php`, `tests/deprecated-api-scan.php` | every extension workflow (job `Language Files`); `help-lint.php` also runs over the whole repository in Shared Path Coverage |
 | `tests/scripts/shared-test-helpers.php` | every extension workflow (loaded by the shared suites) |
 | `tests/scripts/shared-install-messages.php` | every extension workflow (installer-message suites) |
 | `tests/scripts/shared-backend-views.php` | Appointments, DMARC Reports component, Import/Export, Cleanup |
+| `tests/scripts/shared-help-pages.php` | Appointments (its bundled plugins), AJAX Forms, OSMap, Product Compare, Privacy, Privacy Requests |
 | `tests/scripts/shared-update-from-previous.php` | AJAX Forms, OSMap, Privacy (job `Update from previous release (J6)`) |
 | `tests/scripts/shared-deprecations.php`, `tests/scripts/shared-deprecation-tracer.php` | AJAX Forms, OSMap, Privacy (production-like lane) |
 | `tests/Dockerfile.template`, `tests/scripts/docker-entrypoint.sh`, `tests/scripts/install-extension.php` | nothing: templates that every extension has copied into its own `tests/` tree, read by no lane |
@@ -190,7 +191,7 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 
 **Superseded test runs are cancelled.** Every `Build & Test` workflow has a `concurrency` group of workflow plus ref with `cancel-in-progress: true`, so a new push to a pull request or branch cancels the previous run of that same ref instead of letting it finish. Runs of different pull requests never cancel each other. On `main` and for a manual run (`workflow_dispatch`) the group key is the unique run id instead, so no test run on the default branch is cancelled and no manual test run cancels another one: a dispatch is started deliberately and may carry its own inputs (the OSMap workflow takes a `j2commerce6_ref`). Release preparation has no concurrency group. Publication is serialized per extension with `cancel-in-progress: false`, so an active publication is never interrupted by a newer one; GitHub may replace an older pending run in that group.
 
-Besides the test suites, every extension workflow lints its PHP files on the minimum supported PHP 8.1 and checks its language files (`shared/tests/lang-lint.php`: Joomla INI parsing, keys and placeholders equal to en-GB, Swiss High German and French spelling checks, every key the code uses defined in every language, no unused and no assembled keys) and its declared requirements (`shared/tests/requirements-check.php`: Joomla 5.4 or later, PHP 8.1 or later). The suites always run against the newest Joomla 5.4.x and 6.x releases (official Docker images `joomla:5.4-php8.3-apache` and `joomla:6-php8.4-apache`, no pinned patch version); each job log prints the tested Joomla and PHP versions, so a failure caused by a new Joomla release is recognisable immediately.
+Besides the test suites, every extension workflow lints its PHP files on the minimum supported PHP 8.1 and checks its language files (`shared/tests/lang-lint.php`: Joomla INI parsing, keys and placeholders equal to en-GB, Swiss High German and French spelling checks, every key the code uses defined in every language, no unused and no assembled keys), its reachable help (`shared/tests/help-lint.php`, see «Help pages» below) and its declared requirements (`shared/tests/requirements-check.php`: Joomla 5.4 or later, PHP 8.1 or later). The suites always run against the newest Joomla 5.4.x and 6.x releases (official Docker images `joomla:5.4-php8.3-apache` and `joomla:6-php8.4-apache`, no pinned patch version); each job log prints the tested Joomla and PHP versions, so a failure caused by a new Joomla release is recognisable immediately.
 
 Shop-dependent workflows use *Resolve Shop Releases* (`.github/actions/resolve-shops`) to resolve the newest aligned J2Commerce 6 commit of `j2commerce/j2commerce` `main` and the latest J2Store 4 release of `j2commerce/j2cart` (download verified against its sha256 digest) once per run. Shop-free DMARC and Appointments workflows do not resolve or install a shop. AJAX Forms and Cleanup build the resolved J2Commerce 6 package once and share that artifact between jobs; each test job still creates a fresh container and retains the full suite/platform matrix. Intermediate packages expire after one day; test-log artifacts after at most three.
 
@@ -198,6 +199,22 @@ Shop-dependent workflows use *Resolve Shop Releases* (`.github/actions/resolve-s
 
 Local test prerequisites and commands: [`.claude/skills/joomla-extensions/references/testing.md`](.claude/skills/joomla-extensions/references/testing.md).
 
+## Help pages
+
+Every extension has a help page that administrators reach where they work with the extension. It explains what the extension does, how it works and what to do, in de-DE, en-GB and fr-FR.
+
+| Extension | Where the help is |
+|---|---|
+| Appointments | Component view «Help & tips» (submenu entry, toolbar Help button in every backend view) |
+| Appointments bundled plugins | Note at the top of each plugin's options and its toolbar Help button, both open «Help & tips», section «Bundled plugins» |
+| Import/Export | Component help view, toolbar Help button of the dashboard |
+| Cleanup | Component help page, toolbar Help button and link under the page heading |
+| AJAX Forms, OSMap, Product Compare, Privacy (and its bundled system and task plugins), Privacy Requests | «Help» tab in the plugin's edit screen, the first tab after Joomla's own «Plugin» tab, and a note at the top of the options that points to it |
+| DMARC Reports (component, dashboard module, task and MTA-STS plugins) | Component view «Help & tips» (submenu entry, toolbar Help button in every backend view). The module and both plugins, delivered with the component by `pkg_dmarcreports`, open it with their toolbar Help button and a note at the top of their options |
+
+A component's toolbar Help button opens its help view in Joomla's help popup (`&tmpl=component`). Joomla reads a plugin's toolbar Help button from the manifest (`<help url="LANGUAGE_KEY"/>`, the key's value is the address), so a plugin that belongs to a component points it to that component's help view. A standalone plugin has no backend page of its own that the button could open, so its help is the «Help» tab and its toolbar Help button keeps Joomla's default.
+
+`shared/tests/help-lint.php` enforces this in every extension workflow and over the whole repository: a component needs `tmpl/help/default.php`, a toolbar link to it from every file that builds a toolbar and, if it declares a submenu, a submenu entry. A plugin or module needs either its own «Help» tab (fieldset `help` with a `helppage` field, `src/Field/HelppageField.php`, identical in every plugin apart from its namespace) or `<help url>` and a note that link to the help view of its component (the component that bundles it under `plugins/`, or the component its package delivers with it). The installed checks are `shared-backend-views.php` (every component page links to the help view, which also renders in the popup) and `shared-help-pages.php` (every plugin edit screen shows its Help tab or its link, in all three languages).
 ## Languages
 
 Every extension and bundled plugin ships exactly **de-DE, en-GB and fr-FR**, with complete key

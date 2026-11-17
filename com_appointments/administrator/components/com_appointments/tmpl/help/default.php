@@ -12,7 +12,9 @@ use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
 
 $sections = [
-    'administration' => ['COM_APPOINTMENTS_HELP_ADMIN_TITLE', ['COM_APPOINTMENTS_TEAM_C_ADMINISTRATION_HELP']],
+    // Statuses and actions of the booking list and the booking details (BookingsController, BookingStore).
+    'bookings' => ['COM_APPOINTMENTS_HELP_BOOKINGS_TITLE', []],
+    'administration' =>['COM_APPOINTMENTS_HELP_ADMIN_TITLE', ['COM_APPOINTMENTS_TEAM_C_ADMINISTRATION_HELP']],
     'sharing' => ['COM_APPOINTMENTS_HELP_SHARES_TITLE', ['COM_APPOINTMENTS_HELP_SHARES_DESC']],
     'devices' => ['COM_APPOINTMENTS_HELP_DEVICES_TITLE', ['COM_APPOINTMENTS_HELP_DEVICES_DESC']],
     // What removing or blocking a device does, per «When removed or blocked».
@@ -36,7 +38,13 @@ $sections = [
         'COM_APPOINTMENTS_HELP_NOTIFY_EXTERNAL', 'COM_APPOINTMENTS_HELP_NOTIFY_ONCE', 'COM_APPOINTMENTS_HELP_NOTIFY_LANGUAGE',
         'COM_APPOINTMENTS_HELP_NOTIFY_SWITCH', 'COM_APPOINTMENTS_HELP_NOTIFY_MANDATORY',
     ]],
-    'troubleshooting' => ['COM_APPOINTMENTS_HELP_TROUBLE_TITLE', [
+    // Optional direct CRM transfer (Service/Close, CloseController, dashboard section).
+    'close' => ['COM_APPOINTMENTS_HELP_CLOSE_TITLE', []],
+    // The routines of plg_task_appointments and the tasks the installer creates (script.php).
+    'tasks' => ['COM_APPOINTMENTS_HELP_TASKS_TITLE', []],
+    // The bundled plugins link their Help button and option note to this anchor (#help-plugins).
+    'plugins' => ['COM_APPOINTMENTS_HELP_PLUGINS_TITLE', []],
+    'troubleshooting' =>['COM_APPOINTMENTS_HELP_TROUBLE_TITLE', [
         'COM_APPOINTMENTS_HELP_TROUBLE_SLOTS_DESC', 'COM_APPOINTMENTS_TEAM_B_ERROR_KEYS_LOCKED',
         'COM_APPOINTMENTS_TEAM_C_ERROR_OWNER_KEY', 'COM_APPOINTMENTS_HELP_TROUBLE_SYNC_DESC',
         'COM_APPOINTMENTS_HELP_TROUBLE_CHECKS_DESC',
@@ -91,6 +99,108 @@ $retentionLabels = [
     'COM_APPOINTMENTS_EVENTTYPE_RETENTION_DESC' => 'COM_APPOINTMENTS_EVENTTYPE_RETENTION',
     'COM_APPOINTMENTS_CONFIG_AUDIT_RETENTION_DESC' => 'COM_APPOINTMENTS_CONFIG_AUDIT_RETENTION',
 ];
+// Structured content of the sections that need sub-headings, lists or a table:
+// ['h3', key], ['p', key], ['ul', [keys]], ['ol', [keys]], ['table', [column keys], [[cell keys], ...]].
+$tasksManual = 'COM_APPOINTMENTS_HELP_TASKS_SCHEDULE_MANUAL';
+$blocks = [
+    'bookings' => [
+        ['p', 'COM_APPOINTMENTS_HELP_BOOKINGS_INTRO'],
+        ['h3', 'COM_APPOINTMENTS_HELP_BOOKINGS_STATES_TITLE'],
+        ['ul', [
+            'COM_APPOINTMENTS_HELP_BOOKINGS_STATE_PENDING', 'COM_APPOINTMENTS_HELP_BOOKINGS_STATE_CONFIRMED',
+            'COM_APPOINTMENTS_HELP_BOOKINGS_STATE_CANCELLED', 'COM_APPOINTMENTS_HELP_BOOKINGS_STATE_ERASED',
+        ]],
+        ['p', 'COM_APPOINTMENTS_HELP_BOOKINGS_STATE_FLOW'],
+        ['h3', 'COM_APPOINTMENTS_HELP_BOOKINGS_ACTIONS_TITLE'],
+        ['ul', [
+            'COM_APPOINTMENTS_HELP_BOOKINGS_ACTION_APPROVE', 'COM_APPOINTMENTS_HELP_BOOKINGS_ACTION_CANCEL',
+            'COM_APPOINTMENTS_HELP_BOOKINGS_ACTION_RESCHEDULE', 'COM_APPOINTMENTS_HELP_BOOKINGS_ACTION_RETRY',
+            'COM_APPOINTMENTS_HELP_BOOKINGS_ACTION_ICS', 'COM_APPOINTMENTS_HELP_BOOKINGS_ACTION_CSV',
+            'COM_APPOINTMENTS_HELP_BOOKINGS_ACTION_ERASE', 'COM_APPOINTMENTS_HELP_BOOKINGS_ACTION_ENCRYPT',
+        ]],
+        ['p', 'COM_APPOINTMENTS_HELP_BOOKINGS_RIGHTS'],
+        ['p', 'COM_APPOINTMENTS_HELP_BOOKINGS_MAILFAIL'],
+    ],
+    'close' => [
+        ['p', 'COM_APPOINTMENTS_HELP_CLOSE_INTRO'],
+        ['h3', 'COM_APPOINTMENTS_HELP_CLOSE_SETUP_TITLE'],
+        ['ol', [
+            'COM_APPOINTMENTS_HELP_CLOSE_SETUP_1', 'COM_APPOINTMENTS_HELP_CLOSE_SETUP_2', 'COM_APPOINTMENTS_HELP_CLOSE_SETUP_3',
+            'COM_APPOINTMENTS_HELP_CLOSE_SETUP_4', 'COM_APPOINTMENTS_HELP_CLOSE_SETUP_5',
+        ]],
+        ['p', 'COM_APPOINTMENTS_HELP_CLOSE_SETUP_INVALID'],
+        ['h3', 'COM_APPOINTMENTS_HELP_CLOSE_SENT_TITLE'],
+        ['ul', ['COM_APPOINTMENTS_HELP_CLOSE_SENT_PERSON', 'COM_APPOINTMENTS_HELP_CLOSE_SENT_BOOKING', 'COM_APPOINTMENTS_HELP_CLOSE_SENT_NEVER']],
+        ['p', 'COM_APPOINTMENTS_HELP_CLOSE_WHEN'],
+        ['p', 'COM_APPOINTMENTS_HELP_CLOSE_NOTHING_DELETED'],
+        ['p', 'COM_APPOINTMENTS_HELP_CLOSE_RETENTION'],
+        ['h3', 'COM_APPOINTMENTS_HELP_CLOSE_STATUS_TITLE'],
+        ['p', 'COM_APPOINTMENTS_HELP_CLOSE_STATUS_INTRO'],
+        ['ul', [
+            'COM_APPOINTMENTS_HELP_CLOSE_STATUS_QUEUED', 'COM_APPOINTMENTS_HELP_CLOSE_STATUS_RETRY', 'COM_APPOINTMENTS_HELP_CLOSE_STATUS_DONE',
+            'COM_APPOINTMENTS_HELP_CLOSE_STATUS_BLOCKED', 'COM_APPOINTMENTS_HELP_CLOSE_STATUS_UNCERTAIN',
+        ]],
+        ['p', 'COM_APPOINTMENTS_HELP_CLOSE_RETRY_BUTTON'],
+        ['p', 'COM_APPOINTMENTS_HELP_CLOSE_PROFILE_CHANGE'],
+        ['h3', 'COM_APPOINTMENTS_HELP_CLOSE_RECONCILE_TITLE'],
+        ['ol', [
+            'COM_APPOINTMENTS_HELP_CLOSE_RECONCILE_1', 'COM_APPOINTMENTS_HELP_CLOSE_RECONCILE_2', 'COM_APPOINTMENTS_HELP_CLOSE_RECONCILE_3',
+        ]],
+        ['p', 'COM_APPOINTMENTS_HELP_CLOSE_RECONCILE_LIMIT'],
+    ],
+    'tasks' => [
+        ['p', 'COM_APPOINTMENTS_HELP_TASKS_INTRO'],
+        ['p', 'COM_APPOINTMENTS_HELP_TASKS_INSTALL'],
+        ['p', 'COM_APPOINTMENTS_HELP_TASKS_CREATE'],
+        ['table', ['COM_APPOINTMENTS_HELP_TASKS_COL_TASK', 'COM_APPOINTMENTS_HELP_TASKS_COL_WHAT',
+            'COM_APPOINTMENTS_HELP_TASKS_COL_SCHEDULE', 'COM_APPOINTMENTS_HELP_TASKS_COL_MISSING'], [
+            ['COM_APPOINTMENTS_HELP_TASKS_REMINDERS_TASK', 'COM_APPOINTMENTS_HELP_TASKS_REMINDERS_WHAT',
+                'COM_APPOINTMENTS_HELP_TASKS_REMINDERS_SCHEDULE', 'COM_APPOINTMENTS_HELP_TASKS_REMINDERS_MISSING'],
+            ['COM_APPOINTMENTS_HELP_TASKS_RETENTION_TASK', 'COM_APPOINTMENTS_HELP_TASKS_RETENTION_WHAT',
+                'COM_APPOINTMENTS_HELP_TASKS_RETENTION_SCHEDULE', 'COM_APPOINTMENTS_HELP_TASKS_RETENTION_MISSING'],
+            ['COM_APPOINTMENTS_HELP_TASKS_CLOSE_TASK', 'COM_APPOINTMENTS_HELP_TASKS_CLOSE_WHAT',
+                'COM_APPOINTMENTS_HELP_TASKS_CLOSE_SCHEDULE', 'COM_APPOINTMENTS_HELP_TASKS_CLOSE_MISSING'],
+            ['COM_APPOINTMENTS_HELP_TASKS_TEAMRETENTION_TASK', 'COM_APPOINTMENTS_HELP_TASKS_TEAMRETENTION_WHAT',
+                'COM_APPOINTMENTS_HELP_TASKS_TEAMRETENTION_SCHEDULE', 'COM_APPOINTMENTS_HELP_TASKS_TEAMRETENTION_MISSING'],
+            ['COM_APPOINTMENTS_HELP_TASKS_TEAMCLEANUP_TASK', 'COM_APPOINTMENTS_HELP_TASKS_TEAMCLEANUP_WHAT',
+                $tasksManual, 'COM_APPOINTMENTS_HELP_TASKS_TEAMCLEANUP_MISSING'],
+            ['COM_APPOINTMENTS_HELP_TASKS_TEAMLOG_TASK', 'COM_APPOINTMENTS_HELP_TASKS_TEAMLOG_WHAT',
+                $tasksManual, 'COM_APPOINTMENTS_HELP_TASKS_TEAMLOG_MISSING'],
+            ['COM_APPOINTMENTS_HELP_TASKS_TEAMINVITATIONS_TASK', 'COM_APPOINTMENTS_HELP_TASKS_TEAMINVITATIONS_WHAT',
+                $tasksManual, 'COM_APPOINTMENTS_HELP_TASKS_TEAMINVITATIONS_MISSING'],
+        ]],
+        ['p', 'COM_APPOINTMENTS_HELP_TASKS_BATCH'],
+        ['p', 'COM_APPOINTMENTS_HELP_TASKS_CHECK'],
+    ],
+    'plugins' => [
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_INTRO'],
+        ['h3', 'COM_APPOINTMENTS_HELP_PLUGINS_PRIVACY_TITLE'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_PRIVACY_WHAT'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_PRIVACY_STATE'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_PRIVACY_OFF'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_PRIVACY_SETTINGS'],
+        ['h3', 'COM_APPOINTMENTS_HELP_PLUGINS_CONTENT_TITLE'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_CONTENT_WHAT'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_CONTENT_STATE'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_CONTENT_OFF'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_CONTENT_SETTINGS'],
+        ['h3', 'COM_APPOINTMENTS_HELP_PLUGINS_TASK_TITLE'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_TASK_WHAT'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_TASK_STATE'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_TASK_OFF'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_TASK_SETTINGS'],
+        ['h3', 'COM_APPOINTMENTS_HELP_PLUGINS_DAV_TITLE'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_DAV_WHAT'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_DAV_STATE'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_DAV_OFF'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_DAV_SETTINGS'],
+        ['h3', 'COM_APPOINTMENTS_HELP_PLUGINS_USER_TITLE'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_USER_WHAT'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_USER_STATE'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_USER_OFF'],
+        ['p', 'COM_APPOINTMENTS_HELP_PLUGINS_USER_SETTINGS'],
+    ],
+];
 ?>
 <div id="appointments-help" class="com-appointments-help">
     <p class="lead"><?php echo Text::_('COM_APPOINTMENTS_HELP_INTRO'); ?></p>
@@ -115,6 +225,42 @@ $retentionLabels = [
         <section class="card mb-4" id="help-<?php echo $id; ?>" aria-labelledby="help-<?php echo $id; ?>-heading">
             <div class="card-body">
                 <h2 class="h4" id="help-<?php echo $id; ?>-heading"><?php echo Text::_($heading); ?></h2>
+                <?php foreach ($blocks[$id] ?? [] as $block) : ?>
+                    <?php [$type, $content] = $block; ?>
+                    <?php if ($type === 'h3') : ?>
+                        <h3 class="h5"><?php echo Text::_($content); ?></h3>
+                    <?php elseif ($type === 'p') : ?>
+                        <p><?php echo Text::_($content); ?></p>
+                    <?php elseif ($type === 'ul' || $type === 'ol') : ?>
+                        <<?php echo $type; ?>>
+                            <?php foreach ($content as $item) : ?>
+                                <li class="mb-2"><?php echo Text::_($item); ?></li>
+                            <?php endforeach; ?>
+                        </<?php echo $type; ?>>
+                    <?php elseif ($type === 'table') : ?>
+                        <div class="table-responsive">
+                            <table class="table table-striped" id="help-<?php echo $id; ?>-table" aria-labelledby="help-<?php echo $id; ?>-heading">
+                                <thead>
+                                    <tr>
+                                        <?php foreach ($content as $column) : ?>
+                                            <th scope="col"><?php echo Text::_($column); ?></th>
+                                        <?php endforeach; ?>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($block[2] as $cells) : ?>
+                                        <tr>
+                                            <th scope="row"><?php echo Text::_(array_shift($cells)); ?></th>
+                                            <?php foreach ($cells as $cell) : ?>
+                                                <td><?php echo Text::_($cell); ?></td>
+                                            <?php endforeach; ?>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php endif; ?>
+                <?php endforeach; ?>
                 <?php if ($id === 'retention') : ?>
                     <p><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_INTRO'); ?></p>
                     <h3 class="h5"><?php echo Text::_('COM_APPOINTMENTS_HELP_DEL_RULES_TITLE'); ?></h3>
@@ -182,10 +328,13 @@ $retentionLabels = [
             </div>
         </section>
     <?php endforeach; ?>
-    <nav class="d-flex flex-wrap gap-2 mb-3" aria-label="<?php echo $this->escape(Text::_('COM_APPOINTMENTS_HELP_TITLE')); ?>">
-        <a class="btn btn-primary" href="<?php echo Route::_('index.php?option=com_appointments'); ?>"><?php echo Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'); ?></a>
-        <?php if ($this->canOptions) : ?>
-            <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_config&view=component&component=com_appointments'); ?>"><?php echo Text::_('JOPTIONS'); ?></a>
-        <?php endif; ?>
-    </nav>
+    <?php // In the toolbar's Help popup (tmpl=component) these links would open inside the popup. ?>
+    <?php if (!$this->popup) : ?>
+        <nav class="d-flex flex-wrap gap-2 mb-3" aria-label="<?php echo $this->escape(Text::_('COM_APPOINTMENTS_HELP_TITLE')); ?>">
+            <a class="btn btn-primary" href="<?php echo Route::_('index.php?option=com_appointments'); ?>"><?php echo Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'); ?></a>
+            <?php if ($this->canOptions) : ?>
+                <a class="btn btn-secondary" href="<?php echo Route::_('index.php?option=com_config&view=component&component=com_appointments'); ?>"><?php echo Text::_('JOPTIONS'); ?></a>
+            <?php endif; ?>
+        </nav>
+    <?php endif; ?>
 </div>

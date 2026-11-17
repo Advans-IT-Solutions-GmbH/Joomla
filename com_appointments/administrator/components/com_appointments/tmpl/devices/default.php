@@ -13,6 +13,7 @@ use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Advans\Component\Appointments\Administrator\Model\DevicesModel;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Layout\LayoutHelper;
 use Joomla\CMS\Router\Route;
 
 /** @var \Advans\Component\Appointments\Administrator\View\Devices\HtmlView $this */
@@ -27,37 +28,25 @@ $clients = \defined($labels) ? (array) \constant($labels) : [];
 <?php else : ?>
 <form action="<?php echo Route::_('index.php?option=com_appointments&view=devices'); ?>" method="post" name="adminForm" id="adminForm">
     <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_DEVICES_INTRO'); ?></p>
-    <fieldset class="row g-2 mb-3">
-        <legend><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_FILTERS'); ?></legend>
-        <div class="col-md-4">
-            <label for="filter_search"><?php echo Text::_('JSEARCH_FILTER'); ?></label>
-            <input id="filter_search" class="form-control" name="filter_search" maxlength="100" value="<?php echo $this->escape((string) $this->state->get('filter.search')); ?>">
-        </div>
-        <div class="col-md-3">
-            <label for="filter_state"><?php echo Text::_('JSTATUS'); ?></label>
-            <select id="filter_state" class="form-select" name="filter_state">
-                <option value=""><?php echo Text::_('JALL'); ?></option>
-                <?php foreach (DevicesModel::STATES as $value => $label) : ?>
-                    <option value="<?php echo (int) $value; ?>" <?php echo (string) $this->state->get('filter.state') === (string) $value ? 'selected' : ''; ?>><?php echo Text::_($label); ?></option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-        <div><button class="btn btn-primary" type="submit"><?php echo Text::_('JSEARCH_FILTER_SUBMIT'); ?></button></div>
-    </fieldset>
+    <?php echo LayoutHelper::render('joomla.searchtools.default', ['view' => $this]); ?>
     <?php if (!$this->items) : ?>
-        <p class="alert alert-info"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_DEVICES_EMPTY'); ?></p>
+        <p class="alert alert-info"><?php echo Text::_($this->activeFilters ? 'JGLOBAL_NO_MATCHING_RESULTS' : 'COM_APPOINTMENTS_TEAM_F_DEVICES_EMPTY'); ?></p>
     <?php else : ?>
+        <?php
+        $listOrder = $this->escape((string) $this->state->get('list.ordering'));
+        $listDirn = strtolower((string) $this->state->get('list.direction')) === 'asc' ? 'asc' : 'desc';
+        ?>
         <div class="table-responsive">
         <table class="table">
             <caption class="visually-hidden"><?php echo Text::_('COM_APPOINTMENTS_TEAM_DEVICES_TITLE'); ?></caption>
             <thead><tr>
                 <td><?php echo HTMLHelper::_('grid.checkall'); ?></td>
                 <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_DEVICE'); ?></th>
-                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_USER'); ?></th>
-                <th scope="col"><?php echo Text::_('JSTATUS'); ?></th>
+                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_TEAM_F_USER', 'u.name', $listDirn, $listOrder); ?></th>
+                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'JSTATUS', 'd.state', $listDirn, $listOrder); ?></th>
                 <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_REMOVAL'); ?></th>
-                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_LAST_SYNC'); ?></th>
-                <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_CREATED'); ?></th>
+                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_TEAM_F_LAST_SYNC', 'd.last_sync_utc', $listDirn, $listOrder); ?></th>
+                <th scope="col"><?php echo HTMLHelper::_('searchtools.sort', 'COM_APPOINTMENTS_TEAM_F_CREATED', 'd.created_utc', $listDirn, $listOrder); ?></th>
                 <th scope="col"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_RULE'); ?></th>
             </tr></thead>
             <tbody>

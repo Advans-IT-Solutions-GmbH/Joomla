@@ -147,6 +147,7 @@ class HtmlView extends BaseHtmlView
 
         $toolbar->linkButton('dashboard')->url('index.php?option=com_appointments')
             ->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'))->icon('icon-arrow-left');
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
 
         return parent::display($tpl);
     }

@@ -39,6 +39,10 @@ const DEP_RAISING_CALLS = ['trigger_error', 'user_error', 'trigger_deprecation',
 
 require_once __DIR__ . '/shared-test-helpers.php';
 
+// The lanes run with display_errors=Off. A fatal error of this script itself
+// would otherwise end the gate with exit code 255 and no message.
+ini_set('display_errors', 'stderr');
+
 $package   = getenv('INSTALL_MESSAGES_PACKAGE') ?: '/tmp/extension.zip';
 $logFile   = getenv('PHP_ERROR_LOG') ?: '/tmp/php-errors.log';
 $traceFile = getenv('ADVANS_DEPRECATION_TRACE') ?: '/tmp/php-deprecation-trace.log';
@@ -137,7 +141,7 @@ echo "Linted $linted PHP file(s) of the package\n";
 $own   = [];
 $other = [];
 
-foreach (file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+foreach (dep_lines($logFile) as $line) {
     if (str_contains($line, CANARY_PREFIX)) {
         continue;
     }
@@ -234,7 +238,7 @@ $other       = [];
 $deprecated  = dep_joomla_log_dir() . '/deprecated.php';
 
 if (is_file($deprecated)) {
-    foreach (file($deprecated, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+    foreach (dep_lines($deprecated) as $line) {
         if ($line[0] === '#' || str_contains($line, CANARY_PREFIX)) {
             continue;
         }
@@ -276,11 +280,60 @@ function dep_report(string $title, array $own, array $other, int &$failures): vo
 }
 
 /**
+ * The non-empty lines of a file, read one at a time. The logs of a long lane
+ * can be larger than the memory limit, so they are never loaded whole.
+ *
+ * @return iterable<string>
+ */
+function dep_lines(string $path): iterable
+{
+    $handle = @fopen($path, 'rb');
+
+    if ($handle === false) {
+        return;
+    }
+
+    try {
+        while (($line = fgets($handle)) !== false) {
+            $line = rtrim($line, "\r\n");
+
+            if ($line !== '') {
+                yield $line;
+            }
+        }
+    } finally {
+        fclose($handle);
+    }
+}
+
+/**
+ * Which of the given tokens occur in a file, read line by line.
+ *
+ * @param  string[]  $tokens
+ *
+ * @return array<string, true>
+ */
+function dep_find_tokens(string $path, array $tokens): array
+{
+    $found = [];
+
+    foreach (dep_lines($path) as $line) {
+        foreach ($tokens as $token) {
+            if (str_contains($line, $token)) {
+                $found[$token] = true;
+            }
+        }
+    }
+
+    return $found;
+}
+
+/**
  * @return iterable<array>
  */
 function dep_read_trace(string $traceFile): iterable
 {
-    foreach (file($traceFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+    foreach (dep_lines($traceFile) as $line) {
         $record = json_decode($line, true);
 
         if (is_array($record) && isset($record['message'], $record['source'])) {
@@ -618,7 +671,7 @@ function dep_canary(string $logFile, string $traceFile): array
     }
 
     clearstatcache();
-    $phpLog = (string) @file_get_contents($logFile);
+    $phpLogHits = dep_find_tokens($logFile, ["$token-cli-plain", "$token-http-plain"]);
     $trace  = [];
 
     foreach (dep_read_trace($traceFile) as $record) {
@@ -630,7 +683,7 @@ function dep_canary(string $logFile, string $traceFile): array
     foreach (['cli', 'http'] as $channel) {
         $channelFile = $channel === 'cli' ? $cliFile : $webFile;
 
-        if (!str_contains($phpLog, "$token-$channel-plain")) {
+        if (!isset($phpLogHits["$token-$channel-plain"])) {
             $failures[] = "$channel: E_USER_DEPRECATED is missing in $logFile";
         }
 
@@ -660,10 +713,10 @@ function dep_canary(string $logFile, string $traceFile): array
     }
 
     if ($appBooted) {
-        $deprecated = (string) @file_get_contents(dep_joomla_log_dir() . '/deprecated.php');
+        $deprecatedHits = dep_find_tokens(dep_joomla_log_dir() . '/deprecated.php', ["$token-http-apptrigger", "$token-http-applog"]);
 
         foreach (['apptrigger', 'applog'] as $check) {
-            if (!str_contains($deprecated, "$token-http-$check")) {
+            if (!isset($deprecatedHits["$token-http-$check"])) {
                 $failures[] = "http: '$check' is missing in Joomla's deprecated.php (log_deprecated not active)";
             }
         }

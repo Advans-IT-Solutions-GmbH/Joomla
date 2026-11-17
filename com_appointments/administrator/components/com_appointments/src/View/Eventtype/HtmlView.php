@@ -37,6 +37,7 @@ class HtmlView extends BaseHtmlView
         $toolbar->save('eventtype.save');
         $toolbar->cancel('eventtype.cancel');
         $this->setLayout('edit');
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
 
         return parent::display($tpl);
     }

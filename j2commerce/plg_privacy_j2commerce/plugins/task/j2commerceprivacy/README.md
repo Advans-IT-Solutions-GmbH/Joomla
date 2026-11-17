@@ -31,6 +31,12 @@ Parent uninstall removes this plugin and its Scheduler tasks. It does not revers
 
 ## Configuration
 
+### Help
+
+The plugin's edit screen has a **Help** tab (de-DE, en-GB, fr-FR): what each cleanup run does and leaves alone, the task settings and the retention calculation, setting up the task and its trigger, installation and disabling, and typical problems. The plugin itself has no settings; the note on the **Plugin** tab points to the help and to the parent's **Help** tab, which explains the whole function.
+
+### Task parameters
+
 | Task parameter | Default | Meaning |
 |---|---|---|
 | `retention_years` | `10` | Form range 1–30; counted from the order's fiscal-year end |

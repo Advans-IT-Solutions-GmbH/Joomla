@@ -46,6 +46,7 @@ class UninstallTest
         'appointments_close_delivery',
         'appointments_close_limits',
         'appointments_close_missed',
+        'appointments_close_credentials',
         'appointments_copy_restore',
         'appointments_privacy_scope',
         'appointments_privacy_review',

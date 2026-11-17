@@ -11,6 +11,7 @@ namespace Advans\Component\Appointments\Administrator\Model;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\AdminModel;
+use Joomla\Database\ParameterType;
 
 defined('_JEXEC') or die;
 
@@ -59,6 +60,90 @@ class FieldModel extends AdminModel
     protected function canDelete($record)
     {
         return Factory::getApplication()->getIdentity()->authorise('core.delete', $this->asset($record));
+    }
+
+    /**
+     * Drag and drop in the list reorders within the event type of the field only.
+     */
+    protected function getReorderConditions($table)
+    {
+        return [$this->getDatabase()->quoteName('eventtype_id') . ' = ' . (int) $table->eventtype_id];
+    }
+
+    /**
+     * Saves the order of dragged rows. Only fields that exist are passed on (the core method would
+     * otherwise store an empty row for an unknown id), the core method skips every field without
+     * `core.edit.state` on its event type, and afterwards each affected event type the user may
+     * change is numbered 1, 2, 3 and so on again, also when dragging produced zero or negative values.
+     *
+     * @param   int[]  $pks
+     * @param   int[]  $order
+     */
+    public function saveorder($pks = [], $order = null)
+    {
+        $table = $this->getTable();
+        $order = array_values((array) $order);
+        $keptIds = [];
+        $keptOrder = [];
+        $events = [];
+
+        foreach (array_values((array) $pks) as $i => $pk) {
+            $pk = (int) $pk;
+
+            if ($pk < 1 || !isset($order[$i]) || !$table->load($pk)) {
+                continue;
+            }
+
+            $keptIds[] = $pk;
+            $keptOrder[] = (int) $order[$i];
+            $events[(int) $table->eventtype_id] = true;
+        }
+
+        if ($keptIds === [] || !parent::saveorder($keptIds, $keptOrder)) {
+            return false;
+        }
+
+        $user = Factory::getApplication()->getIdentity();
+
+        foreach (array_keys($events) as $eventId) {
+            if ($eventId > 0 && $user->authorise('core.edit.state', 'com_appointments.eventtype.' . $eventId)) {
+                $this->renumber($eventId);
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Numbers the fields of one event type 1, 2, 3 and so on in their current order.
+     */
+    private function renumber(int $eventId): void
+    {
+        $db = $this->getDatabase();
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select($db->quoteName(['id', 'ordering']))
+            ->from($db->quoteName('#__appointments_fields'))
+            ->where($db->quoteName('eventtype_id') . ' = :eventtype')
+            ->bind(':eventtype', $eventId, ParameterType::INTEGER)
+            ->order($db->quoteName('ordering') . ' ASC')
+            ->order($db->quoteName('id') . ' ASC');
+
+        foreach ($db->setQuery($query)->loadObjectList() as $position => $row) {
+            $wanted = $position + 1;
+
+            if ((int) $row->ordering === $wanted) {
+                continue;
+            }
+
+            $id = (int) $row->id;
+            $update = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $update->update($db->quoteName('#__appointments_fields'))
+                ->set($db->quoteName('ordering') . ' = :ordering')
+                ->where($db->quoteName('id') . ' = :id')
+                ->bind(':ordering', $wanted, ParameterType::INTEGER)
+                ->bind(':id', $id, ParameterType::INTEGER);
+            $db->setQuery($update)->execute();
+        }
     }
 
     private function asset($record): string

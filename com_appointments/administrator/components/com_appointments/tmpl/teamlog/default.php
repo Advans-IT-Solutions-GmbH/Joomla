@@ -9,10 +9,10 @@
 
 defined('_JEXEC') or die;
 
-use Advans\Component\Appointments\Administrator\Helper\Team\AuditEvent;
 use Advans\Component\Appointments\Administrator\Service\Team\AuditService;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Layout\LayoutHelper;
 use Joomla\CMS\Router\Route;
 
 /** @var \Advans\Component\Appointments\Administrator\View\Teamlog\HtmlView $this */
@@ -26,25 +26,9 @@ use Joomla\CMS\Router\Route;
     <p><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_LOG_INTRO'); ?></p>
     <p><strong><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_LOG_CHECKSUM'); ?></strong>
         <code class="text-break"><?php echo $this->escape($this->checksum); ?></code></p>
-    <fieldset class="row g-2 mb-3">
-        <legend><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_FILTERS'); ?></legend>
-        <div class="col-md-4">
-            <label for="filter_event"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_LOG_EVENT'); ?></label>
-            <select id="filter_event" class="form-select" name="filter_event">
-                <option value=""><?php echo Text::_('JALL'); ?></option>
-                <?php foreach (AuditEvent::all() as $event) : ?>
-                    <option value="<?php echo $this->escape($event); ?>" <?php echo (string) $this->state->get('filter.event') === $event ? 'selected' : ''; ?>><?php echo $this->escape($event); ?></option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-        <div class="col-md-2">
-            <label for="filter_user_id"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_LOG_USER_ID'); ?></label>
-            <input id="filter_user_id" class="form-control" name="filter_user_id" inputmode="numeric" pattern="[0-9]{1,10}" maxlength="10" value="<?php echo $this->escape((string) $this->state->get('filter.user_id')); ?>">
-        </div>
-        <div><button class="btn btn-primary" type="submit"><?php echo Text::_('JSEARCH_FILTER_SUBMIT'); ?></button></div>
-    </fieldset>
+    <?php echo LayoutHelper::render('joomla.searchtools.default', ['view' => $this]); ?>
     <?php if (!$this->items) : ?>
-        <p class="alert alert-info"><?php echo Text::_('COM_APPOINTMENTS_TEAM_F_LOG_EMPTY'); ?></p>
+        <p class="alert alert-info"><?php echo Text::_($this->activeFilters ? 'JGLOBAL_NO_MATCHING_RESULTS' : 'COM_APPOINTMENTS_TEAM_F_LOG_EMPTY'); ?></p>
     <?php else : ?>
         <div class="table-responsive">
         <table class="table">

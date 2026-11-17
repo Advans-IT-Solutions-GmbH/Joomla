@@ -182,6 +182,7 @@ com_appointments/tests/scripts/
 ├── 15-administration.php    # scoped filters/exports, details/reschedule and system checks
 ├── 16-menu-routing.php      # menu item form, multilingual SEF routing ("All" and one language), mail links
 ├── 21-teamcalendars.php     # internet calendars: one runner, one part file team-<letter>-*.php per work package
+├── 22-list-filters.php      # searchtools of every administrator list: each filter narrows, ACL scope, paging, field drag order
 ├── 20-uninstall.php         # final installed-suite run: tables dropped, task plugin removed, no orphan rows
 └── upgrade-from-v1.3.0.php  # separate CI-only published v1.3.0 upgrade fixture
 ```

@@ -27,7 +27,7 @@ are positional and fed into the matching language key by `ActionPresenter::title
 | `partial_quarantine` | policy | At `p=quarantine` but `pct<100`, so quarantine is only partly exercised — raise `pct` to 100 before advancing or calling quarantine the reached target |
 | `would_be_rejected` | policy | Share of mail that would be blocked today under `p=reject` (sev 3 if ≥2%) |
 | `align_source` | alignment | An unaligned sender (IP) — fix SPF/DKIM before tightening (sev by share) |
-| `new_source` | source | A sending IP not seen before — review it |
+| `new_source` | source | A sending IP not seen before whose current-window mail partly failed DMARC — review it. A new source whose mail all passes (forwarding with the DKIM signature intact) is already authenticated and is not listed; a bundle without the `fail` figure is still flagged |
 | `pass_rate_drop` | alignment | Aligned-pass rate fell vs the previous period |
 | `dns_*` | dns | From `DnsDiagnostics` — missing/broken SPF or DMARC record (see below) |
 
@@ -83,6 +83,17 @@ report whose range begins in the latest rolling window) but never in any earlier
 spans the whole window rather than the single newest report id, because a domain commonly receives
 several overlapping reports from different organisations for the same window; a source first seen in
 a contemporaneous report from another reporter would otherwise be missed.
+
+Each new source carries its failing volume (`fail`). `newSources()` and `newSourcesAll()` both rank failing
+mail first, then volume, then address, so the top 10 is the same in the drill-down and on the dashboard and a
+failing new source is never crowded out by aligned forwarders.
+
+## Help coverage
+
+Every code the engine, `DnsDiagnostics` and `MtaStsDiagnostics` can emit has an entry in
+`HelpTopics::ACTION_GROUPS` with a `COM_DMARCREPORTS_HELP_ACTION_*` text in all three locales.
+`HelpPageTest` reads the codes from those three sources and fails when one has no help entry, so a new
+finding key also needs its help text.
 
 ## Persistence
 

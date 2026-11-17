@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
+<form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
+    <fields name="filter">
+        <field name="search" type="text" inputmode="search" label="COM_APPOINTMENTS_FILTER_SEARCH_LABEL" hint="COM_APPOINTMENTS_TEAMLOG_FILTER_SEARCH_HINT" maxlength="64" />
+        <field name="event" type="Auditevent" label="COM_APPOINTMENTS_TEAM_F_LOG_EVENT" onchange="this.form.submit();">
+            <option value="">COM_APPOINTMENTS_FILTER_SELECT_EVENT</option>
+        </field>
+        <field name="user_id" type="text" label="COM_APPOINTMENTS_TEAM_F_LOG_USER_ID" hint="COM_APPOINTMENTS_TEAM_F_LOG_USER_ID" inputmode="numeric" pattern="[0-9]{1,10}" maxlength="10" onchange="this.form.submit();" />
+        <field name="from" type="calendar" label="COM_APPOINTMENTS_FILTER_FROM_UTC" hint="COM_APPOINTMENTS_FILTER_FROM_UTC" format="%Y-%m-%d" filterformat="Y-m-d" showtime="false" translateformat="false" filter="none" onchange="this.form.submit();" />
+        <field name="to" type="calendar" label="COM_APPOINTMENTS_FILTER_TO_UTC" hint="COM_APPOINTMENTS_FILTER_TO_UTC" format="%Y-%m-%d" filterformat="Y-m-d" showtime="false" translateformat="false" filter="none" onchange="this.form.submit();" />
+    </fields>
+    <fields name="list">
+        <field name="fullordering" type="list" label="JGLOBAL_SORT_BY" default="l.id DESC" onchange="this.form.submit();" validate="options">
+            <option value="">JGLOBAL_SORT_BY</option>
+            <option value="l.id DESC">COM_APPOINTMENTS_SORT_NEWEST_FIRST</option>
+            <option value="l.id ASC">COM_APPOINTMENTS_SORT_OLDEST_FIRST</option>
+        </field>
+        <field name="limit" type="limitbox" label="JGLOBAL_LIST_LIMIT" default="25" onchange="this.form.submit();" />
+    </fields>
+</form>

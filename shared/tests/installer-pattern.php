@@ -124,6 +124,8 @@ namespace {
                     $assert(isset($files[$mirror . '/advansinstaller/SystemCheck.php']), 'Joomla 5 mirror is missing from the guarded destinations.');
                     $assert(($files[str_replace('\\', '/', $installed . '/productcompare.xml')] ?? null) === $manifestFile, 'Canonical options manifest is not guarded with the incoming manifest bytes.');
                     $assert(($files[$mirror . '/productcompare.xml'] ?? null) === $manifestFile, 'Mirrored options manifest is not guarded.');
+                    $alias = str_replace('\\', '/', (string) ($files[$mirror . '/language/en-GB/plg_j2store_productcompare.ini'] ?? ''));
+                    $assert(str_ends_with($alias, '/language/en-GB/plg_j2commerce_productcompare.ini'), 'Joomla 5 mirror lacks the plugin language under the j2store group name.');
                 }
 
                 if ($definition['type'] === 'package') {

@@ -31,7 +31,13 @@ The parent's uninstall removes the bundled child and its extension registration.
 
 ## Configuration
 
-No own parameters are declared. The enabled parent's **Show Consent Checkbox**, **Consent Required**, policy article/text and **Guest Request Confirmation** options control behaviour. With required consent, a missing/invalid cart cannot establish accepted consent.
+### Help
+
+The plugin's edit screen has a **Help** tab (de-DE, en-GB, fr-FR): what the plugin does, the parent settings it uses, installation, update and disabling, and typical problems. The note on the **Plugin** tab points to it and to the parent's **Help** tab, which explains the whole function.
+
+### Settings
+
+No own parameters are declared; the edit screen carries only the help. The enabled parent's **Show Consent Checkbox**, **Consent Required**, policy article/text and **Guest Request Confirmation** options control behaviour. With required consent, a missing/invalid cart cannot establish accepted consent.
 
 ## Usage and Permissions
 

@@ -64,6 +64,7 @@ class ComponentStructureTest
         $this->assertClass('Controller\\ImportController', 'Joomla\\CMS\\MVC\\Controller\\BaseController');
         $this->assertClass('Controller\\DisplayController', 'Joomla\\CMS\\MVC\\Controller\\BaseController');
         $this->assertClass('View\\Dashboard\\HtmlView', 'Joomla\\CMS\\MVC\\View\\HtmlView');
+        $this->assertClass('View\\Help\\HtmlView', 'Joomla\\CMS\\MVC\\View\\HtmlView');
         $this->assertClass('Extension\\J2CommerceImportExportComponent', null);
 
         // --- 2b. Declared dependencies ---
@@ -84,20 +85,32 @@ class ComponentStructureTest
                 'calls getDatabase() without Joomla\\Database\\DatabaseAwareInterface');
         }
 
-        // --- 2c. The component has exactly one view ---
+        // --- 2c. The component has exactly two views: dashboard and help ---
         // Import and export are controller tasks, not views. DisplayController
         // maps both names onto the dashboard so they no longer end in Joomla's
-        // "View not found" (HTTP 404).
-        echo "\n--- Single-view design ---\n";
+        // "View not found" (HTTP 404). The help page is a view of its own;
+        // shared-backend-views.php renders every View\<Name>\HtmlView and every
+        // tmpl/<name> folder it finds, so it covers the help view without an
+        // entry in BACKEND_VIEWS_EXTRA. Any further view class must be added
+        // here on purpose, after checking that suite covers it as well.
+        echo "\n--- View design ---\n";
         $displaySource = (string) @file_get_contents($this->basePath . '/src/Controller/DisplayController.php');
         foreach (['import', 'export'] as $feature) {
             $this->test("DisplayController answers view=$feature",
                 str_contains($displaySource, "'$feature'"),
                 'the feature name is not mapped onto the default view');
         }
-        $this->test('Only the dashboard view class is shipped',
-            count(glob($this->basePath . '/src/View/*/HtmlView.php') ?: []) === 1,
-            'a second view class needs its own coverage in shared-backend-views.php');
+        $views = array_map(
+            static fn (string $file): string => basename(dirname($file)),
+            glob($this->basePath . '/src/View/*/HtmlView.php') ?: []
+        );
+        sort($views);
+        $this->test('Only the dashboard and help view classes are shipped',
+            $views === ['Dashboard', 'Help'],
+            'found: ' . implode(', ', $views) . ' (a further view class needs its own coverage in shared-backend-views.php)');
+        $this->test('The dashboard toolbar opens the help view in the help popup',
+            str_contains((string) @file_get_contents($this->basePath . '/src/View/Dashboard/HtmlView.php'),
+                "ToolbarHelper::help('', false, 'index.php?option=com_j2commerce_importexport&view=help&tmpl=component')"));
 
         // --- 3. Controller capability assertions (more than existence) ---
         echo "\n--- Controller capabilities ---\n";
@@ -114,6 +127,7 @@ class ComponentStructureTest
         echo "\n--- Required assets ---\n";
         foreach ([
             'Dashboard template'  => '/tmpl/dashboard/default.php',
+            'Help template'       => '/tmpl/help/default.php',
             'Services provider'   => '/services/provider.php',
         ] as $name => $rel) {
             $path = $this->basePath . $rel;

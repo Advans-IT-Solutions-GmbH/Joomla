@@ -25,6 +25,22 @@
         <filename>script.php</filename>
     </files>
 
+    <config>
+        <fields name="params">
+            <fieldset name="basic">
+                <field
+                    name="help_note"
+                    type="note"
+                    description="PLG_SYSTEM_DMARCMTASTS_HELP_NOTE"
+                    class="alert alert-info"
+                    filter="unset"
+                />
+            </fieldset>
+        </fields>
+    </config>
+
+    <help key="DMARC_Reports_Help" url="PLG_SYSTEM_DMARCMTASTS_HELP_URL" />
+
     <updateservers>
         <server type="extension" name="DMARC MTA-STS Policy">https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_system_dmarcmtasts/updates/update.xml</server>
     </updateservers>

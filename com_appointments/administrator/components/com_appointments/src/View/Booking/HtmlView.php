@@ -36,6 +36,8 @@ class HtmlView extends BaseHtmlView
         $this->item = $this->getModel()->getItem();
         ToolbarHelper::title(Text::_('COM_APPOINTMENTS_BOOKINGS_DETAIL'), 'calendar');
         Toolbar::getInstance('toolbar')->linkButton('back')->url('index.php?option=com_appointments&view=bookings')->text(Text::_('JTOOLBAR_BACK'));
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
+
         if ($this->item === null) {
             return parent::display($tpl);
         }

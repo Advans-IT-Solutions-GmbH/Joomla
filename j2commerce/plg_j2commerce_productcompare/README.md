@@ -87,6 +87,17 @@ Uninstall via **System → Manage → Extensions**. The plugin creates no databa
 - **Button Text:** Custom button text (Default: "Compare")
 - **Button CSS Class:** CSS classes (Default: `btn btn-secondary`)
 
+### Help tab
+
+The plugin's edit screen (**System → Manage → Plugins → J2Commerce - Product Compare**) has a **Help** tab, the
+first tab after Joomla's own **Plugin** tab. It explains, in de-DE, en-GB and fr-FR, what the plugin does, prerequisites and setup (J2Store 4 or J2Commerce 6, where the button appears, template overrides), every setting with its default, and typical problems with what to do.
+A note at the top of the **Plugin** tab points to it.
+
+The page is described in the manifest (fieldset `help`, field type `helppage`) and rendered by
+`src/Field/HelppageField.php`; its texts are the language keys `PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_*`. Keep them in step
+with the code when a setting or a behaviour changes (`php shared/tests/help-lint.php` checks the
+structure).
+
 ## Usage
 
 ### Browser Storage and Data Handling

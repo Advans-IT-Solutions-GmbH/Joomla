@@ -13,6 +13,7 @@
     <version>1.0.0</version>
     <description>PLG_TASK_APPOINTMENTS_XML_DESCRIPTION</description>
     <namespace path="src">Advans\Plugin\Task\Appointments</namespace>
+    <help url="PLG_TASK_APPOINTMENTS_HELP_URL"/>
     <files>
         <folder plugin="appointments">services</folder>
         <folder>src</folder>
@@ -28,4 +29,16 @@
         <language tag="fr-FR">fr-FR/plg_task_appointments.ini</language>
         <language tag="fr-FR">fr-FR/plg_task_appointments.sys.ini</language>
     </languages>
+    <config>
+        <fields name="params">
+            <fieldset name="basic">
+                <field
+                    name="help_note"
+                    type="note"
+                    class="alert alert-info"
+                    description="PLG_TASK_APPOINTMENTS_HELP_NOTE"
+                />
+            </fieldset>
+        </fields>
+    </config>
 </extension>

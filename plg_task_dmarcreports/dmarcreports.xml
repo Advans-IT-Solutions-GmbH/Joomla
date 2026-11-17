@@ -26,6 +26,22 @@
         <filename>script.php</filename>
     </files>
 
+    <config>
+        <fields name="params">
+            <fieldset name="basic">
+                <field
+                    name="help_note"
+                    type="note"
+                    description="PLG_TASK_DMARCREPORTS_HELP_NOTE"
+                    class="alert alert-info"
+                    filter="unset"
+                />
+            </fieldset>
+        </fields>
+    </config>
+
+    <help key="DMARC_Reports_Help" url="PLG_TASK_DMARCREPORTS_HELP_URL" />
+
     <updateservers>
         <server type="extension" name="DMARC Reports Ingestion Task">https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_task_dmarcreports/updates/update.xml</server>
     </updateservers>

@@ -68,7 +68,8 @@ async function openEditor(page, testInfo, surface) {
     const rootTabs = page.locator(surface === 'eventtype' ? '#eventtype-tabs' : '#myTab');
     await expect(rootTabs.locator(':scope > div[role=tablist]')).toHaveCount(1);
     const paneIds = surface === 'eventtype'
-        ? ['details', 'permissions']
+        // The Close CRM tab is shown to component administrators only, which the fixture user is.
+        ? ['details', 'close', 'permissions']
         : ['general', 'attrib-advanced', 'attrib-advans_systemcheck', 'permissions'];
     await expect(rootTabs.locator(':scope > joomla-tab-element')).toHaveCount(paneIds.length);
     expect(await rootTabs.locator(':scope > joomla-tab-element').evaluateAll(panes => panes.map(pane => pane.id))).toEqual(paneIds);

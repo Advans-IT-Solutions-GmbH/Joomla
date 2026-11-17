@@ -26,9 +26,11 @@ defined('_JEXEC') or die;
  * prioritised Action Center. Recommendations are regenerated live from the
  * data on every load and merged with the persisted status (done, snoozed,
  * ignored) so the administrator's progress is preserved. The DNS/policy publish
- * guidance for MTA-STS and TLS-RPT is pure string generation and is always
- * folded in, so the main Action Center and the dashboard module surface the one
- * manual DNS/host step. Rendering the dashboard never makes an outbound call:
+ * guidance for MTA-STS and TLS-RPT is pure string generation and is folded in
+ * while live checks are off, so the main Action Center and the dashboard module
+ * surface the one manual DNS/host step; with live checks on, the drill-down and
+ * the System Check report the verified state instead. Rendering the dashboard
+ * never makes an outbound call:
  * the live DNS and MTA-STS/TLS-RPT drift lookups stay in the drill-down view
  * and the System Check, so a page that lists many domains cannot stall on a row
  * of network timeouts.
@@ -141,6 +143,15 @@ class DashboardModel extends BaseDatabaseModel
 
         $partition = $status->partition($items);
 
+        // With live checks on, the drill-down and the System Check verify the
+        // published records, so the dashboard leaves the unverified publish
+        // reminders out of its active list instead of contradicting them. Handled
+        // reminders stay in the suppressed list so they can still be reopened.
+        $partition['active'] = MtaStsDiagnostics::withoutUnverifiedReminders(
+            $partition['active'],
+            (int) $params->get('dns_diagnostics', 0) === 1
+        );
+
         $sort = static fn (array $a, array $b): int => ($b['severity'] <=> $a['severity'])
             ?: strcmp((string) $a['domain'], (string) $b['domain']);
 
@@ -151,9 +162,11 @@ class DashboardModel extends BaseDatabaseModel
     }
 
     /**
-     * The MTA-STS/TLS-RPT publish guidance for one domain, mirroring the merge
-     * the drill-down performs in {@see DetailModel::getActions()} so the main
-     * Action Center and the dashboard module surface the same publish actions.
+     * The MTA-STS/TLS-RPT publish guidance for one domain. Without live checks
+     * the main Action Center and the dashboard module surface the same publish
+     * actions as the drill-down; with live checks on, the verified state lives
+     * in the drill-down and the System Check (see
+     * {@see MtaStsDiagnostics::withoutUnverifiedReminders()}).
      * This is pure string generation: it is always network-free, so rendering a
      * dashboard that lists many domains never waits on DNS or HTTPS. The live
      * DNS and MTA-STS/TLS-RPT drift lookups are performed only in the drill-down

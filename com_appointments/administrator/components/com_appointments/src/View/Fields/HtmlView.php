@@ -22,12 +22,24 @@ class HtmlView extends BaseHtmlView
     protected $pagination;
     protected $state;
 
+    /** @var \Joomla\CMS\Form\Form|null  Searchtools filter form (read by the core layout). */
+    public $filterForm;
+
+    /** @var array  Filters with a value (read by the core layout). */
+    public $activeFilters = [];
+
+    /** Whether the rows can be dragged into a new order (sorted by the field order). */
+    protected $dragOrdering = false;
+
     public function display($tpl = null)
     {
         $model = $this->getModel();
         $this->items = $model->getItems();
         $this->pagination = $model->getPagination();
         $this->state = $model->getState();
+        $this->filterForm = $model->getFilterForm();
+        $this->activeFilters = $model->getActiveFilters();
+        $this->dragOrdering = $model->orderedByOrdering();
 
         if ($model->getErrors()) {
             throw new \RuntimeException(implode("\n", $model->getErrors()), 500);
@@ -45,6 +57,7 @@ class HtmlView extends BaseHtmlView
         $toolbar->delete('fields.delete')->message('JGLOBAL_CONFIRM_DELETE')->listCheck(true);
         $toolbar->linkButton('events')->url('index.php?option=com_appointments&view=eventtypes')->text(Text::_('COM_APPOINTMENTS_EVENTTYPES_TITLE'));
         $toolbar->linkButton('dashboard')->url('index.php?option=com_appointments')->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'));
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
 
         return parent::display($tpl);
     }

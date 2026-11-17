@@ -33,6 +33,9 @@ rests on code review. See `ingestion.md`.
 ## Unit suite (`tests/Unit/`, PHPUnit)
 
 Separate CI job, no Docker. Covers the parser, `DnsDiagnostics` and `ActionCenter` (pure logic).
+`HelpPageTest` renders `tmpl/help/default.php` per locale in a child process (`Fixtures/render-help.php`)
+and checks that every emitted Action Center code has a help entry and that the submenu, every view toolbar
+and the module/plugin edit screens link the help page.
 `DashboardLayoutTest` renders `tmpl/dashboard/default.php` in a child PHP process
 (`tests/Unit/Fixtures/render-dashboard.php`, with minimal Joomla stand-ins) and asserts that the
 Action Center status buttons sit in one `com-dmarcreports-action-controls` row below the text,

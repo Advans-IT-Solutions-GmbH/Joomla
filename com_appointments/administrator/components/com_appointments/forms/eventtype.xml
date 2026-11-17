@@ -76,6 +76,10 @@
         <field name="language" type="contentlanguage" label="JFIELD_LANGUAGE_LABEL" default="*"><option value="*">JALL</option></field>
         <field name="ordering" type="number" label="JFIELD_ORDERING_LABEL" default="0" filter="integer" />
     </fieldset>
+    <fieldset name="close" label="COM_APPOINTMENTS_CLOSE_KEY_FIELDSET">
+        <!-- Never stored in the event type: filter="unset". EventtypeController takes the value out of the request. -->
+        <field name="close_api_secret" type="closekey" label="COM_APPOINTMENTS_CLOSE_KEY_LABEL" description="COM_APPOINTMENTS_CLOSE_KEY_DESC" filter="unset" />
+    </fieldset>
     <fieldset name="permissions" label="JCONFIG_PERMISSIONS_LABEL">
         <field name="rules" type="rules" label="JCONFIG_PERMISSIONS_LABEL" filter="rules" validate="rules" component="com_appointments" section="eventtype" />
     </fieldset>
