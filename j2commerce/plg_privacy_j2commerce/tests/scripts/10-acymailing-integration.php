@@ -724,6 +724,149 @@ class AcyMailingIntegrationTest
         }
     }
 
+    /**
+     * Owner decision 2026-11-17: AcyMailing's user synchronisation creates a contact with the
+     * placeholder address when Joomla pseudonymises an account ("UserIDnremoved@email.invalid",
+     * cms_id n). Only such a contact of a pseudonymised account without list rows is deleted, by
+     * the removal request of that account and by the cleanup step; real contacts never.
+     */
+    private function testPseudonymisationPlaceholders(): void
+    {
+        echo "\n--- AcyMailing placeholder contacts of pseudonymised accounts ---\n";
+
+        $prefix = $this->getAcymPrefix();
+        $plugin = $this->createPlugin();
+
+        if ($prefix === null || $plugin === null) {
+            $this->strictSkip('placeholder contacts', 'AcyMailing tables or plugin missing');
+
+            return;
+        }
+
+        $class = \Advans\Plugin\Privacy\J2Commerce\Newsletter\AcymailingPlaceholders::class;
+        $file  = JPATH_BASE . '/plugins/privacy/j2commerce/src/Newsletter/AcymailingPlaceholders.php';
+
+        if (!class_exists($class) && is_file($file)) {
+            require_once $file;
+        }
+
+        if (!$this->test('Placeholder helper installed with the plugin', class_exists($class))) {
+            return;
+        }
+
+        $columns = array_change_key_case($this->db->getTableColumns($prefix . 'user'), CASE_LOWER);
+
+        if (!$this->test('Test schema has the AcyMailing column cms_id', isset($columns['cms_id']))) {
+            return;
+        }
+
+        $users    = [];
+        $contacts = [];
+        $created  = [];
+
+        $addUser = function (string $email) use (&$users): int {
+            $row = (object) [
+                'name' => 'Placeholder test', 'username' => 'acym-placeholder-' . bin2hex(random_bytes(5)),
+                'email' => $email, 'password' => '', 'block' => 1, 'sendEmail' => 0,
+                'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+            ];
+            $this->db->insertObject('#__users', $row, 'id');
+            $users[] = (int) $row->id;
+
+            return (int) $row->id;
+        };
+        $setUserEmail = function (int $id, string $email): void {
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = ' . $this->db->quote($email) . ' WHERE id = ' . $id)->execute();
+        };
+        $addContact = function (string $email, int $cmsId) use ($prefix, &$contacts): int {
+            $id = $this->insertSubscriber($prefix, $email, 'User ID ' . $cmsId);
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET cms_id = ' . $cmsId . ' WHERE id = ' . $id)->execute();
+            $contacts[] = $id;
+
+            return $id;
+        };
+        $exists = fn (int $id): bool => $this->countRows($prefix . 'user', 'id', $id) === 1;
+
+        try {
+            if (!in_array($prefix . 'history', $this->db->getTableList(), true)) {
+                $this->db->setQuery('CREATE TABLE ' . $this->db->quoteName($prefix . 'history')
+                    . ' (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL) ENGINE=InnoDB')->execute();
+                $created[] = $prefix . 'history';
+            }
+
+            $pseudo     = $addUser('acym-placeholder-a-' . random_int(1000, 9999) . '@example.com');
+            $pseudoList = $addUser('acym-placeholder-b-' . random_int(1000, 9999) . '@example.com');
+            $real       = $addUser('acym-placeholder-real-' . random_int(1000, 9999) . '@example.com');
+            // Joomla's pseudonymisation (plg_privacy_user) as it stores the accounts.
+            $setUserEmail($pseudo, 'UserID' . $pseudo . 'removed@email.invalid');
+            $setUserEmail($pseudoList, 'UserID' . $pseudoList . 'removed@email.invalid');
+
+            $placeholder     = $addContact('userid' . $pseudo . 'removed@email.invalid', $pseudo);
+            $this->db->setQuery('INSERT INTO ' . $this->db->quoteName($prefix . 'history') . " (user_id) VALUES ($placeholder)")->execute();
+            $withList        = $addContact('UserID' . $pseudoList . 'removed@email.invalid', $pseudoList);
+            $this->db->setQuery('INSERT IGNORE INTO ' . $this->db->quoteName($prefix . 'user_has_list')
+                . " (user_id, list_id, status, subscription_date) VALUES ($withList, 1, 0, NOW())")->execute();
+            // The account is not pseudonymised: a contact with a placeholder-like address stays.
+            $notPseudo       = $addContact('userid' . $real . 'removed@email.invalid', $real);
+            // A real contact linked to the pseudonymised account stays.
+            $realLinked      = $addContact('acym-placeholder-linked-' . random_int(1000, 9999) . '@example.com', $pseudo);
+            // The placeholder address of another pseudonymised account, linked to $pseudo.
+            $pseudoOther     = $addUser('acym-placeholder-c-' . random_int(1000, 9999) . '@example.com');
+            $setUserEmail($pseudoOther, 'UserID' . $pseudoOther . 'removed@email.invalid');
+            $mismatch        = $addContact('userid' . $pseudoOther . 'removed@email.invalid', $pseudo);
+            // An address that only starts with a placeholder address.
+            $prefixed        = $addContact('userid' . $pseudo . 'removed@email.invalid.example', $pseudo);
+            // A longer address that contains the placeholder address.
+            $longer          = $addContact('xuserid' . $pseudo . 'removed@email.invalid', $pseudo);
+
+            $helper = new $class($this->db);
+            $scoped = $helper->remove([$real]);
+            $this->test('Scoped to another account: nothing removed', $scoped['removed'] === 0 && $exists($placeholder), json_encode($scoped));
+
+            // The removal request of the pseudonymised account deletes its placeholder at once.
+            $method = new \ReflectionMethod($plugin, 'processRequestConsents');
+            $method->setAccessible(true);
+            $method->invoke($plugin, $pseudo, [], []);
+            $this->test('Removal request: the placeholder contact of the pseudonymised account is deleted', !$exists($placeholder));
+            $this->test('Removal request: the history rows of the placeholder are deleted', $this->countRows($prefix . 'history', 'user_id', $placeholder) === 0);
+            $this->test('Removal request: a real contact linked to the account is kept', $exists($realLinked));
+            $this->test('Removal request: a longer address containing the placeholder is kept', $exists($longer));
+
+            $all = $helper->remove();
+            $this->test('Cleanup: placeholder with a list row is kept and counted', $exists($withList) && $all['kept'] >= 1, json_encode($all));
+            $this->test('Cleanup: placeholder-like address of an account that is not pseudonymised is kept', $exists($notPseudo));
+            $this->test('Cleanup: placeholder address of another account ID is kept', $exists($mismatch));
+            $this->test('Cleanup: an address that only starts with a placeholder address is kept', $exists($prefixed));
+            $this->test('Cleanup: real contacts are kept', $exists($realLinked) && (int) $this->db->setQuery(
+                'SELECT COUNT(*) FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE email = ' . $this->db->quote(self::TEST_EMAIL)
+            )->loadResult() === 1);
+
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user_has_list') . ' WHERE user_id = ' . $withList)->execute();
+            $again = $helper->remove();
+            $this->test('Cleanup: the placeholder is deleted once its list rows are gone', !$exists($withList) && $again['removed'] === 1, json_encode($again));
+        } catch (\Throwable $e) {
+            $this->test('placeholder contacts ran without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            foreach ($contacts as $id) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user_has_list') . ' WHERE user_id = ' . (int) $id)->execute();
+
+                if (in_array($prefix . 'history', $this->db->getTableList(), true)) {
+                    $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'history') . ' WHERE user_id = ' . (int) $id)->execute();
+                }
+
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . (int) $id)->execute();
+            }
+
+            foreach ($users as $id) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . (int) $id)->execute();
+            }
+
+            foreach ($created as $table) {
+                $this->db->setQuery('DROP TABLE IF EXISTS ' . $this->db->quoteName($table))->execute();
+            }
+        }
+    }
+
     private function testGracefulSkip(): void
     {
         echo "\n--- Without AcyMailing ---\n";
@@ -795,6 +938,7 @@ class AcyMailingIntegrationTest
         $this->testRemovalAfterPseudonymisation();
         $this->testExportBothAddresses();
         $this->testCollationPairs();
+        $this->testPseudonymisationPlaceholders();
         $this->testGracefulSkip();
 
         echo "\n=== AcyMailing Integration Test Summary ===\n";

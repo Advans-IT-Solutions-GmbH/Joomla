@@ -12,6 +12,7 @@ namespace Advans\Plugin\Task\J2CommercePrivacy\Extension;
 defined('_JEXEC') or die;
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
+use Advans\Plugin\Privacy\J2Commerce\Newsletter\AcymailingPlaceholders;
 use Advans\Plugin\Privacy\J2Commerce\Retention\LifetimeLicenses;
 use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
 use Advans\Plugin\Privacy\J2Commerce\Security\ConfirmAttempts;
@@ -248,17 +249,33 @@ final class J2CommercePrivacy extends CMSPlugin implements SubscriberInterface
                 }
 
                 try {
-                    // Consents belong to J2Commerce 6 orders: only those tables decide whether the
-                    // order still exists with personal data.
+                    // Checkout consents belong to J2Commerce 6 orders: only those tables decide
+                    // whether the order still exists with personal data. Checkout newsletter
+                    // consents may name an order of any data set: they keep their evidence while
+                    // the order exists with personal data in one of them.
                     if (\in_array('#__j2commerce_orders', $orderTables, true)) {
-                        $stale = $repository->removeStaleEvidence($cutoffDate, ['#__j2commerce_orders']);
-                        $this->logTask("IP address and user agent removed from {$stale} consent record(s) without a current order");
+                        $stale = $repository->removeStaleEvidence($cutoffDate, ['#__j2commerce_orders'], $orderTables);
                     } else {
                         $this->logTask('No J2Commerce 6 tables: no checkout consent records to check');
+                        $stale = $orderTables === [] ? 0 : $repository->removeStaleNewsletterEvidence($cutoffDate, $orderTables);
                     }
+
+                    $this->logTask("IP address and user agent removed from {$stale} consent record(s) without a current order");
                 } catch (\Throwable $e) {
                     $otherErrors++;
                     $this->logTask('Error removing consent evidence: ' . $e->getMessage(), 'error');
+                }
+            }
+
+            // AcyMailing contacts created only by Joomla's pseudonymisation of an account (placeholder
+            // address, no list rows); real contacts are never touched.
+            if ($this->loadPrivacyClass(AcymailingPlaceholders::class, '/Newsletter/AcymailingPlaceholders.php')) {
+                try {
+                    $placeholders = (new AcymailingPlaceholders($db))->remove();
+                    $this->logTask("AcyMailing placeholder contacts of pseudonymised accounts removed: {$placeholders['removed']}, kept because of list rows: {$placeholders['kept']}");
+                } catch (\Throwable $e) {
+                    $otherErrors++;
+                    $this->logTask('AcyMailing placeholder contacts not removed: ' . $e->getMessage(), 'error');
                 }
             }
 

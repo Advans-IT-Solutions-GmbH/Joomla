@@ -1198,6 +1198,322 @@ class DataIsolationTest
         }
     }
 
+    /** Insert a consent record of any kind; returns its ID. */
+    private function insertKindRecord(int $userId, string $subject, string $body, int $state = 1, ?string $created = null): int
+    {
+        $row = (object) [
+            'user_id' => $userId,
+            'state'   => $state,
+            'created' => $created ?? gmdate('Y-m-d H:i:s', strtotime('-3 days')),
+            'subject' => $subject,
+            'body'    => $body,
+            'remind'  => 0,
+            'token'   => '',
+        ];
+        $this->db->insertObject('#__privacy_consents', $row, 'id');
+
+        return (int) $row->id;
+    }
+
+    /** Body of a newsletter form record of the site template (current kind). */
+    private static function kindFormBody(string $email, string $shown = 'I would like to receive the newsletter.'): string
+    {
+        $lines = [
+            'Einwilligung: Newsletter, Formular «Newsletter» im Kopfbereich der Website.',
+            'Listen: 1',
+            'Sprache: de-DE',
+            'Angezeigter Text: ' . $shown,
+            'E-Mail-Adresse: ' . $email,
+            'IP-Adresse: 198.51.100.40',
+            'Browserkennung: KindsAgent/1.0',
+        ];
+
+        return implode("\n", array_map(static fn (string $line): string => htmlspecialchars($line, ENT_QUOTES, 'UTF-8'), $lines))
+            . "\n<!-- advans-newsletter-consent -->\n<!-- advans-newsletter-form -->";
+    }
+
+    /** Body of an old header-form record (written with Joomla's registration subject). */
+    private static function kindOldFormBody(string $email): string
+    {
+        return '<p>Newsletter subscription consent</p><p>Email: ' . htmlspecialchars($email, ENT_QUOTES, 'UTF-8')
+            . '</p><p>IP: 198.51.100.41</p><p>User-Agent: KindsAgent/1.0</p>';
+    }
+
+    /** Body of a checkout newsletter consent of an order. */
+    private static function kindCheckoutNewsletterBody(string $orderId, string $ip): string
+    {
+        return implode("\n", [
+            'Einwilligung: Newsletter, im Bestellablauf erteilt.',
+            'Bestellung: ' . $orderId,
+            'Listen: 1',
+            'IP-Adresse: ' . $ip,
+            'Browserkennung: KindsAgent/1.0',
+        ]) . "\n<!-- advans-newsletter-consent -->\n<!-- advans-newsletter-lists:1 -->\n<!-- advans-newsletter-order:" . $orderId . ' -->';
+    }
+
+    /** state and body of a consent record. */
+    private function kindRecord(int $id): object
+    {
+        return $this->db->setQuery('SELECT state, subject, body FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE id = ' . $id)->loadObject()
+            ?: (object) ['state' => null, 'subject' => null, 'body' => ''];
+    }
+
+    /**
+     * Owner decision 2026-11-17: every kind of #__privacy_consents row a privacy request meets, for
+     * export and removal, guest and account, inside and after the retention period of the order,
+     * and rows of other people that must never be touched:
+     * (1) Joomla registration consents of the account, (1b) old header-form newsletter records
+     * (registration subject, user_id 0, e-mail in the body), the newsletter form kind, (2) checkout
+     * consents (covered by testGuestRequests()) and (3) checkout newsletter consents.
+     */
+    private function testConsentKinds(): void
+    {
+        echo "\n--- Consent kinds: export and removal of registration, newsletter form and checkout newsletter consents ---\n";
+
+        if (!class_exists('GuestRequestTestPlugin')) {
+            $this->test('Plugin class loadable for the consent kinds', false);
+            return;
+        }
+
+        $suffix   = (string) time() . random_int(100, 999);
+        $guest    = 'kinds.guest.' . $suffix . '@example.com';
+        $other    = 'kinds.other.' . $suffix . '@example.com';
+        $account  = 'kinds.account.' . $suffix . '@example.com';
+        $expired  = gmdate('Y-m-d H:i:s', strtotime('-12 years'));
+        $recent   = gmdate('Y-m-d H:i:s', strtotime('-1 year'));
+        $isJ6     = $this->tp === 'j2commerce';
+        $orders   = [];
+        $ids      = [];
+        $core     = 'PLG_SYSTEM_PRIVACYCONSENT_SUBJECT';
+        $accountId      = 9921;
+        $otherAccountId = 9922;
+
+        try {
+            $orders['guest_expired']   = $this->insertGuestTestOrder('KIND-GEX-' . $suffix, 0, $guest, $expired, 'Kira');
+            $orders['guest_recent']    = $this->insertGuestTestOrder('KIND-GRE-' . $suffix, 0, strtoupper($guest), $recent, 'Kira');
+            $orders['other_expired']   = $this->insertGuestTestOrder('KIND-OEX-' . $suffix, 0, $other, $expired, 'Otto');
+            $orders['account_recent']  = $this->insertGuestTestOrder('KIND-ARE-' . $suffix, $accountId, $account, $recent, 'Alma');
+            $orders['account_guest']   = $this->insertGuestTestOrder('KIND-AGU-' . $suffix, 0, $account, $recent, 'Alma');
+
+            // (1) registration consents: of the account and of another account.
+            $ids['k1_account']       = $this->insertKindRecord($accountId, $core, '<p>IP Address: 198.51.100.50</p><p>Browser: KindsAgent/1.0</p>');
+            $ids['k1_other_account'] = $this->insertKindRecord($otherAccountId, $core, '<p>IP Address: 198.51.100.51</p><p>Browser: KindsAgent/1.0</p>');
+            // (1b) old header-form records.
+            $ids['k1b_guest']        = $this->insertKindRecord(0, $core, self::kindOldFormBody(strtoupper($guest)));
+            $ids['k1b_other']        = $this->insertKindRecord(0, $core, self::kindOldFormBody($other));
+            $ids['k1b_similar']      = $this->insertKindRecord(0, $core, self::kindOldFormBody('my' . $guest));
+            $ids['k1b_account']      = $this->insertKindRecord(0, $core, self::kindOldFormBody($account));
+            // Form kind.
+            $ids['form_guest']       = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Formular', self::kindFormBody($guest), 1, gmdate('Y-m-d H:i:s', strtotime('-11 years')));
+            $ids['form_text_only']   = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Formular', self::kindFormBody($other, 'Questions: ' . $guest));
+            $ids['form_apostrophe']  = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Formular', self::kindFormBody("o'" . $guest));
+            $ids['form_account']     = $this->insertKindRecord($accountId, 'Newsletter-Einwilligung im Formular', self::kindFormBody('someone.else.' . $suffix . '@example.com'));
+            $ids['form_other_acct']  = $this->insertKindRecord($otherAccountId, 'Newsletter-Einwilligung im Formular', self::kindFormBody($guest));
+            // (3) checkout newsletter consents.
+            $ids['k3_guest_expired'] = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['guest_expired'], '203.0.113.80'), 1, $expired);
+            $ids['k3_guest_recent']  = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['guest_recent'], '203.0.113.81'), 1, $recent);
+            $ids['k3_other']         = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['other_expired'], '203.0.113.82'), 1, $expired);
+            $ids['k3_account']       = $this->insertKindRecord($accountId, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['account_recent'], '203.0.113.83'), 1, $recent);
+            $ids['k3_account_guest'] = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['account_guest'], '203.0.113.84'), 1, $recent);
+            // A row of another writer that mentions the guest address: never touched.
+            $ids['unrelated']        = $this->insertKindRecord(0, 'SOME_OTHER_EXTENSION_SUBJECT', '<p>Email: ' . $guest . '</p><p>IP: 198.51.100.99</p>');
+
+            $before = array_map(fn (int $id): object => $this->kindRecord($id), $ids);
+
+            $plugin = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['retention_years' => 10])]) extends GuestRequestTestPlugin {
+                protected function reportRetainedOrders(array $retained, array $lifetime, string $customerEmail, string $languageTag): void
+                {
+                }
+            };
+            $plugin->setDatabase($this->db);
+
+            // --- Guest export ---
+            $event = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', [
+                'subject' => $this->guestTestRequest('  ' . strtoupper($guest) . ' '),
+                'user'    => null,
+            ]);
+            $plugin->onPrivacyExportRequest($event);
+            $domains = array_merge(...array_values(array_filter($event->getArgument('result', []) ?? [], 'is_array')));
+            $items   = $this->guestTestDomainItems($domains, 'newsletter_consents');
+            sort($items);
+            $wanted  = [(string) $ids['k1b_guest'], (string) $ids['form_guest']];
+
+            if ($isJ6) {
+                array_push($wanted, (string) $ids['k3_guest_expired'], (string) $ids['k3_guest_recent']);
+            }
+
+            sort($wanted);
+            $this->test('Guest export: old header-form and form records with the guest address' . ($isJ6 ? ' and the checkout newsletter consents of the guest orders' : '') . ', nothing else',
+                $items === $wanted, json_encode([$items, $wanted]));
+            $sources = $this->guestTestDomainValues($domains, 'newsletter_consents', 'source');
+            sort($sources);
+            $this->test('Guest export: each record names its source (form or checkout)',
+                $sources === ($isJ6 ? ['checkout', 'checkout', 'form', 'form'] : ['form', 'form']), json_encode($sources));
+            $this->test('Guest export: the exported form record contains the subscriber address and evidence',
+                in_array(true, array_map(fn ($v) => str_contains($v, 'E-Mail-Adresse: ' . $guest) && str_contains($v, '198.51.100.40'),
+                    $this->guestTestDomainValues($domains, 'newsletter_consents', 'consent')), true));
+
+            // --- Account export: account rows come from Joomla's consent plugin, not twice ---
+            $user           = new \Joomla\CMS\User\User();
+            $user->id       = $accountId;
+            $user->username = 'kinds-account-' . $suffix;
+            $user->email    = $account;
+            $accountItems   = $this->guestTestDomainItems($plugin->call('collectExportDomains', $user, $account), 'newsletter_consents');
+            sort($accountItems);
+            $accountWanted  = [(string) $ids['k1b_account']];
+
+            if ($isJ6) {
+                $accountWanted[] = (string) $ids['k3_account_guest'];
+            }
+
+            sort($accountWanted);
+            $this->test('Account export: guest records with the account address' . ($isJ6 ? ' and of its earlier guest order' : '') . ', no record with the account user_id (Joomla exports those)',
+                $accountItems === $accountWanted, json_encode([$accountItems, $accountWanted]));
+
+            // --- Guest removal ---
+            $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest(strtoupper($guest)),
+                'user'    => null,
+            ]));
+
+            foreach (['k1b_guest' => 'old header-form record', 'form_guest' => 'form record (older than the retention period)'] as $key => $label) {
+                $row = $this->kindRecord($ids[$key]);
+                $this->test("Guest removal: $label anonymized at once (state -1, no address, IP or user agent)",
+                    (int) $row->state === -1 && str_contains($row->body, '<!-- j2commerce-consent-erased -->')
+                    && stripos($row->body, $guest) === false && !str_contains($row->body, '198.51.100.4') && !str_contains($row->body, 'KindsAgent')
+                    && $row->subject === $before[$key]->subject, json_encode($row));
+            }
+
+            foreach (['k1b_other' => 'old header-form record of another address', 'k1b_similar' => 'old header-form record of a longer address',
+                'form_text_only' => 'form record naming the address only in the displayed text', 'form_apostrophe' => "form record of an address with an apostrophe prefix",
+                'form_other_acct' => 'form record of another account naming the guest address', 'k1_other_account' => 'registration consent of another account',
+                'k1_account' => 'registration consent of an account (guest request)', 'form_account' => 'form record of an account (guest request)',
+                'k3_other' => 'checkout newsletter consent of another guest', 'k3_account' => 'checkout newsletter consent of an account',
+                'unrelated' => 'record of another extension naming the guest address'] as $key => $label) {
+                $row = $this->kindRecord($ids[$key]);
+                $this->test("Guest removal: $label untouched",
+                    $row->body === $before[$key]->body && (int) $row->state === (int) $before[$key]->state && $row->subject === $before[$key]->subject, json_encode($row));
+            }
+
+            $expiredK3 = $this->kindRecord($ids['k3_guest_expired']);
+            $recentK3  = $this->kindRecord($ids['k3_guest_recent']);
+
+            if ($isJ6) {
+                $this->test('Guest removal: checkout newsletter consent of the anonymized order is invalid and has no IP address or user agent',
+                    (int) $expiredK3->state === -1 && !str_contains($expiredK3->body, '203.0.113.80') && !str_contains($expiredK3->body, 'KindsAgent')
+                    && str_contains($expiredK3->body, '<!-- advans-newsletter-evidence-removed -->')
+                    && str_contains($expiredK3->body, '<!-- advans-newsletter-order:' . $orders['guest_expired'] . ' -->'), json_encode($expiredK3));
+                $this->test('Guest removal: checkout newsletter consent of the order within the retention period is invalid, IP address kept as evidence',
+                    (int) $recentK3->state === -1 && str_contains($recentK3->body, '203.0.113.81'), json_encode($recentK3));
+            } else {
+                $this->test('Guest removal (J2Store): checkout newsletter consents are J2Commerce 6 records and stay unchanged',
+                    $expiredK3->body === $before['k3_guest_expired']->body && (int) $expiredK3->state === 1
+                    && $recentK3->body === $before['k3_guest_recent']->body && (int) $recentK3->state === 1);
+            }
+
+            $exportAfter = new \Joomla\CMS\Event\Privacy\ExportRequestEvent('onPrivacyExportRequest', [
+                'subject' => $this->guestTestRequest($guest),
+                'user'    => null,
+            ]);
+            $plugin->onPrivacyExportRequest($exportAfter);
+            $afterItems = $this->guestTestDomainItems(array_merge(...array_values(array_filter($exportAfter->getArgument('result', []) ?? [], 'is_array'))), 'newsletter_consents');
+            $this->test('Export after the removal: anonymized form records no longer name the guest',
+                !in_array((string) $ids['k1b_guest'], $afterItems, true) && !in_array((string) $ids['form_guest'], $afterItems, true), json_encode($afterItems));
+
+            // --- A kept newsletter subscriber leaves the newsletter consents of the request unchanged ---
+            $keptGuest = 'kinds.kept.' . $suffix . '@example.com';
+            $ids['kept_form'] = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Formular', self::kindFormBody($keptGuest));
+            $keptPlugin = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['retention_years' => 10])]) extends GuestRequestTestPlugin {
+                protected function removeAcyMailingData(?\Joomla\CMS\User\User $user, ?array $emails = null): void
+                {
+                    $flag = new \ReflectionProperty(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class, 'newsletterKept');
+                    $flag->setAccessible(true);
+                    $flag->setValue($this, true);
+                }
+
+                protected function reportRetainedOrders(array $retained, array $lifetime, string $customerEmail, string $languageTag): void
+                {
+                }
+            };
+            $keptPlugin->setDatabase($this->db);
+            $keptBefore = $this->kindRecord($ids['kept_form']);
+            $keptPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest($keptGuest),
+                'user'    => null,
+            ]));
+            $keptAfter = $this->kindRecord($ids['kept_form']);
+            $this->test('Kept newsletter subscriber: the form record stays unchanged until the removal is carried out again',
+                $keptAfter->body === $keptBefore->body && (int) $keptAfter->state === 1, json_encode($keptAfter));
+            $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest($keptGuest),
+                'user'    => null,
+            ]));
+            $this->test('Kept newsletter subscriber: carrying out the removal again anonymizes the form record',
+                (int) $this->kindRecord($ids['kept_form'])->state === -1);
+
+            // --- Account removal ---
+            $plugin->onPrivacyCanRemoveData(null, $user);
+            $plugin->onPrivacyRemoveData(null, $user);
+
+            foreach (['k1_account' => 'registration consent of the account', 'form_account' => 'form record of the account (other subscriber address)',
+                'k1b_account' => 'old header-form guest record with the account address'] as $key => $label) {
+                $row = $this->kindRecord($ids[$key]);
+                $this->test("Account removal: $label anonymized at once",
+                    (int) $row->state === -1 && str_contains($row->body, '<!-- j2commerce-consent-erased -->')
+                    && !str_contains($row->body, '198.51.100.') && stripos($row->body, $account) === false, json_encode($row));
+            }
+
+            $accountK3 = $this->kindRecord($ids['k3_account']);
+            $this->test('Account removal: checkout newsletter consent of the account is invalid, IP address kept while the order is within the retention period',
+                (int) $accountK3->state === -1 && str_contains($accountK3->body, '203.0.113.83'), json_encode($accountK3));
+            $accountGuestK3 = $this->kindRecord($ids['k3_account_guest']);
+            $this->test('Account removal: checkout newsletter consent of the earlier guest order with the account address'
+                . ($isJ6 ? ' is invalid' : ' (J2Store: not a J2Commerce 6 order) is unchanged'),
+                (int) $accountGuestK3->state === ($isJ6 ? -1 : 1) && str_contains($accountGuestK3->body, '203.0.113.84'), json_encode($accountGuestK3));
+
+            foreach (['k1_other_account' => 'registration consent of another account', 'form_other_acct' => 'form record of another account',
+                'k3_other' => 'checkout newsletter consent of another guest', 'unrelated' => 'record of another extension'] as $key => $label) {
+                $row = $this->kindRecord($ids[$key]);
+                $this->test("Account removal: $label untouched",
+                    $row->body === $before[$key]->body && (int) $row->state === (int) $before[$key]->state, json_encode($row));
+            }
+
+            // --- After the retention period: the cleanup step removes the evidence of checkout newsletter consents ---
+            $repository = new \Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository($this->db);
+            $ordersTable = '#__' . $this->tp . '_orders';
+            $ids['k3_old_live']  = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['other_expired'], '203.0.113.90'), 1, $expired);
+            $ids['k3_missing']   = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody('KIND-MISSING-' . $suffix, '203.0.113.91'), 1, $recent);
+            $ids['k3_live']      = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['account_recent'], '203.0.113.92'), 1, $recent);
+            $cutoff = gmdate('Y-m-d H:i:s', strtotime('-10 years'));
+            $repository->removeStaleNewsletterEvidence($cutoff, [$ordersTable]);
+            $this->test('Cleanup: checkout newsletter consent outside the retention period loses IP address and user agent',
+                !str_contains($this->kindRecord($ids['k3_old_live'])->body, '203.0.113.90'));
+            $this->test('Cleanup: checkout newsletter consent of a deleted order loses IP address and user agent',
+                !str_contains($this->kindRecord($ids['k3_missing'])->body, '203.0.113.91'));
+            $this->test('Cleanup: checkout newsletter consent of an order within the retention period keeps its evidence',
+                str_contains($this->kindRecord($ids['k3_live'])->body, '203.0.113.92'));
+            $this->test('Cleanup: a second run changes nothing', $repository->removeStaleNewsletterEvidence($cutoff, [$ordersTable]) === 0);
+            $this->test('Cleanup: form and registration records are never changed by the cleanup',
+                $this->kindRecord($ids['k1_other_account'])->body === $before['k1_other_account']->body
+                && $this->kindRecord($ids['k1b_other'])->body === $before['k1b_other']->body);
+        } catch (\Throwable $e) {
+            $this->test('Consent kind tests ran without error', false, get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            $orderList = implode(',', array_map([$this->db, 'quote'], array_values($orders)));
+
+            if ($orderList !== '') {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_orderinfos') . ' WHERE order_id IN (' . $orderList . ')')->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' WHERE order_id IN (' . $orderList . ')')->execute();
+            }
+
+            $idList = implode(',', array_map('intval', array_values($ids)));
+
+            if ($idList !== '') {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__privacy_consents') . ' WHERE id IN (' . $idList . ')')->execute();
+            }
+        }
+    }
+
     /**
      * Confirmation of a privacy request without login: valid token, wrong, used and expired
      * token, a request that is not pending, another address.
@@ -2661,6 +2977,7 @@ PHP
         $this->testDeleteUserAddressIdorGuard();
         $this->testCheckRetentionPeriod();
         $this->testGuestRequests();
+        $this->testConsentKinds();
         $this->testCollationPairs();
         $this->testRequestConfirmation();
         $this->testAdminRequestMailLink();

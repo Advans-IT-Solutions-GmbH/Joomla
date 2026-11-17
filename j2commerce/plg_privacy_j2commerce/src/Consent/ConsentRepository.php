@@ -32,6 +32,11 @@ use Joomla\Database\ParameterType;
  * - state follows core semantics: 1 = valid, 0 = obsolete, -1 = invalidated. Only state 1 counts.
  * - Legacy records of an earlier template override (LEGACY_SUBJECT) are only anonymized by
  *   anonymizeLegacyConsents() (installer, removal request, cleanup task) and never counted as consent.
+ * - Records of other writers in the same table are handled for privacy requests only: Joomla's
+ *   registration consent (CORE_SUBJECT with the account's user_id), the newsletter consents of the
+ *   site template (NEWSLETTER_MARKER; the form kind and old header-form records with CORE_SUBJECT
+ *   name the subscriber's e-mail address) and checkout newsletter consents (newsletterOrderMarker()).
+ *   An address is matched only as a complete address in the subscriber's address field.
  */
 final class ConsentRepository
 {
@@ -66,8 +71,37 @@ final class ConsentRepository
     /** Marks an anonymized legacy record. */
     public const LEGACY_MARKER = '<!-- j2commerce-legacy-consent -->';
 
+    /**
+     * Marker of every newsletter consent record written by the advans site template and its
+     * J2Commerce checkout layout (language-independent; their subject is translated text). Two
+     * kinds carry it: a consent given at checkout (newsletterOrderMarker(), no e-mail address in
+     * the body, user_id of the order) and a consent given in the newsletter form of the website
+     * (NEWSLETTER_FORM_MARKER, e-mail address in the body).
+     */
+    public const NEWSLETTER_MARKER = '<!-- advans-newsletter-consent -->';
+
+    /** Marker of a newsletter consent given in the newsletter form of the website. */
+    public const NEWSLETTER_FORM_MARKER = '<!-- advans-newsletter-form -->';
+
+    /** Marker the writer of the newsletter consent records sets once IP address and user agent are gone. */
+    public const NEWSLETTER_EVIDENCE_REMOVED_MARKER = '<!-- advans-newsletter-evidence-removed -->';
+
+    /** Value written in place of the IP address and user agent of a newsletter consent record. */
+    public const NEWSLETTER_REMOVED_VALUE_KEY = 'PLG_SYSTEM_J2COMMERCEPRIVACY_NEWSLETTER_EVIDENCE_REMOVED';
+
+    /** Body of a checkout newsletter consent record whose evidence lines could not be found one by one. */
+    public const NEWSLETTER_BODY_REMOVED_KEY = 'PLG_SYSTEM_J2COMMERCEPRIVACY_NEWSLETTER_BODY_EVIDENCE_REMOVED';
+
+    /** Body language key of a consent record anonymized by a removal request (no order behind it). */
+    public const ERASED_BODY_KEY = 'PLG_SYSTEM_J2COMMERCEPRIVACY_CONSENT_BODY_ERASED';
+
+    /** Marks a consent record anonymized by a removal request. */
+    public const ERASED_MARKER = '<!-- j2commerce-consent-erased -->';
+
     /** Rows per batch in the bulk operations. */
     public const BATCH_SIZE = 200;
+
+    private const NEWSLETTER_ORDER_PREFIX = '<!-- advans-newsletter-order:';
 
     private const MARKER_PREFIX = '<!-- j2commerce-order:';
     private const MARKER_SUFFIX = ' -->';
@@ -338,6 +372,321 @@ final class ConsentRepository
         return $rows;
     }
 
+    /**
+     * The complete e-mail address tokens of the subscriber's address field of a consent body: the
+     * line "E-Mail-Adresse: …" of the newsletter form records or the paragraph "Email: …" of the
+     * old header form records (one field per line or paragraph). Other addresses in the body, for
+     * example a contact address in the displayed consent text, never count. A body without such a
+     * field has no subscriber address (fail-closed).
+     *
+     * @return  string[]  Lower case
+     */
+    public static function subscriberAddresses(string $body): array
+    {
+        $lines     = preg_split('/\R/u', (string) preg_replace('~<\s*/\s*p\s*>|<\s*br\s*/?\s*>~iu', "\n", $body)) ?: [];
+        $addresses = [];
+
+        foreach ($lines as $line) {
+            $plain = trim(html_entity_decode(strip_tags($line), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+            if (preg_match('/^(?:e-?mail(?:[- ]?(?:adresse|address))?|adresse e-?mail)\s*:/iu', $plain) !== 1) {
+                continue;
+            }
+
+            foreach (self::addressTokens($line) as $token) {
+                $addresses[$token] = true;
+            }
+        }
+
+        return array_map('strval', array_keys($addresses));
+    }
+
+    /**
+     * Whether the subscriber's address field of $body names one of the keys of $wanted (lower case).
+     *
+     * @param   array<string, mixed>  $wanted
+     */
+    private static function subscriberHasAddress(string $body, array $wanted): bool
+    {
+        foreach (self::subscriberAddresses($body) as $address) {
+            if (isset($wanted[$address])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * SQL condition: a newsletter consent of the website form (NEWSLETTER_FORM_MARKER) or an old
+     * header-form record written with Joomla's registration consent subject (CORE_SUBJECT).
+     */
+    private function formConsentCondition(): string
+    {
+        return '(' . $this->db->quoteName('subject') . ' = ' . $this->db->quote(self::CORE_SUBJECT)
+            . ' OR ' . $this->db->quoteName('body') . ' LIKE ' . $this->likeText(self::NEWSLETTER_FORM_MARKER) . ')';
+    }
+
+    /**
+     * Guest records (user_id 0) of the newsletter form of the website, current kind and old
+     * header-form kind, whose subscriber address field names one of $emails as a complete address,
+     * for a privacy export; nothing is changed. Joomla's consent plugin exports only the records
+     * of an account (user_id).
+     *
+     * @param   string[]  $emails
+     *
+     * @return  object[]  Rows with id, state, created, subject and body, ordered by ID
+     */
+    public function findNewsletterFormConsents(array $emails): array
+    {
+        $emails = self::cleanAddresses($emails);
+
+        if ($emails === []) {
+            return [];
+        }
+
+        $wanted = array_flip($emails);
+        $likes  = array_map(fn (string $email): string => $this->bodyPrefilter($email), $emails);
+        $rows   = [];
+        $lastId = 0;
+
+        do {
+            $query = $this->createQuery()
+                ->select($this->db->quoteName(['id', 'state', 'created', 'subject', 'body']))
+                ->from($this->db->quoteName('#__privacy_consents'))
+                ->where($this->formConsentCondition())
+                ->where($this->db->quoteName('user_id') . ' = 0')
+                ->where('(' . implode(' OR ', $likes) . ')')
+                ->where($this->db->quoteName('id') . ' > ' . $lastId)
+                ->order($this->db->quoteName('id') . ' ASC')
+                ->setLimit(self::BATCH_SIZE);
+
+            $batch = $this->db->setQuery($query)->loadObjectList() ?: [];
+
+            foreach ($batch as $row) {
+                $lastId = max($lastId, (int) $row->id);
+
+                if (self::subscriberHasAddress((string) $row->body, $wanted)) {
+                    $rows[] = $row;
+                }
+            }
+        } while (\count($batch) === self::BATCH_SIZE);
+
+        return $rows;
+    }
+
+    /**
+     * Marker of a checkout newsletter consent naming its order (written by the site's J2Commerce
+     * checkout layout, same character set as orderMarker()).
+     */
+    public static function newsletterOrderMarker(string $orderId): string
+    {
+        return self::NEWSLETTER_ORDER_PREFIX . $orderId . self::MARKER_SUFFIX;
+    }
+
+    /**
+     * Order number of a checkout newsletter consent, or null if the body is none: both the
+     * newsletter marker and the order marker must be present.
+     */
+    public static function extractNewsletterOrderId(string $body): ?string
+    {
+        if (!str_contains($body, self::NEWSLETTER_MARKER)
+            || preg_match('/<!-- advans-newsletter-order:([A-Za-z0-9_.\-]{1,100}) -->/', $body, $matches) !== 1) {
+            return null;
+        }
+
+        return $matches[1];
+    }
+
+    /**
+     * All checkout newsletter consent records of the given orders, in every state, with the order
+     * number as order_id. The caller decides whose orders these are.
+     *
+     * @param   string[]  $orderIds
+     *
+     * @return  object[]  Rows with id, user_id, state, created, subject, body and order_id, ordered by ID
+     */
+    public function findNewsletterOrderConsents(array $orderIds): array
+    {
+        $orderIds = array_values(array_unique(array_filter(array_map('strval', $orderIds), [self::class, 'isValidOrderId'])));
+        $rows     = [];
+
+        foreach (array_chunk($orderIds, 50) as $chunk) {
+            $wanted = array_flip($chunk);
+            $likes  = array_map(fn (string $orderId): string => $this->db->quoteName('body') . ' LIKE ' . $this->likeText(self::newsletterOrderMarker($orderId)), $chunk);
+            $query  = $this->createQuery()
+                ->select($this->db->quoteName(['id', 'user_id', 'state', 'created', 'subject', 'body']))
+                ->from($this->db->quoteName('#__privacy_consents'))
+                ->where($this->db->quoteName('body') . ' LIKE ' . $this->likeText(self::NEWSLETTER_MARKER))
+                ->where('(' . implode(' OR ', $likes) . ')')
+                ->order($this->db->quoteName('id') . ' ASC');
+
+            foreach ($this->db->setQuery($query)->loadObjectList() ?: [] as $row) {
+                $row->order_id = self::extractNewsletterOrderId((string) $row->body);
+
+                if ($row->order_id !== null && isset($wanted[$row->order_id])) {
+                    $rows[(int) $row->id] = $row;
+                }
+            }
+        }
+
+        ksort($rows);
+
+        return array_values($rows);
+    }
+
+    /**
+     * Mark the checkout newsletter consents of a removal request as invalid (state -1): those of
+     * the account ($userId) and the guest records (user_id 0) of the request's guest orders. The
+     * subscriber is gone, so the consent no longer applies. Body, IP address and user agent stay
+     * until the order is anonymized (removeOrderEvidence()) as evidence for mails already sent.
+     *
+     * @param   int       $userId    Account of the request (0: none)
+     * @param   string[]  $orderIds  Guest orders of the request (J2Commerce 6, not shared with another order)
+     *
+     * @return  int  Number of records changed
+     */
+    public function invalidateNewsletterOrderConsents(int $userId, array $orderIds): int
+    {
+        $ids = [];
+
+        foreach ($this->findNewsletterOrderConsents($orderIds) as $row) {
+            if ((int) $row->user_id === 0 && (int) $row->state !== -1) {
+                $ids[] = (int) $row->id;
+            }
+        }
+
+        if ($userId > 0) {
+            $lastId = 0;
+
+            do {
+                $batch = $this->db->setQuery(
+                    $this->createQuery()
+                        ->select($this->db->quoteName(['id', 'body']))
+                        ->from($this->db->quoteName('#__privacy_consents'))
+                        ->where($this->db->quoteName('user_id') . ' = ' . $userId)
+                        ->where($this->db->quoteName('state') . ' <> -1')
+                        ->where($this->db->quoteName('body') . ' LIKE ' . $this->likeText(self::NEWSLETTER_MARKER))
+                        ->where($this->db->quoteName('id') . ' > ' . $lastId)
+                        ->order($this->db->quoteName('id') . ' ASC')
+                        ->setLimit(self::BATCH_SIZE)
+                )->loadObjectList() ?: [];
+
+                foreach ($batch as $row) {
+                    $lastId = max($lastId, (int) $row->id);
+
+                    if (self::extractNewsletterOrderId((string) $row->body) !== null) {
+                        $ids[] = (int) $row->id;
+                    }
+                }
+            } while (\count($batch) === self::BATCH_SIZE);
+        }
+
+        $ids = array_values(array_unique($ids));
+
+        foreach (array_chunk($ids, self::BATCH_SIZE) as $chunk) {
+            $this->db->setQuery(
+                $this->createQuery()
+                    ->update($this->db->quoteName('#__privacy_consents'))
+                    ->set($this->db->quoteName('state') . ' = -1')
+                    ->whereIn($this->db->quoteName('id'), $chunk)
+            )->execute();
+        }
+
+        return \count($ids);
+    }
+
+    /**
+     * Anonymize the consent records of a removal request that are not tied to an order: Joomla's
+     * registration consents of the account (CORE_SUBJECT, user_id = $userId), the newsletter form
+     * records of the account, and the guest records (user_id 0) of the newsletter form, current
+     * and old header-form kind, whose subscriber address field names one of $emails. The body
+     * becomes a neutral note without e-mail address, IP address and user agent, the state -1
+     * (invalid); subject, user_id and time stay. Records of another account are never touched.
+     *
+     * @param   int       $userId  Account of the request (0: none)
+     * @param   string[]  $emails  Request and account addresses
+     *
+     * @return  int  Number of records anonymized
+     */
+    public function anonymizeRequestConsents(int $userId, array $emails): int
+    {
+        $emails = self::cleanAddresses($emails);
+
+        if ($userId <= 0 && $emails === []) {
+            return 0;
+        }
+
+        [$text, $tag] = self::siteText(self::loadSiteBodyLanguage(), self::ERASED_BODY_KEY);
+        $body         = $text . self::ERASED_MARKER . self::EVIDENCE_REMOVED_MARKER . self::languageMarker($tag);
+        $wanted       = array_flip($emails);
+        $scope        = $userId > 0 ? [$this->db->quoteName('user_id') . ' = ' . $userId] : [];
+
+        if ($emails !== []) {
+            $scope[] = '(' . $this->db->quoteName('user_id') . ' = 0 AND ('
+                . implode(' OR ', array_map(fn (string $email): string => $this->bodyPrefilter($email), $emails)) . '))';
+        }
+
+        $changed = 0;
+        $lastId  = 0;
+
+        do {
+            $rows = $this->db->setQuery(
+                $this->createQuery()
+                    ->select($this->db->quoteName(['id', 'user_id', 'body']))
+                    ->from($this->db->quoteName('#__privacy_consents'))
+                    ->where($this->formConsentCondition())
+                    ->where('(' . implode(' OR ', $scope) . ')')
+                    ->where($this->db->quoteName('body') . ' NOT LIKE ' . $this->likeText(self::ERASED_MARKER))
+                    ->where($this->db->quoteName('id') . ' > ' . $lastId)
+                    ->order($this->db->quoteName('id') . ' ASC')
+                    ->setLimit(self::BATCH_SIZE)
+            )->loadObjectList() ?: [];
+
+            $ids = [];
+
+            foreach ($rows as $row) {
+                $lastId = max($lastId, (int) $row->id);
+                $owner  = (int) $row->user_id;
+
+                if (($userId > 0 && $owner === $userId)
+                    || ($owner === 0 && self::subscriberHasAddress((string) $row->body, $wanted))) {
+                    $ids[] = (int) $row->id;
+                }
+            }
+
+            if ($ids !== []) {
+                $this->db->setQuery(
+                    $this->createQuery()
+                        ->update($this->db->quoteName('#__privacy_consents'))
+                        ->set($this->db->quoteName('body') . ' = :body')
+                        ->set($this->db->quoteName('state') . ' = -1')
+                        ->whereIn($this->db->quoteName('id'), $ids)
+                        ->bind(':body', $body)
+                )->execute();
+            }
+
+            $changed += \count($ids);
+        } while (\count($rows) === self::BATCH_SIZE);
+
+        return $changed;
+    }
+
+    /**
+     * Request addresses as they are compared: trimmed, lower case, without duplicates and empty values.
+     *
+     * @param   array<int, mixed>  $emails
+     *
+     * @return  string[]
+     */
+    private static function cleanAddresses(array $emails): array
+    {
+        return array_values(array_unique(array_filter(
+            array_map(static fn ($email): string => self::normaliseAddress((string) $email), $emails),
+            'strlen'
+        )));
+    }
+
     public static function isValidOrderId(string $orderId): bool
     {
         return $orderId !== '' && \strlen($orderId) <= 100 && preg_match('/^[A-Za-z0-9_.\-]+$/', $orderId) === 1;
@@ -441,13 +790,97 @@ final class ConsentRepository
      * Remove IP address and user agent from the checkout consent records of these orders (any
      * state). Called when the plugin anonymizes the orders (retention period expired, removal
      * request or cleanup task): the personal evidence is kept exactly as long as the order.
-     * The record itself (user_id, state, created, subject, order number) is kept.
+     * The record itself (user_id, state, created, subject, order number) is kept. The checkout
+     * newsletter consents of these orders lose their IP address and user agent at the same time
+     * (removeNewsletterOrderEvidence()).
      *
      * @param   string[]  $orderIds
      *
      * @return  int  Number of records changed
      */
     public function removeOrderEvidence(array $orderIds): int
+    {
+        return $this->removeCheckoutOrderEvidence($orderIds) + $this->removeNewsletterOrderEvidence($orderIds);
+    }
+
+    /**
+     * Remove IP address and user agent from the checkout newsletter consents of these orders (any
+     * state). The lines "IP-Adresse:" / "IP address:" and "Browserkennung:" / "User agent:" get the
+     * value NEWSLETTER_REMOVED_VALUE_KEY (default site language); the consent text, lists, language
+     * and policy version stay as evidence. If one of the two lines is not found the body is
+     * replaced by a neutral note with the order number (fail-closed: no unknown evidence remains).
+     *
+     * @param   string[]  $orderIds
+     *
+     * @return  int  Number of records changed
+     */
+    public function removeNewsletterOrderEvidence(array $orderIds): int
+    {
+        $changed  = 0;
+        $language = null;
+
+        foreach ($this->findNewsletterOrderConsents($orderIds) as $record) {
+            $body = (string) $record->body;
+
+            if (str_contains($body, self::NEWSLETTER_EVIDENCE_REMOVED_MARKER) || str_contains($body, self::EVIDENCE_REMOVED_MARKER)) {
+                continue;
+            }
+
+            $language ??= self::loadSiteBodyLanguage();
+            $body       = self::stripNewsletterEvidence($body, (string) $record->order_id, $language);
+            $id         = (int) $record->id;
+
+            $this->db->setQuery(
+                $this->createQuery()
+                    ->update($this->db->quoteName('#__privacy_consents'))
+                    ->set($this->db->quoteName('body') . ' = :body')
+                    ->where($this->db->quoteName('id') . ' = :id')
+                    ->bind(':body', $body)
+                    ->bind(':id', $id, ParameterType::INTEGER)
+            )->execute();
+            $changed++;
+        }
+
+        return $changed;
+    }
+
+    /**
+     * Body of a checkout newsletter consent without IP address and user agent (see
+     * removeNewsletterOrderEvidence()), marked with both evidence-removed markers so that neither
+     * this plugin nor the writer's own retention sweep changes it again.
+     */
+    public static function stripNewsletterEvidence(string $body, string $orderId, Language $language): string
+    {
+        [$removed] = self::siteText($language, self::NEWSLETTER_REMOVED_VALUE_KEY);
+        $removed   = htmlspecialchars($removed === self::NEWSLETTER_REMOVED_VALUE_KEY ? '-' : $removed, ENT_QUOTES, 'UTF-8');
+        $found   = ['ip' => 0, 'agent' => 0];
+        $result  = preg_replace_callback(
+            '~^[ \t]*(IP-Adresse|IP address|Browserkennung|User agent)[ \t]*:[^\r\n]*~mu',
+            static function (array $match) use (&$found, $removed): string {
+                $found[\in_array($match[1], ['IP-Adresse', 'IP address'], true) ? 'ip' : 'agent']++;
+
+                return $match[1] . ': ' . $removed;
+            },
+            $body
+        );
+
+        if ($result === null || $found['ip'] === 0 || $found['agent'] === 0) {
+            [$text] = self::siteText($language, self::NEWSLETTER_BODY_REMOVED_KEY);
+            $result = sprintf($text, htmlspecialchars($orderId, ENT_QUOTES, 'UTF-8'))
+                . "\n" . self::NEWSLETTER_MARKER . "\n" . self::newsletterOrderMarker($orderId);
+        }
+
+        return $result . "\n" . self::NEWSLETTER_EVIDENCE_REMOVED_MARKER . self::EVIDENCE_REMOVED_MARKER;
+    }
+
+    /**
+     * Remove IP address and user agent from the checkout consent records (SUBJECT) of these orders.
+     *
+     * @param   string[]  $orderIds
+     *
+     * @return  int  Number of records changed
+     */
+    private function removeCheckoutOrderEvidence(array $orderIds): int
     {
         $changed = 0;
 
@@ -577,9 +1010,20 @@ final class ConsentRepository
      */
     private static function legacyBody(Language $language): array
     {
-        $text = $language->_(self::LEGACY_BODY_KEY);
+        return self::siteText($language, self::LEGACY_BODY_KEY);
+    }
 
-        if ($text !== '' && $text !== self::LEGACY_BODY_KEY) {
+    /**
+     * Text of $key in $language, else in the packaged en-GB file, else the key itself, together
+     * with the tag of the language it is written in ('' for the key).
+     *
+     * @return  array{0: string, 1: string}  Text, language tag
+     */
+    private static function siteText(Language $language, string $key): array
+    {
+        $text = $language->_($key);
+
+        if ($text !== '' && $text !== $key) {
             return [$text, self::bodyLanguageTag($language)];
         }
 
@@ -587,9 +1031,9 @@ final class ConsentRepository
         $english->load('plg_system_j2commerceprivacy', JPATH_PLUGINS . '/system/j2commerceprivacy', 'en-GB', true)
             || $english->load('plg_system_j2commerceprivacy', JPATH_ADMINISTRATOR, 'en-GB', true);
 
-        $text = $english->_(self::LEGACY_BODY_KEY);
+        $text = $english->_($key);
 
-        return [$text, $text === self::LEGACY_BODY_KEY ? '' : 'en-GB'];
+        return [$text, $text === $key ? '' : 'en-GB'];
     }
 
     /**
@@ -834,12 +1278,87 @@ final class ConsentRepository
      * them: the record is older than the retention cutoff, its order no longer exists in any
      * J2Commerce data set, or the order was already anonymized.
      *
-     * @param   string    $cutoff  created <= cutoff (UTC) is outside the retention period
-     * @param   string[]  $tables  Order tables to look in (for example #__j2commerce_orders, #__j2store_orders)
+     * The checkout newsletter consents are checked the same way (removeStaleNewsletterEvidence()).
+     *
+     * @param   string         $cutoff            created <= cutoff (UTC) is outside the retention period
+     * @param   string[]       $tables            Order tables to look in (for example #__j2commerce_orders, #__j2store_orders)
+     * @param   string[]|null  $newsletterTables  Order tables for the newsletter consents (null: $tables)
      *
      * @return  int  Number of records changed
      */
-    public function removeStaleEvidence(string $cutoff, array $tables): int
+    public function removeStaleEvidence(string $cutoff, array $tables, ?array $newsletterTables = null): int
+    {
+        return $this->removeStaleCheckoutEvidence($cutoff, $tables)
+            + $this->removeStaleNewsletterEvidence($cutoff, $newsletterTables ?? $tables);
+    }
+
+    /**
+     * Remove IP address and user agent from checkout newsletter consents whose order no longer
+     * needs them: the record is older than the retention cutoff, or its order no longer exists
+     * with personal data in any of $tables.
+     *
+     * @param   string    $cutoff  created <= cutoff (UTC) is outside the retention period
+     * @param   string[]  $tables  Order tables to look in
+     *
+     * @return  int  Number of records changed
+     */
+    public function removeStaleNewsletterEvidence(string $cutoff, array $tables): int
+    {
+        $changed = 0;
+        $lastId  = 0;
+
+        do {
+            $records = $this->db->setQuery(
+                $this->createQuery()
+                    ->select($this->db->quoteName(['id', 'created', 'body']))
+                    ->from($this->db->quoteName('#__privacy_consents'))
+                    ->where($this->db->quoteName('body') . ' LIKE ' . $this->likeText(self::NEWSLETTER_MARKER))
+                    ->where($this->db->quoteName('body') . ' LIKE ' . $this->likeText(self::NEWSLETTER_ORDER_PREFIX))
+                    ->where($this->db->quoteName('body') . ' NOT LIKE ' . $this->likeText(self::NEWSLETTER_EVIDENCE_REMOVED_MARKER))
+                    ->where($this->db->quoteName('body') . ' NOT LIKE ' . $this->likeText(self::EVIDENCE_REMOVED_MARKER))
+                    ->where($this->db->quoteName('id') . ' > ' . $lastId)
+                    ->order($this->db->quoteName('id') . ' ASC')
+                    ->setLimit(self::BATCH_SIZE)
+            )->loadObjectList() ?: [];
+
+            if ($records === []) {
+                break;
+            }
+
+            $orders = [];
+
+            foreach ($records as $record) {
+                $orderId = self::extractNewsletterOrderId((string) $record->body);
+
+                if ($orderId !== null) {
+                    $orders[$orderId] = true;
+                }
+            }
+
+            $live = $this->ordersWithPersonalData(array_keys($orders), $tables);
+            $done = [];
+
+            foreach ($records as $record) {
+                $orderId = self::extractNewsletterOrderId((string) $record->body);
+
+                if ($orderId !== null && ((string) $record->created <= $cutoff || !isset($live[$orderId]))) {
+                    $done[$orderId] = true;
+                }
+            }
+
+            $changed += $this->removeNewsletterOrderEvidence(array_keys($done));
+            $lastId   = (int) end($records)->id;
+        } while (\count($records) === self::BATCH_SIZE);
+
+        return $changed;
+    }
+
+    /**
+     * removeStaleEvidence() for the checkout consent records (SUBJECT).
+     *
+     * @param   string[]  $tables
+     */
+    private function removeStaleCheckoutEvidence(string $cutoff, array $tables): int
     {
         $changed = 0;
         $lastId  = 0;
@@ -885,7 +1404,7 @@ final class ConsentRepository
                 }
             }
 
-            $changed += $this->removeOrderEvidence(array_keys($done));
+            $changed += $this->removeCheckoutOrderEvidence(array_keys($done));
             $lastId   = (int) end($records)->id;
         } while (\count($records) === self::BATCH_SIZE);
 
@@ -1051,7 +1570,13 @@ final class ConsentRepository
 
     private function likeMarker(string $orderId): string
     {
-        return $this->db->quote('%' . $this->db->escape(self::orderMarker($orderId), true) . '%', false);
+        return $this->likeText(self::orderMarker($orderId));
+    }
+
+    /** Quoted LIKE pattern: $text anywhere in the column. */
+    private function likeText(string $text): string
+    {
+        return $this->db->quote('%' . $this->db->escape($text, true) . '%', false);
     }
 
     private function ordersTable(): string

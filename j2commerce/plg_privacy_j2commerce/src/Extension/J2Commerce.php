@@ -12,6 +12,7 @@ namespace Advans\Plugin\Privacy\J2Commerce\Extension;
 defined('_JEXEC') or die;
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
+use Advans\Plugin\Privacy\J2Commerce\Newsletter\AcymailingPlaceholders;
 use Advans\Plugin\Privacy\J2Commerce\Retention\LifetimeLicenses;
 use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
 use Advans\Plugin\Privacy\J2Commerce\Security\ConfirmAttempts;
@@ -319,6 +320,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             ConfirmAttempts::class => '/../Security/ConfirmAttempts.php',
             J2CommerceStack::class => '/../Support/J2CommerceStack.php',
             ConsentRepository::class => '/../Consent/ConsentRepository.php',
+            AcymailingPlaceholders::class => '/../Newsletter/AcymailingPlaceholders.php',
         ];
 
         foreach ($classes as $class => $file) {
@@ -440,6 +442,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $legacy = $this->createLegacyGuestConsentsDomain($emails);
         if ($legacy !== null) {
             $domains[] = $legacy;
+        }
+
+        // Newsletter consents of guests (user_id 0): from the newsletter form with the request or
+        // account address, and from the checkout of the guest orders. Records of the account
+        // (user_id) are exported by Joomla's consent plugin.
+        $newsletter = $this->createNewsletterConsentsDomain($emails);
+        if ($newsletter !== null) {
+            $domains[] = $newsletter;
         }
 
         if ($user && $this->params->get('include_joomla_data', 1)) {
@@ -572,6 +582,62 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         return $domain;
     }
 
+    /**
+     * Newsletter consent records of guests (user_id 0), null if none: records of the newsletter
+     * form whose subscriber address field names one of $emails as a complete address (current
+     * kind and old header-form kind), and checkout newsletter consents of the guest orders placed
+     * with one of $emails (J2Commerce 6 orders, like the checkout consents). Every state.
+     *
+     * @param   string[]  $emails
+     */
+    protected function createNewsletterConsentsDomain(array $emails): ?Domain
+    {
+        if ($emails === []) {
+            return null;
+        }
+
+        self::loadHelperClasses();
+        $repository = new ConsentRepository($this->getDatabase());
+        $records    = [];
+
+        foreach ($repository->findNewsletterFormConsents($emails) as $record) {
+            $record->source   = 'form';
+            $record->order_id = '';
+            $records[(int) $record->id] = $record;
+        }
+
+        $orderIds = $this->guestOrderIds($emails, true);
+
+        foreach ($orderIds === [] ? [] : $repository->findNewsletterOrderConsents($orderIds) as $record) {
+            if ((int) $record->user_id === 0) {
+                $record->source = 'checkout';
+                $records[(int) $record->id] = $record;
+            }
+        }
+
+        if ($records === []) {
+            return null;
+        }
+
+        ksort($records);
+        $domain = $this->createDomain('newsletter_consents', Text::_('PLG_PRIVACY_J2COMMERCE_DOMAIN_NEWSLETTER_CONSENTS'));
+
+        foreach ($records as $id => $record) {
+            $text = trim(strip_tags(str_replace(['</p>', '<br>', '<br />', '<br/>'], "\n", (string) $record->body)));
+
+            $domain->addItem($this->createItemFromArray([
+                'source'   => (string) $record->source,
+                'order_id' => (string) $record->order_id,
+                'state'    => (int) $record->state,
+                'created'  => (string) $record->created,
+                'subject'  => Text::_((string) $record->subject),
+                'consent'  => preg_replace("/\n{2,}/", "\n", html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8')),
+            ], $id));
+        }
+
+        return $domain;
+    }
+
     // =========================================================================
     // ACYMAILING INTEGRATION
     // =========================================================================
@@ -585,31 +651,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      */
     protected function getAcymTablePrefix(): ?string
     {
-        $db = $this->getDatabase();
+        self::loadHelperClasses();
 
-        // AcyMailing always creates a table named <joomla_prefix>acym_configuration
-        // Try the standard Joomla table prefix first, then scan for any acym_configuration table.
-        $joomlaPrefix = $db->getPrefix();
-        $candidate    = $joomlaPrefix . 'acym_configuration';
-
-        try {
-            $tables = $db->getTableList();
-        } catch (\Exception $e) {
-            return null;
-        }
-
-        if (in_array($candidate, $tables, true)) {
-            return $joomlaPrefix . 'acym_';
-        }
-
-        // Fallback: scan all tables for *acym_configuration
-        foreach ($tables as $table) {
-            if (str_ends_with($table, 'acym_configuration')) {
-                return substr($table, 0, -strlen('configuration'));
-            }
-        }
-
-        return null;
+        // AcyMailing always creates a table named <joomla_prefix>acym_configuration.
+        return AcymailingPlaceholders::tablePrefix($this->getDatabase());
     }
 
     /**
@@ -1472,6 +1517,16 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             }
         }
 
+        // Guest orders of the request whose checkout newsletter consents become invalid below. Found
+        // before the orders are anonymized: anonymization replaces the e-mail they are found by.
+        $newsletterOrders = [];
+
+        try {
+            $newsletterOrders = $this->guestOrderIds($emails, true);
+        } catch (\Throwable $e) {
+            Log::add('Guest orders of the newsletter consents could not be read: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+        }
+
         // Addresses, carts and expired orders in every J2Commerce data set (a migration keeps the
         // #__j2store_* copies; personal data must not survive there).
         $this->forEachDataSet(function () use ($userId, $emails): void {
@@ -1517,10 +1572,55 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         try {
             $this->removeAcyMailingData($user, array_unique(array_filter([$requestEmail, $accountEmail])));
+            $this->processRequestConsents($userId, $emails, $newsletterOrders);
             $this->reportRetainedOrders($retained, $check['lifetime_expired'] ?? [], $customerEmail, $languageTag);
         } finally {
             $this->guestRequest   = false;
             $this->newsletterKept = false;
+        }
+    }
+
+    /**
+     * Consent records of a removal request that the order anonymization does not cover:
+     *
+     * - Joomla's registration consents of the account and the newsletter form records (account,
+     *   or guest records naming a request address in the subscriber field) are anonymized at once.
+     * - Checkout newsletter consents of the account and of the request's guest orders become
+     *   invalid (state -1); their IP address and user agent stay until the order is anonymized.
+     * - The AcyMailing placeholder contact Joomla's pseudonymisation of the account created is
+     *   deleted (AcymailingPlaceholders guards).
+     *
+     * While a newsletter subscriber of the request was kept (lookup or listener failed) the
+     * newsletter is still running, so the consent records stay unchanged: carrying out the
+     * removal again processes them together with the subscriber.
+     *
+     * @param   int       $userId            Account of the request (0: none)
+     * @param   string[]  $emails            Request and account addresses (requestEmails())
+     * @param   string[]  $newsletterOrders  Guest orders of the request (guestOrderIds(), before anonymization)
+     */
+    protected function processRequestConsents(int $userId, array $emails, array $newsletterOrders): void
+    {
+        self::loadHelperClasses();
+        $db = $this->getDatabase();
+
+        if ($this->newsletterKept) {
+            Log::add('Newsletter subscriber kept: consent records of the request left unchanged until the removal is carried out again', Log::WARNING, 'plg_privacy_j2commerce');
+        } else {
+            try {
+                $repository = new ConsentRepository($db);
+                $repository->anonymizeRequestConsents($userId, $emails);
+                $repository->invalidateNewsletterOrderConsents($userId, $newsletterOrders);
+            } catch (\Throwable $e) {
+                Log::add('Consent records of the request could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            }
+        }
+
+        if ($userId > 0) {
+            try {
+                (new AcymailingPlaceholders($db))->remove([$userId]);
+            } catch (\Throwable $e) {
+                Log::add('AcyMailing placeholder contact not removed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            }
         }
     }
 
@@ -2205,9 +2305,11 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             )->execute();
         }
 
-        // Checkout consents are recorded for J2Commerce 6 orders only and name the order number:
-        // their IP address and user agent are removed in the J2Commerce 6 data set. A J2Store
-        // order number could belong to another customer's J2Commerce 6 order.
+        // Checkout consents (and the checkout newsletter consents) are recorded for J2Commerce 6
+        // orders and name the order number: their IP address and user agent are removed in the
+        // J2Commerce 6 data set. A J2Store order number could belong to another customer's
+        // J2Commerce 6 order; the cleanup task removes the evidence of such records once their
+        // order is anonymized everywhere (ConsentRepository::removeStaleEvidence()).
         if (!$isJ4 && $ownNumbers !== []) {
             (new ConsentRepository($db))->removeOrderEvidence($ownNumbers);
         }

@@ -45,7 +45,7 @@ Customers use the normal J2Commerce checkout. Joomla administrators create and p
 
 ## Privacy and Data Handling
 
-The parent's `ConsentRepository` records consent in `#__privacy_consents`, including order evidence, IP address and user agent. The parent removal/retention paths remove personal evidence according to its configured rules; the consent record itself is not automatically deleted. Operators must describe purpose and retention in their privacy policy. Guest evidence lookup is limited to the session's order, not all orders with the same address.
+The parent's `ConsentRepository` records consent in `#__privacy_consents`, including order evidence, IP address and user agent. The parent removal/retention paths remove personal evidence according to its configured rules; the consent record itself is not automatically deleted. Operators must describe purpose and retention in their privacy policy. Guest evidence lookup is limited to the session's order, not all orders with the same address. This plugin's language file also carries the texts the parent writes into consent records it anonymizes for a removal request (registration and newsletter consents) and into checkout newsletter consents whose IP address and user agent it removes; see the parent's [consent recording](../../../README.md#consent-recording).
 
 This child adds no own tables, Scheduler routine or mail transport. Disabling it removes its checkout validation/mail-link integration; it is not a safe way to bypass a required consent or finish a privacy request.
 
