@@ -210,11 +210,11 @@ try {
             $document = new DOMDocument();
             @$document->loadHTML($help);
             $helpXpath = new DOMXPath($document);
-            $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 10
+            $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 14
                 && $helpXpath->query('//a[@id="toolbar-back"]')->length === 1,
                 'Central help has all generic topics and a real overview return, enabled=' . $enabled);
             $topicLinks = $helpXpath->query('//div[@id="appointments-help"]/nav/a[starts-with(@href,"#help-")]');
-            $topicTargetsValid = $topicLinks->length === 10;
+            $topicTargetsValid = $topicLinks->length === 14;
             foreach ($topicLinks as $topicLink) {
                 $target = substr($topicLink->getAttribute('href'), 1);
                 $topicTargetsValid = $topicTargetsValid && preg_match('/^help-[a-z]+$/D', $target) === 1
@@ -222,7 +222,25 @@ try {
             }
             $check($topicTargetsValid
                 && $helpXpath->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
-                'All ten native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
+                'All fourteen native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
+            $check($helpXpath->query('//section[@id="help-plugins"]//h2[normalize-space()="Bundled plugins"]')->length === 1
+                && $helpXpath->query('//section[@id="help-plugins"]//h3')->length === 5
+                && $helpXpath->query('//table[@id="help-tasks-table"]/tbody/tr')->length === 7
+                && $helpXpath->query('//section[@id="help-bookings"]')->length === 1
+                && $helpXpath->query('//section[@id="help-close"]')->length === 1
+                && str_contains($help, 'CalDAV address') && str_contains($help, 'Uncertain creation: reconcile before continuing'),
+                'Central help explains bookings, the Close transfer, all seven task routines and the five bundled plugins, enabled=' . $enabled);
+            if ($enabled === 0) {
+                // The toolbar Help button opens the page with tmpl=component in a popup: no links that leave the page.
+                $popup = $admin->request('/administrator/index.php?option=com_appointments&view=help&tmpl=component');
+                $popupDocument = new DOMDocument();
+                @$popupDocument->loadHTML($popup);
+                $popupXpath = new DOMXPath($popupDocument);
+                $check($admin->status === 200 && $popupXpath->query('//div[@id="appointments-help"]/section[@id="help-plugins"]')->length === 1
+                    && $popupXpath->query('//div[@id="appointments-help"]/nav/a[starts-with(@href,"#help-")]')->length === 14
+                    && $popupXpath->query('//div[@id="appointments-help"]/nav/a[not(starts-with(@href,"#"))]')->length === 0,
+                    'The Help popup keeps the topic navigation and hides the Overview and Options buttons');
+            }
             $check(str_contains($help, 'id="help-removal"') && str_contains($help, 'PROPFIND and REPORT')
                 && str_contains($help, 'main Outlook calendar'),
                 'Central help explains removing devices and why Outlook with the main calendar uses «Block only», enabled=' . $enabled);
@@ -492,7 +510,26 @@ try {
         $check($restricted->status === 200 && str_contains($html, $allowedTitle) && !str_contains($html, $deniedTitle),
             'Event selector exposes only authorised titles: ' . $view);
     }
-    $denyAll = $db->real_escape_string(json_encode(['core.edit' => [(string) $groupId => 0]], JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR));
+    // The Close API key of an event type: only core.admin sets or deletes it, even for an editor of that event type.
+    $closeKeyTable = "{$prefix}appointments_close_credentials";
+    $placeholder = 'v1:' . base64_encode(random_bytes(80));
+    $db->query("INSERT INTO {$closeKeyTable} (eventtype_id,secret,modified_utc,modified_by) VALUES ({$eventA},'{$placeholder}',UTC_TIMESTAMP(),0)");
+    $editForm = $restricted->request('/administrator/index.php?option=com_appointments&task=eventtype.edit&id=' . $eventA);
+    $check($restricted->status === 200 && str_contains($editForm, 'name="jform[title]"') && !str_contains($editForm, 'close_api_secret'),
+        'An event editor without core.admin does not see the Close API key field');
+    $restricted->request('/administrator/index.php?option=com_appointments&task=eventtype.cancel&id=' . $eventA, [$restricted->token($editForm) => 1]);
+    $eventRow = $db->query("SELECT * FROM {$prefix}appointments_eventtypes WHERE id={$eventA}")->fetch_assoc();
+    $eventRow['conference_params'] = [];
+    foreach ([['close_api_secret' => 'api_SyntheticEditorKey0123456789.DummyOnlyEdit'], ['close_api_secret_delete' => 1]] as $attempt) {
+        $html = $restricted->submit('eventtype', $eventRow + $attempt);
+        $storedKey = $db->query("SELECT secret FROM {$closeKeyTable} WHERE eventtype_id={$eventA}")->fetch_assoc()['secret'] ?? null;
+        $check($restricted->status === 200 && $storedKey === $placeholder
+            && str_contains($html, 'Only component administrators can set or delete the Close API key.')
+            && !str_contains($html, 'DummyOnly'),
+            'An event editor without core.admin can neither set nor delete the Close API key: ' . array_key_first($attempt));
+    }
+    $db->query("DELETE FROM {$closeKeyTable} WHERE eventtype_id={$eventA}");
+    $denyAll =$db->real_escape_string(json_encode(['core.edit' => [(string) $groupId => 0]], JSON_FORCE_OBJECT | JSON_THROW_ON_ERROR));
     $db->query("UPDATE {$prefix}assets SET rules='{$denyAll}' WHERE name='com_appointments.eventtype.{$eventA}'");
     foreach (['eventtypes', 'fields', 'templates'] as $view) {
         $html = $restricted->request('/administrator/index.php?' . http_build_query([
@@ -543,6 +580,7 @@ try {
     }
     foreach ($events as $event) {
         $db->query("DELETE FROM {$prefix}appointments_fields WHERE eventtype_id={$event}");
+        $db->query("DELETE FROM {$prefix}appointments_close_credentials WHERE eventtype_id={$event}");
     }
     foreach ($events as $event) {
         $row = $db->query("SELECT id FROM {$prefix}assets WHERE name='com_appointments.eventtype.{$event}'")->fetch_assoc();

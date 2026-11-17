@@ -177,6 +177,59 @@ class MetricsTest
                 && !in_array('10.0.0.2', $ips, true);
         });
 
+        $this->test('New sources carry their failing volume and rank failing mail first', function () use ($bundle, $action) {
+            // 10.0.0.4 (100 messages, all aligned) outweighs 10.0.0.3 (20 messages,
+            // all failing), yet only the failing one needs a decision, so it must
+            // rank first and survive the top-10 cut in both paths.
+            foreach ([$bundle['new_sources'], $action['new_sources'] ?? []] as $list) {
+                $byIp = [];
+
+                foreach ($list as $source) {
+                    $byIp[$source['ip']] = $source;
+                }
+
+                if (($list[0]['ip'] ?? '') !== '10.0.0.3'
+                    || ($byIp['10.0.0.3']['fail'] ?? -1) !== 20
+                    || ($byIp['10.0.0.4']['fail'] ?? -1) !== 0
+                    || ($byIp['10.0.0.4']['count'] ?? -1) !== 100) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+
+        $this->test('Detail and dashboard list the same top new sources for equal volumes', function () {
+            // Twelve new single-message sources tie on volume. The drill-down
+            // used to order by volume only, so its top ten differed from the
+            // dashboard's top ten, which also orders by address.
+            $tieId = $this->seedTiedNewSources('ties.' . self::DOMAIN, 12);
+
+            try {
+                $metrics = new Metrics($this->db);
+                $detail  = array_map(static fn (array $s): string => $s['ip'], $metrics->domainMetrics($tieId)['new_sources']);
+
+                $bulk = [];
+                foreach ($metrics->domainSummaries() as $row) {
+                    if ((int) ($row['id'] ?? 0) === $tieId) {
+                        $bulk = $metrics->actionMetricsForAll([$row])[$tieId]['new_sources'] ?? [];
+                        break;
+                    }
+                }
+
+                $bulk     = array_map(static fn (array $s): string => $s['ip'], $bulk);
+                $expected = [];
+
+                for ($i = 10; $i <= 19; $i++) {
+                    $expected[] = '10.0.2.' . $i;
+                }
+
+                return $detail === $expected && $bulk === $expected;
+            } finally {
+                $this->deleteDomain($tieId);
+            }
+        });
+
         $this->test('Subdomain inherits the organizational parent sp policy', function () {
             // A monitored subdomain whose only report was published at the
             // organizational parent (policy_domain = parent) with p=none but
@@ -485,6 +538,62 @@ class MetricsTest
             'header_from'  => $domain,
         ];
         $this->db->insertObject('#__dmarc_records', $record);
+
+        return $domainId;
+    }
+
+    /**
+     * A domain with one established sender in an older report and $count new,
+     * aligned single-message sources in the current window, inserted in reverse
+     * address order so an insertion-order result cannot pass by accident.
+     */
+    private function seedTiedNewSources(string $domain, int $count): int
+    {
+        $domainId = $this->insertDomain($domain);
+
+        $insert = function (string $org, int $begin) use ($domainId, $domain): int {
+            $report = (object) [
+                'domain_id'     => $domainId,
+                'source_id'     => 0,
+                'org_name'      => $org,
+                'org_email'     => 'reports@' . $org . '.test',
+                'report_id'     => $org . '-' . $domainId,
+                'report_hash'   => hash('sha256', $domain . '|' . $org . '|' . $begin),
+                'date_begin'    => $begin,
+                'date_end'      => $begin + self::DAY,
+                'policy_domain' => $domain,
+                'policy_p'      => 'reject',
+                'policy_pct'    => 100,
+                'message_count' => 0,
+                'created'       => gmdate('Y-m-d H:i:s'),
+            ];
+            $this->db->insertObject('#__dmarc_reports', $report, 'id');
+
+            return (int) $report->id;
+        };
+
+        $record = function (int $reportId, string $ip) use ($domainId, $domain): void {
+            $row = (object) [
+                'report_id'    => $reportId,
+                'domain_id'    => $domainId,
+                'source_ip'    => $ip,
+                'count'        => 1,
+                'disposition'  => 'none',
+                'dkim_result'  => 'pass',
+                'spf_result'   => 'fail',
+                'dkim_aligned' => 1,
+                'spf_aligned'  => 0,
+                'header_from'  => $domain,
+            ];
+            $this->db->insertObject('#__dmarc_records', $row);
+        };
+
+        $record($insert('tie-old', self::ANCHOR - 30 * self::DAY), '10.0.2.1');
+        $current = $insert('tie-cur', self::ANCHOR - self::DAY);
+
+        for ($i = 10 + $count - 1; $i >= 10; $i--) {
+            $record($current, '10.0.2.' . $i);
+        }
 
         return $domainId;
     }

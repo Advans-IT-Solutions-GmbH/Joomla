@@ -31,12 +31,20 @@ class HtmlView extends BaseHtmlView
 
     protected $state;
 
+    /** @var \Joomla\CMS\Form\Form|null  Searchtools filter form (read by the core layout). */
+    public $filterForm;
+
+    /** @var array  Filters with a value (read by the core layout). */
+    public $activeFilters = [];
+
     public function display($tpl = null)
     {
-        $model            = $this->getModel();
-        $this->items      = $model->getItems();
-        $this->pagination = $model->getPagination();
-        $this->state      = $model->getState();
+        $model               = $this->getModel();
+        $this->items         = $model->getItems();
+        $this->pagination    = $model->getPagination();
+        $this->state         = $model->getState();
+        $this->filterForm    = $model->getFilterForm();
+        $this->activeFilters = $model->getActiveFilters();
 
         $this->addToolbar();
 
@@ -66,5 +74,6 @@ class HtmlView extends BaseHtmlView
             ->url('index.php?option=com_appointments&view=dashboard')
             ->icon('icon-arrow-left')
             ->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'));
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
     }
 }

@@ -104,6 +104,7 @@ class HtmlView extends BaseHtmlView
         if (!$this->enabled) {
             ToolbarHelper::title(Text::_('COM_APPOINTMENTS_TEAM_CALENDARS_TITLE'), 'calendar');
             Toolbar::getInstance('toolbar')->cancel('calendars.cancel', 'JTOOLBAR_CLOSE');
+            ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
 
             return parent::display($tpl);
         }
@@ -179,6 +180,7 @@ class HtmlView extends BaseHtmlView
         }
 
         $toolbar->cancel('calendars.cancel', $id > 0 ? 'JTOOLBAR_CLOSE' : 'JTOOLBAR_CANCEL');
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
 
         return parent::display($tpl);
     }

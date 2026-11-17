@@ -95,6 +95,7 @@ class HtmlView extends BaseHtmlView
         if (Factory::getApplication()->getIdentity()->authorise('core.options', 'com_appointments')) {
             ToolbarHelper::preferences('com_appointments');
         }
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
 
         return parent::display($tpl);
     }

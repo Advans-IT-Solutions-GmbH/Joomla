@@ -54,6 +54,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         'close_delivery',
         'close_limits',
         'close_missed',
+        'close_credentials',
         // Unreleased evaluation table; postflight already removes it on update.
         'close',
         'privacy_staff',

@@ -75,5 +75,7 @@ class HtmlView extends BaseHtmlView
             || $user->authorise('core.options', 'com_dmarcreports')) {
             $toolbar->preferences('com_dmarcreports');
         }
+
+        $toolbar->help('COM_DMARCREPORTS_HELP_TITLE', false, 'index.php?option=com_dmarcreports&view=help&tmpl=component');
     }
 }

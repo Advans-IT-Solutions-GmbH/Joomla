@@ -71,3 +71,18 @@ The JSON fixture contains an authenticated synthetic session cookie. Keep it pri
 commit or upload it. Results contain assertion output and failure screenshots, not browser
 storage states, network traces or credentials. The suite asserts pointer/layout access and these save/validation round trips, not exhaustive
 visual or every-field acceptance of every extension.
+
+## Outcome focus of the Appointments pages
+
+`booking-focus.spec.cjs` (config `focus.config.cjs`) needs no site and no fixture. It serves
+pages with the shipped `booking.js` from the test itself and checks in Chromium and Firefox that
+the outcome of a booking, a reschedule, a cancellation and an erasure takes the focus, also with
+a closed dialog (`aria-modal="true"`, hidden) in the page, that the Tab key goes on from there,
+and that an open dialog keeps the focus. The job `Outcome focus (Chromium and Firefox)` of
+`Build & Test - Appointments` runs it. Locally, from this directory:
+
+```bash
+npm ci --ignore-scripts --no-audit --no-fund
+npx playwright install chromium firefox
+npx playwright test -c focus.config.cjs
+```

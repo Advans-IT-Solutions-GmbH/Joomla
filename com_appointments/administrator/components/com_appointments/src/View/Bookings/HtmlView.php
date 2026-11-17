@@ -20,7 +20,11 @@ class HtmlView extends BaseHtmlView
     protected $items = [];
     protected $pagination;
     protected $state;
-    protected $events = [];
+    /** @var \Joomla\CMS\Form\Form|null  Searchtools filter form (read by the core layout). */
+    public $filterForm;
+
+    /** @var array  Filters with a value (read by the core layout). */
+    public $activeFilters = [];
 
     /** Bookings of 1.3 still in clear text after the migration window. */
     protected $unverified = 0;
@@ -34,7 +38,8 @@ class HtmlView extends BaseHtmlView
         $this->items = $model->getItems();
         $this->pagination = $model->getPagination();
         $this->state = $model->getState();
-        $this->events = $model->authorisedEvents();
+        $this->filterForm = $model->getFilterForm();
+        $this->activeFilters = $model->getActiveFilters();
 
         if ($model->getErrors()) {
             throw new \RuntimeException(implode("\n", $model->getErrors()), 500);
@@ -56,6 +61,7 @@ class HtmlView extends BaseHtmlView
         }
 
         $toolbar->linkButton('dashboard')->url('index.php?option=com_appointments')->text(Text::_('COM_APPOINTMENTS_TOOLBAR_DASHBOARD'));
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
 
         return parent::display($tpl);
     }

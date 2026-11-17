@@ -22,6 +22,9 @@
  * Each response must be HTTP 200, must not carry a PHP error or a Joomla error
  * page, must not show a raw language key, and must contain at least one string
  * from the extension's own language file — otherwise the page did not render.
+ * When the component ships a help view (tmpl/help), every other page must carry
+ * the toolbar Help button to option=<component>&view=help, and the help view
+ * must also render in Joomla's help popup (tmpl=component).
  *
  * The package is read from /tmp/extension.zip (BACKEND_VIEWS_PACKAGE overrides
  * it). The suite reinstalls it with each supported language directory present,
@@ -195,6 +198,22 @@ function bv_error_markers(string $html): array
 }
 
 /**
+ * The data-url of the toolbar Help button on a page, decoded, or null.
+ */
+function bv_help_button_url(string $html): ?string
+{
+    if (preg_match_all('/<[a-z-]+\b[^>]*js-toolbar-help-btn[^>]*>/i', $html, $tags)) {
+        foreach ($tags[0] as $tag) {
+            if (preg_match('/data-url="([^"]*)"/', $tag, $m)) {
+                return html_entity_decode($m[1], ENT_QUOTES | ENT_HTML5);
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
  * Every backend view name the component must answer. '' is the entry point
  * without a view parameter (the controller's default view).
  *
@@ -247,6 +266,11 @@ if (!is_dir(JOOMLA_ROOT . '/administrator/components/' . $option)) {
 }
 
 $views = bv_discover_views($option);
+
+// Components with a help view must link every page to it. A component without
+// one fails shared/tests/help-lint.php, unless it is on that lint's allowlist.
+$hasHelp = is_file(JOOMLA_ROOT . '/administrator/components/' . $option . '/tmpl/help/default.php');
+echo $hasHelp ? "Help view: present, every page must link to it\n" : "Help view: none\n";
 echo 'Views: ' . implode(', ', array_map(static fn (string $v): string => $v === '' ? '(default)' : $v, $views)) . "\n\n";
 
 $englishStrings = sh_read_package_language($package, 'en-GB');
@@ -332,6 +356,34 @@ foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
             } else {
                 bv_fail("$label: no distinct $tag string of the extension on the page");
                 echo '  [diag] ' . mb_substr($text, 0, 400) . "\n";
+            }
+
+            // Every page links to the component's help (AGENTS.md, «Jede Extension
+            // hat eine Hilfeseite»), through the toolbar Help button.
+            if ($hasHelp && $view !== 'help') {
+                $helpUrl = bv_help_button_url($body);
+
+                if ($helpUrl !== null && str_contains($helpUrl, 'option=' . $option . '&view=help')) {
+                    bv_pass("$label: the toolbar Help button opens the help view");
+                } else {
+                    bv_fail("$label: no toolbar Help button to option=$option&view=help (" . ($helpUrl ?? 'no button') . ')');
+                }
+            }
+        }
+
+        // The Help button opens the help view in Joomla's help popup (tmpl=component).
+        if ($hasHelp) {
+            $label    = "$tag: $option&view=help&tmpl=component";
+            $response = bv_request($baseUrl . '/administrator/index.php?option=' . rawurlencode($option) . '&view=help&tmpl=component');
+            $text     = bv_page_text($response['body']);
+
+            if ($response['code'] !== 200 || bv_error_markers(bv_strip_scripts($response['body']))) {
+                bv_fail("$label: the help popup does not render (HTTP {$response['code']})");
+                echo '  [diag] ' . mb_substr($text, 0, 400) . "\n";
+            } elseif (!sh_shown_language_keys($text, $strings, $tag === 'en-GB' ? null : $englishStrings)) {
+                bv_fail("$label: no distinct $tag string of the extension in the help popup");
+            } else {
+                bv_pass("$label: the help popup renders");
             }
         }
     } finally {

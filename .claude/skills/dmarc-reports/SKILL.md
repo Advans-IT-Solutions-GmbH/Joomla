@@ -121,6 +121,7 @@ install never drops collected DMARC data):
 | `DnsDiagnostics` / `SystemDnsResolver` / `DnsResolverInterface` | SPF/DMARC/MTA-STS record checks |
 | `SourcePoller` (`src/Service/`) | Polls every active source over IMAP under the shared locks; reused by the on-demand controller and the task plugin |
 | `EnvironmentCheck` | Whether the IMAP transport is available (system check view) |
+| `HelpTopics` | Help page address (`URL`, `POPUP_URL` for the toolbar Help button and the module/plugin `<help>` element) and one help entry per Action Center code, grouped as the help view lists them |
 
 Controllers (`src/Controller/`): `Display`, `Ingest`, `Export`, `Actions`, `Domain(s)`, `Source(s)`.
 

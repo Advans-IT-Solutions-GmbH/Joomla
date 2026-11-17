@@ -56,5 +56,6 @@ class HtmlView extends BaseHtmlView
         $toolbar->apply('domain.apply');
         $toolbar->save('domain.save');
         $toolbar->cancel('domain.cancel');
+        $toolbar->help('COM_DMARCREPORTS_HELP_TITLE', false, 'index.php?option=com_dmarcreports&view=help&tmpl=component');
     }
 }

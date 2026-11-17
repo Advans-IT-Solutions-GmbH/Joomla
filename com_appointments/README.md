@@ -62,7 +62,7 @@ campaign. Each profile has:
 |---|---|
 | Profile key | Short unique name. Changing it, the origin, the key variable, the delivery mode or the activity type stops updates of records already transferred with the old destination. |
 | Event types | New bookings of these event types use this profile. An event type belongs to at most one profile; an event type without a profile is **never transferred**. |
-| API origin, key variable | The HTTPS origin and the **name** of a server environment variable holding that organisation's API key. The key itself is never stored in the options, the database, screenshots or reports. Use one variable per organisation. |
+| API origin, key variable | The HTTPS origin and, optionally, the **name** of a server environment variable holding that organisation's API key. The variable applies to the profile's event types that have no key of their own (see below). The key itself is never stored in the options, screenshots or reports. Use one variable per organisation. |
 | Expected organisation ID | Optional `orga_…`. Before any personal data is sent, the worker reads the organisation of the configured key (`GET /api/v1/me/`, exactly one organisation required) and binds every transfer record to it. A key of another organisation blocks the affected records, and a configured expected ID that differs blocks the profile. |
 | Booking record | Note (all plans) or Custom Activity (plans with custom activities), with its type ID, field mapping and answer mapping. |
 | Answers in the note | Comma-separated local form field IDs. Nothing else from the form is transferred. Guests, conference links, cancellation reasons, consent records and capability links are never sent. |
@@ -75,6 +75,39 @@ organisation, and its bookings do not occupy the batch of the other profiles. En
 **Appointments: deliver approved bookings to Close**, which is created **disabled**, including on fresh
 installations. An invalid configuration never breaks a booking: the booking is recorded for later
 routing and the dashboard shows the configuration warning; no call is made until it is fixed.
+
+### API key per booking page
+
+Each event type has a **Close CRM** tab where a component administrator enters the Close API key
+for that booking page. Several keys exist side by side, for example two booking pages of one Close
+organisation and a third page of another one. The transfer of a booking uses the key of its event
+type; without one, it uses the key variable of the profile, so a configuration with variables keeps
+working unchanged. Without either, the profile's records block with `credential`.
+
+- **Masked and write-only.** The input is a password field that is always empty. After saving the
+  form shows only "Saved" with the last four characters (none for keys shorter than 16 characters),
+  never the key. An empty submit keeps the stored key, a new value replaces it, a checkbox deletes it.
+  A refused save does not keep the key in the session or show it again; it is entered again.
+- **Encrypted at rest.** `#__appointments_close_credentials` holds per event type only a sodium
+  secretbox (XSalsa20-Poly1305) with a random nonce, keyed from the Joomla site secret for this
+  purpose and the event type. The options, the event type row, logs, messages, audit rows, the
+  privacy export, CSV exports and the Close delivery records never contain the key. HTTP errors from
+  Close are recorded as their status code only.
+- **Replacing a key** keeps already transferred records deliverable as long as the new key
+  authenticates the same Close organisation. A key of another organisation blocks them with
+  `organization_changed` before any personal data is sent.
+- **Changing the site secret** makes every stored key unreadable. The key lookup itself never
+  throws: the tab shows that the key must be entered again, and new key lookups use the profile
+  variable, if there is one, until then. This covers the API key only. The same secret also
+  authenticates the existing Close delivery records and decrypts the stored bookings, so those
+  records stop with an integrity or decryption error after a secret change, and neither the profile
+  variable nor a re-entered key restores them. Do not change the site secret of an installation in
+  use (see "Signing keys" below).
+- **Permission.** Only users with `core.admin` on the component see the tab and can set or delete a
+  key, also when they may edit the event type otherwise. Deleting an event type deletes its key.
+- **Rights of the key.** A Close API key always carries all rights of the Close user it was created
+  for. Close has no keys with limited rights. Create it for a dedicated Close user that serves only
+  this transfer, and handle it with care.
 
 ### Nothing is deleted in Close
 
@@ -329,9 +362,9 @@ bookings after the update, until the setting is made (see section "Scheduler, re
   diagnostics and an administrator retry action preserve a saved booking even if provisioning fails.
 
 - **Booking administration.** Filter by event, status and UTC date range, search invitee full,
-  first or last name and email, sort by start or last name,
-  export a filtered CSV, inspect details and custom answers, and reschedule using the same locked
-  lifecycle. System checks report platform, mail configuration, Scheduler and audit health.
+  first or last name and email, sort by start, last name, event type or status, choose the number
+  per page and clear all filters in one step, export a filtered CSV, inspect details and custom
+  answers, and reschedule using the same locked lifecycle. System checks report platform, mail configuration, Scheduler and audit health.
 
 - **Joomla privacy integration.** The bundled privacy plugin exports readable booking records and
   removes matching records through Joomla's formal data-subject workflow. An address that is an
@@ -1446,8 +1479,11 @@ bookings already have `invitee_phone` filled from the custom field, so no data h
 
 Invalid input is reported at the field it concerns, all fields in one round trip: the control gets
 `aria-invalid="true"` and `aria-describedby` pointing to its message, and the first invalid control
-receives the focus. A missing consent and a missing confirmation on the reschedule, cancel and
-erase pages each have their own message. Only problems the visitor cannot fix in a field (an
+receives the focus. An answer longer than its field allows (first and last name 127 characters,
+e-mail address and text field 255, textarea 8000, or the field's own «Maximum characters») gets
+the length message with that number, not the message of a missing or invalid value. A missing
+telephone number marks the number field only, not the preselected calling code. A missing consent
+and a missing confirmation on the reschedule, cancel and erase pages each have their own message. Only problems the visitor cannot fix in a field (an
 expired or tampered form, too many attempts, a time just taken) appear as a message above the form.
 
 Dates and times follow the site language: the month and the day are written in words with the
@@ -1704,6 +1740,10 @@ result's `aria-describedby` without removing existing descriptions. This is the 
 ordinary result-focus rule above: standard result layouts keep their notices inside the result
 and never request this fallback. Invalid fields, modals, other focused controls and prior pointer
 or keyboard interaction still prevent the fallback from taking focus.
+Only a rendered modal or invalid control counts: a closed dialog a template keeps in every page
+(`role="dialog" aria-modal="true"`, hidden with `display:none` or `visibility:hidden`) does not
+keep the outcome or the message from the focus. `shared/tests/browser/booking-focus.spec.cjs`
+checks this in Chromium and Firefox with the keyboard.
 Initial result/message focus runs once at `pageshow`, after native fragment navigation
 instead of during DOMContentLoaded; progressive form enhancement still starts at
 DOMContentLoaded. Back-forward cache restores do not refocus the outcome. A script loaded
@@ -1904,6 +1944,35 @@ task and last run, invalid feed-credential counts and the oldest audit record. A
 check is not a delivery test or a remote connectivity probe. Configure and monitor both Scheduler
 routines; a never-run task is explicitly shown as needing attention.
 
+### List search tools
+
+Every administrator list uses Joomla's standard search tools: a search field, the filters under
+«Filter Options», sortable column headings, the sort and number-per-page selectors, paging and
+«Clear». A filter is kept for the next visit until it is cleared. Filters only narrow what the
+list's permission scope already shows, and a filter's choices list only values from that scope.
+
+| List | Search | Filters |
+|------|--------|---------|
+| Bookings | Invitee name and e-mail address | Event type, status, UTC start date from and to |
+| Event types | Title, `id:<number>` | Status, schedule |
+| Booking fields | Label, `id:<number>` | Event type, field type, required, status |
+| E-mail templates | Subject, `id:<number>` | Scope (event type or site-wide fallback), purpose, language, status |
+| Schedules | Name, time zone | Status, host |
+| Blocked periods | Note | Host, period (current and upcoming, past) |
+| Devices | Device, name, username | Status |
+| Internet calendar log | Reference under «Details» | Event, user ID, UTC date from and to |
+
+Booking fields sorted by their order are grouped by event type. Drag a row by its handle to change
+the order of the booking form: a row moves only within its own event type, also while the list is
+filtered, and the event type is then numbered 1, 2, 3 and so on again. Dragging needs the
+«Edit State» permission of the event type. Links of earlier releases with flat `filter_<name>`
+parameters keep working, including `filter_eventtype_id=-1` (every scope) on the template list.
+The booking list, the device list and the log refuse a forged filter value with HTTP 400 and clear
+the stored filters, so the list opens normally on the next visit.
+
+The schedule form has a «Hide past dates» switch above the date-specific times. It only hides rows
+in the browser; saving keeps every date, because the form always sends all rows.
+
 ### Event types
 
 | Setting | Purpose |
@@ -1997,7 +2066,8 @@ site secret deliberately invalidates existing signatures and changes derived roo
 The independently random subscription credentials and optional operator JWT signing secret are
 different capabilities and have their own rotation/configuration paths. The database holds only
 a keyed digest of each subscription credential, so changing the site secret also invalidates every
-subscription URL; rotate each feed afterwards to issue a new one.
+subscription URL; rotate each feed afterwards to issue a new one. The Close API keys stored per
+event type become unreadable too and have to be entered again (section "API key per booking page").
 
 ## Uninstall
 
@@ -2135,6 +2205,7 @@ The authoritative list and order is [`tests/test.env`](tests/test.env):
 | Conference | Automatic links, JWT separation, explicit failure, retry and lifecycle teardown |
 | Privacy | Real typed Joomla privacy events, Unicode isolation, export/removal and legal blocking |
 | Administration | Filters, CSV safety, reschedule, system checks, restricted event ACL by exact list/CSV row identity across pagination, Close action POST/token/component-administrator guards, and scoped mobile queue layout |
+| List filters | Search tools of every administrator list: each filter narrows by exact row identity, permission scope of filters and their choices, paging and number per page, clearing, earlier flat links, refused forged values and the per-event-type drag order of booking fields |
 | Backend views | Shared HTTP rendering checks for every administrator view |
 | Installer messages | Shared install/update checks in en-GB, de-DE and fr-FR |
 | Uninstall | Component removal and table cleanup |
@@ -2145,6 +2216,12 @@ ordinary reconciliation form interaction without horizontal scrolling. It uses t
 `shared/tests/browser` Playwright dependencies and installed Edge/Firefox browsers across all
 seven viewport widths, three locales and both themes; it makes no network requests or Joomla writes.
 This isolated layout regression complements, but does not replace, installed-site browser acceptance.
+
+The CI job «List tools in Chromium and Firefox (J6)» runs `tests/browser/list-filters.spec.cjs`
+against an installed Joomla 6 test site at 1600 and 375 px: it drags booking fields within their
+event type, filtered and unfiltered, and checks that the other event type keeps its order, and it
+saves a schedule with «Hide past dates» switched on and checks that every date is still stored.
+`tests/browser/list-filters-fixture.php` creates the synthetic administrator session and data.
 
 PHPUnit covers the pure helpers without Joomla or a database, including DST, buffers, the slot
 grid, minimum notice, booking horizons and caps. CI treats skipped integration assertions as

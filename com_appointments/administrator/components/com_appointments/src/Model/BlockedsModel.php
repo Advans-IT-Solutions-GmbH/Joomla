@@ -9,7 +9,9 @@
 
 namespace Advans\Component\Appointments\Administrator\Model;
 
+use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Model\ListModel;
+use Joomla\Database\ParameterType;
 
 defined('_JEXEC') or die;
 
@@ -20,28 +22,39 @@ defined('_JEXEC') or die;
  */
 class BlockedsModel extends ListModel
 {
+    use ListFiltersTrait;
+
+    /** Columns the list may be sorted by. */
+    private const SORTABLE = ['b.id', 'b.title', 'b.start_utc', 'b.end_utc', 'u.name'];
+
     public function __construct($config = [], $factory = null)
     {
         if (empty($config['filter_fields'])) {
-            $config['filter_fields'] = ['b.id', 'title', 'b.title', 'start_utc', 'b.start_utc', 'end_utc', 'b.end_utc'];
+            $config['filter_fields'] = self::SORTABLE;
         }
 
         parent::__construct($config, $factory);
     }
 
+    protected function filterNames(): array
+    {
+        return ['search', 'user_id', 'period'];
+    }
+
     protected function populateState($ordering = 'b.start_utc', $direction = 'DESC')
     {
-        $this->setState(
-            'filter.search',
-            $this->getUserStateFromRequest($this->context . '.filter.search', 'filter_search', '', 'string')
-        );
-
+        $this->adoptFlatFilters();
         parent::populateState($ordering, $direction);
+        $this->setState('filter.search', $this->textFilter('search'));
+        $this->setState('filter.user_id', $this->idFilter('user_id'));
+        $this->setState('filter.period', $this->optionFilter('period', ['upcoming', 'past']));
     }
 
     protected function getStoreId($id = '')
     {
-        $id .= ':' . $this->getState('filter.search');
+        foreach ($this->filterNames() as $name) {
+            $id .= ':' . $this->getState('filter.' . $name);
+        }
 
         return parent::getStoreId($id);
     }
@@ -71,19 +84,28 @@ class BlockedsModel extends ListModel
         $search = (string) $this->getState('filter.search');
 
         if ($search !== '') {
-            $like = '%' . $search . '%';
+            $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search) . '%';
             $query->where($db->quoteName('b.title') . ' LIKE :search')
                 ->bind(':search', $like);
         }
 
-        $ordering  = (string) $this->state->get('list.ordering', 'b.start_utc');
-        $direction = strtoupper((string) $this->state->get('list.direction', 'DESC')) === 'ASC' ? 'ASC' : 'DESC';
+        $userId = (int) $this->getState('filter.user_id');
 
-        if (!\in_array($ordering, $this->filter_fields, true)) {
-            $ordering = 'b.start_utc';
+        if ($userId > 0) {
+            $query->where($db->quoteName('b.user_id') . ' = :user')->bind(':user', $userId, ParameterType::INTEGER);
         }
 
-        $query->order($db->quoteName($ordering) . ' ' . $direction);
+        // Stored in UTC, so the comparison is against the current UTC time. A period that has
+        // started but not ended yet counts as current and is listed with the upcoming ones.
+        $period = (string) $this->getState('filter.period');
+
+        if ($period !== '') {
+            $now = Factory::getDate('now', 'UTC')->toSql();
+            $query->where($db->quoteName('b.end_utc') . ($period === 'past' ? ' < ' : ' >= ') . ':now')->bind(':now', $now);
+        }
+
+        [$ordering, $direction] = $this->listOrdering(self::SORTABLE, 'b.start_utc', 'DESC');
+        $query->order($db->quoteName($ordering) . ' ' . $direction)->order($db->quoteName('b.id') . ' ' . $direction);
 
         return $query;
     }

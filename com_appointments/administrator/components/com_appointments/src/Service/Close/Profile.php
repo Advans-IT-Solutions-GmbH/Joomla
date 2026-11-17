@@ -12,7 +12,9 @@ defined('_JEXEC') or die;
 
 /**
  * One Close destination: its own API origin and key reference, its own delivery mode and mapping.
- * The API key itself is never part of the options; only the name of a server environment variable.
+ * The API key itself is never part of the options. Each event type may have its own key, entered in
+ * the backend and stored sealed (CredentialStore); the optional server environment variable named
+ * here applies to event types without a usable stored key.
  */
 final class Profile
 {
@@ -64,9 +66,10 @@ final class Profile
             || preg_match('/[\s\x00-\x1f\x7f]/', $this->origin)) {
             throw new \InvalidArgumentException('Close API origin is not configured as an HTTPS origin.');
         }
+        // Optional since keys can be stored per event type; without both, delivery blocks with "credential".
         $this->credential = trim((string) ($entry['credential_env'] ?? ''));
-        if (!preg_match('/^[A-Z][A-Z0-9_]{2,100}$/D', $this->credential)) {
-            throw new \InvalidArgumentException('Close credential environment reference is missing.');
+        if ($this->credential !== '' && !preg_match('/^[A-Z][A-Z0-9_]{2,100}$/D', $this->credential)) {
+            throw new \InvalidArgumentException('Close credential environment reference is invalid.');
         }
         $this->mode = (string) ($entry['delivery'] ?? self::MODE_NOTE);
         if (!in_array($this->mode, [self::MODE_NOTE, self::MODE_ACTIVITY], true)) {

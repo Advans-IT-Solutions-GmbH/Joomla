@@ -72,6 +72,7 @@ class HtmlView extends BaseHtmlView
         Toolbar::getInstance('toolbar')->linkButton('back')
             ->url('index.php?option=com_appointments')
             ->text(Text::_('JTOOLBAR_BACK'));
+        ToolbarHelper::help('', false, 'index.php?option=com_appointments&view=help&tmpl=component');
 
         return parent::display($tpl);
     }

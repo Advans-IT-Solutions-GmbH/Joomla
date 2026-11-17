@@ -11,7 +11,6 @@ namespace Advans\Component\Appointments\Administrator\Model;
 
 use Advans\Component\Appointments\Administrator\Helper\Team\TeamStates;
 use Joomla\CMS\Factory;
-use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\Model\ListModel;
 
 defined('_JEXEC') or die;
@@ -26,6 +25,8 @@ defined('_JEXEC') or die;
  */
 class DevicesModel extends ListModel
 {
+    use ListFiltersTrait;
+
     public const STATES = [
         TeamStates::DEVICE_ACTIVE         => 'COM_APPOINTMENTS_TEAM_F_DEVICE_ACTIVE',
         TeamStates::DEVICE_CLEANUP_EMPTY  => 'COM_APPOINTMENTS_TEAM_F_DEVICE_CLEANUP_EMPTY',
@@ -75,24 +76,37 @@ class DevicesModel extends ListModel
         return $query->order($db->quoteName($order) . ' ' . $direction)->order($db->quoteName('d.id') . ' DESC');
     }
 
+    protected function filterNames(): array
+    {
+        return ['search', 'state'];
+    }
+
     protected function populateState($ordering = 'd.last_sync_utc', $direction = 'DESC')
     {
+        // Searchtools send filter[...]; links of earlier releases the flat filter_<name>.
+        $this->adoptFlatFilters();
         parent::populateState($ordering, $direction);
-        $app = Factory::getApplication();
 
-        foreach (['state', 'search'] as $key) {
-            $value = trim((string) $app->getUserStateFromRequest($this->context . '.filter.' . $key, 'filter_' . $key, '', 'string'));
+        foreach ($this->filterNames() as $key) {
+            $value = $this->rawFilter($key);
 
-            if (($key === 'state' && $value !== '' && !\array_key_exists((int) $value, self::STATES))
-                || ($key === 'state' && $value !== '' && !ctype_digit($value))
+            if ($value === null
+                || ($key === 'state' && $value !== '' && (!ctype_digit($value) || !\array_key_exists((int) $value, self::STATES)))
                 || ($key === 'search' && (preg_match('//u', $value) !== 1 || mb_strlen($value) > 100))) {
                 // Not kept: a forged link must not leave the list stuck on an error.
-                $app->setUserState($this->context . '.filter.' . $key, '');
-
-                throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_TEAM_F_FILTER_INVALID'), 400);
+                $this->rejectFilters('COM_APPOINTMENTS_TEAM_F_FILTER_INVALID');
             }
 
             $this->setState('filter.' . $key, $value);
         }
+    }
+
+    protected function getStoreId($id = '')
+    {
+        foreach ($this->filterNames() as $key) {
+            $id .= ':' . $this->getState('filter.' . $key);
+        }
+
+        return parent::getStoreId($id);
     }
 }

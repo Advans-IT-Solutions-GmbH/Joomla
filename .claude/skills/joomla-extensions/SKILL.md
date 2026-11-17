@@ -74,6 +74,23 @@ Advans-IT-Solutions-GmbH/Joomla
 - **Mail languages:** all outgoing subjects and bodies are supplied in the same three languages,
   including HTML where used. Recipient account language, else site default (also guests), not
   request/order language. See root README "E-mail templates" and `references/testing.md`.
+- **Every extension has a help page** («Jede Extension hat eine Hilfeseite», `AGENTS.md`): reachable
+  where the administrator works with the extension, explaining what it does, how it works and what to
+  do, in de-DE, en-GB and fr-FR, accurate to the code. A component ships a help view
+  (`tmpl/help/default.php`), and every view's toolbar carries
+  `ToolbarHelper::help('', false, 'index.php?option=<component>&view=help&tmpl=component')` (Joomla's
+  help popup). A plugin or module either has its own «Help» tab (fieldset `help` directly after
+  `basic`, one `helppage` field whose `<section>`, `<p>`, `<ul>`/`<ol>`/`<li>` and `<note>` children
+  name the language keys, `src/Field/HelppageField.php` copied unchanged apart from namespace and
+  `@package`, `addfieldprefix`, and a note as the first field of `basic` pointing to the tab), or it
+  belongs to a component and links to that component's help view through `<help url="KEY"/>` (Joomla
+  reads the address from the language key) plus a note at the top of its options. Joomla always shows
+  its own «Plugin» tab first, so the «Help» tab is the first of the plugin's own tabs. A standalone
+  plugin has no backend page the toolbar Help button could open, so that button keeps Joomla's
+  default. `shared/tests/help-lint.php` enforces the rule in every extension workflow (allowlist only
+  for an extension whose help is in an open pull request, named by branch, removed by that pull
+  request); `shared-backend-views.php` and `shared-help-pages.php` check it on the installed site.
+  Details: root `README.md`, «Help pages».
 - **Releases:** only the latest release per extension exists; the publish workflow deletes older
   releases and tags on purpose. Details: `references/release-workflow.md`.
 - **OSMap mixed installation** (J2Store and J2Commerce both enabled): `com_j2store` takes

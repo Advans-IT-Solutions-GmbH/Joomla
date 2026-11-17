@@ -42,6 +42,8 @@ extension/tag family, not the monorepo's global latest release.
 
 ## Configuration
 
+Help: the Help button of the plugin edit screen and the note at the top of its options open the **Help & tips** page of the DMARC Reports component (`index.php?option=com_dmarcreports&view=help`), which explains the terms, the Action Center entries and the typical tasks.
+
 Configure everything in the DMARC Reports component options (Options → MTA-STS): enable MTA-STS,
 choose the mode, list the MX hosts, set `max_age` and the TLS-RPT reporting address. Then publish
 the DNS records and the `mta-sts` subdomain shown in the component's Action Center.

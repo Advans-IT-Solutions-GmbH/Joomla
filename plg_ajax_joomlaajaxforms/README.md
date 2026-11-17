@@ -112,6 +112,17 @@ removed.
 | Enable Shop Cart | AJAX cart operations (requires J2Commerce 4.x or 6.x); `removeCartItem` and `getCartCount` answer `TASK_DISABLED` while it is No | Yes |
 | Debug Output | Write the plugin's developer traces (which form was found, which form was converted) to the browser console. With this off no trace is printed during normal use; a failed request is still reported with `console.error` so a problem stays visible. The script learns the setting from the script options, or, on a page that carries none, from the `texts` answer of the endpoint; traces from before that answer arrives are not printed | No |
 
+### Help tab
+
+The plugin's edit screen (**System → Manage → Plugins → Joomla! AJAX Forms**) has a **Help** tab, the
+first tab after Joomla's own **Plugin** tab. It explains, in de-DE, en-GB and fr-FR, what the plugin does and which forms it handles, prerequisites and setup (script in the template, form detection, `.htaccess` check), every setting with its default, security and privacy behaviour, and typical problems with what to do.
+A note at the top of the **Plugin** tab points to it.
+
+The page is described in the manifest (fieldset `help`, field type `helppage`) and rendered by
+`src/Field/HelppageField.php`; its texts are the language keys `PLG_AJAX_JOOMLAAJAXFORMS_HELP_*`. Keep them in step
+with the code when a setting or a behaviour changes (`php shared/tests/help-lint.php` checks the
+structure).
+
 ### J2Commerce Cart Compatibility
 
 The cart features support both J2Store / J2Commerce 4.x (`#__j2store_*` tables) and J2Commerce 6.x (`#__j2commerce_*` tables). The active shop is decided once per request by the enabled component together with its cart table:

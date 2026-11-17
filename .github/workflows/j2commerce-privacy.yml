@@ -12,6 +12,8 @@ on:
       - 'shared/installer/**'
       - 'shared/tests/run-tests.sh'
       - 'shared/tests/lang-lint.php'
+      - 'shared/tests/help-lint.php'
+      - 'shared/tests/scripts/shared-help-pages.php'
       - 'shared/tests/requirements-check.php'
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
@@ -31,6 +33,8 @@ on:
       - 'shared/installer/**'
       - 'shared/tests/run-tests.sh'
       - 'shared/tests/lang-lint.php'
+      - 'shared/tests/help-lint.php'
+      - 'shared/tests/scripts/shared-help-pages.php'
       - 'shared/tests/requirements-check.php'
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
@@ -144,6 +148,8 @@ jobs:
           php-version: '8.3'
       - name: Lint language files
         run: php shared/tests/lang-lint.php j2commerce/plg_privacy_j2commerce
+      - name: Check that the extension has reachable help
+        run: php shared/tests/help-lint.php j2commerce/plg_privacy_j2commerce
       - name: Check compatibility requirements (Joomla 5.4+, PHP 8.1+)
         run: php shared/tests/requirements-check.php j2commerce/plg_privacy_j2commerce
       - name: Scan for deprecated Joomla APIs
@@ -268,6 +274,8 @@ jobs:
             script: 'autocleanup_task'
           - name: '10 - AcyMailing Integration'
             script: 'acymailing'
+          - name: 'Help Pages'
+            script: 'help-pages'
           - name: 'Installer Messages'
             script: 'install-messages'
           - name: '11 - Uninstall'
@@ -362,6 +370,8 @@ jobs:
             script: 'autocleanup_task'
           - name: '10 - AcyMailing Integration'
             script: 'acymailing'
+          - name: 'Help Pages'
+            script: 'help-pages'
           - name: 'Installer Messages'
             script: 'install-messages'
           - name: '11 - Uninstall'

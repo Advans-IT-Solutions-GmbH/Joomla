@@ -706,4 +706,62 @@ class ActionCenterTest extends TestCase
         $this->assertSame('mtasts', $tlsrpt['category']);
         $this->assertSame('tlsrpt_publish:7', $tlsrpt['action_key']);
     }
+
+    /**
+     * @param   array<int, array<string, mixed>>  $newSources
+     *
+     * @return  array<int, array<string, mixed>>
+     */
+    private function itemsWithNewSources(array $newSources): array
+    {
+        return ActionCenter::generate(
+            [
+                'domain_id'         => 1,
+                'domain'            => 'example.org',
+                'total'             => 1000,
+                'current_policy'    => 'reject',
+                'dmarc_pass'        => 1000,
+                'new_sources'       => $newSources,
+            ],
+            self::CONFIG
+        );
+    }
+
+    public function testNewSourceWhoseMailPassesDmarcIsNotAnAction(): void
+    {
+        // Mail forwarded by a mailbox provider keeps the domain's DKIM signature and
+        // passes DMARC from a sending IP never seen before. Such a source is already
+        // authenticated and cannot be abuse, so "authenticate it or check for abuse"
+        // was a false alarm that refilled the Action Center with every forwarder.
+        $items = $this->itemsWithNewSources([
+            ['ip' => '192.0.2.10', 'count' => 14, 'fail' => 0],
+            ['ip' => '2001:db8::1', 'count' => 1, 'fail' => 0],
+        ]);
+
+        $this->assertNotContains('new_source', $this->codes($items));
+    }
+
+    public function testNewSourceWithFailingMailNeedsADecision(): void
+    {
+        $items = $this->itemsWithNewSources([
+            ['ip' => '192.0.2.10', 'count' => 14, 'fail' => 0],
+            ['ip' => '198.51.100.7', 'count' => 5, 'fail' => 3],
+        ]);
+
+        $new = array_values(array_filter($items, static fn (array $i): bool => $i['code'] === 'new_source'));
+
+        $this->assertCount(1, $new);
+        $this->assertSame('new_source:1:198.51.100.7', $new[0]['action_key']);
+        $this->assertSame(['198.51.100.7', 5], $new[0]['params']);
+        $this->assertSame(2, $new[0]['severity']);
+    }
+
+    public function testNewSourceWithoutAFailFigureIsStillFlagged(): void
+    {
+        // A metrics bundle that does not say how much of the new source failed must
+        // not hide it: without the figure the source is treated as undecided.
+        $items = $this->itemsWithNewSources([['ip' => '198.51.100.8', 'count' => 2]]);
+
+        $this->assertContains('new_source', $this->codes($items));
+    }
 }

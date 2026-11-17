@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- @copyright (C) 2026 Advans IT Solutions GmbH; @license GPL-3.0-or-later; SPDX-License-Identifier: GPL-3.0-or-later -->
+<form addfieldprefix="Advans\Component\Appointments\Administrator\Field">
+    <fields name="filter">
+        <field name="search" type="text" inputmode="search" label="COM_APPOINTMENTS_FILTER_SEARCH_LABEL" hint="COM_APPOINTMENTS_EVENTTYPES_FILTER_SEARCH_HINT" maxlength="200" />
+        <field name="published" type="list" label="JSTATUS" onchange="this.form.submit();">
+            <option value="">JOPTION_SELECT_PUBLISHED</option>
+            <option value="1">JPUBLISHED</option>
+            <option value="0">JUNPUBLISHED</option>
+        </field>
+        <field name="schedule_id" type="Schedulelist" label="COM_APPOINTMENTS_EVENTTYPE_SCHEDULE" onchange="this.form.submit();">
+            <option value="">COM_APPOINTMENTS_FILTER_SELECT_SCHEDULE</option>
+        </field>
+    </fields>
+    <fields name="list">
+        <field name="fullordering" type="list" label="JGLOBAL_SORT_BY" default="e.ordering ASC" onchange="this.form.submit();" validate="options">
+            <option value="">JGLOBAL_SORT_BY</option>
+            <option value="e.ordering ASC">JGRID_HEADING_ORDERING_ASC</option>
+            <option value="e.ordering DESC">JGRID_HEADING_ORDERING_DESC</option>
+            <option value="e.title ASC">JGLOBAL_TITLE_ASC</option>
+            <option value="e.title DESC">JGLOBAL_TITLE_DESC</option>
+            <option value="e.duration_minutes ASC">COM_APPOINTMENTS_SORT_DURATION_ASC</option>
+            <option value="e.duration_minutes DESC">COM_APPOINTMENTS_SORT_DURATION_DESC</option>
+            <option value="s.title ASC">COM_APPOINTMENTS_SORT_SCHEDULE_ASC</option>
+            <option value="s.title DESC">COM_APPOINTMENTS_SORT_SCHEDULE_DESC</option>
+            <option value="e.published ASC">JSTATUS_ASC</option>
+            <option value="e.published DESC">JSTATUS_DESC</option>
+            <option value="e.id ASC">JGRID_HEADING_ID_ASC</option>
+            <option value="e.id DESC">JGRID_HEADING_ID_DESC</option>
+        </field>
+        <field name="limit" type="limitbox" label="JGLOBAL_LIST_LIMIT" default="25" onchange="this.form.submit();" />
+    </fields>
+</form>
