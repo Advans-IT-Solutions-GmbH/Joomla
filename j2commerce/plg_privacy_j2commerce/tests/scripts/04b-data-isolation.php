@@ -1430,7 +1430,7 @@ class DataIsolationTest
             $ids['kept_k3_expired'] = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['kept_expired'], '203.0.113.85'), 1, $expired);
             $ids['kept_k3_recent']  = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['kept_recent'], '203.0.113.86'), 1, $recent);
             $keptPlugin = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['retention_years' => 10])]) extends GuestRequestTestPlugin {
-                protected function removeAcyMailingData(?\Joomla\CMS\User\User $user, ?array $emails = null): void
+                protected function removeAcyMailingData(?\Joomla\CMS\User\User $user, ?array $emails = null, int $accountId = 0, string $originalEmail = ''): void
                 {
                     $flag = new \ReflectionProperty(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class, 'newsletterKept');
                     $flag->setAccessible(true);

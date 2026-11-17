@@ -885,11 +885,19 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * Deletes the subscriber record and all list associations.
      * Uses raw SQL for version-independence — no AcyMailing PHP classes required.
      *
-     * @param   User|null  $user    The user of the request (null: guest customer without account)
-     * @param   string[]   $emails  Addresses to look up, captured before Joomla's privacy user plugin
-     *                              pseudonymised $user->email; default: $user->email
+     * Subscribers linked to the verified account of the request (cms_id) are removed as well:
+     * with AcyMailing's user synchronisation, the save of Joomla's privacy plugin for user accounts
+     * has already changed their address to the account's placeholder address, so the lookup by
+     * address would miss them. The listener of EVENT_BEFORE_NEWSLETTER_REMOVAL then gets the
+     * original address ($originalEmail), not the placeholder.
+     *
+     * @param   User|null  $user           The user of the request (null: guest customer without account)
+     * @param   string[]   $emails         Addresses to look up, captured before Joomla's privacy user plugin
+     *                                     pseudonymised $user->email; default: $user->email
+     * @param   int        $accountId      Verified account of the request (0: none), also from a retry marker
+     * @param   string     $originalEmail  Original address of that account for the removal listener
      */
-    protected function removeAcyMailingData(?User $user, ?array $emails = null): void
+    protected function removeAcyMailingData(?User $user, ?array $emails = null, int $accountId = 0, string $originalEmail = ''): void
     {
         $prefix = $this->getAcymTablePrefix();
         if ($prefix === null) {
@@ -903,13 +911,15 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             'strlen'
         )));
 
-        if ($emails === []) {
+        if ($emails === [] && $accountId <= 0) {
             return;
         }
 
+        $linked = [];
+
         try {
             // The address is decided in PHP (see ownerCondition()).
-            $values  = ConsentRepository::addressValues($db, $prefix . 'user', 'id', 'email', $emails);
+            $values  = $emails === [] ? [] : ConsentRepository::addressValues($db, $prefix . 'user', 'id', 'email', $emails);
             $acymIds = [];
 
             if ($values !== []) {
@@ -918,6 +928,18 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                     ->from($db->quoteName($prefix . 'user'))
                     ->where(ConsentRepository::exactValuesCondition($db, $db->quoteName('email'), $values));
                 $acymIds = array_map('intval', $db->setQuery($query)->loadColumn() ?: []);
+            }
+
+            $columns = $accountId > 0 ? array_change_key_case($db->getTableColumns($prefix . 'user'), CASE_LOWER) : [];
+
+            if (isset($columns['cms_id'])) {
+                $linked  = array_map('intval', $db->setQuery(
+                    $this->createDbQuery()
+                        ->select($db->quoteName('id'))
+                        ->from($db->quoteName($prefix . 'user'))
+                        ->where($db->quoteName('cms_id') . ' = ' . $accountId)
+                )->loadColumn() ?: []);
+                $acymIds = array_values(array_unique(array_merge($acymIds, $linked)));
             }
         } catch (\Exception $e) {
             Log::add('AcyMailing privacy lookup failed (' . \get_class($e) . '); removal remains unverified.',
@@ -932,11 +954,19 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         foreach ($acymIds as $acymId) {
-            $this->removeAcyMailingSubscriber($prefix, $acymId, (int) ($user->id ?? 0));
+            $this->removeAcyMailingSubscriber(
+                $prefix,
+                $acymId,
+                $accountId > 0 ? $accountId : (int) ($user->id ?? 0),
+                \in_array($acymId, $linked, true) ? $originalEmail : ''
+            );
         }
     }
 
-    private function removeAcyMailingSubscriber(string $prefix, int $acymId, int $userId): void
+    /**
+     * @param   string  $listenerEmail  Address for the removal listener ('' : the subscriber's stored address)
+     */
+    private function removeAcyMailingSubscriber(string $prefix, int $acymId, int $userId, string $listenerEmail = ''): void
     {
         $db = $this->getDatabase();
 
@@ -944,7 +974,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // list rows (unsubscribed included) and its history go, so it can keep a suppression
         // record. If that fails, the subscriber stays and the administrator is told.
         try {
-            $email = (string) $db->setQuery(
+            $email = trim($listenerEmail) !== '' ? $listenerEmail : (string) $db->setQuery(
                 $this->createDbQuery()
                     ->select($db->quoteName('email'))
                     ->from($db->quoteName($prefix . 'user'))
@@ -1584,7 +1614,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $this->guestRequest   = $user === null;
 
         try {
-            $this->removeAcyMailingData($user, array_unique(array_filter([$requestEmail, $accountEmail])));
+            $this->removeAcyMailingData($user, array_unique(array_filter([$requestEmail, $accountEmail])), $userId, $accountEmail !== '' ? $accountEmail : $requestEmail);
             $consentsDone = $this->processRequestConsents($userId, $emails, $newsletterOrders);
             $this->removeShopData($userId, $emails, $requestId, $consentsDone);
 

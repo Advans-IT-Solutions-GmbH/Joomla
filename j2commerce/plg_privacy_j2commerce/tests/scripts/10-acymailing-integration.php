@@ -946,6 +946,90 @@ class AcyMailingIntegrationTest
         }
     }
 
+    /**
+     * With user synchronisation, the user plugin's save changes the address of the account's
+     * existing subscriber to the placeholder before this plugin runs. The subscriber is found by
+     * cms_id of the verified account, removed with its list rows, and the removal listener gets
+     * the original address.
+     */
+    private function testSyncedSubscriberOfTheAccount(): void
+    {
+        echo "\n--- Existing subscriber whose address the user synchronisation changed ---\n";
+
+        $prefix = $this->getAcymPrefix();
+        $plugin = $this->createPlugin();
+
+        if ($prefix === null || $plugin === null || !class_exists(\Joomla\Component\Privacy\Administrator\Table\RequestTable::class)) {
+            $this->strictSkip('synced subscriber', 'AcyMailing tables, plugin or com_privacy missing');
+
+            return;
+        }
+
+        $email = 'acym-synced-' . random_int(1000, 9999) . '@example.com';
+        $row   = (object) [
+            'name' => 'Synced test', 'username' => 'acym-synced-' . bin2hex(random_bytes(4)), 'email' => $email,
+            'password' => '', 'block' => 0, 'sendEmail' => 0, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+        ];
+        $this->db->insertObject('#__users', $row, 'id');
+        $userId      = (int) $row->id;
+        $placeholder = 'userid' . $userId . 'removed@email.invalid';
+        $contact     = 0;
+        $seen        = [];
+        $name        = \Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::EVENT_BEFORE_NEWSLETTER_REMOVAL;
+        $listener    = function ($event) use (&$seen): void {
+            $seen[] = (string) $event->getArgument('email', '');
+        };
+        $this->app->getDispatcher()->addListener($name, $listener);
+
+        try {
+            $contact = $this->insertSubscriber($prefix, $email, 'Synced Subscriber');
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET cms_id = ' . $userId . ' WHERE id = ' . $contact)->execute();
+            $this->db->setQuery('INSERT IGNORE INTO ' . $this->db->quoteName($prefix . 'user_has_list')
+                . " (user_id, list_id, status, subscription_date) VALUES ($contact, 1, 1, NOW())")->execute();
+
+            $user           = new User();
+            $user->id       = $userId;
+            $user->name     = $row->name;
+            $user->username = $row->username;
+            $user->email    = $email;
+            $request = (new \ReflectionClass(\Joomla\Component\Privacy\Administrator\Table\RequestTable::class))->newInstanceWithoutConstructor();
+            $request->id           = 0;
+            $request->email        = $email;
+            $request->request_type = 'remove';
+            $request->status       = 1;
+
+            $dispatcher = new \Joomla\Event\Dispatcher();
+            $dispatcher->addSubscriber($plugin);
+            // plg_privacy_user saves the pseudonymised account; AcyMailing's synchronisation moves
+            // the existing subscriber to the placeholder address.
+            $dispatcher->addListener('onPrivacyRemoveData', function () use ($user, $userId, $placeholder, $prefix, $contact): void {
+                $user->email = 'UserID' . $userId . 'removed@email.invalid';
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = ' . $this->db->quote($user->email) . ' WHERE id = ' . $userId)->execute();
+                $this->db->setQuery('UPDATE ' . $this->db->quoteName($prefix . 'user') . ' SET email = ' . $this->db->quote($placeholder) . ' WHERE id = ' . $contact)->execute();
+            });
+
+            $plugin->onPrivacyCanRemoveData(new \Joomla\CMS\Event\Privacy\CanRemoveDataEvent('onPrivacyCanRemoveData', ['subject' => $request, 'user' => $user]));
+            $dispatcher->dispatch('onPrivacyRemoveData', new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', ['subject' => $request, 'user' => $user]));
+            $messages = $this->takeMessages();
+
+            $this->test('Synced subscriber of the account deleted with its list rows although its address was changed',
+                $this->countRows($prefix . 'user', 'id', $contact) === 0 && $this->countRows($prefix . 'user_has_list', 'user_id', $contact) === 0,
+                json_encode($messages));
+            $this->test('The removal listener gets the original address, not the placeholder', $seen === [$email], json_encode($seen));
+        } catch (\Throwable $e) {
+            $this->test('synced subscriber ran without error', false, $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        } finally {
+            $this->app->getDispatcher()->removeListener($name, $listener);
+
+            if ($contact > 0) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user_has_list') . ' WHERE user_id = ' . $contact)->execute();
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName($prefix . 'user') . ' WHERE id = ' . $contact)->execute();
+            }
+
+            $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $userId)->execute();
+        }
+    }
+
     private function testGracefulSkip(): void
     {
         echo "\n--- Without AcyMailing ---\n";
@@ -1019,6 +1103,7 @@ class AcyMailingIntegrationTest
         $this->testCollationPairs();
         $this->testPseudonymisationPlaceholders();
         $this->testPlaceholderAfterUserPluginInBothOrders();
+        $this->testSyncedSubscriberOfTheAccount();
         $this->testGracefulSkip();
 
         echo "\n=== AcyMailing Integration Test Summary ===\n";
