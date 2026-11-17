@@ -157,11 +157,12 @@ final class Attribution
 
         $url = explode('#', $url, 2)[0];
         $parts = explode('?', $url, 2);
-        // A user name and password before the host («https://user:secret@host/») are never kept,
-        // up to the last «@» of the authority, so an unencoded «@» in the password goes too.
-        $base = preg_replace('#\A([a-z][a-z0-9+.-]*://)[^/?]*@#i', '$1', $parts[0]) ?? '';
+        // A user name and password before the host («https://user:secret@host/», also scheme-relative
+        // «//user:secret@host/») are never kept, up to the last «@» of the authority, so an
+        // unencoded «@» in the password goes too.
+        $base = preg_replace('#\A((?:[a-z][a-z0-9+.-]*:)?//)[^/?]*@#i', '$1', $parts[0]) ?? '';
 
-        if ($pathOnly && preg_match('#\A[a-z][a-z0-9+.-]*://[^/?]*#i', $base, $origin) === 1) {
+        if ($pathOnly && preg_match('#\A(?:[a-z][a-z0-9+.-]*:)?//[^/?]*#i', $base, $origin) === 1) {
             $base = substr($base, \strlen($origin[0]));
             $base = $base === '' ? '/' : $base;
         }

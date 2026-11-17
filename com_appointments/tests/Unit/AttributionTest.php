@@ -171,6 +171,12 @@ final class AttributionTest extends TestCase
 
         self::assertSame('https://other.example.org/x', Attribution::url('https://user:p@ss@other.example.org/x'),
             'A password with an unencoded «@» is dropped up to the host, nothing of it is left');
+        self::assertSame('//other.example.org/x?page=2', Attribution::url('//user:secret@other.example.org/x?page=2'),
+            'A scheme-relative address loses its user name and password too');
+        self::assertSame('/x?page=2', Attribution::url('//user:secret@other.example.org/x?page=2', true),
+            'A scheme-relative address keeps only path and query where only those are stored');
+        $state = Attribution::visit(null, $this->request('/lp', '//user:secret@other.example.org/x'), $this->at('2026-11-16 08:00:00'));
+        self::assertStringNotContainsString('secret', json_encode($state), 'A scheme-relative referrer keeps no password');
         self::assertSame('https://other.example.org/x?page=a@b', Attribution::url('https://other.example.org/x?page=a@b'),
             'An «@» in the query never counts as user information');
         self::assertSame('https://other.example.org/p@th?page=2', Attribution::url('https://other.example.org/p@th?page=2'),
