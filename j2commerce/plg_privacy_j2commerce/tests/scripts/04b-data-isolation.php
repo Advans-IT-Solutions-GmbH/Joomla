@@ -1756,6 +1756,25 @@ class DataIsolationTest
                 (int) $cleanK3->state === -1 && !str_contains($cleanK3->body, '203.0.113.96'), json_encode($cleanK3));
             $this->test('Cleanup: a run after that changes nothing', $repository->removeStaleNewsletterEvidence($cutoff, [$ordersTable]) === 0);
 
+            // An active subscriber with a lifetime-license order and no removal request: the order is
+            // anonymized but keeps its address, so the consent stays attributable and valid.
+            $lifeGuest = 'kinds.lifetime.' . $suffix . '@example.com';
+            $orders['life_expired'] = $this->insertGuestTestOrder('KIND-LIF-' . $suffix, 0, $lifeGuest, $expired, 'Lia');
+            $ids['life_k3_task']    = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['life_expired'], '203.0.113.97'), 1, $expired);
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' SET ip_address = ' . $this->db->quote('')
+                . ' WHERE order_id = ' . $this->db->quote($orders['life_expired']))->execute();
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__' . $this->tp . '_orderinfos') . ' SET billing_first_name = ' . $this->db->quote('Anonymized')
+                . ' WHERE order_id = ' . $this->db->quote($orders['life_expired']))->execute();
+            $repository->removeOrderEvidence([$orders['life_expired']]);
+            $lifeTask = $this->kindRecord($ids['life_k3_task']);
+            $this->test('Lifetime license (order keeps its address): order anonymization removes the evidence, the consent stays valid',
+                (int) $lifeTask->state === 1 && !str_contains($lifeTask->body, '203.0.113.97'), json_encode($lifeTask));
+            $ids['life_k3_scan'] = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['life_expired'], '203.0.113.98'), 1, $expired);
+            $repository->removeStaleNewsletterEvidence($cutoff, [$ordersTable]);
+            $lifeScan = $this->kindRecord($ids['life_k3_scan']);
+            $this->test('Lifetime license: the cleanup scan removes the evidence, the consent stays valid',
+                (int) $lifeScan->state === 1 && !str_contains($lifeScan->body, '203.0.113.98'), json_encode($lifeScan));
+
             // Interleavings: every writer reads the row again under lock before it changes it.
             $ids['race_a'] = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['account_recent'], '203.0.113.94'), 1, $recent);
             $stale         = $repository->findNewsletterOrderConsents([$orders['account_recent']]);

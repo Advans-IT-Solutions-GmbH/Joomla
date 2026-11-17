@@ -945,10 +945,12 @@ final class ConsentRepository
      * and policy version stay as evidence. If one of the two lines is not found the body is
      * replaced by a neutral note with the order number (fail-closed: no unknown evidence remains).
      *
-     * Called when these orders lost their personal data (anonymized): the records can no longer
-     * be attributed to anyone, so they also become invalid (state -1) and lose any pending-removal
-     * marker. A removal request or a retry could not reach them any more, and a valid consent
-     * nobody can be named for must not remain.
+     * Called when these orders were anonymized. A record whose order can no longer be attributed
+     * to anyone (attributableOrders(): no account, no address left in any data set) also becomes
+     * invalid (state -1) and loses any pending-removal marker: a removal request or a retry could
+     * not reach it any more, and a valid consent nobody can be named for must not remain. Orders
+     * that keep their address (lifetime licenses) or belong to an account stay attributable, so
+     * their records keep their state.
      *
      * @param   string[]  $orderIds
      *
@@ -956,13 +958,65 @@ final class ConsentRepository
      */
     public function removeNewsletterOrderEvidence(array $orderIds): int
     {
-        $records = $this->findNewsletterOrderConsents($orderIds);
+        $records      = $this->findNewsletterOrderConsents($orderIds);
+        $attributable = $records === [] ? [] : $this->attributableOrders(array_column($records, 'order_id'), $this->orderTables());
 
         foreach ($records as $record) {
-            $record->invalidate = true;
+            $record->invalidate = !isset($attributable[(string) $record->order_id]);
         }
 
         return $this->stripNewsletterRecords($records);
+    }
+
+    /**
+     * Order numbers among $orderIds that can still be attributed to a person in at least one of
+     * $tables: an order of an account (user_id > 0) or an order that still carries an e-mail
+     * address (not empty, not the placeholder of anonymized orders).
+     *
+     * @param   string[]  $orderIds
+     * @param   string[]  $tables  Order tables (#__*_orders)
+     *
+     * @return  array<string, true>
+     */
+    private function attributableOrders(array $orderIds, array $tables): array
+    {
+        $orderIds = array_values(array_unique(array_filter(array_map('strval', $orderIds), [self::class, 'isValidOrderId'])));
+        $found    = [];
+
+        foreach ($tables as $table) {
+            foreach (array_chunk($orderIds, 500) as $chunk) {
+                $rows = $this->db->setQuery(
+                    $this->createQuery()
+                        ->select($this->db->quoteName(['order_id', 'user_id', 'user_email']))
+                        ->from($this->db->quoteName($table))
+                        ->whereIn($this->db->quoteName('order_id'), $chunk, ParameterType::STRING)
+                )->loadObjectList() ?: [];
+
+                foreach ($rows as $row) {
+                    $email = self::normaliseAddress((string) $row->user_email);
+
+                    if ((int) $row->user_id > 0 || ($email !== '' && $email !== 'anonymized@deleted.invalid')) {
+                        $found[(string) $row->order_id] = true;
+                    }
+                }
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * Order tables of every existing J2Commerce data set.
+     *
+     * @return  string[]
+     */
+    private function orderTables(): array
+    {
+        if (!class_exists(J2CommerceStack::class)) {
+            require_once \dirname(__DIR__) . '/Support/J2CommerceStack.php';
+        }
+
+        return array_map(static fn (bool $isJ4): string => $isJ4 ? '#__j2store_orders' : '#__j2commerce_orders', J2CommerceStack::dataSets($this->db));
     }
 
     /**
@@ -1495,13 +1549,15 @@ final class ConsentRepository
                 }
             }
 
-            $live = $this->ordersWithPersonalData(array_keys($orders), $tables);
-            $done = [];
+            $live         = $this->ordersWithPersonalData(array_keys($orders), $tables);
+            $attributable = $this->attributableOrders(array_keys($orders), $tables);
+            $done         = [];
 
             // Only the records that are due themselves: another record of the same order number
             // (a newer consent, or another order sharing the number) keeps its evidence. A record
-            // whose order no longer exists with personal data can no longer be attributed to
-            // anyone: it also becomes invalid. Age alone only removes the evidence.
+            // whose order can no longer be attributed to anyone (no account, no address left) also
+            // becomes invalid; an order that keeps its address (lifetime license) or belongs to an
+            // account stays attributable. Age alone only removes the evidence.
             foreach ($records as $record) {
                 $record->order_id = self::extractNewsletterOrderId((string) $record->body);
 
@@ -1511,10 +1567,10 @@ final class ConsentRepository
 
                 $body              = (string) $record->body;
                 $stripped          = str_contains($body, self::NEWSLETTER_EVIDENCE_REMOVED_MARKER) || str_contains($body, self::EVIDENCE_REMOVED_MARKER);
-                $record->invalidate = !isset($live[$record->order_id]);
+                $record->invalidate = !isset($attributable[$record->order_id]);
 
                 if (($record->invalidate && (int) $record->state !== -1)
-                    || (!$stripped && ($record->invalidate || (string) $record->created <= $cutoff))) {
+                    || (!$stripped && (!isset($live[$record->order_id]) || (string) $record->created <= $cutoff))) {
                     $done[] = $record;
                 }
             }
