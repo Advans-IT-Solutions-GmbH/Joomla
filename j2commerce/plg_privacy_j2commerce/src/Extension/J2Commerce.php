@@ -1502,8 +1502,18 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // A removal of this address that did not finish (marked below) is continued with its
         // account: Joomla pseudonymised the account in that run, so the retry arrives without one.
+        // If that lookup fails or is ambiguous, an unfinished account removal could be missed: the
+        // request is then reported as incomplete and the orders keep their address for a retry.
+        $pendingFailed = false;
+
         if ($user === null) {
-            $pending = $this->pendingAccount($emails);
+            try {
+                $pending = $this->pendingAccount($emails);
+            } catch (\Throwable $e) {
+                Log::add('Removal request: unfinished removals could not be determined: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+                $pending       = null;
+                $pendingFailed = true;
+            }
 
             if ($pending !== null) {
                 Log::add('Continuing an unfinished removal request with its pseudonymised account ' . $pending, Log::INFO, 'plg_privacy_j2commerce');
@@ -1554,7 +1564,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $newsletterOrders = null;
 
         try {
-            $newsletterOrders = $this->guestOrderIds($emails, true);
+            $newsletterOrders = $pendingFailed ? null : $this->guestOrderIds($emails, true);
         } catch (\Throwable $e) {
             Log::add('Guest orders of the newsletter consents could not be read: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
         }
@@ -1792,9 +1802,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     /**
      * The account of an unfinished removal request of one of $emails (markPendingAccount()), or
-     * null: none, or more than one (ambiguous, fail-closed).
+     * null: none. Throws if the accounts cannot be read or more than one matches (ambiguous): the
+     * caller then reports the removal as incomplete instead of treating the request as a guest's.
      *
      * @param   string[]  $emails
+     *
+     * @throws  \RuntimeException
      */
     protected function pendingAccount(array $emails): ?int
     {
@@ -1802,20 +1815,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return null;
         }
 
-        try {
-            $db     = $this->getDatabase();
-            $wanted = array_map(fn (string $email): string => $this->pendingHash($email), $emails);
-            $rows   = $db->setQuery(
-                $this->createDbQuery()
-                    ->select($db->quoteName(['id', 'params']))
-                    ->from($db->quoteName('#__users'))
-                    ->where($db->quoteName('params') . ' LIKE ' . $db->quote('%' . $db->escape(self::PENDING_PARAM, true) . '%', false))
-            )->loadObjectList() ?: [];
-        } catch (\Throwable $e) {
-            Log::add('Removal request: unfinished removals could not be read: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
-
-            return null;
-        }
+        $db     = $this->getDatabase();
+        $wanted = array_map(fn (string $email): string => $this->pendingHash($email), $emails);
+        $rows   = $db->setQuery(
+            $this->createDbQuery()
+                ->select($db->quoteName(['id', 'params']))
+                ->from($db->quoteName('#__users'))
+                ->where($db->quoteName('params') . ' LIKE ' . $db->quote('%' . $db->escape(self::PENDING_PARAM, true) . '%', false))
+        )->loadObjectList() ?: [];
 
         $found = [];
 
@@ -1832,9 +1839,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         if (\count($found) > 1) {
-            Log::add('Removal request: several unfinished removals match the address, none continued', Log::WARNING, 'plg_privacy_j2commerce');
-
-            return null;
+            throw new \RuntimeException('several unfinished removals match the address, none continued');
         }
 
         return $found === [] ? null : (int) array_key_first($found);

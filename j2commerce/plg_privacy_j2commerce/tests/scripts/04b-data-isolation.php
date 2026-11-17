@@ -1684,6 +1684,61 @@ class DataIsolationTest
             $plain->setDatabase($this->db);
             $this->test('Another address finds no unfinished removal', $plain->call('pendingAccount', ['someone.else.' . $suffix . '@example.com']) === null);
 
+            // Two accounts marked for the same address: ambiguous, the lookup refuses.
+            $ambiguous = 'kinds.ambiguous.' . $suffix . '@example.com';
+            foreach ([1, 2] as $n) {
+                $row = (object) [
+                    'name' => 'Kinds ambiguous ' . $n, 'username' => 'kinds-amb-' . $n . '-' . $suffix, 'email' => 'kinds.amb' . $n . '.' . $suffix . '@example.com',
+                    'password' => '', 'block' => 1, 'sendEmail' => 0, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{}',
+                ];
+                $this->db->insertObject('#__users', $row, 'id');
+                $failUsers[] = (int) $row->id;
+                $plain->call('markPendingAccount', (int) $row->id, [$ambiguous]);
+            }
+
+            try {
+                $plain->call('pendingAccount', [$ambiguous]);
+                $ambiguousRefused = false;
+            } catch (\RuntimeException $e) {
+                $ambiguousRefused = true;
+            }
+
+            $this->test('Two accounts with a retry marker for the same address: the lookup refuses (no account is guessed)', $ambiguousRefused);
+
+            // A failed or ambiguous lookup is an incomplete removal: warning, the guest orders keep their address.
+            $orders['amb_expired'] = $this->insertGuestTestOrder('KIND-AMB-' . $suffix, 0, $ambiguous, $expired, 'Ada');
+            $ambPlugin = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['retention_years' => 10])]) extends GuestRequestTestPlugin {
+                public array $messages = [];
+
+                protected function feedbackApplication(): ?object
+                {
+                    $plugin = $this;
+
+                    return new class ($plugin) {
+                        public function __construct(private object $plugin)
+                        {
+                        }
+
+                        public function enqueueMessage(string $message, string $type = 'message'): void
+                        {
+                            $this->plugin->messages[] = [$type, $message];
+                        }
+                    };
+                }
+
+                protected function reportRetainedOrders(array $retained, array $lifetime, string $customerEmail, string $languageTag): void
+                {
+                }
+            };
+            $ambPlugin->setDatabase($this->db);
+            $ambPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest($ambiguous),
+                'user'    => null,
+            ]));
+            $this->test('Ambiguous retry marker: the removal is reported as incomplete and the guest order keeps its address',
+                in_array('warning', array_column($ambPlugin->messages, 0), true)
+                && ($this->loadGuestTestOrder($orders['amb_expired'])->user_email ?? '') === $ambiguous, json_encode($ambPlugin->messages));
+
             // --- Account removal ---
             $plugin->onPrivacyCanRemoveData(null, $user);
             $plugin->onPrivacyRemoveData(null, $user);
