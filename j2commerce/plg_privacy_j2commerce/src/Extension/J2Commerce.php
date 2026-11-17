@@ -71,15 +71,6 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     /** A newsletter subscriber of the removal request being reported was kept (listener failed). */
     private bool $newsletterKept = false;
-
-    /**
-     * J2Commerce 6 order numbers the removal request being processed has anonymized (keys), for
-     * the checkout newsletter consents (processRequestConsents()).
-     *
-     * @var array<string, true>
-     */
-    private array $anonymizedOrders = [];
-
     /** Order e-mail of anonymized orders; never matched as a customer address. */
     public const ANONYMIZED_EMAIL = 'anonymized@deleted.invalid';
 
@@ -1545,15 +1536,18 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         // The newsletter subscriber goes first (request and account e-mail as captured above):
-        // whether it was kept decides below what happens to the newsletter consents. A kept
-        // subscriber (see removeAcyMailingSubscriber()) is named in the messages below.
-        $this->newsletterKept   = false;
-        $this->guestRequest     = $user === null;
-        $this->anonymizedOrders = [];
+        // whether it was kept decides what happens to the newsletter consents. The consents are
+        // processed before the orders, because anonymizing an order removes the address a retry
+        // would find it by: if consent processing fails, the orders are not anonymized now, and
+        // carrying out the removal again does both. A kept subscriber (see
+        // removeAcyMailingSubscriber()) is named in the messages below.
+        $this->newsletterKept = false;
+        $this->guestRequest   = $user === null;
 
         try {
             $this->removeAcyMailingData($user, array_unique(array_filter([$requestEmail, $accountEmail])));
-            $this->removeShopData($userId, $emails, $requestId);
+            $consentsDone = $this->processRequestConsents($userId, $emails, $newsletterOrders);
+            $this->removeShopData($userId, $emails, $requestId, $consentsDone);
 
             // Consent records of an earlier template override (also guest records with the user's
             // e-mail addresses): anonymized, never assigned to an order.
@@ -1564,12 +1558,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 Log::add('Legacy consent records could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
             }
 
-            $this->processRequestConsents($userId, $emails, $newsletterOrders);
             $this->reportRetainedOrders($retained, $check['lifetime_expired'] ?? [], $customerEmail, $languageTag);
         } finally {
-            $this->guestRequest     = false;
-            $this->newsletterKept   = false;
-            $this->anonymizedOrders = [];
+            $this->guestRequest   = false;
+            $this->newsletterKept = false;
         }
     }
 
@@ -1577,13 +1569,21 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * Addresses, carts and expired orders of a removal request in every J2Commerce data set (a
      * migration keeps the #__j2store_* copies; personal data must not survive there).
      *
-     * @param   int       $userId     Account of the request (0: none)
-     * @param   string[]  $emails     Request and account addresses
-     * @param   int       $requestId  ID of the privacy request (0: unknown), named in the action log
+     * @param   int       $userId          Account of the request (0: none)
+     * @param   string[]  $emails          Request and account addresses
+     * @param   int       $requestId       ID of the privacy request (0: unknown), named in the action log
+     * @param   bool      $anonymizeOrders False while the consent records of the request are not
+     *                                     processed: the orders keep the address a retry needs
      */
-    protected function removeShopData(int $userId, array $emails, int $requestId): void
+    protected function removeShopData(int $userId, array $emails, int $requestId, bool $anonymizeOrders = true): void
     {
-        $this->forEachDataSet(function () use ($userId, $emails): void {
+        $anonymize = $anonymizeOrders && $this->params->get('anonymize_orders', 1);
+
+        if (!$anonymizeOrders && $this->params->get('anonymize_orders', 1)) {
+            Log::add('Consent records of the request not processed: orders not anonymized until the removal is carried out again', Log::WARNING, 'plg_privacy_j2commerce');
+        }
+
+        $this->forEachDataSet(function () use ($userId, $emails, $anonymize): void {
             // Delete address book entries while Delete Addresses is on
             if ($this->params->get('delete_addresses', 1)) {
                 $this->deleteAddresses($userId, $emails);
@@ -1597,7 +1597,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
             // Anonymize only orders OUTSIDE retention period
             // Orders within retention period are kept intact for legal compliance
-            if ($this->params->get('anonymize_orders', 1)) {
+            if ($anonymize) {
                 $this->anonymizeOrders($userId, $emails);
             }
         });
@@ -1606,7 +1606,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $this->logActivity('all_addresses_deleted', $userId, '', ['requestid' => $requestId > 0 ? (string) $requestId : '-']);
         }
 
-        if ($this->params->get('anonymize_orders', 1)) {
+        if ($anonymize) {
             $this->logActivity('orders_anonymized', $userId, '', ['requestid' => $requestId > 0 ? (string) $requestId : '-']);
         }
     }
@@ -1621,21 +1621,25 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * - The AcyMailing placeholder contact Joomla's pseudonymisation of the account created is
      *   deleted (AcymailingPlaceholders guards).
      *
-     * While a newsletter subscriber of the request was kept (lookup, listener or deletion failed)
-     * the newsletter is still running, so these consent records stay unchanged: carrying out the
-     * removal again processes them together with the subscriber. Only the checkout newsletter
-     * consents of guest orders this request has just anonymized become invalid all the same:
-     * their order no longer carries the address, so a retry could not attribute them any more.
+     * Runs before the orders are anonymized. While a newsletter subscriber of the request was
+     * kept (lookup, listener or deletion failed) the newsletter is still running, so the guest
+     * records, which a retry finds again by the address, stay unchanged: carrying out the removal
+     * again processes them together with the subscriber. Records a retry could no longer
+     * attribute are processed all the same: those of the account (Joomla pseudonymises it in the
+     * same request, so a retry arrives without account) and the checkout newsletter consents of
+     * guest orders this request is about to anonymize (guestOrdersDueForAnonymization()).
      *
-     * A step that fails is logged and reported to the administrator as a warning (the removal is
-     * incomplete and has to be carried out again).
+     * A step that fails is logged and reported to the administrator as a warning; the caller then
+     * leaves the orders as they are, so that carrying out the removal again finds everything.
      *
      * @param   int            $userId            Account of the request (0: none)
      * @param   string[]       $emails            Request and account addresses (requestEmails())
      * @param   string[]|null  $newsletterOrders  Guest orders of the request (guestOrderIds(), before
      *                                            anonymization); null: the lookup failed
+     *
+     * @return  bool  Whether every step succeeded
      */
-    protected function processRequestConsents(int $userId, array $emails, ?array $newsletterOrders): void
+    protected function processRequestConsents(int $userId, array $emails, ?array $newsletterOrders): bool
     {
         self::loadHelperClasses();
         $db     = $this->getDatabase();
@@ -1646,8 +1650,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $repository = new ConsentRepository($db);
 
             if ($this->newsletterKept) {
-                Log::add('Newsletter subscriber kept: consent records of the request left unchanged until the removal is carried out again', Log::WARNING, 'plg_privacy_j2commerce');
-                $repository->invalidateNewsletterOrderConsents(0, array_values(array_intersect($orders, array_keys($this->anonymizedOrders))));
+                Log::add('Newsletter subscriber kept: guest consent records of the request left unchanged until the removal is carried out again', Log::WARNING, 'plg_privacy_j2commerce');
+
+                if ($userId > 0) {
+                    $repository->anonymizeRequestConsents($userId, []);
+                }
+
+                $repository->invalidateNewsletterOrderConsents($userId, $this->guestOrdersDueForAnonymization($orders));
             } else {
                 $repository->anonymizeRequestConsents($userId, $emails);
                 $repository->invalidateNewsletterOrderConsents($userId, $orders);
@@ -1673,6 +1682,56 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 $app->enqueueMessage($this->pluginStrings(self::currentLanguage())->_('PLG_PRIVACY_J2COMMERCE_CONSENTS_INCOMPLETE'), 'warning');
             }
         }
+
+        return !$failed;
+    }
+
+    /**
+     * The guest orders among $orderIds (J2Commerce 6) that anonymizeOrders() is about to anonymize
+     * with their address: outside the retention period, Anonymize Orders on, no lifetime license
+     * (those keep their address and stay findable).
+     *
+     * @param   string[]  $orderIds
+     *
+     * @return  string[]
+     */
+    protected function guestOrdersDueForAnonymization(array $orderIds): array
+    {
+        $orderIds = array_values(array_unique(array_map('strval', $orderIds)));
+
+        if ($orderIds === [] || !$this->params->get('anonymize_orders', 1)) {
+            return [];
+        }
+
+        $db  = $this->getDatabase();
+        $due = [];
+
+        foreach ($this->forEachDataSet(function () use ($db, $orderIds): array {
+            if ($this->isJ2Commerce4()) {
+                return [];
+            }
+
+            $numbers = [];
+
+            foreach (array_chunk($orderIds, 500) as $chunk) {
+                $db->setQuery(
+                    $this->createDbQuery()
+                        ->select($db->quoteName('order_id'))
+                        ->from($db->quoteName('#__j2commerce_orders'))
+                        ->where($db->quoteName('user_id') . ' = 0')
+                        ->whereIn($db->quoteName('order_id'), $chunk, ParameterType::STRING)
+                        ->where($db->quoteName('created_on') . ' <= ' . $db->quote($this->retentionCutoff()))
+                );
+                array_push($numbers, ...array_map('strval', $db->loadColumn() ?: []));
+            }
+
+            // Same lookup as anonymizeOrders() in this data set (fail-closed: all keep their address).
+            return $numbers === [] ? [] : array_values(array_diff($numbers, $this->lifetimeOrderIds($numbers)));
+        }) as $numbers) {
+            array_push($due, ...$numbers);
+        }
+
+        return array_values(array_unique($due));
     }
 
     /**
@@ -2363,10 +2422,6 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // order is anonymized everywhere (ConsentRepository::removeStaleEvidence()).
         if (!$isJ4 && $ownNumbers !== []) {
             (new ConsentRepository($db))->removeOrderEvidence($ownNumbers);
-
-            foreach ($ownNumbers as $number) {
-                $this->anonymizedOrders[(string) $number] = true;
-            }
         }
     }
 

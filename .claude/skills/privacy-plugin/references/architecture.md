@@ -38,16 +38,16 @@ J2Commerce extends CMSPlugin implements SubscriberInterface
 │       ├── removeAcyMailingData()   — first: lookup by captured e-mails; fires onJ2CommercePrivacyBeforeNewsletterRemoval
 │       │                              (group j2commerce, email/acymId) before each subscriber, keeps it (newsletterKept)
 │       │                              if a listener throws or the deletion fails
-│       ├── removeShopData()         — every data set:
+│       ├── processRequestConsents() — before the orders: registration + form consents anonymized (anonymizeRequestConsents),
+│       │                              checkout newsletter consents state -1 (invalidateNewsletterOrderConsents); with a kept
+│       │                              subscriber only account records and guestOrdersDueForAnonymization(); AcymailingPlaceholders
+│       │                              ::remove([account]); a failed step enqueues PLG_PRIVACY_J2COMMERCE_CONSENTS_INCOMPLETE
+│       ├── removeShopData()         — every data set (orders only anonymized if the consent step succeeded):
 │       │   ├── deleteAddresses()    — if delete_addresses
 │       │   ├── deleteCartData()
 │       │   └── anonymizeOrders()    — if anonymize_orders; cutoff Retention\RetentionPeriod; lifetime orders keep
-│       │                              user_email; consent IP/UA removed; J2Commerce 6 numbers -> anonymizedOrders
+│       │                              user_email; consent IP/UA removed (checkout + checkout newsletter consents)
 │       ├── anonymizeLegacyConsents()
-│       ├── processRequestConsents() — registration + form consents anonymized (anonymizeRequestConsents), checkout
-│       │                              newsletter consents state -1 (invalidateNewsletterOrderConsents); with a kept
-│       │                              subscriber only those of guest orders in anonymizedOrders; AcymailingPlaceholders::remove
-│       │                              ([account]); a failed step enqueues PLG_PRIVACY_J2COMMERCE_CONSENTS_INCOMPLETE
 │       └── reportRetainedOrders()   — customer e-mail first, then administrator message
 └── onAjaxJ2commercePrivacy()     — com_ajax entry (result via $event->addResult())
     ├── handleAccountTask()      — deleteAddress (logged-in, form token)

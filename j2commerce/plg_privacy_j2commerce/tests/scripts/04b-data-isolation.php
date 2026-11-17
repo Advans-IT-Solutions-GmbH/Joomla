@@ -1502,6 +1502,67 @@ class DataIsolationTest
             $warnPlugin->call('processRequestConsents', 0, [$keptGuest], []);
             $this->test('Consent processing without a failure adds no warning', $warnPlugin->messages === [], json_encode($warnPlugin->messages));
 
+            // --- A failed guest-order lookup leaves the orders as they are; the retry does both ---
+            $lookupGuest = 'kinds.lookup.' . $suffix . '@example.com';
+            $orders['lookup_expired'] = $this->insertGuestTestOrder('KIND-LEX-' . $suffix, 0, $lookupGuest, $expired, 'Lena');
+            $ids['lookup_k3']         = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['lookup_expired'], '203.0.113.87'), 1, $expired);
+            $lookupPlugin = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['retention_years' => 10])]) extends GuestRequestTestPlugin {
+                protected function guestOrderIds(array $emails, bool $j2commerce6Only = false): array
+                {
+                    throw new \RuntimeException('Injected guest-order lookup failure');
+                }
+
+                protected function reportRetainedOrders(array $retained, array $lifetime, string $customerEmail, string $languageTag): void
+                {
+                }
+            };
+            $lookupPlugin->setDatabase($this->db);
+            $lookupPlugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest($lookupGuest),
+                'user'    => null,
+            ]));
+            $lookupOrder = $this->loadGuestTestOrder($orders['lookup_expired']);
+            $this->test('Failed guest-order lookup: the expired guest order keeps its address for the retry',
+                $lookupOrder && $lookupOrder->user_email === $lookupGuest, json_encode($lookupOrder));
+            $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest($lookupGuest),
+                'user'    => null,
+            ]));
+            $lookupOrder = $this->loadGuestTestOrder($orders['lookup_expired']);
+            $lookupK3    = $this->kindRecord($ids['lookup_k3']);
+            $this->test('Retry after the failed lookup: order anonymized' . ($isJ6 ? ', its checkout newsletter consent invalid without evidence' : ''),
+                $lookupOrder && $lookupOrder->user_email === 'anonymized@deleted.invalid'
+                && ($isJ6 ? ((int) $lookupK3->state === -1 && !str_contains($lookupK3->body, '203.0.113.87')) : (int) $lookupK3->state === 1),
+                json_encode([$lookupOrder, $lookupK3]));
+
+            // --- Kept subscriber on an account removal: the retry arrives without account ---
+            $keptAccountId = 9923;
+            $keptAccount   = 'kinds.keptaccount.' . $suffix . '@example.com';
+            $orders['kept_account_recent'] = $this->insertGuestTestOrder('KIND-KAR-' . $suffix, $keptAccountId, $keptAccount, $recent, 'Karl');
+            $ids['kept_acc_form']  = $this->insertKindRecord($keptAccountId, 'Newsletter-Einwilligung im Formular', self::kindFormBody($keptAccount));
+            $ids['kept_acc_k3']    = $this->insertKindRecord($keptAccountId, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['kept_account_recent'], '203.0.113.88'), 1, $recent);
+            $ids['kept_acc_guest'] = $this->insertKindRecord(0, $core, self::kindOldFormBody($keptAccount));
+            $keptUser           = new \Joomla\CMS\User\User();
+            $keptUser->id       = $keptAccountId;
+            $keptUser->username = 'kinds-kept-account-' . $suffix;
+            $keptUser->email    = $keptAccount;
+            $keptPlugin->onPrivacyCanRemoveData(null, $keptUser);
+            $keptPlugin->onPrivacyRemoveData(null, $keptUser);
+            $accForm  = $this->kindRecord($ids['kept_acc_form']);
+            $accK3    = $this->kindRecord($ids['kept_acc_k3']);
+            $accGuest = $this->kindRecord($ids['kept_acc_guest']);
+            $this->test('Kept subscriber, account removal: the account records are processed at once (a retry has no account)',
+                (int) $accForm->state === -1 && str_contains($accForm->body, '<!-- j2commerce-consent-erased -->')
+                && (int) $accK3->state === -1 && str_contains($accK3->body, '203.0.113.88'), json_encode([$accForm, $accK3]));
+            $this->test('Kept subscriber, account removal: the guest record with the account address waits for the retry',
+                (int) $accGuest->state === 1 && $accGuest->body === self::kindOldFormBody($keptAccount), json_encode($accGuest));
+            $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest($keptAccount),
+                'user'    => null,
+            ]));
+            $this->test('Retry without account (pseudonymised): the guest record with the address is anonymized',
+                (int) $this->kindRecord($ids['kept_acc_guest'])->state === -1);
+
             // --- Account removal ---
             $plugin->onPrivacyCanRemoveData(null, $user);
             $plugin->onPrivacyRemoveData(null, $user);
