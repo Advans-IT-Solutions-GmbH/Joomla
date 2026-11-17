@@ -1565,9 +1565,13 @@ own, no script and no form field: a value posted with the booking form never rea
 
 The visitor's time zone is the booking's `invitee_timezone`, as before. Every value is valid UTF-8
 without control or format characters and at most 2048 characters (Accept-Language 512). A whole record is at most 64 KiB of JSON: one that would be larger (only crafted values get there) keeps the first 256 characters of each value. Only the
-parameters listed above are kept. URLs lose their fragment and every query parameter whose name
-suggests a credential (`token`, `signature`, `secret`, `password`, `pwd`, `key`, `auth`, `session`, `sid`,
-`code`, `nonce`, `hash`, `otp`, `ticket`, `mail`) and Joomla form tokens.
+parameters listed above are kept. URLs lose their fragment, a user name and password before the
+host, every query parameter whose name suggests a credential (`token`, `signature`, `secret`,
+`password`, `pwd`, `key`, `auth`, `session`, `sid`, `code`, `nonce`, `hash`, `otp`, `ticket`, `mail`,
+`jwt`, `bearer`, `credential`, `activation`, `invite`, `reset`, `verify`, `confirm`, `magic`, `sig`),
+Joomla form tokens, and every query parameter whose value looks like a token whatever its name: a
+JSON Web Token, or at least 32 characters without spaces that mix letters and digits. The campaign
+parameters and click IDs above are kept as they are.
 
 **Not collected.** Screen and viewport size would need a script that reads properties of the
 device. That is an access to the visitor's terminal equipment, which needs consent under the

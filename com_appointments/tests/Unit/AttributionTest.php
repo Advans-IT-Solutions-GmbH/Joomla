@@ -131,6 +131,30 @@ final class AttributionTest extends TestCase
         self::assertSame('', Attribution::visit(null, $this->request('/', '', 'not-an-ip'), $this->at('2026-11-16 08:00:00'))['landing_ip']);
     }
 
+    public function testCapabilitiesInAUrlAreNeverStoredWhateverTheyAreCalled(): void
+    {
+        $jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl';
+        $opaque = 'Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MDEyMzQ1Njc4OTA';
+        $clickId = 'Cj0KCQiA4L67BhDUARIsADWrl7G1a2b3c4d5e6f7g8h9i0';
+
+        self::assertSame('https://other.example.org/reset?page=2', Attribution::url('https://user:secret@other.example.org/reset?page=2'),
+            'A user name and password before the host are dropped');
+        self::assertSame('/lp?id=1&view=article', Attribution::url('/lp?x=' . $jwt . '&id=1&ref=' . $opaque . '&view=article', true),
+            'A JSON Web Token or an opaque token is dropped under any parameter name');
+        self::assertSame('/lp?design=keep', Attribution::url('/lp?jwt=a&sig=b&design=keep&invite=c&user_sig=d&reset=e&confirm=f', true),
+            'Parameter names that name a capability are dropped, similar ordinary names are kept');
+        self::assertSame('/lp?utm_source=linkedin&gclid=' . $clickId . '&q=some+words+longer+than+thirty-two+characters',
+            Attribution::url('/lp?utm_source=linkedin&gclid=' . $clickId . '&q=some+words+longer+than+thirty-two+characters', true),
+            'Click IDs and ordinary text stay');
+
+        $state = Attribution::visit(null, $this->request('/lp?utm_source=linkedin&gclid=' . $clickId . '&ref=' . $opaque,
+            'https://user:secret@other.example.org/x?t=' . $jwt), $this->at('2026-11-16 08:00:00'));
+        foreach (['secret', $jwt, $opaque] as $capability) {
+            self::assertStringNotContainsString($capability, json_encode($state), 'Never stored: ' . $capability);
+        }
+        self::assertSame($clickId, $state['first_touch']['parameters']['gclid']);
+    }
+
     public function testRecordForTheBookingCombinesTheSessionAndTheSubmit(): void
     {
         $state = Attribution::visit(null, $this->request('/de/it-services?utm_source=linkedin', 'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));
