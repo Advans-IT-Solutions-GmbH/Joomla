@@ -72,6 +72,14 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
     /** A newsletter subscriber of the removal request being reported was kept (listener failed). */
     private bool $newsletterKept = false;
 
+    /**
+     * J2Commerce 6 order numbers the removal request being processed has anonymized (keys), for
+     * the checkout newsletter consents (processRequestConsents()).
+     *
+     * @var array<string, true>
+     */
+    private array $anonymizedOrders = [];
+
     /** Order e-mail of anonymized orders; never matched as a customer address. */
     public const ANONYMIZED_EMAIL = 'anonymized@deleted.invalid';
 
@@ -994,7 +1002,15 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
             $this->logActivity('acymailing_subscriber_deleted', $userId);
         } catch (\Exception $e) {
+            // The subscriber may still exist: the request reports it as kept, and the newsletter
+            // consents of the request stay unchanged until the removal is carried out again.
             Log::add('AcyMailing subscriber deletion failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            $this->newsletterKept = true;
+            $app = $this->feedbackApplication();
+
+            if ($app !== null && method_exists($app, 'enqueueMessage')) {
+                $app->enqueueMessage($this->pluginStrings(self::currentLanguage())->_('PLG_PRIVACY_J2COMMERCE_ACYM_REMOVAL_KEPT'), 'warning');
+            }
         }
     }
 
@@ -1519,7 +1535,8 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
         // Guest orders of the request whose checkout newsletter consents become invalid below. Found
         // before the orders are anonymized: anonymization replaces the e-mail they are found by.
-        $newsletterOrders = [];
+        // null: the lookup failed (reported as an incomplete consent removal).
+        $newsletterOrders = null;
 
         try {
             $newsletterOrders = $this->guestOrderIds($emails, true);
@@ -1527,8 +1544,45 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             Log::add('Guest orders of the newsletter consents could not be read: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
         }
 
-        // Addresses, carts and expired orders in every J2Commerce data set (a migration keeps the
-        // #__j2store_* copies; personal data must not survive there).
+        // The newsletter subscriber goes first (request and account e-mail as captured above):
+        // whether it was kept decides below what happens to the newsletter consents. A kept
+        // subscriber (see removeAcyMailingSubscriber()) is named in the messages below.
+        $this->newsletterKept   = false;
+        $this->guestRequest     = $user === null;
+        $this->anonymizedOrders = [];
+
+        try {
+            $this->removeAcyMailingData($user, array_unique(array_filter([$requestEmail, $accountEmail])));
+            $this->removeShopData($userId, $emails, $requestId);
+
+            // Consent records of an earlier template override (also guest records with the user's
+            // e-mail addresses): anonymized, never assigned to an order.
+            try {
+                self::loadHelperClasses();
+                (new ConsentRepository($this->getDatabase()))->anonymizeLegacyConsents($userId, [$requestEmail, $accountEmail]);
+            } catch (\Throwable $e) {
+                Log::add('Legacy consent records could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            }
+
+            $this->processRequestConsents($userId, $emails, $newsletterOrders);
+            $this->reportRetainedOrders($retained, $check['lifetime_expired'] ?? [], $customerEmail, $languageTag);
+        } finally {
+            $this->guestRequest     = false;
+            $this->newsletterKept   = false;
+            $this->anonymizedOrders = [];
+        }
+    }
+
+    /**
+     * Addresses, carts and expired orders of a removal request in every J2Commerce data set (a
+     * migration keeps the #__j2store_* copies; personal data must not survive there).
+     *
+     * @param   int       $userId     Account of the request (0: none)
+     * @param   string[]  $emails     Request and account addresses
+     * @param   int       $requestId  ID of the privacy request (0: unknown), named in the action log
+     */
+    protected function removeShopData(int $userId, array $emails, int $requestId): void
+    {
         $this->forEachDataSet(function () use ($userId, $emails): void {
             // Delete address book entries while Delete Addresses is on
             if ($this->params->get('delete_addresses', 1)) {
@@ -1555,29 +1609,6 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         if ($this->params->get('anonymize_orders', 1)) {
             $this->logActivity('orders_anonymized', $userId, '', ['requestid' => $requestId > 0 ? (string) $requestId : '-']);
         }
-
-        // Consent records of an earlier template override (also guest records with the user's
-        // e-mail addresses): anonymized, never assigned to an order.
-        try {
-            self::loadHelperClasses();
-            (new ConsentRepository($this->getDatabase()))->anonymizeLegacyConsents($userId, [$requestEmail, $accountEmail]);
-        } catch (\Throwable $e) {
-            Log::add('Legacy consent records could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
-        }
-
-        // Remove AcyMailing subscriber data (request and account e-mail as captured above). A kept
-        // subscriber (see removeAcyMailingSubscriber()) is named in the messages below.
-        $this->newsletterKept = false;
-        $this->guestRequest   = $user === null;
-
-        try {
-            $this->removeAcyMailingData($user, array_unique(array_filter([$requestEmail, $accountEmail])));
-            $this->processRequestConsents($userId, $emails, $newsletterOrders);
-            $this->reportRetainedOrders($retained, $check['lifetime_expired'] ?? [], $customerEmail, $languageTag);
-        } finally {
-            $this->guestRequest   = false;
-            $this->newsletterKept = false;
-        }
     }
 
     /**
@@ -1590,36 +1621,56 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
      * - The AcyMailing placeholder contact Joomla's pseudonymisation of the account created is
      *   deleted (AcymailingPlaceholders guards).
      *
-     * While a newsletter subscriber of the request was kept (lookup or listener failed) the
-     * newsletter is still running, so the consent records stay unchanged: carrying out the
-     * removal again processes them together with the subscriber.
+     * While a newsletter subscriber of the request was kept (lookup, listener or deletion failed)
+     * the newsletter is still running, so these consent records stay unchanged: carrying out the
+     * removal again processes them together with the subscriber. Only the checkout newsletter
+     * consents of guest orders this request has just anonymized become invalid all the same:
+     * their order no longer carries the address, so a retry could not attribute them any more.
      *
-     * @param   int       $userId            Account of the request (0: none)
-     * @param   string[]  $emails            Request and account addresses (requestEmails())
-     * @param   string[]  $newsletterOrders  Guest orders of the request (guestOrderIds(), before anonymization)
+     * A step that fails is logged and reported to the administrator as a warning (the removal is
+     * incomplete and has to be carried out again).
+     *
+     * @param   int            $userId            Account of the request (0: none)
+     * @param   string[]       $emails            Request and account addresses (requestEmails())
+     * @param   string[]|null  $newsletterOrders  Guest orders of the request (guestOrderIds(), before
+     *                                            anonymization); null: the lookup failed
      */
-    protected function processRequestConsents(int $userId, array $emails, array $newsletterOrders): void
+    protected function processRequestConsents(int $userId, array $emails, ?array $newsletterOrders): void
     {
         self::loadHelperClasses();
-        $db = $this->getDatabase();
+        $db     = $this->getDatabase();
+        $failed = $newsletterOrders === null;
+        $orders = $newsletterOrders ?? [];
 
-        if ($this->newsletterKept) {
-            Log::add('Newsletter subscriber kept: consent records of the request left unchanged until the removal is carried out again', Log::WARNING, 'plg_privacy_j2commerce');
-        } else {
-            try {
-                $repository = new ConsentRepository($db);
+        try {
+            $repository = new ConsentRepository($db);
+
+            if ($this->newsletterKept) {
+                Log::add('Newsletter subscriber kept: consent records of the request left unchanged until the removal is carried out again', Log::WARNING, 'plg_privacy_j2commerce');
+                $repository->invalidateNewsletterOrderConsents(0, array_values(array_intersect($orders, array_keys($this->anonymizedOrders))));
+            } else {
                 $repository->anonymizeRequestConsents($userId, $emails);
-                $repository->invalidateNewsletterOrderConsents($userId, $newsletterOrders);
-            } catch (\Throwable $e) {
-                Log::add('Consent records of the request could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+                $repository->invalidateNewsletterOrderConsents($userId, $orders);
             }
+        } catch (\Throwable $e) {
+            $failed = true;
+            Log::add('Consent records of the request could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
         }
 
         if ($userId > 0) {
             try {
                 (new AcymailingPlaceholders($db))->remove([$userId]);
             } catch (\Throwable $e) {
+                $failed = true;
                 Log::add('AcyMailing placeholder contact not removed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            }
+        }
+
+        if ($failed) {
+            $app = $this->feedbackApplication();
+
+            if ($app !== null && method_exists($app, 'enqueueMessage')) {
+                $app->enqueueMessage($this->pluginStrings(self::currentLanguage())->_('PLG_PRIVACY_J2COMMERCE_CONSENTS_INCOMPLETE'), 'warning');
             }
         }
     }
@@ -2312,6 +2363,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         // order is anonymized everywhere (ConsentRepository::removeStaleEvidence()).
         if (!$isJ4 && $ownNumbers !== []) {
             (new ConsentRepository($db))->removeOrderEvidence($ownNumbers);
+
+            foreach ($ownNumbers as $number) {
+                $this->anonymizedOrders[(string) $number] = true;
+            }
         }
     }
 

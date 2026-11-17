@@ -816,10 +816,22 @@ final class ConsentRepository
      */
     public function removeNewsletterOrderEvidence(array $orderIds): int
     {
+        return $this->stripNewsletterRecords($this->findNewsletterOrderConsents($orderIds));
+    }
+
+    /**
+     * Remove IP address and user agent from exactly these checkout newsletter consent records.
+     *
+     * @param   object[]  $records  Rows with id, body and order_id
+     *
+     * @return  int  Number of records changed
+     */
+    private function stripNewsletterRecords(array $records): int
+    {
         $changed  = 0;
         $language = null;
 
-        foreach ($this->findNewsletterOrderConsents($orderIds) as $record) {
+        foreach ($records as $record) {
             $body = (string) $record->body;
 
             if (str_contains($body, self::NEWSLETTER_EVIDENCE_REMOVED_MARKER) || str_contains($body, self::EVIDENCE_REMOVED_MARKER)) {
@@ -1338,15 +1350,17 @@ final class ConsentRepository
             $live = $this->ordersWithPersonalData(array_keys($orders), $tables);
             $done = [];
 
+            // Only the records that are due themselves: another record of the same order number
+            // (a newer consent, or another order sharing the number) keeps its evidence.
             foreach ($records as $record) {
-                $orderId = self::extractNewsletterOrderId((string) $record->body);
+                $record->order_id = self::extractNewsletterOrderId((string) $record->body);
 
-                if ($orderId !== null && ((string) $record->created <= $cutoff || !isset($live[$orderId]))) {
-                    $done[$orderId] = true;
+                if ($record->order_id !== null && ((string) $record->created <= $cutoff || !isset($live[$record->order_id]))) {
+                    $done[] = $record;
                 }
             }
 
-            $changed += $this->removeNewsletterOrderEvidence(array_keys($done));
+            $changed += $this->stripNewsletterRecords($done);
             $lastId   = (int) end($records)->id;
         } while (\count($records) === self::BATCH_SIZE);
 

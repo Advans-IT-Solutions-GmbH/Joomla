@@ -1423,6 +1423,10 @@ class DataIsolationTest
             // --- A kept newsletter subscriber leaves the newsletter consents of the request unchanged ---
             $keptGuest = 'kinds.kept.' . $suffix . '@example.com';
             $ids['kept_form'] = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Formular', self::kindFormBody($keptGuest));
+            $orders['kept_expired'] = $this->insertGuestTestOrder('KIND-KEX-' . $suffix, 0, $keptGuest, $expired, 'Kurt');
+            $orders['kept_recent']  = $this->insertGuestTestOrder('KIND-KRE-' . $suffix, 0, $keptGuest, $recent, 'Kurt');
+            $ids['kept_k3_expired'] = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['kept_expired'], '203.0.113.85'), 1, $expired);
+            $ids['kept_k3_recent']  = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['kept_recent'], '203.0.113.86'), 1, $recent);
             $keptPlugin = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['retention_years' => 10])]) extends GuestRequestTestPlugin {
                 protected function removeAcyMailingData(?\Joomla\CMS\User\User $user, ?array $emails = null): void
                 {
@@ -1444,12 +1448,59 @@ class DataIsolationTest
             $keptAfter = $this->kindRecord($ids['kept_form']);
             $this->test('Kept newsletter subscriber: the form record stays unchanged until the removal is carried out again',
                 $keptAfter->body === $keptBefore->body && (int) $keptAfter->state === 1, json_encode($keptAfter));
+            $keptRecent  = $this->kindRecord($ids['kept_k3_recent']);
+            $keptExpired = $this->kindRecord($ids['kept_k3_expired']);
+            $this->test('Kept newsletter subscriber: the checkout newsletter consent of an order within the retention period stays valid with its evidence',
+                (int) $keptRecent->state === 1 && str_contains($keptRecent->body, '203.0.113.86'), json_encode($keptRecent));
+
+            if ($isJ6) {
+                // The order was anonymized in the same request: a retry can no longer find it by
+                // the address, so its consent is invalidated now, not left valid for ever.
+                $this->test('Kept newsletter subscriber: the checkout newsletter consent of the order anonymized by the request is invalid and without evidence',
+                    (int) $keptExpired->state === -1 && !str_contains($keptExpired->body, '203.0.113.85'), json_encode($keptExpired));
+            } else {
+                $this->test('Kept newsletter subscriber (J2Store): checkout newsletter consents unchanged',
+                    (int) $keptExpired->state === 1 && str_contains($keptExpired->body, '203.0.113.85'), json_encode($keptExpired));
+            }
+
             $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
                 'subject' => $this->guestTestRequest($keptGuest),
                 'user'    => null,
             ]));
             $this->test('Kept newsletter subscriber: carrying out the removal again anonymizes the form record',
                 (int) $this->kindRecord($ids['kept_form'])->state === -1);
+            $this->test('Kept newsletter subscriber: carrying out the removal again invalidates the checkout newsletter consent of the retained order'
+                . ($isJ6 ? '' : ' (J2Store: unchanged)'),
+                (int) $this->kindRecord($ids['kept_k3_recent'])->state === ($isJ6 ? -1 : 1));
+
+            // A failing step is reported to the administrator as an incomplete removal.
+            $warnPlugin = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry([])]) extends GuestRequestTestPlugin {
+                public array $messages = [];
+
+                protected function feedbackApplication(): ?object
+                {
+                    $plugin = $this;
+
+                    return new class ($plugin) {
+                        public function __construct(private object $plugin)
+                        {
+                        }
+
+                        public function enqueueMessage(string $message, string $type = 'message'): void
+                        {
+                            $this->plugin->messages[] = [$type, $message];
+                        }
+                    };
+                }
+            };
+            $warnPlugin->setDatabase($this->db);
+            $warnPlugin->call('processRequestConsents', 0, [$keptGuest], null);
+            $this->test('A failed guest-order lookup is reported as a warning (removal incomplete)',
+                ($warnPlugin->messages[0][0] ?? '') === 'warning' && count($warnPlugin->messages) === 1
+                && !str_starts_with((string) ($warnPlugin->messages[0][1] ?? ''), 'PLG_'), json_encode($warnPlugin->messages));
+            $warnPlugin->messages = [];
+            $warnPlugin->call('processRequestConsents', 0, [$keptGuest], []);
+            $this->test('Consent processing without a failure adds no warning', $warnPlugin->messages === [], json_encode($warnPlugin->messages));
 
             // --- Account removal ---
             $plugin->onPrivacyCanRemoveData(null, $user);
@@ -1484,6 +1535,8 @@ class DataIsolationTest
             $ids['k3_old_live']  = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['other_expired'], '203.0.113.90'), 1, $expired);
             $ids['k3_missing']   = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody('KIND-MISSING-' . $suffix, '203.0.113.91'), 1, $recent);
             $ids['k3_live']      = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['account_recent'], '203.0.113.92'), 1, $recent);
+            // An expired and a newer record of the same live order: only the expired one is due.
+            $ids['k3_live_old']  = $this->insertKindRecord(0, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['account_recent'], '203.0.113.93'), 1, $expired);
             $cutoff = gmdate('Y-m-d H:i:s', strtotime('-10 years'));
             $repository->removeStaleNewsletterEvidence($cutoff, [$ordersTable]);
             $this->test('Cleanup: checkout newsletter consent outside the retention period loses IP address and user agent',
@@ -1492,6 +1545,9 @@ class DataIsolationTest
                 !str_contains($this->kindRecord($ids['k3_missing'])->body, '203.0.113.91'));
             $this->test('Cleanup: checkout newsletter consent of an order within the retention period keeps its evidence',
                 str_contains($this->kindRecord($ids['k3_live'])->body, '203.0.113.92'));
+            $this->test('Cleanup: only the expired record of a live order loses its evidence, the newer record of the same order keeps it',
+                !str_contains($this->kindRecord($ids['k3_live_old'])->body, '203.0.113.93')
+                && str_contains($this->kindRecord($ids['k3_live'])->body, '203.0.113.92'));
             $this->test('Cleanup: a second run changes nothing', $repository->removeStaleNewsletterEvidence($cutoff, [$ordersTable]) === 0);
             $this->test('Cleanup: form and registration records are never changed by the cleanup',
                 $this->kindRecord($ids['k1_other_account'])->body === $before['k1_other_account']->body

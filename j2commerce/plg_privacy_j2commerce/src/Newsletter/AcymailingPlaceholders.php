@@ -161,29 +161,7 @@ final class AcymailingPlaceholders
                     continue;
                 }
 
-                if ($this->hasListRows($prefix, $contactId)) {
-                    $result['kept']++;
-                    continue;
-                }
-
-                foreach ($related as $table) {
-                    $this->db->setQuery(
-                        $this->createQuery()
-                            ->delete($this->db->quoteName($prefix . $table))
-                            ->where($this->db->quoteName('user_id') . ' = ' . $contactId)
-                    )->execute();
-                }
-
-                // The list check is repeated in the statement itself: a contact that got a list row
-                // in the meantime is never deleted.
-                $this->db->setQuery(
-                    'DELETE FROM ' . $this->db->quoteName($prefix . 'user')
-                    . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $contactId
-                    . ' AND NOT EXISTS (SELECT 1 FROM ' . $this->db->quoteName($prefix . 'user_has_list', 'l')
-                    . ' WHERE ' . $this->db->quoteName('l.user_id') . ' = ' . $contactId . ')'
-                )->execute();
-
-                if ($this->db->getAffectedRows() > 0) {
+                if ($this->deleteContact($prefix, $contactId, $cmsId, $related)) {
                     $result['removed']++;
                 } else {
                     $result['kept']++;
@@ -192,6 +170,77 @@ final class AcymailingPlaceholders
         } while (\count($contacts) === self::BATCH_SIZE);
 
         return $result;
+    }
+
+    /**
+     * Delete one placeholder contact in a transaction. Every guard is checked again on locked
+     * rows (contact, account, list rows) before anything is deleted, and the contact row itself
+     * is deleted only while it still has no list row. If a guard no longer holds or the contact
+     * is not deleted, the transaction is rolled back, so its related rows stay too.
+     *
+     * @param   string[]  $related  Existing RELATED_TABLES
+     *
+     * @return  bool  Whether the contact was deleted (false: kept)
+     */
+    private function deleteContact(string $prefix, int $contactId, int $cmsId, array $related): bool
+    {
+        $this->db->transactionStart();
+
+        try {
+            $contact = $this->db->setQuery(
+                'SELECT ' . $this->db->quoteName('email') . ', ' . $this->db->quoteName('cms_id')
+                . ' FROM ' . $this->db->quoteName($prefix . 'user')
+                . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $contactId . ' FOR UPDATE'
+            )->loadObject();
+            $account = $this->db->setQuery(
+                'SELECT ' . $this->db->quoteName('email') . ' FROM ' . $this->db->quoteName('#__users')
+                . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $cmsId . ' FOR UPDATE'
+            )->loadResult();
+            $lists = $this->db->setQuery(
+                'SELECT ' . $this->db->quoteName('user_id') . ' FROM ' . $this->db->quoteName($prefix . 'user_has_list')
+                . ' WHERE ' . $this->db->quoteName('user_id') . ' = ' . $contactId . ' FOR UPDATE'
+            )->loadColumn() ?: [];
+
+            $placeholder = self::placeholderAddress($cmsId);
+
+            if (!\is_object($contact) || (int) $contact->cms_id !== $cmsId || $lists !== []
+                || ConsentRepository::normaliseAddress((string) $contact->email) !== $placeholder
+                || ConsentRepository::normaliseAddress((string) $account) !== $placeholder) {
+                $this->db->transactionRollback();
+
+                return false;
+            }
+
+            foreach ($related as $table) {
+                $this->db->setQuery(
+                    $this->createQuery()
+                        ->delete($this->db->quoteName($prefix . $table))
+                        ->where($this->db->quoteName('user_id') . ' = ' . $contactId)
+                )->execute();
+            }
+
+            // The list check is repeated in the statement itself.
+            $this->db->setQuery(
+                'DELETE FROM ' . $this->db->quoteName($prefix . 'user')
+                . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $contactId
+                . ' AND NOT EXISTS (SELECT 1 FROM ' . $this->db->quoteName($prefix . 'user_has_list', 'l')
+                . ' WHERE ' . $this->db->quoteName('l.user_id') . ' = ' . $contactId . ')'
+            )->execute();
+
+            if ($this->db->getAffectedRows() < 1) {
+                $this->db->transactionRollback();
+
+                return false;
+            }
+
+            $this->db->transactionCommit();
+
+            return true;
+        } catch (\Throwable $e) {
+            $this->db->transactionRollback();
+
+            throw $e;
+        }
     }
 
     /**
@@ -223,16 +272,6 @@ final class AcymailingPlaceholders
         }
 
         return $found;
-    }
-
-    private function hasListRows(string $prefix, int $contactId): bool
-    {
-        return (int) $this->db->setQuery(
-            $this->createQuery()
-                ->select('COUNT(*)')
-                ->from($this->db->quoteName($prefix . 'user_has_list'))
-                ->where($this->db->quoteName('user_id') . ' = ' . $contactId)
-        )->loadResult() > 0;
     }
 
     /**
