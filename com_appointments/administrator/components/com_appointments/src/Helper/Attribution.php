@@ -30,8 +30,10 @@ defined('_JEXEC') or die;
  *
  * Every value is text without control or format characters, valid UTF-8, at most
  * {@see self::MAX_LENGTH} characters. Parameter names come from a fixed list, URLs lose their
- * fragment and every query parameter that may carry a credential (a token, a signature, a code,
- * a Joomla form token). Output is plain text: pages and mails escape it.
+ * fragment, a user name and password before the host, and every query parameter that may carry a
+ * credential by its name (a token, a signature, a code, a Joomla form token) or by its value (a
+ * JSON Web Token or another opaque token, {@see self::tokenLike()}). Output is plain text: pages
+ * and mails escape it.
  *
  * Pure: no database and no Joomla runtime, so it is tested on its own.
  *
@@ -73,9 +75,15 @@ final class Attribution
     public const FIT_LENGTH = 256;
 
     /** Query parameters that are never stored with a URL. */
-    private const SECRET = '/token|signature|secret|passw|pwd|key|auth|session|sid|code|nonce|hash|otp|ticket|mail/i';
+    private const SECRET = '/token|signature|secret|passw|pwd|key|auth|session|sid|code|nonce|hash|otp|ticket|mail|jwt|bearer|credential|activat|invit|reset|verif|confirm|magic|\Asig\z|_sig\z/i';
 
-    private const TOUCH_FIELDS = ['time_utc', 'landing_url', 'referrer', 'referrer_host'];
+    /** The shortest query value that is checked for a token by its value ({@see self::tokenLike()}). */
+    private const TOKEN_LENGTH = 32;
+
+    /** The shortest run between separators that makes such a value a token when it mixes letters and digits. */
+    private const TOKEN_RUN = 12;
+
+    private const TOUCH_FIELDS =['time_utc', 'landing_url', 'referrer', 'referrer_host'];
 
     /**
      * Text without control or format characters (also bidirectional overrides), valid UTF-8,
@@ -134,9 +142,10 @@ final class Attribution
     }
 
     /**
-     * A URL as stored: without fragment and without any query parameter that may carry a
-     * credential, otherwise as it was sent. `$pathOnly` keeps path and query only (a URL of
-     * the site itself).
+     * A URL as stored: without fragment, without user name and password before the host, and
+     * without any query parameter that may carry a credential (by its name, or by a value that
+     * looks like a token), otherwise as it was sent. `$pathOnly` keeps path and query only (a URL
+     * of the site itself).
      */
     public static function url(mixed $url, bool $pathOnly = false): string
     {
@@ -148,7 +157,9 @@ final class Attribution
 
         $url = explode('#', $url, 2)[0];
         $parts = explode('?', $url, 2);
-        $base = $parts[0];
+        // A user name and password before the host («https://user:secret@host/») are never kept,
+        // up to the last «@» of the authority, so an unencoded «@» in the password goes too.
+        $base = preg_replace('#\A([a-z][a-z0-9+.-]*://)[^/?]*@#i', '$1', $parts[0]) ?? '';
 
         if ($pathOnly && preg_match('#\A[a-z][a-z0-9+.-]*://[^/?]*#i', $base, $origin) === 1) {
             $base = substr($base, \strlen($origin[0]));
@@ -162,9 +173,10 @@ final class Attribution
                 continue;
             }
 
-            $name = rawurldecode(str_replace('+', ' ', explode('=', $pair, 2)[0]));
+            [$name, $value] = array_map(static fn (string $part): string => rawurldecode(str_replace('+', ' ', $part)), explode('=', $pair, 2) + [1 => '']);
 
-            if (preg_match(self::SECRET, $name) === 1 || preg_match('/\A[a-f0-9]{32}\z/i', $name) === 1) {
+            if (preg_match(self::SECRET, $name) === 1 || preg_match('/\A[a-f0-9]{32}\z/i', $name) === 1
+                || (!\in_array(strtolower($name), self::PARAMETERS, true) && self::tokenLike($value))) {
                 continue;
             }
 
@@ -172,6 +184,34 @@ final class Attribution
         }
 
         return self::clean($base . ($kept === [] ? '' : '?' . implode('&', $kept)));
+    }
+
+    /**
+     * Whether a query value looks like a credential whatever its parameter is called: a JSON Web
+     * Token, or an opaque string of at least {@see self::TOKEN_LENGTH} characters without spaces
+     * (a reset or invitation token, a signed link, a session ID, a UUID) in which a run of at
+     * least {@see self::TOKEN_RUN} characters between the separators «-», «_», «.» and «~» mixes
+     * letters and digits. Readable values such as «spring-2026-linkedin-retargeting-switzerland»
+     * keep letters and digits in separate words and stay. The campaign parameters and click IDs
+     * (self::PARAMETERS) are not checked: a click ID is such a string by design.
+     */
+    private static function tokenLike(string $value): bool
+    {
+        if (preg_match('/\AeyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/', $value) === 1) {
+            return true;
+        }
+
+        if (\strlen($value) < self::TOKEN_LENGTH || preg_match('#\A[A-Za-z0-9_.~+/=-]+\z#', $value) !== 1) {
+            return false;
+        }
+
+        foreach (preg_split('/[-_.~]+/', $value) ?: [] as $run) {
+            if (\strlen($run) >= self::TOKEN_RUN && preg_match('/[A-Za-z]/', $run) === 1 && preg_match('/[0-9]/', $run) === 1) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** The host of a URL in lower case, '' for none. */

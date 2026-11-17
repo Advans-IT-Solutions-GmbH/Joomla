@@ -1565,9 +1565,22 @@ own, no script and no form field: a value posted with the booking form never rea
 
 The visitor's time zone is the booking's `invitee_timezone`, as before. Every value is valid UTF-8
 without control or format characters and at most 2048 characters (Accept-Language 512). A whole record is at most 64 KiB of JSON: one that would be larger (only crafted values get there) keeps the first 256 characters of each value. Only the
-parameters listed above are kept. URLs lose their fragment and every query parameter whose name
-suggests a credential (`token`, `signature`, `secret`, `password`, `pwd`, `key`, `auth`, `session`, `sid`,
-`code`, `nonce`, `hash`, `otp`, `ticket`, `mail`) and Joomla form tokens.
+parameters listed above are kept. URLs lose their fragment, a user name and password before the
+host (up to the last `@` before the host), every query parameter whose name contains a word that
+suggests a credential (`token`, `signature`, `secret`, `password`, `pwd`, `key`, `auth`, `session`,
+`sid`, `code`, `nonce`, `hash`, `otp`, `ticket`, `mail`, `jwt`, `bearer`, `credential`, `activation`,
+`invite`, `reset`, `verify`, `confirm`, `magic`, and `sig` alone or as `…_sig`), Joomla form tokens,
+and every query parameter whose value looks like a token whatever its name:
+
+- a JSON Web Token (`eyJ…` with at least two dot-separated parts), or
+- a value of at least 32 characters made only of letters, digits and `-_.~+/=` in which a run of at
+  least 12 characters between the separators `-`, `_`, `.` and `~` mixes letters and digits: a hex
+  or Base64 token, a signed link, a session ID, a UUID.
+
+Readable values keep letters and digits in separate words and stay, also when they are long, for
+example `campaign=spring-2026-linkedin-retargeting-switzerland`. The campaign parameters and click
+IDs above are never removed, whatever their values look like: a click ID is an opaque string by
+design.
 
 **Not collected.** Screen and viewport size would need a script that reads properties of the
 device. That is an access to the visitor's terminal equipment, which needs consent under the
