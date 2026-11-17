@@ -71,6 +71,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     /** A newsletter subscriber of the removal request being reported was kept (listener failed). */
     private bool $newsletterKept = false;
+    /**
+     * Key in the params of an account whose removal request is in progress or did not finish:
+     * HMAC hashes (site secret) of the request and account addresses. A retry arrives without
+     * account after Joomla pseudonymised it and finds the account through this marker.
+     */
+    public const PENDING_PARAM = 'plg_privacy_j2commerce_pending';
+
     /** Order e-mail of anonymized orders; never matched as a customer address. */
     public const ANONYMIZED_EMAIL = 'anonymized@deleted.invalid';
 
@@ -1493,6 +1500,23 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             return;
         }
 
+        // A removal of this address that did not finish (marked below) is continued with its
+        // account: Joomla pseudonymised the account in that run, so the retry arrives without one.
+        if ($user === null) {
+            $pending = $this->pendingAccount($emails);
+
+            if ($pending !== null) {
+                Log::add('Continuing an unfinished removal request with its pseudonymised account ' . $pending, Log::INFO, 'plg_privacy_j2commerce');
+                $userId = $pending;
+            }
+        }
+
+        // The verified association of request and account is stored on the account before any
+        // work that can fail, and removed once everything is done.
+        if ($userId > 0) {
+            $this->markPendingAccount($userId, $emails);
+        }
+
         $customerEmail = $requestEmail !== '' ? $requestEmail : $accountEmail;
         $check         = $this->retentionOverDataSets($userId, $emails);
         $languageTag   = $user
@@ -1548,6 +1572,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $this->removeAcyMailingData($user, array_unique(array_filter([$requestEmail, $accountEmail])));
             $consentsDone = $this->processRequestConsents($userId, $emails, $newsletterOrders);
             $this->removeShopData($userId, $emails, $requestId, $consentsDone);
+
+            if ($userId > 0 && $consentsDone) {
+                $this->clearPendingAccount($userId);
+            }
 
             // Consent records of an earlier template override (also guest records with the user's
             // e-mail addresses): anonymized, never assigned to an order.
@@ -1684,6 +1712,152 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         }
 
         return !$failed;
+    }
+
+    /**
+     * Site secret for the hashes of the pending-removal marker ('' without application).
+     */
+    protected function pendingSecret(): string
+    {
+        try {
+            $app = $this->getApplication() ?? Factory::getApplication();
+
+            return (string) $app->get('secret', '');
+        } catch (\Throwable $e) {
+            return '';
+        }
+    }
+
+    /** HMAC of a request address for the pending-removal marker (never the address itself). */
+    private function pendingHash(string $email): string
+    {
+        return hash_hmac('sha256', 'pending-removal|' . ConsentRepository::normaliseAddress($email), $this->pendingSecret());
+    }
+
+    /**
+     * Store on the account, in its params (PENDING_PARAM), the HMAC hashes of the request and
+     * account addresses of a removal request in progress. Written directly, without saving the
+     * user (no user events). A failure is logged: the removal then goes on, but a retry after a
+     * failed step could not find the account again.
+     *
+     * @param   string[]  $emails
+     */
+    protected function markPendingAccount(int $userId, array $emails): void
+    {
+        try {
+            $this->updateAccountParams($userId, function (array $params) use ($emails): array {
+                $params[self::PENDING_PARAM] = array_values(array_unique(array_map(fn (string $email): string => $this->pendingHash($email), $emails)));
+
+                return $params;
+            });
+        } catch (\Throwable $e) {
+            Log::add('Removal request: the account could not be marked for a retry: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+        }
+    }
+
+    /** Remove the pending-removal marker of an account (its removal request is done). */
+    protected function clearPendingAccount(int $userId): void
+    {
+        try {
+            $this->updateAccountParams($userId, static function (array $params): array {
+                unset($params[self::PENDING_PARAM]);
+
+                return $params;
+            });
+        } catch (\Throwable $e) {
+            Log::add('Removal request: the retry marker of the account could not be removed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+        }
+    }
+
+    /**
+     * The account of an unfinished removal request of one of $emails (markPendingAccount()), or
+     * null: none, or more than one (ambiguous, fail-closed).
+     *
+     * @param   string[]  $emails
+     */
+    protected function pendingAccount(array $emails): ?int
+    {
+        if ($emails === []) {
+            return null;
+        }
+
+        try {
+            $db     = $this->getDatabase();
+            $wanted = array_map(fn (string $email): string => $this->pendingHash($email), $emails);
+            $rows   = $db->setQuery(
+                $this->createDbQuery()
+                    ->select($db->quoteName(['id', 'params']))
+                    ->from($db->quoteName('#__users'))
+                    ->where($db->quoteName('params') . ' LIKE ' . $db->quote('%' . $db->escape(self::PENDING_PARAM, true) . '%', false))
+            )->loadObjectList() ?: [];
+        } catch (\Throwable $e) {
+            Log::add('Removal request: unfinished removals could not be read: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+
+            return null;
+        }
+
+        $found = [];
+
+        foreach ($rows as $row) {
+            $params = json_decode((string) $row->params, true);
+
+            foreach (\is_array($params) ? (array) ($params[self::PENDING_PARAM] ?? []) : [] as $hash) {
+                foreach ($wanted as $candidate) {
+                    if (\is_string($hash) && hash_equals($hash, $candidate)) {
+                        $found[(int) $row->id] = true;
+                    }
+                }
+            }
+        }
+
+        if (\count($found) > 1) {
+            Log::add('Removal request: several unfinished removals match the address, none continued', Log::WARNING, 'plg_privacy_j2commerce');
+
+            return null;
+        }
+
+        return $found === [] ? null : (int) array_key_first($found);
+    }
+
+    /**
+     * Change the params of an account in the database (read, change, write back in one
+     * transaction), without loading or saving the user.
+     */
+    private function updateAccountParams(int $userId, callable $change): void
+    {
+        $db = $this->getDatabase();
+        $db->transactionStart();
+
+        try {
+            $current = $db->setQuery(
+                'SELECT ' . $db->quoteName('params') . ' FROM ' . $db->quoteName('#__users')
+                . ' WHERE ' . $db->quoteName('id') . ' = ' . $userId . ' FOR UPDATE'
+            )->loadResult();
+
+            if ($current === null) {
+                $db->transactionRollback();
+
+                return;
+            }
+
+            $params  = json_decode((string) $current, true);
+            $params  = $change(\is_array($params) ? $params : []);
+            $encoded = json_encode($params === [] ? new \stdClass() : $params);
+
+            $db->setQuery(
+                $this->createDbQuery()
+                    ->update($db->quoteName('#__users'))
+                    ->set($db->quoteName('params') . ' = :params')
+                    ->where($db->quoteName('id') . ' = :id')
+                    ->bind(':params', $encoded)
+                    ->bind(':id', $userId, ParameterType::INTEGER)
+            )->execute();
+            $db->transactionCommit();
+        } catch (\Throwable $e) {
+            $db->transactionRollback();
+
+            throw $e;
+        }
     }
 
     /**

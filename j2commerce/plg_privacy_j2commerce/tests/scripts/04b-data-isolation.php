@@ -1285,6 +1285,7 @@ class DataIsolationTest
         $orders   = [];
         $ids      = [];
         $core     = 'PLG_SYSTEM_PRIVACYCONSENT_SUBJECT';
+        $failUsers = [];
         $accountId      = 9921;
         $otherAccountId = 9922;
 
@@ -1563,6 +1564,70 @@ class DataIsolationTest
             $this->test('Retry without account (pseudonymised): the guest record with the address is anonymized',
                 (int) $this->kindRecord($ids['kept_acc_guest'])->state === -1);
 
+            // --- A failed consent write on an account removal: the retry without account continues it ---
+            $failEmail = 'kinds.failaccount.' . $suffix . '@example.com';
+            $failRow   = (object) [
+                'name' => 'Kinds fail account', 'username' => 'kinds-fail-' . $suffix, 'email' => $failEmail, 'password' => '',
+                'block' => 0, 'sendEmail' => 0, 'registerDate' => gmdate('Y-m-d H:i:s'), 'params' => '{"language":"de-DE"}',
+            ];
+            $this->db->insertObject('#__users', $failRow, 'id');
+            $failUserId = (int) $failRow->id;
+            $failUsers[] = $failUserId;
+            $orders['fail_expired'] = $this->insertGuestTestOrder('KIND-FEX-' . $suffix, $failUserId, $failEmail, $expired, 'Fritz');
+            $ids['fail_k1']   = $this->insertKindRecord($failUserId, $core, '<p>IP Address: 198.51.100.60</p><p>Browser: KindsAgent/1.0</p>');
+            $ids['fail_form'] = $this->insertKindRecord($failUserId, 'Newsletter-Einwilligung im Formular', self::kindFormBody($failEmail));
+            $ids['fail_k3']   = $this->insertKindRecord($failUserId, 'Newsletter-Einwilligung im Bestellablauf', self::kindCheckoutNewsletterBody($orders['fail_expired'], '203.0.113.89'), 1, $expired);
+
+            $failPlugin = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['retention_years' => 10])]) extends GuestRequestTestPlugin {
+                protected function processRequestConsents(int $userId, array $emails, ?array $newsletterOrders): bool
+                {
+                    return false; // a consent write that failed
+                }
+
+                protected function reportRetainedOrders(array $retained, array $lifetime, string $customerEmail, string $languageTag): void
+                {
+                }
+            };
+            $failPlugin->setDatabase($this->db);
+            $failUser           = new \Joomla\CMS\User\User();
+            $failUser->id       = $failUserId;
+            $failUser->username = $failRow->username;
+            $failUser->email    = $failEmail;
+            $failPlugin->onPrivacyCanRemoveData(null, $failUser);
+            $failPlugin->onPrivacyRemoveData(null, $failUser);
+
+            $paramsOf = fn (): array => (array) json_decode((string) $this->db->setQuery('SELECT params FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . $failUserId)->loadResult(), true);
+            $this->test('Failed consent step on an account removal: the account keeps a hashed retry marker, no address in it',
+                !empty($paramsOf()['plg_privacy_j2commerce_pending']) && !str_contains(json_encode($paramsOf()), $failEmail), json_encode($paramsOf()));
+            $this->test('Failed consent step on an account removal: the account order keeps its address for the retry',
+                ($this->loadGuestTestOrder($orders['fail_expired'])->user_email ?? '') === $failEmail);
+
+            // Joomla's privacy plugin for user accounts pseudonymises the account in that run.
+            $this->db->setQuery('UPDATE ' . $this->db->quoteName('#__users') . ' SET email = ' . $this->db->quote('UserID' . $failUserId . 'removed@email.invalid')
+                . ', name = ' . $this->db->quote('User ID ' . $failUserId) . ' WHERE id = ' . $failUserId)->execute();
+
+            $plugin->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest(strtoupper($failEmail)),
+                'user'    => null,
+            ]));
+            $failK1   = $this->kindRecord($ids['fail_k1']);
+            $failForm = $this->kindRecord($ids['fail_form']);
+            $failK3   = $this->kindRecord($ids['fail_k3']);
+            $failOrd  = $this->loadGuestTestOrder($orders['fail_expired']);
+            $this->test('Retry without account: the account consent records are processed through the retry marker',
+                (int) $failK1->state === -1 && str_contains($failK1->body, '<!-- j2commerce-consent-erased -->')
+                && (int) $failForm->state === -1 && stripos($failForm->body, $failEmail) === false
+                && (int) $failK3->state === -1, json_encode([$failK1, $failForm, $failK3]));
+            $this->test('Retry without account: the account order is anonymized' . ($isJ6 ? ' and its newsletter consent loses IP address and user agent' : ''),
+                $failOrd && $failOrd->user_email === 'anonymized@deleted.invalid'
+                && (!$isJ6 || !str_contains($failK3->body, '203.0.113.89')), json_encode([$failOrd, $failK3]));
+            $this->test('Retry without account: the retry marker is removed, other params stay',
+                !isset($paramsOf()['plg_privacy_j2commerce_pending']) && ($paramsOf()['language'] ?? '') === 'de-DE', json_encode($paramsOf()));
+
+            $plain = new GuestRequestTestPlugin(['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry([])]);
+            $plain->setDatabase($this->db);
+            $this->test('Another address finds no unfinished removal', $plain->call('pendingAccount', ['someone.else.' . $suffix . '@example.com']) === null);
+
             // --- Account removal ---
             $plugin->onPrivacyCanRemoveData(null, $user);
             $plugin->onPrivacyRemoveData(null, $user);
@@ -1621,6 +1686,10 @@ class DataIsolationTest
             if ($orderList !== '') {
                 $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_orderinfos') . ' WHERE order_id IN (' . $orderList . ')')->execute();
                 $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__' . $this->tp . '_orders') . ' WHERE order_id IN (' . $orderList . ')')->execute();
+            }
+
+            foreach ($failUsers as $failId) {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . (int) $failId)->execute();
             }
 
             $idList = implode(',', array_map('intval', array_values($ids)));

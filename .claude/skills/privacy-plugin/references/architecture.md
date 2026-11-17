@@ -32,6 +32,8 @@ J2Commerce extends CMSPlugin implements SubscriberInterface
 │   └── checkCanRemoveData()
 ├── onPrivacyRemoveData()         — anonymize/delete
 │   └── processDataRemoval()      — uses the captured account data and the request e-mail
+│       ├── pendingAccount()         — user = null: continue the one account whose retry marker matches an address
+│       ├── markPendingAccount()     — account params PENDING_PARAM: HMAC hashes of the addresses (cleared when done)
 │       ├── checkRetentionPeriod()   — retained orders (+ lifetime flag), expired lifetime orders
 │       │   └── lifetimeOrderIds()   — Retention\LifetimeLicenses (fail-closed)
 │       ├── guestOrderIds()          — J2Commerce 6 guest orders of the request, read before anonymization
