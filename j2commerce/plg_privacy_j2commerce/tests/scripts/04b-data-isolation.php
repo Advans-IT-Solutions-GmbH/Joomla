@@ -1767,6 +1767,56 @@ class DataIsolationTest
                 'subject' => $this->guestTestRequest($ambiguous),
                 'user'    => null,
             ]));
+            // An incomplete run sends no completion e-mail and no completion message; the retained orders are listed.
+            $incompleteGuest = 'kinds.incomplete.' . $suffix . '@example.com';
+            $orders['incomplete_recent'] = $this->insertGuestTestOrder('KIND-INC-' . $suffix, 0, $incompleteGuest, $recent, 'Ina');
+            $incomplete = new class (['name' => 'j2commerce', 'type' => 'privacy', 'params' => new \Joomla\Registry\Registry(['retention_years' => 10])]) extends GuestRequestTestPlugin {
+                public array $messages = [];
+                public int $mails = 0;
+
+                protected function feedbackApplication(): ?object
+                {
+                    $plugin = $this;
+
+                    return new class ($plugin) {
+                        public function __construct(private object $plugin)
+                        {
+                        }
+
+                        public function isClient(string $name): bool
+                        {
+                            return $name === 'administrator';
+                        }
+
+                        public function enqueueMessage(string $message, string $type = 'message'): void
+                        {
+                            $this->plugin->messages[] = [$type, $message];
+                        }
+                    };
+                }
+
+                protected function processRequestConsents(int $userId, array $emails, ?array $newsletterOrders): bool
+                {
+                    return false;
+                }
+
+                protected function sendCustomerRetentionNotice($app, array $retained, array $lifetime, string $customerEmail, string $languageTag): string
+                {
+                    $this->mails++;
+
+                    return 'sent';
+                }
+            };
+            $incomplete->setDatabase($this->db);
+            $incomplete->onPrivacyRemoveData(new \Joomla\CMS\Event\Privacy\RemoveDataEvent('onPrivacyRemoveData', [
+                'subject' => $this->guestTestRequest($incompleteGuest),
+                'user'    => null,
+            ]));
+            $this->test('Incomplete run: no completion e-mail, only warnings, the retained order is listed',
+                $incomplete->mails === 0 && !in_array('message', array_column($incomplete->messages, 0), true)
+                && in_array(true, array_map(static fn (array $m): bool => $m[0] === 'warning' && str_contains($m[1], 'KIND-INC-') && !str_contains($m[1], 'PLG_'), $incomplete->messages), true),
+                json_encode($incomplete->messages));
+
             $this->test('Ambiguous retry marker: the removal is reported as incomplete and the guest order keeps its address',
                 in_array('warning', array_column($ambPlugin->messages, 0), true)
                 && ($this->loadGuestTestOrder($orders['amb_expired'])->user_email ?? '') === $ambiguous, json_encode($ambPlugin->messages));

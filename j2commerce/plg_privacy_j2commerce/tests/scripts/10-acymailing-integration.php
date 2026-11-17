@@ -1003,6 +1003,16 @@ class AcyMailingIntegrationTest
             $request->request_type = 'remove';
             $request->status       = 1;
 
+            // The export of the account shows every subscriber the removal will delete, also the
+            // linked contact with another address.
+            $export = new \ReflectionMethod($plugin, 'createAcyMailingDomain');
+            $export->setAccessible(true);
+            $domain  = $export->invoke($plugin, $user, [$email]);
+            $itemIds = $domain ? array_map(static fn ($item): string => (string) $item->id, $domain->getItems()) : [];
+            $this->test('Account export contains the subscriber of the address and the linked contact with another address',
+                in_array('subscriber_' . $contact . '_subscriber', $itemIds, true) && in_array('subscriber_' . $second . '_subscriber', $itemIds, true),
+                json_encode($itemIds));
+
             $dispatcher = new \Joomla\Event\Dispatcher();
             $dispatcher->addSubscriber($plugin);
             // plg_privacy_user saves the pseudonymised account; AcyMailing's synchronisation moves

@@ -72,6 +72,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
 
     /** A newsletter subscriber of the removal request being reported was kept (listener failed). */
     private bool $newsletterKept = false;
+
+    /**
+     * The consent step of the removal request being reported failed: its orders were not
+     * anonymized and the request has to be carried out again (no completion notices).
+     */
+    private bool $consentsIncomplete = false;
     /**
      * Key in the params of an account whose removal request is in progress or did not finish:
      * HMAC hashes (site secret) of the request and account addresses. A retry arrives without
@@ -717,10 +723,34 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             }
         }
 
+        // The subscribers linked to the verified account (cms_id), whatever their address: a
+        // removal request deletes them too (removeAcyMailingData()), so the export shows them.
+        $accountId = (int) ($user->id ?? 0);
+
+        if ($accountId > 0) {
+            try {
+                $columns = array_change_key_case($db->getTableColumns($prefix . 'user'), CASE_LOWER);
+
+                if (isset($columns['cms_id'])) {
+                    $query = $this->createDbQuery()
+                        ->select(['id', 'email', 'name', 'confirmed', 'creation_date'])
+                        ->from($db->quoteName($prefix . 'user'))
+                        ->where($db->quoteName('cms_id') . ' = ' . $accountId);
+
+                    foreach ($db->setQuery($query)->loadObjectList() ?: [] as $row) {
+                        $acymUsers[(int) $row->id] = $row;
+                    }
+                }
+            } catch (\Exception $e) {
+                return null;
+            }
+        }
+
         if ($acymUsers === []) {
             return null;
         }
 
+        ksort($acymUsers);
         $domain = $this->createDomain('newsletter_subscriptions', Text::_('PLG_PRIVACY_J2COMMERCE_ACYM_DOMAIN'));
 
         foreach ($acymUsers as $acymUser) {
@@ -1646,10 +1676,12 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
                 Log::add('Legacy consent records could not be processed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
             }
 
+            $this->consentsIncomplete = !$consentsDone;
             $this->reportRetainedOrders($retained, $check['lifetime_expired'] ?? [], $customerEmail, $languageTag);
         } finally {
-            $this->guestRequest   = false;
-            $this->newsletterKept = false;
+            $this->guestRequest       = false;
+            $this->newsletterKept     = false;
+            $this->consentsIncomplete = false;
         }
     }
 
@@ -2144,6 +2176,26 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         $app = $this->feedbackApplication();
 
         if ($app === null) {
+            return;
+        }
+
+        // Unfinished request (consent step failed, orders not anonymized): no completion e-mail
+        // to the customer and no completion message. The administrator gets the orders that
+        // will be kept; the warning PLG_PRIVACY_J2COMMERCE_CONSENTS_INCOMPLETE asks for a retry,
+        // which then sends the e-mail.
+        if ($this->consentsIncomplete) {
+            if (($retained !== [] || $lifetime !== []) && method_exists($app, 'isClient') && $app->isClient('administrator')) {
+                $strings = $this->pluginStrings(self::currentLanguage());
+                $app->enqueueMessage(
+                    nl2br(htmlspecialchars(
+                        sprintf($strings->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_INCOMPLETE_RETAINED'), $customerEmail) . "\n\n" . $this->formatRetainedOrders($retained, $lifetime, $strings),
+                        ENT_QUOTES,
+                        'UTF-8'
+                    )),
+                    'warning'
+                );
+            }
+
             return;
         }
 
