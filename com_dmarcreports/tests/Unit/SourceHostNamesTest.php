@@ -47,6 +47,7 @@ class SourceHostNamesTest extends TestCase
     {
         return new class ($ptr, $forward, $onLookup) implements ReverseDnsResolverInterface {
             public int $ptrCalls = 0;
+            public int $addressCalls = 0;
 
             public function __construct(private array $ptr, private array $forward, private ?\Closure $onLookup)
             {
@@ -65,6 +66,7 @@ class SourceHostNamesTest extends TestCase
 
             public function addresses(string $host): ?array
             {
+                $this->addressCalls++;
                 return \array_key_exists($host, $this->forward) ? $this->forward[$host] : [];
             }
         };
@@ -172,6 +174,26 @@ class SourceHostNamesTest extends TestCase
 
         $this->assertSame(2, $resolver->ptrCalls);
         $this->assertArrayNotHasKey('192.0.2.3', $store->entries, 'An address not looked up is not cached as a miss');
+    }
+
+    public function testDeadlineStopsForwardLookupAfterSlowPtr(): void
+    {
+        $now = 0.0;
+        $clock = static function () use (&$now): float {
+            return $now;
+        };
+        $resolver = $this->resolver(
+            ['192.0.2.61' => ['Gateway.Example.NET.']],
+            ['gateway.example.net' => ['192.0.2.61']],
+            static function () use (&$now): void {
+                $now += 2.0;
+            }
+        );
+
+        $names = new SourceHostNames($resolver, $this->store(), 2.0, 10, \Closure::fromCallable($clock));
+
+        $this->assertSame(['192.0.2.61' => ''], $names->names(['192.0.2.61']));
+        $this->assertSame(0, $resolver->addressCalls);
     }
 
     public function testWithoutResolverOnlyTheCacheIsRead(): void

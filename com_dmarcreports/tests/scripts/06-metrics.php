@@ -546,16 +546,36 @@ class MetricsTest
                 ];
             });
 
+            $this->test('Bulk classification matches detail classification and remains scoped by domain', function () use ($metrics, $domainId) {
+                $ips = ['10.0.3.1', '10.0.3.3', '10.0.3.6', '10.0.3.7'];
+                $single = $metrics->classifySources($domainId, $ips);
+                $bulk = $metrics->classifySourcesAll([$domainId => $ips]);
+
+                return ($bulk[$domainId] ?? null) === $single;
+            });
+
             $this->runManyFlaggedSourcesTest();
 
             $this->test('Stored new-source items of DKIM-confirmed sources close automatically', function () use ($metrics, $domainId) {
                 $this->insertAction($domainId, 'new_source:' . $domainId . ':10.0.3.1', 'snoozed');
                 $this->insertAction($domainId, 'new_source:' . $domainId . ':10.0.3.2', 'snoozed');
-                $this->insertAction($domainId, 'new_source:' . $domainId . ':10.0.3.7', 'ignored');
+                $this->insertAction($domainId, 'new_source:' . $domainId . ':10.0.3.7', 'snoozed');
+                $raceKey = 'new_source:' . $domainId . ':10.0.3.1';
 
                 $status   = new ActionStatus($this->db);
                 $resolved = $status->resolveConfirmedNewSources(
-                    static fn (int $id, array $ips): array => $metrics->classifySources($id, $ips)
+                    function (int $id, array $ips) use ($metrics, $domainId, $raceKey): array {
+                        $update = $this->query()
+                            ->update($this->db->quoteName('#__dmarc_actions'))
+                            ->set($this->db->quoteName('status') . ' = ' . $this->db->quote('ignored'))
+                            ->set($this->db->quoteName('modified_by') . ' = 7')
+                            ->where($this->db->quoteName('domain_id') . ' = ' . (int) $domainId)
+                            ->where($this->db->quoteName('action_key') . ' = ' . $this->db->quote($raceKey))
+                            ->where($this->db->quoteName('status') . ' IN (' . $this->db->quote('open') . ', ' . $this->db->quote('snoozed') . ')');
+                        $this->db->setQuery($update)->execute();
+
+                        return $metrics->classifySources($id, $ips);
+                    }
                 );
 
                 $states = [];
@@ -571,13 +591,14 @@ class MetricsTest
                 $auto = array_column($status->autoResolved(), 'action_key');
 
                 return $resolved === 1
-                    // Confirmed through DKIM: closed by the software (modified_by 0).
-                    && $states['new_source:' . $domainId . ':10.0.3.1'] === 'auto_done/0'
+                    // Status changed concurrently while classification ran:
+                    // the conditional update leaves this administrator decision intact.
+                    && $states['new_source:' . $domainId . ':10.0.3.1'] === 'ignored/7'
                     // SPF only: stays, the new SPF-only item takes over.
                     && $states['new_source:' . $domainId . ':10.0.3.2'] === 'snoozed/7'
-                    // Ignored by the administrator: his decision stands.
-                    && $states['new_source:' . $domainId . ':10.0.3.7'] === 'ignored/7'
-                    && in_array('new_source:' . $domainId . ':10.0.3.1', $auto, true);
+                    // A separate source remains DKIM-confirmed and closes normally.
+                    && $states['new_source:' . $domainId . ':10.0.3.7'] === 'auto_done/0'
+                    && in_array('new_source:' . $domainId . ':10.0.3.7', $auto, true);
             });
         } finally {
             $this->deleteDomain($domainId);
