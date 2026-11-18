@@ -266,7 +266,7 @@ Releases use a **two-stage, PR-based flow** so that no commit reaches `main` wit
 
 1. Go to **Actions** → select the **Release - …** workflow for the extension
 2. Click **Run workflow** and choose a bump level (or leave empty for auto-detect from commits)
-3. The workflow bumps the version files on a `release/<prefix>-v<version>` branch and opens a **pull request** titled `release: <prefix> v<version>` — it does **not** push to `main`
+3. The workflow bumps the version files on a `release/<prefix>-v<version>` branch and opens a **pull request** titled `release: <prefix> v<version>` — it does **not** push to `main`. The version commit is created through the GitHub API with the workflow's `GITHUB_TOKEN` (`.github/scripts/create-verified-commit.py`), so GitHub signs it and it shows as **Verified**, as the ruleset requires for every commit of a pull request; the script checks the tree, parent, message and signature of that commit and only then pushes that same commit to the release branch with the lease of the former force push (rejected if the branch moved after the checkout)
 4. **Review and merge** that pull request into `main` (squash)
 5. On merge, the matching **Publish - …** workflow triggers automatically: it builds the package, creates and pushes the tag, generates the changelog and creates the GitHub release
 
@@ -276,7 +276,7 @@ If a merged `release:` commit was never published, for example because Actions c
 
 ### Release permissions and CI approval
 
-Release preparation uses the built-in `GITHUB_TOKEN`, with `contents: write` and `pull-requests: write`; no App or PAT is configured. A repository owner must enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests**, subject to organisation policy. Without that permission the branch push can succeed but PR creation fails; the workflow reports an error and preserves the branch. Enable the permission and rerun preparation, or open the PR from that branch manually rather than deleting it.
+Release preparation uses the built-in `GITHUB_TOKEN`, with `contents: write` and `pull-requests: write`; no App or PAT is configured. A repository owner must enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests**, subject to organisation policy. Without that permission the release branch can be created but PR creation fails; the workflow reports an error and preserves the branch. Enable the permission and rerun preparation, or open the PR from that branch manually rather than deleting it.
 
 For PRs created or updated using `GITHUB_TOKEN`, the `pull_request` events `opened`, `synchronize` and `reopened` create **approval-required** CI runs. A user with write access must select **Approve workflows to run** in the PR before checks can execute. Review and merge only after those checks pass; the merge must be performed by a human, not by the token. See [GitHub's workflow-trigger documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
 
