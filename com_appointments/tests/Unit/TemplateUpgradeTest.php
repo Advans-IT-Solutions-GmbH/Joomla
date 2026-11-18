@@ -60,6 +60,9 @@ final class TemplateUpgradeTest extends TestCase
         $host = str_replace('\n', "\n", $strings['COM_APPOINTMENTS_MAIL_HOST_CANCELLATION_BODY']);
 
         self::assertSame(1, substr_count($host, '{cancel_reason}'));
+        // With a target calendar the host gets calendar_cancelled instead; other calendar users get the
+        // allowlisted booking (CalendarNotice::contentBooking()), so the line stays empty and is left out.
+        self::assertSame(1, substr_count($strings['COM_APPOINTMENTS_MAIL_CALENDAR_CANCELLED_BODY'], '{cancel_reason}'));
         self::assertStringNotContainsString('{cancel_reason}', $strings['COM_APPOINTMENTS_MAIL_CANCELLATION_BODY']);
         self::assertStringNotContainsString('{cancel_reason}', $strings['COM_APPOINTMENTS_MAIL_GUEST_CANCELLATION_BODY']);
         self::assertStringNotContainsString('{cancel_reason}', MailComposer::withoutEmptyDetails($host, ['{cancel_reason}' => '']),

@@ -2052,7 +2052,8 @@ form of such a link that is still open in another tab changes nothing and leads 
 The cancellation mail to the booking person offers only the erase link: an appointment that is
 cancelled can no longer be rescheduled or cancelled, so its mails carry neither link, also not in
 the placeholders `{reschedule_url}` and `{cancel_url}` of an edited template. The host's
-cancellation mail (`host_cancellation`) names the reason the booking person gave; the line is left
+cancellation mail (`host_cancellation`, with a target calendar `calendar_cancelled` for the host only)
+names the reason the booking person gave; the line is left
 out when there is none. The booking person's and the guests' mails do not repeat it.
 
 Rescheduling keeps the booking ID and calendar UID, advances `SEQUENCE`, checks the new slot under

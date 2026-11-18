@@ -404,6 +404,18 @@ return static function (TeamSuite $suite): void {
                 $expect(str_contains($body, 'Notify Invitee') && !str_contains($body, 'Private reason') && !str_contains($body, '555 01 01'),
                     $name . ' must get what the calendar copy shows, not the cancellation reason or the telephone');
             }
+            $expect(str_contains($to($goneMails, $address('host'))[0]['body'] ?? '', 'Private reason text'),
+                'The host, and only the host, reads the cancellation reason in an edited calendar template');
+            // Review finding: with the shipped calendar_cancelled defaults the host also reads the reason.
+            $db->query("UPDATE {$p}appointments_templates SET published=0 WHERE id IN (" . implode(',', array_slice($state['templates'], -2)) . ')');
+            $defaultMails = $send($cancelled, 'cancellation');
+            $expect(str_contains($to($defaultMails, $address('host'))[0]['body'] ?? '', 'Reason for cancellation: Private reason text'),
+                'The shipped calendar cancellation names the reason for the host');
+            foreach (['reader', 'external', 'freebusy'] as $name) {
+                $expect(!str_contains(json_encode($to($defaultMails, $address($name))), 'Private reason'),
+                    $name . ' never reads the reason in the shipped calendar cancellation');
+            }
+            $db->query("UPDATE {$p}appointments_templates SET published=1 WHERE id IN (" . implode(',', array_slice($state['templates'], -2)) . ')');
             $erased = $send($cancelled, 'erasure_notice', true);
             $erasedTemplates = $templates($erased);
             $expect(\count($to($erased, 'notify-invitee@example.test')) === 0 && str_starts_with((string) $erasedTemplates['host'], '1:Cancelled in')
