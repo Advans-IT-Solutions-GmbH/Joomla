@@ -117,6 +117,16 @@ def validate_changelog(changelog, prefix, number):
     raise ValueError(f"Changelog XML has no release-notes link for {expected_tag}")
 
 
+def verify_remote_changelog(repo, tag, changelog, prefix, number):
+    with tempfile.TemporaryDirectory() as directory:
+        run("gh", "release", "download", tag, "--repo", repo,
+            "--pattern", changelog.name, "--dir", directory)
+        downloaded = Path(directory) / changelog.name
+        if not downloaded.is_file():
+            raise ValueError(f"Downloaded changelog asset is missing: {tag}/{changelog.name}")
+        validate_changelog(downloaded, prefix, number)
+
+
 def publish(repo, prefix, number, sha, package, title, notes, changelog=None):
     # Repeat the remote preflight immediately before writes, not against stale checkout tags.
     refs, releases = inventory(repo)
@@ -142,7 +152,9 @@ def publish(repo, prefix, number, sha, package, title, notes, changelog=None):
         if not changelog.is_file():
             raise ValueError(f"Changelog XML does not exist: {changelog}")
         published_assets = releases[tag]["assets"] if tag in releases else []
-        if not any(asset["name"] == changelog.name for asset in published_assets):
+        if any(asset["name"] == changelog.name for asset in published_assets):
+            verify_remote_changelog(repo, tag, changelog, prefix, number)
+        else:
             run("gh", "release", "upload", tag, str(changelog), "--repo", repo)
     # Never delete a working release or clobber an existing asset on a retry.
     # ZIP timestamps may change between builds; compare unpacked payloads instead.

@@ -108,6 +108,41 @@ class PublishTests(unittest.TestCase):
                                   package, "Title", "Notes", changelog)
             self.assertEqual(calls, [])
 
+    def test_unvalidated_remote_changelog_stops_retry_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "extension.zip"
+            changelog = Path(directory) / "changelog.xml"
+            package.write_bytes(b"package")
+            changelog.write_text(
+                "<changelogs><changelog><version>1.0.0</version><change><item>"
+                "Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/privacy-v1.0.0"
+                "</item></change></changelog></changelogs>",
+                encoding="utf-8",
+            )
+            calls = []
+            refs = {"privacy-v0.9.0": "old", "privacy-v1.0.0": "built"}
+            releases = {
+                "privacy-v0.9.0": {"assets": []},
+                "privacy-v1.0.0": {"assets": [{"name": "extension.zip"}, {"name": "changelog.xml"}]},
+            }
+
+            def run(*args):
+                calls.append(args)
+                return ""
+
+            with patch.object(publisher, "inventory", return_value=(refs, releases)), \
+                    patch.object(publisher, "zip_contents", return_value={}), \
+                    patch.object(publisher, "verify_asset"), \
+                    patch.object(publisher, "verify_remote_changelog",
+                                 side_effect=ValueError("Stale remote changelog")), \
+                    patch.object(publisher, "run", side_effect=run), self.assertRaises(ValueError):
+                publisher.publish("owner/repo", "privacy-v", "1.0.0", "built",
+                                  package, "Title", "Notes", changelog)
+
+            self.assertFalse(any(call[:3] == ("gh", "release", "edit") for call in calls))
+            self.assertFalse(any(call[:3] == ("gh", "release", "delete") for call in calls))
+            self.assertFalse(any("--delete" in call for call in calls))
+
     def test_changelog_upload_failure_preserves_previous_release_and_tag(self):
         with tempfile.TemporaryDirectory() as directory:
             package = Path(directory) / "extension.zip"
@@ -203,6 +238,7 @@ class PublishTests(unittest.TestCase):
             with patch.object(publisher, "inventory", return_value=(refs, releases)), \
                     patch.object(publisher, "zip_contents", return_value={}), \
                     patch.object(publisher, "verify_asset", side_effect=ValueError("Bad download") if bad_download else None) as verify, \
+                    patch.object(publisher, "verify_remote_changelog"), \
                     patch.object(publisher, "run", side_effect=run):
                 if failed_command or bad_download:
                     with self.assertRaises((subprocess.CalledProcessError, ValueError)):
