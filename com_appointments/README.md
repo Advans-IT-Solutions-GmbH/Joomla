@@ -600,9 +600,11 @@ each run (at most 200, also while internet calendars are off) and forgets one on
 both steps succeed and its generation is unchanged; its log shows `guest_copies_repaired` and `guest_copies_pending`.
 A reference whose booking was deleted meanwhile, or whose internet calendars were switched
 off, resolves once the copy can be removed; deleting all Appointments data on uninstall drops it.
-The installer creates that task only while the internet calendars are switched on (see
-[Scheduled tasks](#scheduled-tasks)): without a task the reference and the stale copy remain until
-the operator resolves the failure and runs it. A formal Core request does
+The installer creates this task unconditionally, also while the internet calendars are switched off
+(see [Scheduled tasks](#scheduled-tasks)). If it is missing, repeat the installation or update rather
+than creating a manual duplicate: an existing task is never duplicated and only an absent task is
+created switched on. While it is switched off or trashed, leave that operator choice intact and
+switch the existing task on instead. A formal Core request does
 not process these references, and the removed address no longer finds the booking.
 
 Before Core pseudonymises an account, **CanRemove** captures its minimal staff scope
