@@ -86,10 +86,16 @@ final class SystemReverseDnsResolver implements ReverseDnsResolverInterface
         if (
             !\function_exists('pcntl_async_signals')
             || !\function_exists('pcntl_alarm')
+            || !\function_exists('pcntl_getsignal')
             || !\defined('SIGALRM')
         ) {
             return $lookup();
         }
+
+        $previousAsync = pcntl_async_signals();
+        $previousHandler = pcntl_getsignal(SIGALRM);
+        $previousAlarm = pcntl_alarm(0);
+        $started = microtime(true);
 
         pcntl_async_signals(true);
         pcntl_signal(SIGALRM, static function (): never {
@@ -103,6 +109,14 @@ final class SystemReverseDnsResolver implements ReverseDnsResolverInterface
             return false;
         } finally {
             pcntl_alarm(0);
+            pcntl_signal(SIGALRM, $previousHandler);
+            pcntl_async_signals($previousAsync);
+
+            if ($previousAlarm > 0) {
+                $elapsed = (int) ceil(microtime(true) - $started);
+                $remaining = max(1, $previousAlarm - $elapsed);
+                pcntl_alarm($remaining);
+            }
         }
     }
 

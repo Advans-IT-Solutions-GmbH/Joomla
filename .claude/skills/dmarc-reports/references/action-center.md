@@ -76,6 +76,9 @@ checks a shared elapsed-time deadline. `SystemReverseDnsResolver` adds a one-sec
 POSIX `pcntl` controls are available; platforms without `pcntl` cannot guarantee a hard in-flight
 timeout. It never runs during ingestion. The detail view looks names up only with `dns_diagnostics` on,
 the dashboard reads the cache only. Names never influence the classification.
+Dashboard/all-domain flagged-source retrieval is capped at 200 sources per domain; detail
+retrieval is capped at 500. Incomplete shared-deadline DNS outcomes are not cached, so later
+page views can retry them.
 
 `new_source` is retired (no longer generated). `ActionStatus::resolveConfirmedNewSources()` closes
 stored `new_source:*` rows (status open/snoozed) whose source is now DKIM-confirmed with status

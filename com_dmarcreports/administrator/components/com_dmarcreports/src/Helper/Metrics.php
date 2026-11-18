@@ -26,6 +26,9 @@ defined('_JEXEC') or die;
  */
 final class Metrics
 {
+    public const DASHBOARD_FLAGGED_SOURCE_LIMIT = 200;
+    public const DETAIL_FLAGGED_SOURCE_LIMIT = 500;
+
     private DatabaseInterface $db;
 
     public function __construct(?DatabaseInterface $db = null)
@@ -101,7 +104,7 @@ final class Metrics
         $latestPolicy = $this->latestPolicy($domainId, (string) ($domain['domain'] ?? ''));
 
         $anchor  = $this->latestReportEnd($domainId);
-        $flagged = $this->flaggedSources($domainId, $anchor);
+        $flagged = $this->flaggedSources($domainId, $anchor, self::DETAIL_FLAGGED_SOURCE_LIMIT);
 
         $metrics = [
             'domain_id'          => $domainId,
@@ -576,7 +579,7 @@ final class Metrics
      *
      * @return array<int, array<string, mixed>>
      */
-    private function flaggedSources(int $domainId, int $anchor, int $limit = 0): array
+    private function flaggedSources(int $domainId, int $anchor, int $limit = self::DETAIL_FLAGGED_SOURCE_LIMIT): array
     {
         if ($anchor === 0) {
             return [];
@@ -1019,7 +1022,7 @@ final class Metrics
      *
      * @return  array<int, array<int, array<string, mixed>>>
      */
-    private function flaggedSourcesAll(array $domainIds, int $limit = 0): array
+    private function flaggedSourcesAll(array $domainIds, int $limit = self::DASHBOARD_FLAGGED_SOURCE_LIMIT): array
     {
         if ($domainIds === []) {
             return [];

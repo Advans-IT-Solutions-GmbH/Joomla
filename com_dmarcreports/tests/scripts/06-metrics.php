@@ -695,7 +695,7 @@ class MetricsTest
             ];
             $this->db->insertObject('#__dmarc_reports', $report, 'id');
 
-            for ($i = 1; $i <= 25; $i++) {
+            for ($i = 1; $i <= 205; $i++) {
                 $record = (object) [
                     'report_id'    => (int) $report->id,
                     'domain_id'    => $domainId,
@@ -716,9 +716,9 @@ class MetricsTest
             $detailIps = array_map(static fn (array $source): string => $source['ip'], $detail['flagged_sources']);
 
             $this->test('More than 20 flagged delivered-failing sources are not truncated in the detail view', function () use ($detail, $detailIps) {
-                return count($detail['flagged_sources']) === 25
-                    && count($detailIps) === 25
-                    && count(array_unique($detailIps)) === 25;
+                return count($detail['flagged_sources']) === 205
+                    && count($detailIps) === 205
+                    && count(array_unique($detailIps)) === 205;
             });
 
             $bulk = [];
@@ -732,8 +732,8 @@ class MetricsTest
             $this->test('More than 20 flagged delivered-failing sources are not truncated in bulk metrics', function () use ($bulk, $detailIps) {
                 $bulkIps = array_map(static fn (array $source): string => $source['ip'], $bulk);
 
-                return count($bulk) === 25
-                    && $bulkIps === $detailIps;
+                return count($bulk) === Metrics::DASHBOARD_FLAGGED_SOURCE_LIMIT
+                    && $bulkIps === array_slice($detailIps, 0, Metrics::DASHBOARD_FLAGGED_SOURCE_LIMIT);
             });
 
             $this->test('The domain source table includes all more-than-20 flagged sources', function () use ($detail, $detailIps) {
@@ -749,7 +749,7 @@ class MetricsTest
                     }
                 }
 
-                return count($rows) === 25;
+                return count($rows) === 205;
             });
         } finally {
             $this->deleteDomain($domainId);

@@ -190,10 +190,12 @@ class SourceHostNamesTest extends TestCase
             }
         );
 
-        $names = new SourceHostNames($resolver, $this->store(), 2.0, 10, \Closure::fromCallable($clock));
+        $store = $this->store();
+        $names = new SourceHostNames($resolver, $store, 2.0, 10, \Closure::fromCallable($clock));
 
         $this->assertSame(['192.0.2.61' => ''], $names->names(['192.0.2.61']));
         $this->assertSame(0, $resolver->addressCalls);
+        $this->assertArrayNotHasKey('192.0.2.61', $store->entries, 'Expired/incomplete results must not become cached misses');
     }
 
     public function testWithoutResolverOnlyTheCacheIsRead(): void

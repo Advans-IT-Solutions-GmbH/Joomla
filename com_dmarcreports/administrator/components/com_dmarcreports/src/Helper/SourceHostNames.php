@@ -116,6 +116,9 @@ final class SourceHostNames
 
             $lookups++;
             $host       = $this->lookupWithin($ip, $start + $this->budgetSeconds);
+            if ($host === null) {
+                continue;
+            }
             $names[$ip] = $host;
             $ttl        = $host !== '' ? self::TTL_CONFIRMED : self::TTL_UNCONFIRMED;
             $this->store->set($ip, $host, (int) ($this->clock)() + $ttl);
@@ -130,10 +133,10 @@ final class SourceHostNames
      */
     public function lookup(string $ip): string
     {
-        return $this->lookupWithin($ip, ($this->clock)() + $this->budgetSeconds);
+        return $this->lookupWithin($ip, ($this->clock)() + $this->budgetSeconds) ?? '';
     }
 
-    private function lookupWithin(string $ip, float $deadline): string
+    private function lookupWithin(string $ip, float $deadline): ?string
     {
         $packed = @inet_pton($ip);
 
@@ -142,7 +145,7 @@ final class SourceHostNames
         }
 
         if (($this->clock)() >= $deadline) {
-            return '';
+            return null;
         }
 
         try {
@@ -152,7 +155,7 @@ final class SourceHostNames
         }
 
         if (($this->clock)() >= $deadline) {
-            return '';
+            return null;
         }
 
         foreach (\array_slice((array) $ptr, 0, self::MAX_NAMES) as $name) {
@@ -163,13 +166,17 @@ final class SourceHostNames
             }
 
             if (($this->clock)() >= $deadline) {
-                return '';
+                return null;
             }
 
             try {
                 $addresses = $this->resolver->addresses($name);
             } catch (\Throwable $e) {
                 continue;
+            }
+
+            if (($this->clock)() >= $deadline) {
+                return null;
             }
 
             foreach ((array) $addresses as $address) {
