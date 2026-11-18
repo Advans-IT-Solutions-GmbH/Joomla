@@ -29,6 +29,15 @@ final class Queue
     /** Unreleased evaluation layout; it held erasure obligations that no longer exist. */
     public const LEGACY_TABLE = '#__appointments_close';
 
+    /**
+     * Columns added after the first release of the table. The MAC leaves them out while they are
+     * empty, so the rows of an earlier version stay authentic after the update.
+     */
+    private const MATCH_COLUMNS = [
+        'match_rule' => "VARCHAR(32) NOT NULL DEFAULT ''",
+        'match_candidates' => "VARCHAR(1200) NOT NULL DEFAULT ''",
+    ];
+
     private ?string $profileKey = null;
     /** @var array<string, Client> */
     private array $clients = [];
@@ -66,8 +75,18 @@ final class Queue
             next_attempt BIGINT NOT NULL DEFAULT 0,
             last_attempt BIGINT NOT NULL DEFAULT 0,
             mac CHAR(64) NOT NULL,
+            match_rule VARCHAR(32) NOT NULL DEFAULT \'\',
+            match_candidates VARCHAR(1200) NOT NULL DEFAULT \'\',
             INDEX delivery_due (state, next_attempt)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+        // How a transfer was assigned to a contact and its possible duplicates (Client::match()): lead
+        // IDs only, no booking data. Added to the table of an earlier version; empty in its rows.
+        $columns = $db->getTableColumns(self::TABLE);
+        foreach (self::MATCH_COLUMNS as $column => $definition) {
+            if (!array_key_exists($column, $columns)) {
+                $db->setQuery('ALTER TABLE ' . $db->quoteName(self::TABLE) . ' ADD COLUMN ' . $db->quoteName($column) . ' ' . $definition)->execute();
+            }
+        }
         // Bookings the retention erased after the longest wait without reaching Close (dashboard warning).
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_close_missed') . ' (
             booking_id INT UNSIGNED NOT NULL PRIMARY KEY,
@@ -374,12 +393,16 @@ final class Queue
                 $db->transactionCommit();
                 return 'next';
             }
+            $assignment = [];
             if ($row['contact_id'] === '') {
                 $client->validateLeadFields();
-                $match = $client->contact((string) ($opened['invitee_email'] ?? ''));
-                if ($match !== null) {
+                // E-mail, then telephone, then name with company (Client::match()); never blocks on duplicates.
+                $match = $client->match($opened);
+                $assignment = ['match_rule' => $match['match_rule'], 'match_candidates' => $match['match_candidates']];
+                if (isset($match['contact_id'], $match['lead_id'])) {
                     // Existing leads and contacts are never changed.
-                    $this->save($id, $match + ['binding' => $profile->binding, 'state' => 'pending', 'reason' => '']);
+                    $this->save($id, ['contact_id' => $match['contact_id'], 'lead_id' => $match['lead_id']] + $assignment
+                        + ['binding' => $profile->binding, 'state' => 'pending', 'reason' => '']);
                     $db->transactionCommit();
                     return 'next';
                 }
@@ -388,7 +411,8 @@ final class Queue
                 $path = '/api/v1/lead/';
                 $operation = 'create_contact';
             } else {
-                $context = $this->context($opened, $profile, (int) $row['contact_created'] === 1);
+                $context = $this->context($opened, $profile, (int) $row['contact_created'] === 1)
+                    + ['match_rule' => (string) ($row['match_rule'] ?? ''), 'match_candidates' => (string) ($row['match_candidates'] ?? '')];
                 if ($profile->mode === Profile::MODE_ACTIVITY) {
                     $client->validateActivityFields();
                     $payload = $client->activity($opened, $context);
@@ -409,7 +433,7 @@ final class Queue
             $create = $method === 'POST';
             // Persist BEFORE the request; a crash cannot replay an uncertain POST.
             $this->save($id, ['state' => $create ? 'uncertain' : 'retry', 'operation' => $operation,
-                'binding' => $profile->binding, 'reason' => 'in_flight', 'attempts' => (int) $row['attempts'] + 1]);
+                'binding' => $profile->binding, 'reason' => 'in_flight', 'attempts' => (int) $row['attempts'] + 1] + $assignment);
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();
@@ -610,6 +634,11 @@ final class Queue
     private static function mac(array $row): string
     {
         unset($row['mac']);
+        foreach (array_keys(self::MATCH_COLUMNS) as $column) {
+            if ((string) ($row[$column] ?? '') === '') {
+                unset($row[$column]);
+            }
+        }
         ksort($row);
         $row = array_map(static fn ($value): string => (string) $value, $row);
         $key = (new KeyProvider((string) Factory::getApplication()->get('secret', '')))->key('close-delivery-metadata');

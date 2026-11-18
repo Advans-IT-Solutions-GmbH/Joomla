@@ -19,6 +19,26 @@ final class Client
 {
     private const STATES = [0 => 'pending', 1 => 'confirmed', 2 => 'cancelled'];
 
+    /** How the booking was assigned to a contact (match()); an ambiguous step is 'ambiguous_' . the step. */
+    public const MATCH_EMAIL = 'email';
+    public const MATCH_PHONE = 'phone';
+    public const MATCH_NAME_COMPANY = 'name_company';
+    public const MATCH_NONE = 'none';
+
+    /** The most contacts a step reads and the most possible duplicates a note names. */
+    public const CANDIDATE_LIMIT = 10;
+
+    /** The note's text of each assignment, written out for the language lint. */
+    private const MATCH_TEXTS = [
+        self::MATCH_EMAIL => 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH_EMAIL',
+        self::MATCH_PHONE => 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH_PHONE',
+        self::MATCH_NAME_COMPANY => 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH_NAME_COMPANY',
+        self::MATCH_NONE => 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH_NONE',
+        'ambiguous_' . self::MATCH_EMAIL => 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH_AMBIGUOUS_EMAIL',
+        'ambiguous_' . self::MATCH_PHONE => 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH_AMBIGUOUS_PHONE',
+        'ambiguous_' . self::MATCH_NAME_COMPANY => 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH_AMBIGUOUS_NAME_COMPANY',
+    ];
+
     private ?array $typeData = null;
     private ?string $organization = null;
     /** @var array<string, bool> lead cf_ ID => accepts multiple values */
@@ -81,40 +101,162 @@ final class Client
         return $this->organization;
     }
 
-    /** Exact e-mail match, like the scheduling integration: one match is reused unchanged. */
-    public function contact(string $email): ?array
+    /**
+     * The existing contact a booking belongs to, in three steps, each only when the one before found
+     * nothing: 1. the exact e-mail address; 2. the telephone number in E.164 form; 3. first and last
+     * name of the contact together with the company (the answer of the configured lead-name field),
+     * both exactly, ignoring case and spacing. A name alone never matches. Exactly one match in a step
+     * is reused unchanged. Several matches in a step never block: the booking gets a new lead, and the
+     * leads that matched are named in its note as possible duplicates. Each step sends Close only the
+     * value it searches for, which the new lead would carry anyway.
+     *
+     * @return array{match_rule: string, match_candidates: string, contact_id?: string, lead_id?: string}
+     */
+    public function match(array $booking): array
+    {
+        $this->assertBooking($booking);
+        $steps = [
+            self::MATCH_EMAIL => fn (): ?array => $this->byEmail(trim((string) $booking['invitee_email'])),
+            self::MATCH_PHONE => fn (): ?array => $this->byPhone(self::e164((string) ($booking['invitee_phone'] ?? ''))),
+            self::MATCH_NAME_COMPANY => fn (): ?array => $this->byNameAndCompany(self::personName($booking),
+                $this->first(self::answers($booking), $this->profile->leadName)),
+        ];
+        foreach ($steps as $rule => $find) {
+            $found = $find();
+            if ($found === null || $found['contacts'] === []) {
+                continue;
+            }
+            if (count($found['contacts']) === 1 && !$found['more']) {
+                return $found['contacts'][0] + ['match_rule' => $rule, 'match_candidates' => ''];
+            }
+            $leads = array_values(array_unique(array_column($found['contacts'], 'lead_id')));
+            return ['match_rule' => 'ambiguous_' . $rule, 'match_candidates' => implode(',', array_slice($leads, 0, self::CANDIDATE_LIMIT))];
+        }
+        return ['match_rule' => self::MATCH_NONE, 'match_candidates' => ''];
+    }
+
+    /** A telephone number in E.164 form ("+41791234567"), or '' when it is not an international number. */
+    public static function e164(string $phone): string
+    {
+        $digits = (string) preg_replace('/[\s().\/-]/', '', trim($phone));
+        return preg_match('/^(?:\+|00)([1-9][0-9]{6,14})$/D', $digits, $match) === 1 ? '+' . $match[1] : '';
+    }
+
+    /** A name or company for an exact comparison: lower case, spacing collapsed and trimmed. */
+    public static function comparable(string $value): string
+    {
+        return mb_strtolower(trim((string) preg_replace('/\s+/u', ' ', $value)));
+    }
+
+    /** @return ?array{contacts: list<array{contact_id: string, lead_id: string}>, more: bool} */
+    private function byEmail(string $email): ?array
+    {
+        return $this->search(['type' => 'has_related', 'this_object_type' => 'contact', 'related_object_type' => 'contact_email',
+            'related_query' => ['type' => 'field_condition',
+                'field' => ['type' => 'regular_field', 'object_type' => 'contact_email', 'field_name' => 'email'],
+                'condition' => ['type' => 'text', 'mode' => 'exact_value', 'value' => $email]]], 'emails',
+            static function (array $contact) use ($email): bool {
+                foreach (is_array($contact['emails'] ?? null) ? $contact['emails'] : [] as $address) {
+                    if (is_string($address['email'] ?? null) && strcasecmp(trim($address['email']), $email) === 0) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+    }
+
+    /** @return ?array{contacts: list<array{contact_id: string, lead_id: string}>, more: bool} */
+    private function byPhone(string $phone): ?array
+    {
+        if ($phone === '') {
+            return null;
+        }
+        return $this->search(['type' => 'has_related', 'this_object_type' => 'contact', 'related_object_type' => 'contact_phone',
+            'related_query' => ['type' => 'field_condition',
+                'field' => ['type' => 'regular_field', 'object_type' => 'contact_phone', 'field_name' => 'phone'],
+                'condition' => ['type' => 'text', 'mode' => 'exact_value', 'value' => $phone]]], 'phones',
+            static function (array $contact) use ($phone): bool {
+                foreach (is_array($contact['phones'] ?? null) ? $contact['phones'] : [] as $number) {
+                    if (is_string($number['phone'] ?? null) && self::e164($number['phone']) === $phone) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+    }
+
+    /**
+     * Contacts with this first and last name whose lead has this company as its name. Without a name
+     * or without a company the step does not apply.
+     *
+     * @return ?array{contacts: list<array{contact_id: string, lead_id: string}>, more: bool}
+     */
+    private function byNameAndCompany(string $name, string $company): ?array
+    {
+        if (self::comparable($name) === '' || self::comparable($company) === '') {
+            return null;
+        }
+        $named = $this->search(['type' => 'field_condition',
+            'field' => ['type' => 'regular_field', 'object_type' => 'contact', 'field_name' => 'name'],
+            'condition' => ['type' => 'text', 'mode' => 'exact_value', 'value' => trim($name)]], 'name',
+            static fn (array $contact): bool => is_string($contact['name'] ?? null) && self::comparable($contact['name']) === self::comparable($name));
+        $companies = [];
+        $contacts = [];
+        foreach ($named['contacts'] as $contact) {
+            $lead = $contact['lead_id'];
+            if (!isset($companies[$lead])) {
+                $data = $this->request('GET', '/api/v1/lead/' . $lead . '/?_fields=id,name');
+                if (($data['id'] ?? '') !== $lead) {
+                    throw new DeliveryException('blocked', 'invalid_search');
+                }
+                $companies[$lead] = self::comparable(is_string($data['name'] ?? null) ? $data['name'] : '');
+            }
+            if ($companies[$lead] === self::comparable($company)) {
+                $contacts[] = $contact;
+            }
+        }
+        return ['contacts' => $contacts, 'more' => $named['more'] && $contacts !== []];
+    }
+
+    /**
+     * One contact search: at most CANDIDATE_LIMIT + 1 contacts, of which those $exact accepts.
+     * `more` says that Close has further results beyond those read.
+     *
+     * @param \Closure(array): bool $exact
+     *
+     * @return array{contacts: list<array{contact_id: string, lead_id: string}>, more: bool}
+     */
+    private function search(array $condition, string $field, \Closure $exact): array
     {
         $response = $this->request('POST', '/api/v1/data/search/', [
-            'query' => ['type' => 'and', 'queries' => [
-                ['type' => 'object_type', 'object_type' => 'contact'],
-                ['type' => 'has_related', 'this_object_type' => 'contact', 'related_object_type' => 'contact_email',
-                    'related_query' => ['type' => 'field_condition',
-                        'field' => ['type' => 'regular_field', 'object_type' => 'contact_email', 'field_name' => 'email'],
-                        'condition' => ['type' => 'text', 'mode' => 'exact_value', 'value' => $email]]],
-            ]],
-            '_fields' => ['contact' => ['id', 'lead_id', 'emails']], '_limit' => 2,
+            'query' => ['type' => 'and', 'queries' => [['type' => 'object_type', 'object_type' => 'contact'], $condition]],
+            '_fields' => ['contact' => ['id', 'lead_id', $field]], '_limit' => self::CANDIDATE_LIMIT + 1,
         ]);
         if (!isset($response['data']) || !is_array($response['data']) || !array_key_exists('cursor', $response)) {
             throw new DeliveryException('blocked', 'invalid_search');
         }
-        if (count($response['data']) > 1 || $response['cursor'] !== null) {
-            throw new DeliveryException('blocked', 'ambiguous_contact');
-        }
-        if ($response['data'] === []) {
-            return null;
-        }
-        $contact = $response['data'][0];
-        foreach ($contact['emails'] ?? [] as $address) {
-            if (is_string($address['email'] ?? null) && strcasecmp(trim($address['email']), trim($email)) === 0) {
-                try {
-                    return ['contact_id' => Settings::id((string) ($contact['id'] ?? ''), 'cont'),
-                        'lead_id' => Settings::id((string) ($contact['lead_id'] ?? ''), 'lead')];
-                } catch (\InvalidArgumentException $e) {
-                    throw new DeliveryException('blocked', 'invalid_search');
-                }
+        $contacts = [];
+        foreach ($response['data'] as $contact) {
+            if (!is_array($contact) || !$exact($contact)) {
+                continue;
+            }
+            try {
+                $contacts[] = ['contact_id' => Settings::id((string) ($contact['id'] ?? ''), 'cont'),
+                    'lead_id' => Settings::id((string) ($contact['lead_id'] ?? ''), 'lead')];
+            } catch (\InvalidArgumentException $e) {
+                throw new DeliveryException('blocked', 'invalid_search');
             }
         }
-        throw new DeliveryException('blocked', 'inexact_contact');
+        return ['contacts' => array_slice($contacts, 0, self::CANDIDATE_LIMIT),
+            'more' => $response['cursor'] !== null || count($response['data']) > self::CANDIDATE_LIMIT];
+    }
+
+    /** First and last name of the booking person, else the full name. */
+    private static function personName(array $booking): string
+    {
+        $name = trim(trim((string) ($booking['invitee_first_name'] ?? '')) . ' ' . trim((string) ($booking['invitee_last_name'] ?? '')));
+        return $name !== '' && trim((string) ($booking['invitee_first_name'] ?? '')) !== '' && trim((string) ($booking['invitee_last_name'] ?? '')) !== ''
+            ? $name : trim((string) ($booking['invitee_name'] ?? ''));
     }
 
     /** Checks every mapped lead field before personal data is sent. */
@@ -231,6 +373,13 @@ final class Client
         $line('COM_APPOINTMENTS_CLOSE_NOTE_SOURCE', $this->profile->source);
         $line('COM_APPOINTMENTS_CLOSE_NOTE_NEW_CONTACT', $text(!empty($context['contact_created'])
             ? 'COM_APPOINTMENTS_CLOSE_NOTE_YES' : 'COM_APPOINTMENTS_CLOSE_NOTE_NO'));
+        // How the booking was assigned (match()). The e-mail address and telephone number the booking
+        // person used are the lines above. Transfers recorded before the matching steps have none.
+        $rule = (string) ($context['match_rule'] ?? '');
+        if (isset(self::MATCH_TEXTS[$rule])) {
+            $line('COM_APPOINTMENTS_CLOSE_NOTE_MATCH', $text(self::MATCH_TEXTS[$rule]));
+        }
+        $line('COM_APPOINTMENTS_CLOSE_NOTE_DUPLICATES', str_replace(',', ', ', (string) ($context['match_candidates'] ?? '')));
         $line('COM_APPOINTMENTS_CLOSE_NOTE_UID', (string) $booking['uid']);
         $line('COM_APPOINTMENTS_CLOSE_NOTE_SEQUENCE', (string) (int) $booking['sequence']);
         $title = sprintf($text($state === 'cancelled' ? 'COM_APPOINTMENTS_CLOSE_NOTE_TITLE_CANCELLED'
@@ -248,6 +397,9 @@ final class Client
             'end' => self::time($booking['end_utc'])->format('Y-m-d\TH:i:s\Z'),
             'event_type' => (string) ($context['event_title'] ?? ''), 'campaign' => $this->profile->campaign,
             'contact_created' => !empty($context['contact_created']) ? 'yes' : 'no',
+            // match(): email, phone, name_company, none or ambiguous_<step>, and the possible duplicates.
+            'matched_by' => (string) ($context['match_rule'] ?? ''),
+            'duplicates' => str_replace(',', ', ', (string) ($context['match_candidates'] ?? '')),
             'start_local' => self::time($booking['start_utc'])->setTimezone(new \DateTimeZone($context['timezone'] ?? 'UTC'))
                 ->format('Y-m-d H:i T')];
         $payload = ['custom_activity_type_id' => $this->profile->type, 'status' => 'published'];

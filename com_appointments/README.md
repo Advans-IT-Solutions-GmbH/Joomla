@@ -36,19 +36,33 @@ cloud calendar or send historical bookings. Only bookings **created after activa
 The transfer reproduces what Close's own Calendly integration does with its "Create Contacts"
 option, using only API features that every Close plan offers:
 
-- **Existing person:** the invitee is matched by exact e-mail address, not by domain. One match reuses
-  that Contact and its Lead **unchanged**. Several matches stop visibly for manual review.
+- **Existing person:** the invitee is looked for in three steps, each only when the step before found
+  nothing: (1) the exact e-mail address, not the domain; (2) the telephone number in E.164 form (Close
+  search on the contacts' phone numbers, compared again in E.164 form); (3) the contact's first and
+  last name **together with** the company, the answer of the field configured as Lead name, matched
+  against the Lead's name; both exactly, ignoring case and spacing. A name alone never matches: the
+  same name exists in different companies. Exactly one match in a step reuses that Contact and its
+  Lead **unchanged**. Several matches in a step never block the transfer: a new Lead is created as
+  below, and its Note lists the matching Lead IDs as possible duplicates (at most ten). Without a
+  telephone number, a name or a company answer the step is skipped. The searches send only these
+  values, which a new Lead would carry anyway; nothing beyond the configured answers leaves the site.
+  The Note always says how the booking was assigned ("Assigned by") together with the e-mail address
+  and telephone number the invitee used. The delivery table keeps the rule and the candidate Lead
+  IDs (`match_rule`, `match_candidates`), no personal data.
 - **New person:** a new Lead with one Contact (name, e-mail, phone). Optionally the Lead name comes from
   a form field such as the company, the Contact title from a field such as the job title, and Lead
   custom fields from fixed values (for example the lead origin) or from answers. These values are set
   on **new** Leads only; existing Leads and Contacts are never overwritten. No Opportunity is created.
 - **The booking itself:** one **Note** on that Lead and Contact per booking, with status, start and end
   in the site time zone, event type, name, e-mail, phone, the configured answers with their field
-  labels, campaign, source, "new contact created" and the booking UID. Approval, rescheduling and
+  labels, campaign, source, "new contact created", how the booking was assigned, possible duplicates
+  and the booking UID. Approval, rescheduling and
   cancellation **update the same Note** (cancellation changes its title and status). Notes are written
   in the site's default language.
 - **Optional Custom Activity** instead of a Note, only for Close plans that offer custom activities.
-  Its fields are single-valued text fields; the worker checks the type's field catalog first.
+  Its fields are single-valued text fields; the worker checks the type's field catalog first. The
+  optional fields `matched_by` (`email`, `phone`, `name_company`, `none` or `ambiguous_<step>`) and
+  `duplicates` carry the assignment.
 
 The Close API has no endpoint to create a Meeting activity; Meetings come from Close's calendar
 sync. A synced calendar keeps working independently of this transfer.
@@ -126,7 +140,7 @@ deletes or anonymises anything in Close**, and nothing on the website waits for 
 
 The administrator dashboard lists the transfer records of current bookings, 100 per page, with the
 profile and a diagnostic code but no payloads or credentials. Failed rechecks rotate behind other due
-records; authentication, organisation, mapping, unknown-field and ambiguous-contact errors block visibly. The
+records; authentication, organisation, mapping and unknown-field errors block visibly (several matching contacts do not block, see above). The
 dashboard's safe retry action rechecks blocked records, never uncertain creations. The HTTPS transport
 uses verified TLS, no redirect, a bounded response, five-second timeouts and **no transport-level
 retry**, and it only issues GET, POST and PUT. A database advisory lock serializes workers on this

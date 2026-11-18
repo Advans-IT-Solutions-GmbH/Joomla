@@ -21,7 +21,7 @@ final class Profile
     public const MODE_NOTE = 'note';
     public const MODE_ACTIVITY = 'activity';
     private const ACTIVITY_REQUIRED = ['uid', 'sequence', 'start', 'end', 'state', 'source'];
-    private const ACTIVITY_OPTIONAL = ['event_type', 'campaign', 'contact_created', 'start_local'];
+    private const ACTIVITY_OPTIONAL = ['event_type', 'campaign', 'contact_created', 'start_local', 'matched_by', 'duplicates'];
 
     public readonly string $key;
     public readonly string $origin;
