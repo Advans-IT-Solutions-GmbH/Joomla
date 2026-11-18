@@ -21,7 +21,7 @@
  *                    version changes, with a plain explanation
  *   foreign-pause    a package variant replaces an unclassified file of another extension: the
  *                    update pauses with a plain explanation and the Approve button; following it
- *                    (Install from Folder of the paused copy) completes the update with a backup
+ *                    (Extensions: Update) and updating once more completes the update with a backup
  *   osmap-patch      OSMap's Factory.php still has the bug: patched after a backup and reported
  *   privacy-override an unchanged checkout override of an earlier privacy release (PRIVACY_OVERRIDE)
  *                    is retired by renaming after a backup and reported
@@ -395,25 +395,26 @@ foreach ($scenarios as $scenario) {
             bu_check('the update paused', !$result['updated'] && str_contains($paused, 'The installation was paused. Nothing has been changed.'), bu_text($result));
             bu_check('the pause names the file and explains why', str_contains($paused, 'media/advans-test-foreign/other.txt') && str_contains($paused, 'belongs to another extension'));
             bu_check('the foreign file is untouched', file_get_contents($foreign) === "belongs to another extension\n");
-            $link = preg_match('/href="([^"]*install_directory=[^"]*)"[^>]*>\s*Approve\s*</', implode("\n", array_column($result['messages'], 'html')), $match) === 1 ? html_entity_decode($match[1]) : '';
-            bu_check('the pause offers the Approve button to the Super User', $link !== '');
-            $form = $browser->request($link);
-            $pending = $state . '/pending';
-            bu_check('the button opens Install from Folder with the paused copy filled in', str_contains($form, 'value="' . htmlspecialchars($pending) . '"') || str_contains($form, 'value="' . $pending . '"'));
-            $approved = $browser->request('index.php?option=com_installer&view=install', [
-                'task'              => 'install.install',
-                'installtype'       => 'folder',
-                'install_directory' => $pending,
-                BuBrowser::token($form) => '1',
+            $link = preg_match('/href="([^"]*)"[^>]*>\s*Approve\s*</', implode("\n", array_column($result['messages'], 'html')), $match) === 1 ? html_entity_decode($match[1]) : '';
+            bu_check('the pause offers the Approve button to the Super User', str_contains($link, 'option=com_installer') && str_contains($link, 'view=update'), $link);
+            bu_check('the pause explains how the Super User approves', str_contains($paused, 'update this extension again'));
+            // Approve: the button opens Extensions: Update, where the Super User updates once more.
+            $page = $browser->request($link);
+            $update = $db->query('SELECT update_id FROM ' . sh_table('updates') . " WHERE extension_id = $extensionId")->fetch_assoc();
+            bu_check('the update is still offered after the pause', isset($update['update_id']) && $page !== '');
+            $approved = $browser->request('index.php?option=com_installer&view=update', [
+                'task' => 'update.update',
+                'cid'  => [(int) ($update['update_id'] ?? 0)],
+                BuBrowser::token($page) => '1',
             ]);
             $messages = ['messages' => BuBrowser::messages($approved)];
             echo '  ' . bu_text($messages) . "\n";
-            bu_check('the approved installation completed', bu_installed_version() === $version, bu_text($messages));
+            bu_check('the repeated update completed', bu_installed_version() === $version, bu_text($messages));
             bu_check('the foreign file was replaced after a backup', file_get_contents($foreign) === "replaced by the test package\n");
             $backups = array_map('bu_backup', array_diff(bu_backups(), $backupsBefore));
             bu_check('the backup holds the other extension\'s bytes', in_array("belongs to another extension\n", array_column($backups, 'bytes'), true));
             bu_check('the report names the adjusted foreign file', str_contains(bu_text($messages), 'media/advans-test-foreign/other.txt'));
-            bu_check('the paused copy is removed after the installation', !is_dir($pending));
+            bu_check('the pause is closed after the installation', !is_file($state . '/plan.php') && !is_file($state . '/pending.php'));
             @unlink($variant);
             break;
 

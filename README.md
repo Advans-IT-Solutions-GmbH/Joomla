@@ -141,10 +141,10 @@ The installer changes files of other extensions only in these operations:
 Any other destination outside the extension's own territory whose bytes are not known is a case
 without a safe automatic choice. The installation then **pauses before anything changes** and
 explains in plain language (in the site's language) which file would be affected and why. Each
-such file is already backed up. A Super User continues with **Approve**: it opens **System →
-Install → Extensions → Install from Folder** with the paused copy of the package filled in
-(`administrator/advans-installer-state/EXTENSION/pending`); **Check & Install** approves exactly
-the reviewed old and new hashes and completes the installation. Other administrators see that a
+such file is already backed up. A Super User approves by repeating the same installation within
+one hour: **Approve** opens **System → Update → Extensions** (or **System → Install → Extensions**
+when the package was uploaded), and updating (or installing the same package) once more approves
+exactly the reviewed old and new hashes and completes the installation (Joomla renders messages without forms, so the button cannot submit by itself). Other administrators see that a
 Super User has to approve. Server administrators can approve on the command line instead:
 
 ```text
@@ -163,7 +163,7 @@ written and verified during preflight, before Joomla copies the first file.
 site and were replaced or removed, and the adjusted files of other extensions, each with the backup
 location. Customisations belong in template overrides, which updates do not replace.
 
-**Where state and backups live.** Backups, the record, a paused plan and its copy of the package
+**Where state and backups live.** Backups, the record and a paused plan
 are stored in **`administrator/advans-installer-state/EXTENSION/`**, outside Joomla's disposable
 cache and extension directories. Backup containers are non-executable PHP envelopes with the
 original bytes as base64, their hash and destination binding; opening one over HTTP discloses

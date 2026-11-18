@@ -22,6 +22,9 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
      */
     public const BACKUP_RETENTION_DAYS = 180;
 
+    /** A Super User approves a pause by repeating the installation within this period. */
+    private const APPROVAL_SECONDS = 3600;
+
     /** A package's decisions for its children are valid for this long. */
     private const HANDOFF_SECONDS = 3600;
 
@@ -98,7 +101,7 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
 
             State::directory($state . '/backups');
             $approved = is_file($stateRoot . '/approved.php') ? State::read($stateRoot . '/approved.php') : [];
-            [$approved, $fromPausedCopy] = $this->continuePausedInstallation($source, $state, $approved);
+            $approved = $this->approveRepeatedInstallation($state, $approved);
             $knowledge = Knowledge::load($source . '/' . Knowledge::CATALOG, $state . '/' . Knowledge::RECORD);
             $comparison = FileGuard::compare($files);
             $plan = Planner::plan(
@@ -112,7 +115,7 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
             );
 
             if ($plan['halts'] !== []) {
-                return $this->pause($plan['halts'], $state, $source, $fromPausedCopy);
+                return $this->pause($plan['halts'], $state);
             }
 
             // Every backup is written and verified before Joomla changes a single file.
@@ -143,7 +146,6 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
                 'incoming'       => $comparison['incoming'],
                 'changes'        => $plan['changes'],
                 'kept'           => $kept,
-                'fromPausedCopy' => $fromPausedCopy,
             ];
         } catch (BackupFailure $failure) {
             Log::add($failure->getMessage(), Log::ERROR, 'advans-installer');
@@ -280,14 +282,6 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
         } catch (\RuntimeException $error) {
             Log::add('Cannot apply the backup retention: ' . $error->getMessage(), Log::WARNING, 'advans-installer');
         }
-
-        if ($guard['fromPausedCopy']) {
-            $pending = $guard['state'] . '/pending';
-            // The installation still runs from this copy; remove it when the request ends.
-            register_shutdown_function(static function () use ($pending): void {
-                self::removeTree($pending);
-            });
-        }
     }
 
     /** @param list<array<string, mixed>> $changes */
@@ -333,11 +327,11 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
 
     /**
      * No safe automatic choice exists: keep verified backups, explain in plain language and let a
-     * Super User continue in the backend (or the server administrator on the command line).
+     * Super User approve in the backend (or the server administrator on the command line).
      *
      * @param list<array<string, mixed>> $halts
      */
-    private function pause(array $halts, string $state, string $source, bool $fromPausedCopy): bool
+    private function pause(array $halts, string $state): bool
     {
         $entries = [];
 
@@ -367,20 +361,17 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
             . '<p>' . Text::_('ADVANS_GUARD_PAUSED_WHY') . '</p><ul>' . $items . '</ul>';
 
         if (!self::isCli()) {
-            $pending = $state . '/pending';
-
-            if (!$fromPausedCopy) {
-                self::removeTree($pending);
-                self::copyPackage($source, $pending);
-            }
-
-            State::write($state . '/pending.php', ['plan' => $digest]);
-            $app->setUserState('com_installer.install.install_directory', $pending);
+            // Joomla renders messages without forms, so the approval is the Super User's repetition
+            // of this installation (Joomla's own CSRF-protected request) within the approval period.
+            State::write($state . '/pending.php', ['plan' => $digest, 'expires' => time() + self::APPROVAL_SECONDS]);
+            $fromUpdate = $app->getInput()->getCmd('task') === 'update.update';
 
             if (self::isSuperUser()) {
-                $message .= '<p>' . Text::sprintf('ADVANS_GUARD_PAUSED_APPROVE', $escape(Knowledge::relative($state . '/backups'))) . '</p>'
-                    . '<p><a class="btn btn-primary" href="index.php?option=com_installer&amp;view=install&amp;install_directory='
-                    . $escape(rawurlencode($pending)) . '">' . Text::_('ADVANS_GUARD_PAUSED_BUTTON') . '</a></p>';
+                $message .= '<p>' . Text::sprintf(
+                    $fromUpdate ? 'ADVANS_GUARD_PAUSED_APPROVE_UPDATE' : 'ADVANS_GUARD_PAUSED_APPROVE_INSTALL',
+                    $escape(Knowledge::relative($state . '/backups'))
+                ) . '</p><p><a class="btn btn-primary" href="index.php?option=com_installer&amp;view='
+                    . ($fromUpdate ? 'update' : 'install') . '">' . Text::_('ADVANS_GUARD_PAUSED_BUTTON') . '</a></p>';
             } else {
                 $message .= '<p>' . Text::_('ADVANS_GUARD_PAUSED_SUPERUSER') . '</p>';
             }
@@ -393,49 +384,38 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
     }
 
     /**
-     * A Super User continues a paused installation by installing its preserved copy
-     * (System → Install → Extensions → Install from Folder). That request is the approval of
-     * exactly the reviewed plan: changed bytes produce a new plan and a new pause.
+     * After a pause, a Super User approves by repeating the same installation in the backend within
+     * the approval period, as the pause explains. That request (Joomla checks its form token) is the
+     * approval of exactly the reviewed old and new hashes: changed bytes on the site or in the
+     * package produce a new plan and a new pause.
      *
      * @param array<string, mixed> $approved
-     * @return array{0: array<string, mixed>, 1: bool}
+     * @return array<string, mixed>
      */
-    private function continuePausedInstallation(string $source, string $state, array $approved): array
+    private function approveRepeatedInstallation(string $state, array $approved): array
     {
-        $pending = $state . '/pending';
         $marker = $state . '/pending.php';
-        $real = is_dir($pending) ? realpath($pending) : false;
-        $fromPausedCopy = $real !== false && realpath($source) === $real;
 
-        if (!$fromPausedCopy) {
-            // Another package was started: an earlier paused copy is no longer needed.
-            self::removeTree($pending);
-
-            if (is_file($marker)) {
-                unlink($marker);
-            }
-
-            return [$approved, false];
-        }
-
-        if (self::isCli() || !self::isSuperUser() || !is_file($marker) || !is_file($state . '/plan.php')
-            || (class_exists(\Joomla\CMS\Session\Session::class) && !\Joomla\CMS\Session\Session::checkToken('post'))) {
-            return [$approved, true];
+        // Joomla's install and update controllers have already checked the form token of this request.
+        if (!is_file($marker) || !is_file($state . '/plan.php') || self::isCli() || !self::isSuperUser()) {
+            return $approved;
         }
 
         $paused = State::read($marker);
+        unlink($marker);
 
-        if (!is_string($paused['plan'] ?? null) || !hash_equals($paused['plan'], (string) hash_file('sha256', $state . '/plan.php'))) {
-            return [$approved, true];
+        if ((int) ($paused['expires'] ?? 0) < time() || !is_string($paused['plan'] ?? null)
+            || !hash_equals($paused['plan'], (string) hash_file('sha256', $state . '/plan.php'))) {
+            return $approved;
         }
 
         try {
-            return [Approval::approve($state . '/plan.php'), true];
+            return Approval::approve($state . '/plan.php');
         } catch (\RuntimeException $stale) {
             // The site changed since the pause: plan again, which pauses again with current bytes.
             Log::add($stale->getMessage(), Log::WARNING, 'advans-installer');
 
-            return [$approved, true];
+            return $approved;
         }
     }
 
@@ -468,60 +448,4 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
         return $user !== null && $user->authorise('core.admin') === true;
     }
 
-    private static function copyPackage(string $source, string $target): void
-    {
-        $source = rtrim(str_replace('\\', '/', $source), '/');
-        State::directory($target);
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($source, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::SELF_FIRST
-        );
-
-        foreach ($iterator as $entry) {
-            $relative = substr(str_replace('\\', '/', $entry->getPathname()), strlen($source) + 1);
-            $first = explode('/', $relative)[0];
-
-            if ($first === '.advans-operations' || str_starts_with($first, 'advans-preflight-')) {
-                continue;
-            }
-
-            if ($entry->isLink()) {
-                throw new \RuntimeException('The package contains a symbolic link.');
-            }
-
-            $destination = $target . '/' . $relative;
-
-            if ($entry->isDir()) {
-                if (!is_dir($destination) && !mkdir($destination, 0700, true)) {
-                    throw new \RuntimeException('Cannot preserve the paused package.');
-                }
-            } elseif (!copy($entry->getPathname(), $destination)) {
-                throw new \RuntimeException('Cannot preserve the paused package.');
-            }
-        }
-    }
-
-    private static function removeTree(string $path): void
-    {
-        if (is_link($path) || is_file($path)) {
-            @unlink($path);
-
-            return;
-        }
-
-        if (!is_dir($path)) {
-            return;
-        }
-
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($path, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-
-        foreach ($iterator as $entry) {
-            $entry->isDir() && !$entry->isLink() ? @rmdir($entry->getPathname()) : @unlink($entry->getPathname());
-        }
-
-        @rmdir($path);
-    }
 }

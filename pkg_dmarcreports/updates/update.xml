@@ -5,6 +5,7 @@
         <description>DMARC and TLS-RPT reporting suite: component, dashboard module, ingestion task plugin and MTA-STS policy system plugin</description>
         <element>pkg_dmarcreports</element>
         <type>package</type>
+        <client>site</client>
         <version>1.3.0</version>
         <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/pkg_dmarcreports</infourl>
         <downloads>
