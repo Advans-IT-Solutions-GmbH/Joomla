@@ -85,6 +85,27 @@ foreach ($files as $file) {
             $failed = true;
         }
 
+        $releaseNotes = $changelogDocument->xpath('/changelogs/changelog/item | /changelogs/changelog/change/item | /changelogs/changelog/note/item');
+        $releaseNotesText = is_array($releaseNotes)
+            ? array_map(static fn($item): string => trim((string) $item), $releaseNotes)
+            : [];
+        $usableReleaseNotes = false;
+
+        foreach ($releaseNotesText as $text) {
+            if (preg_match(
+                '#^Release notes: https://github\.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/[a-z0-9-]+-v' . preg_quote($version, '#') . '$#',
+                $text
+            ) === 1) {
+                $usableReleaseNotes = true;
+                break;
+            }
+        }
+
+        if (!$usableReleaseNotes) {
+            fwrite(STDERR, "FAIL {$changelogRelative}: changelog has no version-tagged Release notes item\n");
+            $failed = true;
+        }
+
         $scheme = parse_url($changelog, PHP_URL_SCHEME);
         $host = parse_url($changelog, PHP_URL_HOST);
         $path = parse_url($changelog, PHP_URL_PATH);
