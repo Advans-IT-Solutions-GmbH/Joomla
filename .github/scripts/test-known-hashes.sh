@@ -62,6 +62,7 @@ echo 'PASS: every release commit is rebuilt and its built files (stamped ones in
 
 # Publication: the release commit exists now and is HEAD.
 git add -A && git commit -q -m 'release: fixture v1.2.0 (#3)'
+RELEASE_120="$(git rev-parse HEAD)"
 stage 1.2.0
 php "$GENERATOR" ext "$FIXTURE/published.php" "$FIXTURE/stage" >/dev/null
 cmp "$FIXTURE/prepared.php" "$FIXTURE/published.php"
@@ -70,6 +71,21 @@ git commit -q --allow-empty -m 'release: other v2.0.0'
 php "$GENERATOR" ext "$FIXTURE/later.php" "$FIXTURE/stage" >/dev/null
 cmp "$FIXTURE/prepared.php" "$FIXTURE/later.php"
 echo 'PASS: preparation, publication and later builds produce byte-identical catalogs'
+
+# A recovery build of 1.2.0 after a newer release and its tag exist: only the history of the
+# commit being built counts, so the catalog (and with it the package checksum) never changes.
+release 1.2.1 'fourth payload' 'release: fixture v1.2.1 (#4)'
+git tag fixture-v1.2.1
+git checkout -q "$RELEASE_120"
+stage 1.2.0
+php "$GENERATOR" ext "$FIXTURE/recovered.php" "$FIXTURE/stage" >/dev/null
+cmp "$FIXTURE/published.php" "$FIXTURE/recovered.php"
+if catalog "$FIXTURE/recovered.php" | grep -q "$(sha 'fourth payload')"; then
+    echo 'FAIL: a newer release entered the catalog of an older commit'
+    exit 1
+fi
+git checkout -q -
+echo 'PASS: a historical rebuild after a newer release and its tag is byte-identical'
 
 ADVANS_KNOWN_HASHES=skip php "$GENERATOR" ext "$FIXTURE/skipped.php" "$FIXTURE/stage" >/dev/null
 catalog "$FIXTURE/skipped.php" | grep -q '"complete":false'

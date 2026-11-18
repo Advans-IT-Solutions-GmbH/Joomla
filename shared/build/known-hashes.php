@@ -10,8 +10,9 @@
  * files that the build stamps. The files of the build in progress (BUILD_DIRECTORY) are added too.
  *
  * Releases are found as merged release commits ("release: <prefix> vX.Y.Z") in the history of
- * HEAD and as tags "<prefix>-vX.Y.Z". The publish workflow deletes older tags, so the release
- * commits are the complete source.
+ * HEAD and as tags "<prefix>-vX.Y.Z" that point into that history. The publish workflow deletes
+ * older tags, so the release commits are the complete source. Nothing outside the history of HEAD
+ * counts, so a rebuild of a commit gives the same catalog however many releases followed it.
  *
  * The catalog is the same whether it is built before or after the release commit of the version
  * being built exists (release preparation and publication, also of a package whose child was just
@@ -222,9 +223,14 @@ foreach (preg_split('/\R/', trim($tags)) as $tag) {
     }
 
     [$tagCode, $sha] = $run(['git', '-C', $root, 'rev-list', '-n', '1', $tag]);
+    $sha = trim($sha);
 
-    if ($tagCode === 0) {
-        $releases[trim($sha)] ??= $match[1];
+    // Only releases in the history of the commit being built: a tag of a newer release must not
+    // change the catalog (and the package checksum) of a later rebuild of an older commit.
+    [$ancestorCode] = $tagCode === 0 ? $run(['git', '-C', $root, 'merge-base', '--is-ancestor', $sha, 'HEAD']) : [1];
+
+    if ($ancestorCode === 0) {
+        $releases[$sha] ??= $match[1];
     }
 }
 
