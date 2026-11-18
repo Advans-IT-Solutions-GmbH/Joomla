@@ -463,8 +463,23 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 }
             }
         }
-        $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__scheduler_tasks'))
-            ->whereIn($db->quoteName('type'), self::SCHEDULER_TASK_TYPES, ParameterType::STRING))->execute();
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName('id'))
+            ->from($db->quoteName('#__scheduler_tasks'))
+            ->whereIn($db->quoteName('type'), self::SCHEDULER_TASK_TYPES, ParameterType::STRING);
+        $taskIds = array_map('intval', (array) $db->setQuery($query)->loadColumn());
+        $taskTable = Factory::getApplication()->bootComponent('com_scheduler')->getMVCFactory()
+            ->createTable('Task', 'Administrator');
+
+        if ($taskIds !== [] && !$taskTable) {
+            throw new \RuntimeException('The Scheduler task table is unavailable for asset cleanup.');
+        }
+
+        foreach ($taskIds as $taskId) {
+            if (!$taskTable->delete($taskId)) {
+                throw new \RuntimeException('The scheduled task could not be removed through the Scheduler table.');
+            }
+        }
 
         if ($deleteData) {
             foreach (self::APPOINTMENT_TABLES as $table) {

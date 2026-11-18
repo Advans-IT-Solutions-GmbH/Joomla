@@ -124,10 +124,23 @@ class PlgTaskDmarcreportsInstallerScript extends InstallerScript
             }
 
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-            $query->delete($db->quoteName('#__scheduler_tasks'))
+            $query->select($db->quoteName('id'))
+                ->from($db->quoteName('#__scheduler_tasks'))
                 ->where($db->quoteName('type') . ' = ' . $db->quote('plg_task_dmarcreports.ingest'));
-            $db->setQuery($query)->execute();
-            $removed = (int) $db->getAffectedRows();
+            $taskIds = array_map('intval', (array) $db->setQuery($query)->loadColumn());
+            $taskTable = Factory::getApplication()->bootComponent('com_scheduler')->getMVCFactory()
+                ->createTable('Task', 'Administrator');
+            $removed = 0;
+
+            if ($taskIds !== [] && !$taskTable) {
+                throw new \RuntimeException('The Scheduler task table is unavailable for asset cleanup.');
+            }
+
+            foreach ($taskIds as $taskId) {
+                if ($taskTable->delete($taskId)) {
+                    $removed++;
+                }
+            }
 
             if ($removed > 0) {
                 $app = Factory::getApplication();

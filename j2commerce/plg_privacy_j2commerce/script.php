@@ -1761,13 +1761,24 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
         if (in_array($db->getPrefix() . 'scheduler_tasks', $tables, true)) {
             $query = $this->dbQuery($db)
-                ->delete($db->quoteName('#__scheduler_tasks'))
+                ->select($db->quoteName('id'))
+                ->from($db->quoteName('#__scheduler_tasks'))
                 ->where($db->quoteName('type') . ' = :taskType')
                 ->bind(':taskType', $taskType);
-            $db->setQuery($query);
-            $db->execute();
+            $taskIds = array_map('intval', (array) $db->setQuery($query)->loadColumn());
+            $taskTable = $app->bootComponent('com_scheduler')->getMVCFactory()
+                ->createTable('Task', 'Administrator');
+            $removedTasks = 0;
 
-            $removedTasks = (int) $db->getAffectedRows();
+            if ($taskIds !== [] && !$taskTable) {
+                throw new \RuntimeException('The Scheduler task table is unavailable for asset cleanup.');
+            }
+
+            foreach ($taskIds as $taskId) {
+                if ($taskTable->delete($taskId)) {
+                    $removedTasks++;
+                }
+            }
 
             if ($removedTasks > 0) {
                 $app->enqueueMessage(
