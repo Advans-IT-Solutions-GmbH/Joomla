@@ -28,6 +28,11 @@ final class Client
     /** The most contacts a step reads and the most possible duplicates a note names. */
     public const CANDIDATE_LIMIT = 10;
 
+    /** The name step reads contacts in pages of NAME_PAGE, at most NAME_LIMIT, and the company of at most NAME_LEADS leads. */
+    private const NAME_PAGE = 100;
+    private const NAME_LIMIT = 200;
+    private const NAME_LEADS = 50;
+
     /** The note's text of each assignment, written out for the language lint. */
     private const MATCH_TEXTS = [
         self::MATCH_EMAIL => 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH_EMAIL',
@@ -126,6 +131,7 @@ final class Client
             if ($found === null || $found['contacts'] === []) {
                 continue;
             }
+            // Every match counts here; only the possible duplicates a note names are capped.
             if (count($found['contacts']) === 1 && !$found['more']) {
                 return $found['contacts'][0] + ['match_rule' => $rule, 'match_candidates' => ''];
             }
@@ -187,7 +193,9 @@ final class Client
 
     /**
      * Contacts with this first and last name whose lead has this company as its name. Without a name
-     * or without a company the step does not apply.
+     * or without a company the step does not apply. The company is checked on every contact with the
+     * name, across result pages (up to NAME_LIMIT contacts and NAME_LEADS leads), before anything is
+     * limited: only the possible duplicates a note names are capped (match()).
      *
      * @return ?array{contacts: list<array{contact_id: string, lead_id: string}>, more: bool}
      */
@@ -199,12 +207,19 @@ final class Client
         $named = $this->search(['type' => 'field_condition',
             'field' => ['type' => 'regular_field', 'object_type' => 'contact', 'field_name' => 'name'],
             'condition' => ['type' => 'text', 'mode' => 'exact_value', 'value' => trim($name)]], 'name',
-            static fn (array $contact): bool => is_string($contact['name'] ?? null) && self::comparable($contact['name']) === self::comparable($name));
+            static fn (array $contact): bool => is_string($contact['name'] ?? null) && self::comparable($contact['name']) === self::comparable($name),
+            self::NAME_PAGE, self::NAME_LIMIT);
         $companies = [];
         $contacts = [];
+        $more = $named['more'];
         foreach ($named['contacts'] as $contact) {
             $lead = $contact['lead_id'];
             if (!isset($companies[$lead])) {
+                if (count($companies) >= self::NAME_LEADS) {
+                    // More leads with this name than are read: a match among them cannot be excluded.
+                    $more = true;
+                    continue;
+                }
                 $data = $this->request('GET', '/api/v1/lead/' . $lead . '/?_fields=id,name');
                 if (($data['id'] ?? '') !== $lead) {
                     throw new DeliveryException('blocked', 'invalid_search');
@@ -215,40 +230,52 @@ final class Client
                 $contacts[] = $contact;
             }
         }
-        return ['contacts' => $contacts, 'more' => $named['more'] && $contacts !== []];
+        // One match among more contacts than were read is not unique: match() then lists it as a possible duplicate.
+        return ['contacts' => $contacts, 'more' => $more && $contacts !== []];
     }
 
     /**
-     * One contact search: at most CANDIDATE_LIMIT + 1 contacts, of which those $exact accepts.
+     * One contact search: the contacts $exact accepts, read in pages of $page up to $max contacts.
      * `more` says that Close has further results beyond those read.
      *
      * @param \Closure(array): bool $exact
      *
      * @return array{contacts: list<array{contact_id: string, lead_id: string}>, more: bool}
      */
-    private function search(array $condition, string $field, \Closure $exact): array
+    private function search(array $condition, string $field, \Closure $exact, int $page = self::CANDIDATE_LIMIT + 1,
+        int $max = self::CANDIDATE_LIMIT + 1): array
     {
-        $response = $this->request('POST', '/api/v1/data/search/', [
-            'query' => ['type' => 'and', 'queries' => [['type' => 'object_type', 'object_type' => 'contact'], $condition]],
-            '_fields' => ['contact' => ['id', 'lead_id', $field]], '_limit' => self::CANDIDATE_LIMIT + 1,
-        ]);
-        if (!isset($response['data']) || !is_array($response['data']) || !array_key_exists('cursor', $response)) {
-            throw new DeliveryException('blocked', 'invalid_search');
-        }
         $contacts = [];
-        foreach ($response['data'] as $contact) {
-            if (!is_array($contact) || !$exact($contact)) {
-                continue;
+        $read = 0;
+        $cursor = null;
+        do {
+            $payload = [
+                'query' => ['type' => 'and', 'queries' => [['type' => 'object_type', 'object_type' => 'contact'], $condition]],
+                '_fields' => ['contact' => ['id', 'lead_id', $field]], '_limit' => min($page, $max - $read),
+            ];
+            if ($cursor !== null) {
+                $payload['cursor'] = $cursor;
             }
-            try {
-                $contacts[] = ['contact_id' => Settings::id((string) ($contact['id'] ?? ''), 'cont'),
-                    'lead_id' => Settings::id((string) ($contact['lead_id'] ?? ''), 'lead')];
-            } catch (\InvalidArgumentException $e) {
+            $response = $this->request('POST', '/api/v1/data/search/', $payload);
+            if (!isset($response['data']) || !is_array($response['data']) || !array_key_exists('cursor', $response)
+                || ($response['cursor'] !== null && !is_string($response['cursor']))) {
                 throw new DeliveryException('blocked', 'invalid_search');
             }
-        }
-        return ['contacts' => array_slice($contacts, 0, self::CANDIDATE_LIMIT),
-            'more' => $response['cursor'] !== null || count($response['data']) > self::CANDIDATE_LIMIT];
+            foreach ($response['data'] as $contact) {
+                $read++;
+                if (!is_array($contact) || !$exact($contact)) {
+                    continue;
+                }
+                try {
+                    $contacts[] = ['contact_id' => Settings::id((string) ($contact['id'] ?? ''), 'cont'),
+                        'lead_id' => Settings::id((string) ($contact['lead_id'] ?? ''), 'lead')];
+                } catch (\InvalidArgumentException $e) {
+                    throw new DeliveryException('blocked', 'invalid_search');
+                }
+            }
+            $cursor = $response['cursor'];
+        } while ($cursor !== null && $response['data'] !== [] && $read < $max);
+        return ['contacts' => $contacts, 'more' => $cursor !== null];
     }
 
     /** First and last name of the booking person, else the full name. */

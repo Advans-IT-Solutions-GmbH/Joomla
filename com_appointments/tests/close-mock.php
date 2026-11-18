@@ -160,6 +160,8 @@ namespace {
         public array $objects = [];
         /** The related object (or contact_name) of every contact search, in order. */
         public array $searches = [];
+        /** [offset, limit] of every search page read. */
+        public array $pages = [];
         public string $mode = 'ok';
         public ?string $orgId = null;
         public array $leadFields = ['cf_origin' => false, 'cf_funnel' => false, 'cf_systems' => true, 'cf_product' => false];
@@ -195,9 +197,12 @@ namespace {
                 if ($this->mode === 'ambiguous') {
                     $found = [$found[0] ?? [], $found[0] ?? []];
                 }
+                // Pages as Close returns them: the cursor of the next page, null after the last one.
                 $limit = (int) $payload['_limit'];
-                return ['code' => 200, 'data' => ['data' => array_slice($found, 0, $limit),
-                    'cursor' => count($found) > $limit ? 'next' : null]];
+                $offset = (int) ($payload['cursor'] ?? 0);
+                $this->pages[] = [$offset, $limit];
+                return ['code' => 200, 'data' => ['data' => array_slice($found, $offset, $limit),
+                    'cursor' => count($found) > $offset + $limit ? (string) ($offset + $limit) : null]];
             }
             if ($method === 'GET' && preg_match('~^/api/v1/lead/(lead_\w+)/\?_fields=id,name$~', $path, $match)) {
                 return isset($this->objects[$match[1]]) ? ['code' => 200, 'data' => ['id' => $match[1], 'name' => $this->objects[$match[1]]['name'] ?? '']]
@@ -533,6 +538,28 @@ namespace {
         && $state(47)['match_candidates'] === 'lead_name47a,lead_name47b' && !in_array($state(47)['lead_id'], ['lead_name47a', 'lead_name47b'], true)
         && str_contains($noteOf(47), 'COM_APPOINTMENTS_CLOSE_NOTE_DUPLICATES: lead_name47a, lead_name47b'),
         'several name and company matches create a new lead and name the candidates');
+    // Review finding: more contacts with the name than one search page of the e-mail step, only the last
+    // one in the company. The company is checked on every contact with the name before anything is capped.
+    for ($i = 1; $i <= 11; $i++) {
+        $seed('cont_same48x' . $i, 'lead_same48x' . $i, $i === 11 ? 'Target AG' : 'Elsewhere ' . $i, 'Sam Same', 'same' . $i . '@example.test', '');
+    }
+    $leadsBefore = $main->count('POST', '/api/v1/lead/');
+    $enrol($person($booking(48, 1, 'sam.private@example.test', ['11' => 'Target AG'] + $lifeSciences), 'Sam', 'Same'));
+    $queue->run();
+    $check($state(48)['match_rule'] === 'name_company' && $state(48)['lead_id'] === 'lead_same48x11'
+        && $main->count('POST', '/api/v1/lead/') === $leadsBefore,
+        'the only contact of the company is found among more same-named contacts than one page of the other steps');
+    // Name results beyond one page are read page by page.
+    for ($i = 1; $i <= 105; $i++) {
+        $seed('cont_many49x' . $i, 'lead_many49x' . ($i % 40), $i === 105 ? 'Paged AG' : 'Other ' . ($i % 40), 'Pat Paged', 'pat' . $i . '@example.test', '');
+    }
+    $main->objects['lead_many49x25'] = ['name' => 'Paged AG'];
+    $main->pages = [];
+    $enrol($person($booking(49, 1, 'pat.private@example.test', ['11' => 'Paged AG'] + $lifeSciences), 'Pat', 'Paged'));
+    $queue->run();
+    $check(count(array_filter($main->pages, static fn (array $page): bool => $page[0] > 0)) >= 1
+        && $state(49)['match_rule'] === 'ambiguous_name_company' && str_contains($state(49)['match_candidates'], 'lead_many49x25'),
+        'the name step reads every result page and decides over all contacts with the name');
     $check(!str_contains(json_encode($all()), 'NEVER_'), 'the matching sends no unlisted answer, guest or conference capability');
 
     // Rate limits are per profile.
