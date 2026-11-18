@@ -268,14 +268,35 @@ try {
 
         if ($directory === null) {
             // A release made before the extension had any build configuration was packaged by
-            // hand and cannot be rebuilt; it is listed, not hidden. A build configuration in the
-            // extension's folder under another name is a release this script fails to rebuild.
+            // hand. Prefer the published release asset over marking the catalog incomplete, so
+            // strict builds can still recognise every file of that historical release.
             [$ownCode] = $run(['git', '-C', $root, 'cat-file', '-e', $sha . ':' . ($ownPath === '' ? '' : $ownPath . '/') . 'build.env']);
 
             if ($ownCode === 0) {
                 $catalog['failed'][] = "$releaseVersion: the build configuration names another extension";
             } else {
-                $catalog['unreproducible'][] = "$releaseVersion: released before the extension had a build configuration";
+                $repository = getenv('GITHUB_REPOSITORY');
+                $assetDirectory = sys_get_temp_dir() . '/advans-known-hashes-asset-' . bin2hex(random_bytes(8));
+                mkdir($assetDirectory, 0700, true);
+                $assetCode = 1;
+
+                if ($repository !== false && $repository !== '' && is_dir($assetDirectory)) {
+                    [$assetCode] = $run(['gh', 'release', 'download', $prefix . '-v' . $releaseVersion, '--repo', $repository, '--pattern', '*.zip', '--dir', $assetDirectory]);
+                }
+
+                $assets = glob($assetDirectory . '/*.zip') ?: [];
+
+                if ($assetCode === 0 && count($assets) === 1) {
+                    $hashArchive($assets[0], $hashes);
+                    $versions[] = $releaseVersion;
+                } else {
+                    $catalog['unreproducible'][] = "$releaseVersion: released before the extension had a build configuration and its published asset is unavailable";
+                }
+
+                foreach ($assets as $asset) {
+                    @unlink($asset);
+                }
+                @rmdir($assetDirectory);
             }
 
             continue;
