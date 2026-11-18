@@ -66,6 +66,7 @@ final class DashboardModuleTest extends TestCase
         $user = new class () {
             /** @var array<string, bool> */
             public array $rules = [
+                'core.manage:com_appointments' => true,
                 'core.edit:com_appointments.eventtype.2' => true,
                 'core.edit.state:com_appointments.eventtype.2' => true,
                 'core.delete:com_appointments.eventtype.3' => true,
@@ -83,5 +84,8 @@ final class DashboardModuleTest extends TestCase
         self::assertFalse(EventScope::allowsAny($user, 'core.edit.state', [1, 3]));
         self::assertTrue(EventScope::allowsAny($user, 'core.delete', [3]));
         self::assertFalse(EventScope::allowsAny($user, 'core.delete', []), 'No listed event type, no button');
+        self::assertFalse(EventScope::canExportCampaigns($user, []), 'An empty result must not grant campaign export');
+        self::assertTrue(EventScope::canExportCampaigns($user, [['id' => 2, 'title' => 'Two']]),
+            'An authorized event type keeps campaign export available without displayed bookings');
     }
 }

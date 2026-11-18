@@ -45,4 +45,17 @@ final class EventScope
 
         return false;
     }
+
+    /**
+     * Campaign aggregates outlive individual bookings and deleted event types. They stay visible
+     * for a component administrator, or for an editor with at least one authorized event type,
+     * even when the current filtered booking result is empty.
+     *
+     * @param list<array<string,mixed>> $authorizedEvents
+     */
+    public static function canExportCampaigns(object $user, array $authorizedEvents): bool
+    {
+        return $user->authorise('core.manage', 'com_appointments')
+            && ($user->authorise('core.admin', 'com_appointments') || $authorizedEvents !== []);
+    }
 }

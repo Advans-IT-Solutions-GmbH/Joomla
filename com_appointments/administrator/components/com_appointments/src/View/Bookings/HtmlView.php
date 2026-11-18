@@ -12,6 +12,8 @@ use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 use Joomla\CMS\Toolbar\Toolbar;
 use Joomla\CMS\Toolbar\ToolbarHelper;
+use Joomla\CMS\Factory;
+use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
 
@@ -63,7 +65,14 @@ class HtmlView extends BaseHtmlView
         if ($may('core.edit')) {
             $toolbar->standardButton('retry')->text(Text::_('COM_APPOINTMENTS_CONFERENCE_RETRY'))->task('bookings.retryConference')->listCheck(true);
             $toolbar->standardButton('export')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CSV'))->task('bookings.exportCsv');
-            // The non-personal campaign aggregate, which outlives the anonymisation of the bookings.
+        }
+
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $campaignEvents = \Advans\Component\Appointments\Administrator\Helper\EventScope::events($db, $user);
+        $mayCampaigns = \Advans\Component\Appointments\Administrator\Helper\EventScope::canExportCampaigns($user, $campaignEvents);
+        if ($mayCampaigns) {
+            // The non-personal campaign aggregate outlives anonymisation and deleted event types,
+            // so its button must not depend on a nonempty or filtered booking result.
             $toolbar->standardButton('campaigns')->icon('icon-chart')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CAMPAIGNS_CSV'))->task('bookings.exportCampaigns');
         }
         if ($may('core.delete')) {
