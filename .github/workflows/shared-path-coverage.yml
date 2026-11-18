@@ -21,6 +21,32 @@ on:
       - '.github/workflows/**'
       - '.github/scripts/check-shared-path-coverage.sh'
       - '.github/scripts/test-language-delivery.py'
+      - 'com_appointments/updates/update.xml'
+      - 'com_dmarcreports/updates/update.xml'
+      - 'j2commerce/com_j2commerce_importexport/updates/update.xml'
+      - 'j2commerce/com_j2store_cleanup/updates/update.xml'
+      - 'j2commerce/plg_j2commerce_productcompare/updates/update.xml'
+      - 'j2commerce/plg_osmap_j2commerce/updates/update.xml'
+      - 'j2commerce/plg_privacy_j2commerce/updates/update.xml'
+      - 'mod_dmarcreports/updates/update.xml'
+      - 'pkg_dmarcreports/updates/update.xml'
+      - 'plg_ajax_joomlaajaxforms/updates/update.xml'
+      - 'plg_system_dmarcmtasts/updates/update.xml'
+      - 'plg_system_privacyrequests/updates/update.xml'
+      - 'plg_task_dmarcreports/updates/update.xml'
+      - 'com_appointments/updates/changelog.xml'
+      - 'com_dmarcreports/updates/changelog.xml'
+      - 'j2commerce/com_j2commerce_importexport/updates/changelog.xml'
+      - 'j2commerce/com_j2store_cleanup/updates/changelog.xml'
+      - 'j2commerce/plg_j2commerce_productcompare/updates/changelog.xml'
+      - 'j2commerce/plg_osmap_j2commerce/updates/changelog.xml'
+      - 'j2commerce/plg_privacy_j2commerce/updates/changelog.xml'
+      - 'mod_dmarcreports/updates/changelog.xml'
+      - 'pkg_dmarcreports/updates/changelog.xml'
+      - 'plg_ajax_joomlaajaxforms/updates/changelog.xml'
+      - 'plg_system_dmarcmtasts/updates/changelog.xml'
+      - 'plg_system_privacyrequests/updates/changelog.xml'
+      - 'plg_task_dmarcreports/updates/changelog.xml'
   pull_request:
     branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
@@ -28,6 +54,32 @@ on:
       - '.github/workflows/**'
       - '.github/scripts/check-shared-path-coverage.sh'
       - '.github/scripts/test-language-delivery.py'
+      - 'com_appointments/updates/update.xml'
+      - 'com_dmarcreports/updates/update.xml'
+      - 'j2commerce/com_j2commerce_importexport/updates/update.xml'
+      - 'j2commerce/com_j2store_cleanup/updates/update.xml'
+      - 'j2commerce/plg_j2commerce_productcompare/updates/update.xml'
+      - 'j2commerce/plg_osmap_j2commerce/updates/update.xml'
+      - 'j2commerce/plg_privacy_j2commerce/updates/update.xml'
+      - 'mod_dmarcreports/updates/update.xml'
+      - 'pkg_dmarcreports/updates/update.xml'
+      - 'plg_ajax_joomlaajaxforms/updates/update.xml'
+      - 'plg_system_dmarcmtasts/updates/update.xml'
+      - 'plg_system_privacyrequests/updates/update.xml'
+      - 'plg_task_dmarcreports/updates/update.xml'
+      - 'com_appointments/updates/changelog.xml'
+      - 'com_dmarcreports/updates/changelog.xml'
+      - 'j2commerce/com_j2commerce_importexport/updates/changelog.xml'
+      - 'j2commerce/com_j2store_cleanup/updates/changelog.xml'
+      - 'j2commerce/plg_j2commerce_productcompare/updates/changelog.xml'
+      - 'j2commerce/plg_osmap_j2commerce/updates/changelog.xml'
+      - 'j2commerce/plg_privacy_j2commerce/updates/changelog.xml'
+      - 'mod_dmarcreports/updates/changelog.xml'
+      - 'pkg_dmarcreports/updates/changelog.xml'
+      - 'plg_ajax_joomlaajaxforms/updates/changelog.xml'
+      - 'plg_system_dmarcmtasts/updates/changelog.xml'
+      - 'plg_system_privacyrequests/updates/changelog.xml'
+      - 'plg_task_dmarcreports/updates/changelog.xml'
 
 permissions: {}
 
@@ -58,3 +110,5 @@ jobs:
         run: python .github/scripts/test-language-delivery.py
       - name: Check that every extension of the repository has reachable help
         run: php shared/tests/help-lint.php
+      - name: Check update changelog URLs
+        run: php shared/tests/update-changelog-lint.php

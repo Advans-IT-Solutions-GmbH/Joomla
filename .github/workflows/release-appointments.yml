@@ -130,6 +130,8 @@ jobs:
           # Joomla verifies the download against this hash. The package build is reproducible,
           # so the publish workflow rebuilds exactly these bytes and checks them before uploading.
           SHA256=$(sha256sum "com_appointments/$PACKAGE" | cut -d ' ' -f 1)
+          sed -i -E 's#<version>[^<]+</version>#<version>'"$VERSION"'</version>#' com_appointments/updates/changelog.xml
+          sed -i -E 's#<item>Release notes: https://[^<]+</item>#<item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/appointments-v'"$VERSION"'</item>#' com_appointments/updates/changelog.xml
           cat > com_appointments/updates/update.xml << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <updates>
@@ -140,6 +142,7 @@ jobs:
                   <type>component</type>
                   <version>$VERSION</version>
                   <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/com_appointments</infourl>
+                  <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/appointments-v$VERSION/changelog.xml</changelogurl>
                   <downloads>
                       <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/appointments-v$VERSION/$PACKAGE</downloadurl>
                   </downloads>
