@@ -47,10 +47,12 @@ class HtmlView extends BaseHtmlView
 
         ToolbarHelper::title(Text::_('COM_APPOINTMENTS_BOOKINGS_TITLE'), 'calendar');
         $toolbar = Toolbar::getInstance('toolbar');
-        // A button whose task this user may not run on any listed event type would only end in an
-        // error page (BookingsController): approve and cancel need «Edit State», erase «Delete».
+        // A button whose task this user may not run on any booking of the list would only end in an
+        // error page (BookingsController): approve and cancel need «Edit State», erase «Delete», each
+        // on the event type of the selected booking. Only the bookings shown can be selected, so the
+        // event types of those decide, not the whole permission scope (a filter can narrow it).
         // The list itself and retry need «Edit», which every listed event type grants (EventScope).
-        $events = array_map(static fn (array $event): int => (int) $event['id'], $model->authorisedEvents());
+        $events = array_values(array_unique(array_map(static fn (object $item): int => (int) $item->eventtype_id, (array) $this->items)));
         $may = static fn (string $action): bool => \Advans\Component\Appointments\Administrator\Helper\EventScope::allowsAny($user, $action, $events);
 
         if ($may('core.edit.state')) {
