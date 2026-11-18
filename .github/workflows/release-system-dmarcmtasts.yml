@@ -126,6 +126,7 @@ jobs:
           # so the publish workflow rebuilds exactly these bytes and checks them before uploading.
           SHA256=$(sha256sum "plg_system_dmarcmtasts/$PACKAGE" | cut -d ' ' -f 1)
           sed -i -E 's#<version>[^<]+</version>#<version>'"$VERSION"'</version>#' plg_system_dmarcmtasts/updates/changelog.xml
+          sed -i -E 's#<item>Release notes: https://[^<]+</item>#<item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/system-dmarcmtasts-v'"$VERSION"'</item>#' plg_system_dmarcmtasts/updates/changelog.xml
           cat > plg_system_dmarcmtasts/updates/update.xml << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <updates>

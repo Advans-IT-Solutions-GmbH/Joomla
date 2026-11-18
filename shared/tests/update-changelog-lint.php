@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
-$root = dirname(__DIR__, 2);
+$rootArgument = $argv[1] ?? null;
+$resolvedRoot = $rootArgument !== null ? realpath($rootArgument) : false;
+$root = $resolvedRoot !== false ? $resolvedRoot : dirname(__DIR__, 2);
 $files = [];
 
 foreach (new RecursiveIteratorIterator(
@@ -85,8 +87,16 @@ foreach ($files as $file) {
             continue;
         }
 
+        $changelogFile = dirname($file) . DIRECTORY_SEPARATOR . 'changelog.xml';
+        if (!is_file($changelogFile)) {
+            fwrite(STDERR, "FAIL {$relative}: stable update {$version} has no sibling changelog.xml\n");
+            $failed = true;
+            continue;
+        }
+
         $scheme = parse_url($changelog, PHP_URL_SCHEME);
         $host = parse_url($changelog, PHP_URL_HOST);
+        $path = parse_url($changelog, PHP_URL_PATH);
 
         if (!in_array(strtolower((string) $scheme), ['http', 'https'], true)
             || $host === null
@@ -103,8 +113,15 @@ foreach ($files as $file) {
             continue;
         }
 
-        $xmlChangelog = str_contains($changelog, 'raw.githubusercontent.com/')
-            || str_contains($changelog, '/releases/download/');
+        $xmlChangelog = is_string($path)
+            && preg_match('/\.xml$/i', $path) === 1
+            && (
+                strtolower((string) $host) === 'raw.githubusercontent.com'
+                || (
+                    strtolower((string) $host) === 'github.com'
+                    && str_contains($path, '/releases/download/')
+                )
+            );
 
         if (!$xmlChangelog) {
             fwrite(STDERR, "FAIL {$relative}: stable update {$version} changelogurl is not an explicit Joomla XML endpoint: {$changelog}\n");
