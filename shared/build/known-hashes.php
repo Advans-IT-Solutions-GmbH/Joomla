@@ -2,32 +2,40 @@
 /**
  * Write the catalog of released file hashes that the shared installer ships in advansinstaller/.
  *
- * The installer treats an existing file as untouched when its bytes equal a file of any earlier
- * release of the same extension. The catalog therefore holds the SHA-256 of every file, as built,
- * of every earlier release: each release is rebuilt from its own source with its own build
- * scripts, exactly as its publish workflow built it, and the files of the resulting ZIP (and of
- * the child ZIPs of a package) are hashed. Hashing the built files, not the sources, covers the
- * manifests and language files that the build stamps.
+ * The installer treats an existing file as untouched when its bytes equal a file of any release of
+ * the same extension. The catalog therefore holds the SHA-256 of every file, as built, of every
+ * release: each release is rebuilt from its own source with its own build scripts, exactly as its
+ * publish workflow built it, and the files of the resulting ZIP (and of the child ZIPs of a
+ * package) are hashed. Hashing the built files, not the sources, covers the manifests and language
+ * files that the build stamps. The files of the build in progress (BUILD_DIRECTORY) are added too.
  *
  * Releases are found as merged release commits ("release: <prefix> vX.Y.Z") in the history of
  * HEAD and as tags "<prefix>-vX.Y.Z". The publish workflow deletes older tags, so the release
- * commits are the complete source. HEAD itself is excluded when it is the release commit of the
- * version being built, so the release preparation and the publication build identical catalogs.
+ * commits are the complete source.
  *
- * Usage: php known-hashes.php EXTENSION_DIRECTORY OUTPUT_FILE
+ * The catalog is the same whether it is built before or after the release commit of the version
+ * being built exists (release preparation and publication, also of a package whose child was just
+ * released): that release rebuilds to exactly the files of the build in progress, which are always
+ * included, and catalog files themselves are never hashed. The catalog lists hashes only, sorted,
+ * without versions or timestamps, so the package bytes and their SHA-256 stay reproducible.
+ *
+ * Usage: php known-hashes.php EXTENSION_DIRECTORY OUTPUT_FILE BUILD_DIRECTORY
  *
  * Environment:
  *   ADVANS_KNOWN_HASHES=skip      write an empty catalog (rebuilds of history, quick local builds)
  *   ADVANS_KNOWN_HASHES_STRICT=1  fail when the history is unavailable or a release cannot be rebuilt
  */
 
-if (PHP_SAPI !== 'cli' || $argc !== 3 || !is_dir($argv[1])) {
-    fwrite(STDERR, "Usage: php known-hashes.php EXTENSION_DIRECTORY OUTPUT_FILE\n");
+if (PHP_SAPI !== 'cli' || $argc !== 4 || !is_dir($argv[1]) || !is_dir($argv[3])) {
+    fwrite(STDERR, "Usage: php known-hashes.php EXTENSION_DIRECTORY OUTPUT_FILE BUILD_DIRECTORY\n");
     exit(1);
 }
 
+const CATALOG_PATH = 'advansinstaller/known-hashes.php';
+
 $extension = realpath($argv[1]);
 $output = $argv[2];
+$buildDirectory = realpath($argv[3]);
 $strict = getenv('ADVANS_KNOWN_HASHES_STRICT') === '1';
 
 $run = static function (array $command, ?string $cwd = null, ?array $env = null): array {
@@ -72,11 +80,15 @@ $write = static function (array $catalog) use ($output): void {
     }
 };
 
-$hashArchive = static function (string $zipFile, array &$hashes) use (&$hashArchive): void {
+/** A catalog never lists itself: its bytes depend on the history that is available. */
+$isCatalog = static fn(string $path): bool => str_ends_with(str_replace('\\', '/', $path), CATALOG_PATH);
+
+$hashBytes = null;
+$hashArchive = static function (string $zipFile, array &$hashes) use (&$hashArchive, &$hashBytes): void {
     $zip = new ZipArchive();
 
     if ($zip->open($zipFile) !== true) {
-        throw new RuntimeException('Cannot open a rebuilt package.');
+        throw new RuntimeException('Cannot open a built package.');
     }
 
     try {
@@ -90,27 +102,34 @@ $hashArchive = static function (string $zipFile, array &$hashes) use (&$hashArch
             $bytes = $zip->getFromIndex($index);
 
             if (!is_string($bytes)) {
-                throw new RuntimeException('Cannot read a rebuilt package entry.');
+                throw new RuntimeException('Cannot read a built package entry.');
             }
 
-            if (str_ends_with(strtolower($name), '.zip')) {
-                $nested = tempnam(sys_get_temp_dir(), 'advans-known-');
-                file_put_contents($nested, $bytes);
-
-                try {
-                    $hashArchive($nested, $hashes);
-                } finally {
-                    unlink($nested);
-                }
-
-                continue;
-            }
-
-            $hashes[hash('sha256', $bytes)] = true;
+            $hashBytes($name, $bytes, $hashes);
         }
     } finally {
         $zip->close();
     }
+};
+$hashBytes = static function (string $name, string $bytes, array &$hashes) use ($hashArchive, $isCatalog): void {
+    if ($isCatalog($name)) {
+        return;
+    }
+
+    if (str_ends_with(strtolower($name), '.zip')) {
+        $nested = tempnam(sys_get_temp_dir(), 'advans-known-');
+        file_put_contents($nested, $bytes);
+
+        try {
+            $hashArchive($nested, $hashes);
+        } finally {
+            unlink($nested);
+        }
+
+        return;
+    }
+
+    $hashes[hash('sha256', $bytes)] = true;
 };
 
 $removeTree = static function (string $path) use (&$removeTree): void {
@@ -134,20 +153,32 @@ $removeTree = static function (string $path) use (&$removeTree): void {
 
 $config = $readEnv((string) file_get_contents($extension . '/build.env'));
 $name = $config['EXTENSION_NAME'] ?? '';
-$version = $config['VERSION'] ?? '';
 $prefix = $config['RELEASE_PREFIX'] ?? '';
 
-if ($name === '' || $version === '' || preg_match('/^[a-z][a-z0-9-]*$/', $prefix) !== 1) {
-    fwrite(STDERR, "build.env must set EXTENSION_NAME, VERSION and RELEASE_PREFIX (the tag prefix without -v).\n");
+if ($name === '' || preg_match('/^[a-z][a-z0-9-]*$/', $prefix) !== 1) {
+    fwrite(STDERR, "build.env must set EXTENSION_NAME and RELEASE_PREFIX (the tag prefix without -v).\n");
     exit(1);
 }
 
-$catalog = ['extension' => $name, 'complete' => false, 'versions' => [], 'unreproducible' => [], 'failed' => [], 'hashes' => []];
+$catalog = ['extension' => $name, 'complete' => false, 'unreproducible' => [], 'failed' => [], 'hashes' => []];
+$hashes = [];
+
+// The files of the build in progress.
+foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($buildDirectory, FilesystemIterator::SKIP_DOTS)) as $file) {
+    $relative = substr(str_replace('\\', '/', $file->getPathname()), strlen(str_replace('\\', '/', $buildDirectory)) + 1);
+    $hashBytes($relative, (string) file_get_contents($file->getPathname()), $hashes);
+}
+
+$finish = static function (array $catalog, array $hashes) use ($write): void {
+    $catalog['hashes'] = array_keys($hashes);
+    sort($catalog['hashes'], SORT_STRING);
+    $write($catalog);
+};
 
 if (getenv('ADVANS_KNOWN_HASHES') === 'skip') {
-    $catalog['unreproducible'][] = 'catalog generation skipped (ADVANS_KNOWN_HASHES=skip)';
-    $write($catalog);
-    echo "Known-hashes catalog skipped for $name\n";
+    $catalog['unreproducible'][] = 'earlier releases skipped (ADVANS_KNOWN_HASHES=skip)';
+    $finish($catalog, $hashes);
+    echo "Known-hashes catalog for $name: earlier releases skipped\n";
     exit(0);
 }
 
@@ -164,13 +195,11 @@ if ($code !== 0 || trim($shallow) !== 'false') {
     }
 
     $catalog['unreproducible'][] = $message;
-    $write($catalog);
+    $finish($catalog, $hashes);
     echo "Known-hashes catalog for $name is incomplete: $message\n";
     exit(0);
 }
 
-[, $head] = $run(['git', '-C', $root, 'rev-parse', 'HEAD']);
-$head = trim($head);
 $pattern = '/^release: ' . preg_quote($prefix, '/') . ' v(\d+\.\d+\.\d+)(?:\s|$)/';
 $releases = [];
 [, $log] = $run(['git', '-C', $root, 'log', '--format=%H%x09%s', 'HEAD']);
@@ -197,13 +226,8 @@ foreach (preg_split('/\R/', trim($tags)) as $tag) {
     }
 }
 
-// The release commit of the version being built is the build itself, not an earlier release.
-if (isset($releases[$head]) && $releases[$head] === $version) {
-    unset($releases[$head]);
-}
-
 uasort($releases, 'version_compare');
-$hashes = [];
+$versions = [];
 $work = sys_get_temp_dir() . '/advans-known-hashes-' . bin2hex(random_bytes(8));
 mkdir($work, 0700, true);
 $environment = getenv();
@@ -243,20 +267,20 @@ try {
             continue;
         }
 
-        $buildDirectory = $directory === '.' ? $source : $source . '/' . $directory;
-        [$buildCode, $buildOut, $buildErr] = $run(['bash', 'build.sh'], $buildDirectory, $environment);
-        $packages = glob($buildDirectory . '/*.zip') ?: [];
+        $releaseDirectory = $directory === '.' ? $source : $source . '/' . $directory;
+        [$buildCode, $buildOut, $buildErr] = $run(['bash', 'build.sh'], $releaseDirectory, $environment);
+        $packages = glob($releaseDirectory . '/*.zip') ?: [];
 
         if ($buildCode !== 0 || count($packages) !== 1) {
             $catalog['failed'][] = "$releaseVersion: the release build failed";
             fwrite(STDERR, "Rebuilding $name $releaseVersion failed:\n" . substr($buildOut . $buildErr, -4000) . "\n");
             $removeTree($source);
+            @unlink($source . '.tar');
             continue;
         }
 
         $hashArchive($packages[0], $hashes);
-        $catalog['versions'][] = $releaseVersion;
-        echo "Hashed the built files of $name $releaseVersion\n";
+        $versions[] = $releaseVersion;
         $removeTree($source);
         @unlink($source . '.tar');
     }
@@ -264,12 +288,10 @@ try {
     $removeTree($work);
 }
 
-$catalog['hashes'] = array_keys($hashes);
-sort($catalog['hashes'], SORT_STRING);
 $catalog['complete'] = $catalog['failed'] === [];
-$write($catalog);
-echo 'Known-hashes catalog for ' . $name . ': ' . count($catalog['versions']) . ' releases, '
-    . count($catalog['hashes']) . " distinct files\n";
+$finish($catalog, $hashes);
+echo 'Known-hashes catalog for ' . $name . ': releases ' . (implode(', ', $versions) ?: 'none')
+    . ' and the build in progress, ' . count($hashes) . " distinct files\n";
 
 foreach (array_merge($catalog['unreproducible'], $catalog['failed']) as $note) {
     echo "  note: $note\n";

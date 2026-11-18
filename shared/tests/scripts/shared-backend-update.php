@@ -314,7 +314,15 @@ foreach ($scenarios as $scenario) {
     switch ($scenario) {
         case 'clean':
             if (getenv('EXPECT_BOOTSTRAP') === '1') {
-                bu_check('bootstrap: the previous release left no record of written files', !is_file($state . '/installed.php'));
+                // Start from the state of an installation made before the record existed: once a
+                // published release writes the record itself, it is removed here, so the update must
+                // recognise every installed file through the catalog of released files alone.
+                if (is_file($state . '/installed.php')) {
+                    unlink($state . '/installed.php');
+                    echo "Removed the record of the published release to update from a pre-record state\n";
+                }
+
+                bu_check('bootstrap: no record of written files before the update', !is_file($state . '/installed.php'));
             }
 
             $result = bu_update($browser, $package, $version);
@@ -332,10 +340,14 @@ foreach ($scenarios as $scenario) {
             file_put_contents($modifyFile, $changed);
             $result = bu_update($browser, $package, $version);
             bu_check('update succeeded without a pause', $result['updated'], bu_text($result));
-            $new = array_values(array_diff(bu_backups(), $backupsBefore));
-            $backup = count($new) === 1 ? bu_backup($new[0]) : ['destination' => '', 'bytes' => ''];
-            bu_check('exactly one new backup', count($new) === 1, implode(', ', $new));
-            bu_check('the backup holds exactly the changed bytes', $backup['bytes'] === $changed && $backup['destination'] === $modifyFile);
+            // Foreign territory (for example the Joomla 5 Product Compare mirror) is backed up on every
+            // update as well; the changed own file must have exactly one backup of its own.
+            $own = array_values(array_filter(
+                array_map('bu_backup', array_diff(bu_backups(), $backupsBefore)),
+                static fn(array $backup): bool => $backup['destination'] === $modifyFile
+            ));
+            bu_check('exactly one new backup of the changed file', count($own) === 1, (string) count($own));
+            bu_check('the backup holds exactly the changed bytes', ($own[0]['bytes'] ?? null) === $changed);
             bu_check('the changed file was replaced by the update', hash_file('sha256', $modifyFile) !== hash('sha256', $changed));
             bu_check('the report names the changed file and the backup location', str_contains(bu_text($result), $relativeModify)
                 && str_contains(bu_text($result), 'administrator/advans-installer-state/' . $id . '/backups'), bu_text($result));

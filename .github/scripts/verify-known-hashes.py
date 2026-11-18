@@ -40,6 +40,8 @@ def files(archive, prefix=""):
             if name.endswith("/"):
                 continue
             payload = package.read(name)
+            if name.endswith("advansinstaller/known-hashes.php"):
+                continue  # A catalog never lists itself; the installer's record covers installed catalogs.
             if name.lower().endswith(".zip"):
                 result.update(files(io.BytesIO(payload), f"{prefix}{name}!"))
             else:
@@ -62,8 +64,7 @@ def main():
     args = parser.parse_args()
     repo = os.environ["GITHUB_REPOSITORY"]
     data = catalog(args.package)
-    print(f"Catalog of {data['extension']}: releases {', '.join(data['versions']) or 'none'}; "
-          f"{len(data['hashes'])} distinct files; complete={data['complete']}")
+    print(f"Catalog of {data['extension']}: {len(data['hashes'])} distinct files; complete={data['complete']}")
     for note in data.get("unreproducible", []) + data.get("failed", []):
         print(f"  note: {note}")
     if not data["complete"]:
@@ -77,15 +78,7 @@ def main():
         key=lambda item: item[0])
     if not published:
         raise ValueError(f"No published release with the prefix {args.prefix}-v")
-    number, release = published[-1]
-    latest = ".".join(map(str, number))
-    head = run("git", "log", "-1", "--format=%s")
-    if re.match(rf"release: {re.escape(args.prefix)} v{re.escape(latest)}(\s|$)", head):
-        print(f"HEAD is the release commit of {latest}; the catalog covers the releases before it.")
-        return
-    if latest not in data["versions"]:
-        raise ValueError(f"The catalog does not include the latest published release {latest}")
-
+    release = published[-1][1]
     assets = [asset["name"] for asset in release["assets"] if asset["name"].endswith(".zip")]
     if len(assets) != 1:
         raise ValueError(f"Expected one ZIP asset in {release['tag_name']}, found {assets}")

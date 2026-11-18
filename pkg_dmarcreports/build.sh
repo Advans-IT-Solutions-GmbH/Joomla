@@ -118,7 +118,7 @@ php ../shared/build/prepare-installer.php "$BUILD_DIR"
 
 # Hashes of the files of every earlier package release (children included), so that updates
 # recognise untouched files.
-php ../shared/build/known-hashes.php . "$BUILD_DIR/advansinstaller/known-hashes.php"
+php ../shared/build/known-hashes.php . "$BUILD_DIR/advansinstaller/known-hashes.php" "$BUILD_DIR"
 
 echo "Creating installation package..."
 bash ../shared/build/deterministic-zip.sh "$BUILD_DIR" "$PACKAGE_NAME"

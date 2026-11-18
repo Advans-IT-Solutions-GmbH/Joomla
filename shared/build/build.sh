@@ -92,7 +92,7 @@ SHARED_BUILD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 php "$SHARED_BUILD/prepare-installer.php" "$BUILD_DIR"
 
 # Hashes of the files of every earlier release, so that updates recognise untouched files.
-php "$SHARED_BUILD/known-hashes.php" . "$BUILD_DIR/advansinstaller/known-hashes.php"
+php "$SHARED_BUILD/known-hashes.php" . "$BUILD_DIR/advansinstaller/known-hashes.php" "$BUILD_DIR"
 
 # Create installation package
 echo "Creating installation package..."

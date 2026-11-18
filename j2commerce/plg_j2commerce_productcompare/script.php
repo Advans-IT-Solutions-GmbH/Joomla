@@ -110,14 +110,16 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
                 $this->reportExtensionId($parent, $keptId);
             }
 
-            $this->installOptionsManifest($parent);
-            $this->setGroupForInstalledStack($parent);
-            $this->ensureUpdateSite();
-
+            // Before any message: the explanation of a skipped mirror must be translated, also
+            // on a first installation.
             $app = Factory::getApplication();
             $lang = $app->getLanguage();
             $lang->load('plg_j2commerce_productcompare', JPATH_ADMINISTRATOR);
             $lang->load('plg_j2commerce_productcompare', $parent->getParent()->getPath('source'));
+
+            $this->installOptionsManifest($parent);
+            $this->setGroupForInstalledStack($parent);
+            $this->ensureUpdateSite();
 
             $enabled = $this->isPluginEnabled();
 
@@ -222,7 +224,12 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             ->where($db->quoteName('element') . ' = ' . $db->quote('productcompare'))
             ->whereIn($db->quoteName('folder'), ['j2commerce', 'j2store'], ParameterType::STRING)
             ->order($db->quoteName('extension_id') . ' ASC');
-        $rows = $db->setQuery($query)->loadObjectList() ?: [];
+        // Only rows of this plugin: a plugin of another extension registered as
+        // j2store/productcompare is never merged, changed or removed.
+        $rows = array_values(array_filter(
+            $db->setQuery($query)->loadObjectList() ?: [],
+            static fn (object $row): bool => strtolower(trim((string) $row->name)) === 'plg_j2commerce_productcompare'
+        ));
 
         $keep = null;
         $new  = null;
@@ -373,7 +380,20 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         $owner = $this->mirrorOwner();
 
         if ($owner !== null) {
-            // Leave the other extension intact; the plugin stays in its own j2commerce group.
+            // Leave the other extension intact. This plugin's registration moves to (or stays in)
+            // its own j2commerce group, whose folder holds the files just installed; a row of the
+            // other extension is not touched (only rows with this plugin's name are updated).
+            $db = Factory::getContainer()->get(DatabaseInterface::class);
+            $q  = $this->createDbQuery($db)
+                ->update($db->quoteName('#__extensions'))
+                ->set($db->quoteName('folder') . ' = ' . $db->quote('j2commerce'))
+                ->where($db->quoteName('element') . ' = ' . $db->quote('productcompare'))
+                ->where($db->quoteName('folder') . ' = ' . $db->quote('j2store'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+                ->where('LOWER(' . $db->quoteName('name') . ') = ' . $db->quote('plg_j2commerce_productcompare'));
+            $db->setQuery($q);
+            $db->execute();
+
             Factory::getApplication()->enqueueMessage(
                 Text::sprintf('PLG_J2COMMERCE_PRODUCTCOMPARE_MIRROR_OCCUPIED', htmlspecialchars($owner, ENT_QUOTES, 'UTF-8')),
                 'warning'
@@ -534,7 +554,8 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
                 ->from($db->quoteName('#__extensions'))
                 ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
                 ->where($db->quoteName('element') . ' = ' . $db->quote('productcompare'))
-                ->whereIn($db->quoteName('folder'), ['j2commerce', 'j2store'], ParameterType::STRING);
+                ->whereIn($db->quoteName('folder'), ['j2commerce', 'j2store'], ParameterType::STRING)
+                ->where('LOWER(' . $db->quoteName('name') . ') = ' . $db->quote('plg_j2commerce_productcompare'));
 
             return (int) $db->setQuery($query)->loadResult() === 1;
         } catch (\Throwable $e) {
@@ -553,7 +574,8 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             ->select($db->quoteName('folder'))
             ->from($db->quoteName('#__extensions'))
             ->where($db->quoteName('element') . ' = ' . $db->quote($element))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'));
+            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+            ->where('LOWER(' . $db->quoteName('name') . ') = ' . $db->quote('plg_j2commerce_productcompare'));
         $db->setQuery($q);
         $folder = $db->loadResult() ?: 'j2commerce';
 
@@ -563,6 +585,7 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
             ->where($db->quoteName('element') . ' = :element')
             ->where($db->quoteName('folder') . ' = :folder')
             ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
+            ->where('LOWER(' . $db->quoteName('name') . ') = ' . $db->quote('plg_j2commerce_productcompare'))
             ->bind(':element', $element)
             ->bind(':folder', $folder);
         $db->setQuery($query);
