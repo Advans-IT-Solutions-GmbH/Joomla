@@ -412,7 +412,7 @@ switch ($op) {
         }
         break;
     case 'appointments-prepare':
-        foreach (['reminders', 'retention'] as $routine) {
+        foreach (['reminders', 'retention', 'teamretention'] as $routine) {
             $type = 'plg_task_appointments.' . $routine;
             if ((int) $db->setQuery('SELECT COUNT(*) FROM #__scheduler_tasks WHERE type=' . $db->quote($type))->loadResult()) {
                 continue;

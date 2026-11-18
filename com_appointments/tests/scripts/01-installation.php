@@ -290,7 +290,7 @@ class InstallationTest
         $tasks = function (): array {
             $found = [];
             $result = $this->db->query("SELECT id, type, state, execution_rules, params FROM {$this->dbPrefix}scheduler_tasks"
-                . " WHERE type IN ('plg_task_appointments.reminders','plg_task_appointments.retention','plg_task_appointments.close') ORDER BY id");
+                . " WHERE type IN ('plg_task_appointments.reminders','plg_task_appointments.retention','plg_task_appointments.teamretention','plg_task_appointments.close') ORDER BY id");
             while ($result && ($row = $result->fetch_assoc())) {
                 $found[$row['type']][] = $row;
             }
@@ -310,10 +310,11 @@ class InstallationTest
             $found = $tasks();
             $reminders = $found['plg_task_appointments.reminders'] ?? [];
             $retention = $found['plg_task_appointments.retention'] ?? [];
+            $teamRetention = $found['plg_task_appointments.teamretention'] ?? [];
             $rules = static fn (array $row): array => json_decode((string) $row['execution_rules'], true) ?: [];
 
-            return count($reminders) === 1 && count($retention) === 1
-                && (int) $reminders[0]['state'] === 1 && (int) $retention[0]['state'] === 1
+            return count($reminders) === 1 && count($retention) === 1 && count($teamRetention) === 1
+                && (int) $reminders[0]['state'] === 1 && (int) $retention[0]['state'] === 1 && (int) $teamRetention[0]['state'] === 1
                 && ($rules($reminders[0])['rule-type'] ?? '') === 'interval-minutes' && (int) ($rules($reminders[0])['interval-minutes'] ?? 0) === 5
                 && ($rules($retention[0])['rule-type'] ?? '') === 'interval-hours' && (int) ($rules($retention[0])['interval-hours'] ?? 0) === 24
                 && (int) (json_decode((string) $reminders[0]['params'], true)['batch_size'] ?? 0) === 100;

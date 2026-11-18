@@ -246,6 +246,7 @@ $work = sys_get_temp_dir() . '/advans-known-hashes-' . bin2hex(random_bytes(8));
 mkdir($work, 0700, true);
 $environment = getenv();
 $environment['ADVANS_KNOWN_HASHES'] = 'skip';
+unset($environment['ADVANS_KNOWN_HASHES_STRICT']);
 
 try {
     foreach ($releases as $sha => $releaseVersion) {

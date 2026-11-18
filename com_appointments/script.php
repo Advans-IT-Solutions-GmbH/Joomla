@@ -1123,8 +1123,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
      * up). It is created only when no task of its routine exists at all, in any state: a task the
      * operator switched on, off or trashed is never changed or created again.
      *
-     * The required tasks (reminders while reminders are configured, retention, and the internet
-     * calendar routines while internet calendars are switched on) are created switched on by the
+     * The required tasks (reminders while reminders are configured, retention, team retention, and
+     * the internet calendar routines while internet calendars are switched on) are created switched on by the
      * shared installer after this postflight, see shared/installer/tasks.php. A failure never
      * fails the installation; it is reported, so the operator can create the task by hand.
      */
