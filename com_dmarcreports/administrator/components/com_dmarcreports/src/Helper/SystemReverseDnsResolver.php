@@ -21,6 +21,8 @@ defined('_JEXEC') or die;
  */
 final class SystemReverseDnsResolver implements ReverseDnsResolverInterface
 {
+    private const QUERY_TIMEOUT_SECONDS = 1;
+
     public function ptr(string $ip): ?array
     {
         $name = self::reverseName($ip);
@@ -33,7 +35,7 @@ final class SystemReverseDnsResolver implements ReverseDnsResolverInterface
             return null;
         }
 
-        $records = @dns_get_record($name, DNS_PTR);
+        $records = $this->query(static fn (): array|false => @dns_get_record($name, DNS_PTR));
 
         // dns_get_record() returns false for a missing PTR (NXDOMAIN) as well as
         // for a resolver failure; both mean "no confirmed name" here.
@@ -60,7 +62,7 @@ final class SystemReverseDnsResolver implements ReverseDnsResolverInterface
             return null;
         }
 
-        $records = @dns_get_record($host, DNS_A + DNS_AAAA);
+        $records = $this->query(static fn (): array|false => @dns_get_record($host, DNS_A + DNS_AAAA));
 
         if (!\is_array($records)) {
             return null;
@@ -77,6 +79,31 @@ final class SystemReverseDnsResolver implements ReverseDnsResolverInterface
         }
 
         return $addresses;
+    }
+
+    private function query(\Closure $lookup): array|false
+    {
+        if (
+            !\function_exists('pcntl_async_signals')
+            || !\function_exists('pcntl_alarm')
+            || !\defined('SIGALRM')
+        ) {
+            return $lookup();
+        }
+
+        pcntl_async_signals(true);
+        pcntl_signal(SIGALRM, static function (): never {
+            throw new \RuntimeException('DNS lookup timeout');
+        });
+        pcntl_alarm(self::QUERY_TIMEOUT_SECONDS);
+
+        try {
+            return $lookup();
+        } catch (\Throwable $e) {
+            return false;
+        } finally {
+            pcntl_alarm(0);
+        }
     }
 
     /**

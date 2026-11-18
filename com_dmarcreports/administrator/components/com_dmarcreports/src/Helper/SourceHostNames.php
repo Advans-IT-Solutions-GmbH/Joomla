@@ -23,8 +23,9 @@ defined('_JEXEC') or die;
  * Lookups are cached (a confirmed name for seven days, no name for one day) and
  * best-effort time-limited: one call starts no new lookup once its budget of
  * lookups or seconds is spent, and checks the shared deadline before PTR and
- * forward DNS calls. PHP's dns_get_record() has no separate per-call timeout,
- * so it cannot guarantee that a stalled resolver cannot delay the page.
+ * forward DNS calls. The system resolver adds a one-second alarm where POSIX
+ * pcntl controls are available; platforms without pcntl cannot guarantee a hard
+ * in-flight timeout.
  * Ingestion never calls this class.
  *
  * @since  1.4.0
