@@ -396,13 +396,47 @@ final class Queue
             $assignment = [];
             if ($row['contact_id'] === '') {
                 $client->validateLeadFields();
-                // E-mail, then telephone, then name with company (Client::match()); never blocks on duplicates.
+                if ((string) ($row['operation'] ?? '') !== 'matching') {
+                    // Persist the matching phase without holding the booking and delivery rows while
+                    // e-mail, telephone and name/company searches use the remote service.
+                    $this->save($id, ['operation' => 'matching', 'state' => 'pending', 'reason' => '',
+                        'binding' => $profile->binding]);
+                    $db->transactionCommit();
+                    return 'next';
+                }
+
+                $sequence = (int) $row['target_sequence'];
+                $db->transactionCommit();
+
+                // Remote reads are outside the booking lock. The locking revalidation below is not a
+                // historical snapshot: it resumes only this UID and delivery version and rejects stale work.
                 $match = $client->match($opened);
                 $assignment = ['match_rule' => $match['match_rule'], 'match_candidates' => $match['match_candidates']];
+
+                $db->transactionStart();
+                $currentBooking = $this->booking($id);
+                $current = $this->find($id, true);
+                if ($current === null || !$currentBooking
+                    || (int) $current['target_sequence'] !== $sequence
+                    || $current['state'] === 'uncertain'
+                    || (string) $current['operation'] !== 'matching'
+                    || $current['contact_id'] !== ''
+                    || !hash_equals($current['uid'], (string) $currentBooking['uid'])
+                    || !hash_equals($current['uid'], (string) $booking['uid'])
+                    || (int) $currentBooking['sequence'] !== $sequence
+                    || $currentBooking['anonymised_utc'] !== null
+                    || !hash_equals((string) $current['profile'], $profile->key)
+                    || ($current['binding'] !== '' && !hash_equals($current['binding'], $profile->binding))) {
+                    if ($current !== null) {
+                        $this->save($id, ['operation' => '', 'state' => 'pending', 'reason' => '']);
+                    }
+                    $db->transactionCommit();
+                    return 'next';
+                }
                 if (isset($match['contact_id'], $match['lead_id'])) {
                     // Existing leads and contacts are never changed.
                     $this->save($id, ['contact_id' => $match['contact_id'], 'lead_id' => $match['lead_id']] + $assignment
-                        + ['binding' => $profile->binding, 'state' => 'pending', 'reason' => '']);
+                        + ['operation' => '', 'binding' => $profile->binding, 'state' => 'pending', 'reason' => '']);
                     $db->transactionCommit();
                     return 'next';
                 }

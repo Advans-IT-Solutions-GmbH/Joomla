@@ -266,6 +266,34 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 = $parent->getParent()->getPath('source') . '/administrator/language/' . $tag . '/com_appointments.ini';
         }
 
+        $source = $parent->getParent()->getPath('source');
+        foreach (self::BUNDLED_MODULES as $element) {
+            $moduleSource = $source . '/modules/' . $element;
+            $moduleTarget = JPATH_ADMINISTRATOR . '/modules/' . $element;
+            if (!is_dir($moduleSource)) {
+                continue;
+            }
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($moduleSource, \FilesystemIterator::SKIP_DOTS)
+            );
+            foreach ($iterator as $file) {
+                if (!$file->isFile()) {
+                    continue;
+                }
+                $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($moduleSource) + 1));
+                $files[$moduleTarget . '/' . $relative] = $file->getPathname();
+            }
+            foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+                foreach (['ini', 'sys.ini'] as $suffix) {
+                    $name = $element . '.' . $suffix;
+                    $candidate = $moduleSource . '/language/' . $tag . '/' . $name;
+                    if (is_file($candidate)) {
+                        $files[JPATH_ADMINISTRATOR . '/language/' . $tag . '/' . $name] = $candidate;
+                    }
+                }
+            }
+        }
+
         if ($type === 'install') {
             foreach (glob($root . '/data/epochs.php*') ?: [] as $file) {
                 $files[$file] = $this->removalCandidate($parent, 'Remove obsolete calendar epoch anchor on fresh installation');
