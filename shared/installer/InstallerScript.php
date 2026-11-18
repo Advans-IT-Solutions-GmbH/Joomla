@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-namespace Advans\Installer;
+namespace Advans\Installer\V2;
 
 defined('_JEXEC') or die;
 

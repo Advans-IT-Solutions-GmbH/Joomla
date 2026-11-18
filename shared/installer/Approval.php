@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-namespace Advans\Installer;
+namespace Advans\Installer\V2;
 
 /**
  * Approve the exact old and new hashes of a paused installation's review plan.

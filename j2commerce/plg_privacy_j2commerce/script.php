@@ -13,7 +13,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     : dirname(__DIR__, 2) . '/shared/installer/load.php';
 
 use Joomla\CMS\Factory;
-use Advans\Installer\InstallerScript;
+use Advans\Installer\V2\InstallerScript;
 use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
@@ -143,8 +143,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             return is_string($content)
                 && str_contains($content, self::BUNDLED_OVERRIDE_MARKER)
                 && in_array(hash('sha256', str_replace("\r\n", "\n", $content)), self::BUNDLED_CHECKOUT_OVERRIDE_HASHES, true)
-                ? \Advans\Installer\Planner::ADJUST
-                : \Advans\Installer\Planner::SKIP;
+                ? \Advans\Installer\V2\Planner::ADJUST
+                : \Advans\Installer\V2\Planner::SKIP;
         }
 
         return parent::foreignDecision($destination, $existing, $known);

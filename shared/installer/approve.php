@@ -26,5 +26,5 @@ if ($path === false || basename($path) !== 'plan.php' || !hash_equals($argv[3], 
     exit(1);
 }
 
-\Advans\Installer\Approval::approve($path);
+\Advans\Installer\V2\Approval::approve($path);
 fwrite(STDOUT, "Approved exact file hashes. Retry the same package in Joomla; changed files or package bytes require a new review.\n");

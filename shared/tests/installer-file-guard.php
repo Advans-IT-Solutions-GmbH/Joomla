@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../installer/FileGuard.php';
 
-use Advans\Installer\FileGuard;
+use Advans\Installer\V2\FileGuard;
 
 $base = __DIR__ . DIRECTORY_SEPARATOR . '.file-guard-test-' . bin2hex(random_bytes(8));
 $backupRoot = $base . DIRECTORY_SEPARATOR . 'backups';
@@ -221,7 +221,7 @@ try {
     try {
         FileGuard::backup($blocked, $blockedHash, $compareBackups);
         throw new RuntimeException('An unwritable backup must fail.');
-    } catch (\Advans\Installer\BackupFailure $failure) {
+    } catch (\Advans\Installer\V2\BackupFailure $failure) {
         expect($failure->destination === FileGuard::normalize($blocked), 'The backup failure must name the destination.');
     }
 

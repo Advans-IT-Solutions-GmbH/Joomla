@@ -4,6 +4,26 @@
  * The CI installer-message suite additionally uses real Joomla.
  */
 
+namespace Advans\Installer {
+    // An installer runtime from before V2, loaded earlier in the same request by another
+    // extension (for example in a bulk update). It must not take the place of this runtime.
+    abstract class InstallerScript
+    {
+        public function preflight($type, $parent)
+        {
+            return false;
+        }
+    }
+
+    final class FileGuard
+    {
+    }
+
+    final class Destinations
+    {
+    }
+}
+
 namespace Joomla\CMS\Installer {
     class InstallerScript
     {
@@ -188,7 +208,15 @@ namespace {
         $class = 'JFormFieldAdvanssystemcheck';
         require $duplicateRuntime . '/load.php';
         $assert($class === 'JFormFieldAdvanssystemcheck', 'Runtime loader overwrote Joomla FormHelper caller scope.');
-        $assert(class_exists(\Advans\Installer\InstallerScript::class, false), 'Loading another extension did not reuse the shared runtime.');
+        $assert(class_exists(\Advans\Installer\V2\InstallerScript::class, false), 'Loading another extension did not reuse the shared runtime.');
+        // Mixed bulk update: an older runtime already holds Advans\Installer; this one must still
+        // use its own classes, from its own files.
+        $assert(class_exists(\Advans\Installer\InstallerScript::class, false), 'The older runtime fixture is not loaded.');
+
+        foreach (['InstallerScript', 'FileGuard', 'Destinations', 'Planner', 'Knowledge', 'Approval', 'State'] as $runtimeClass) {
+            $file = (new \ReflectionClass('Advans\\Installer\\V2\\' . $runtimeClass))->getFileName();
+            $assert(realpath((string) $file) === realpath($support . '/' . $runtimeClass . '.php'), 'An older runtime replaced ' . $runtimeClass . '.');
+        }
         $source = $work . '/source';
         $destination = JPATH_PLUGINS . '/ajax/joomlaajaxforms';
         $state = JPATH_ADMINISTRATOR . '/advans-installer-state/plg_ajax_joomlaajaxforms';
@@ -199,7 +227,7 @@ namespace {
         file_put_contents($destination . '/payload.php', '<?php echo "changed on this site";');
         file_put_contents($destination . '/untouched.php', '<?php echo "earlier release";');
         // The catalog of earlier releases knows the untouched file, not the changed one.
-        \Advans\Installer\State::write($source . '/' . \Advans\Installer\Knowledge::CATALOG, [
+        \Advans\Installer\V2\State::write($source . '/' . \Advans\Installer\V2\Knowledge::CATALOG, [
             'complete' => true,
             'hashes'   => [hash('sha256', '<?php echo "earlier release";')],
         ]);
@@ -211,7 +239,7 @@ namespace {
             public function getManifest(): \SimpleXMLElement { return $this->manifest; }
             public function getPath(string $key): string { return $key === 'manifest' ? $this->source . '/joomlaajaxforms.xml' : $this->source; }
         };
-        $installer = new class extends \Advans\Installer\InstallerScript {
+        $installer = new class extends \Advans\Installer\V2\InstallerScript {
             /** @var array<string, string> */
             public array $foreign = [];
 
@@ -240,7 +268,7 @@ namespace {
         $assert(count($backups()) === 1, 'Exactly the changed own file must be backed up.');
         $changedBackup = $backups()[0];
         $assert(
-            \Advans\Installer\FileGuard::restoreBytes($changedBackup, $destination . '/payload.php', hash('sha256', '<?php echo "changed on this site";')) === '<?php echo "changed on this site";',
+            \Advans\Installer\V2\FileGuard::restoreBytes($changedBackup, $destination . '/payload.php', hash('sha256', '<?php echo "changed on this site";')) === '<?php echo "changed on this site";',
             'The backup does not hold the changed bytes.'
         );
         $install();
@@ -248,7 +276,7 @@ namespace {
         $report = $messageText();
         $assert(str_contains($report, 'plugins/ajax/joomlaajaxforms/payload.php') && !str_contains($report, 'untouched.php'), 'The report must name exactly the changed own file.');
         $assert(str_contains($report, 'advans-installer-state/plg_ajax_joomlaajaxforms/backups'), 'The report must name the backup location.');
-        $record = \Advans\Installer\State::read($state . '/' . \Advans\Installer\Knowledge::RECORD);
+        $record = \Advans\Installer\V2\State::read($state . '/' . \Advans\Installer\V2\Knowledge::RECORD);
         $assert(($record['files']['plugins/ajax/joomlaajaxforms/payload.php'] ?? '') === hash('sha256', '<?php echo "new";'), 'The record lacks a written file.');
 
         // 2. The record makes the next update recognise the files this installation wrote.
@@ -267,7 +295,7 @@ namespace {
         file_put_contents($source . '/foreign-incoming.php', '<?php echo "ours";');
         $installer->foreign = [$foreign => $source . '/foreign-incoming.php'];
         $app->tag = 'de-DE';
-        \Advans\Installer\SystemCheck::loadLanguage();
+        \Advans\Installer\V2\SystemCheck::loadLanguage();
         $app->messages = [];
         $assert($installer->preflight('update', $parent) === false, 'An unclassified foreign file must pause the installation.');
         $assert(file_get_contents($foreign) === '<?php echo "other extension";', 'The pause changed the foreign file.');
@@ -281,7 +309,7 @@ namespace {
         fclose($pipes[2]);
         $assert(proc_close($process) === 0, 'Approval command failed: ' . $output);
         $app->tag = 'en-GB';
-        \Advans\Installer\SystemCheck::loadLanguage();
+        \Advans\Installer\V2\SystemCheck::loadLanguage();
         $app->messages = [];
         $assert($installer->preflight('update', $parent) === true, 'Approved retry was not accepted.');
         copy($source . '/foreign-incoming.php', $foreign);
@@ -293,7 +321,7 @@ namespace {
 
         // 4. A backup that cannot be written stops the installation before anything changes.
         file_put_contents($destination . '/payload.php', '<?php echo "changed again";');
-        mkdir($state . '/backups/' . hash('sha256', \Advans\Installer\FileGuard::normalize($destination . '/payload.php') . "\0" . hash('sha256', '<?php echo "changed again";')) . '.php');
+        mkdir($state . '/backups/' . hash('sha256', \Advans\Installer\V2\FileGuard::normalize($destination . '/payload.php') . "\0" . hash('sha256', '<?php echo "changed again";')) . '.php');
         $app->messages = [];
         $assert($installer->preflight('update', $parent) === false, 'A failed backup must stop the installation.');
         $assert(str_contains($messageText(), 'plugins/ajax/joomlaajaxforms/payload.php could not be written or checked'), 'The backup failure must be explained.');
@@ -323,28 +351,28 @@ namespace {
         }
 
         \Joomla\CMS\Factory::$db->enabled = false;
-        $disabled = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $disabled = \Advans\Installer\V2\SystemCheck::results('plg_ajax_joomlaajaxforms');
         \Joomla\CMS\Factory::$db->enabled = true;
-        $enabled = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $enabled = \Advans\Installer\V2\SystemCheck::results('plg_ajax_joomlaajaxforms');
         $assert(count($disabled['warnings']) === count($enabled['warnings']) + 1, 'Repeating the check did not refresh actual plugin state.');
         $assert($enabled['blockers'] === [], 'Available platform was reported blocked.');
         $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_HTTPS_UNKNOWN'), array_column($enabled['warnings'], 1), true), 'CLI transport was incorrectly treated as verified.');
         $app->cli = false;
-        $insecure = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $insecure = \Advans\Installer\V2\SystemCheck::results('plg_ajax_joomlaajaxforms');
         $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_HTTPS_INSECURE'), array_column($insecure['warnings'], 1), true), 'HTTP request was not reported insecure.');
         \Joomla\CMS\Uri\Uri::$scheme = 'https';
-        $secure = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $secure = \Advans\Installer\V2\SystemCheck::results('plg_ajax_joomlaajaxforms');
         $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_HTTPS_CURRENT'), array_column($secure['passed'], 1), true), 'HTTPS administrator request was not recognized.');
         $rewrite = "RewriteCond %{QUERY_STRING} ^option=com_ [NC]\nRewriteRule ^index\\.php$ / [R=301,L]\n";
         file_put_contents(JPATH_ROOT . '/.htaccess', $rewrite);
-        $blocked = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $blocked = \Advans\Installer\V2\SystemCheck::results('plg_ajax_joomlaajaxforms');
         $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_BLOCKED'), array_column($blocked['warnings'], 1), true), 'Blocking option rewrite was not reported.');
         $assert(file_get_contents(JPATH_ROOT . '/.htaccess') === $rewrite, 'Routing check modified existing server configuration.');
         $allowlisted = "RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]\n" . $rewrite;
         file_put_contents(JPATH_ROOT . '/.htaccess', $allowlisted);
-        $safe = \Advans\Installer\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $safe = \Advans\Installer\V2\SystemCheck::results('plg_ajax_joomlaajaxforms');
         $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($safe['warnings'], 1), true), 'Allowlisted routes were blocked or incorrectly reported as HTTP-verified.');
-        $routing = new \Advans\Installer\RoutingCheck();
+        $routing = new \Advans\Installer\V2\RoutingCheck();
         $assert($routing->analyse("RewriteRule ^component/(.*)$ / [R=301,L]") === ['component'], 'Component route blocking was missed.');
         $assert($routing->analyse("RewriteCond %{QUERY_STRING} !plugin= [NC]\nRewriteRule ^component/(.*)$ / [R=301,L]") === [], 'Plugin exclusion was ignored.');
         $assert($routing->analyse("RewriteCond %{QUERY_STRING} !plugin= [NC,OR]\nRewriteCond %{REQUEST_URI} ^/component/\nRewriteRule ^component/(.*)$ / [R=301,L]") === ['component'], 'OR group bypass was missed.');
@@ -357,26 +385,26 @@ namespace {
         ] as $privacyConditions) {
             $privacyRule = $privacyConditions . "RewriteRule ^index\\.php$ - [F,L]\n";
             file_put_contents(JPATH_ROOT . '/.htaccess', $privacyRule);
-            $privacy = \Advans\Installer\SystemCheck::results('plg_privacy_j2commerce');
+            $privacy = \Advans\Installer\V2\SystemCheck::results('plg_privacy_j2commerce');
             $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_BLOCKED'), array_column($privacy['warnings'], 1), true), 'Privacy AJAX endpoint blocking was missed.');
             file_put_contents(JPATH_ROOT . '/.htaccess', "RewriteCond %{QUERY_STRING} !group=privacy [NC]\n" . $privacyRule);
-            $privacy = \Advans\Installer\SystemCheck::results('plg_privacy_j2commerce');
+            $privacy = \Advans\Installer\V2\SystemCheck::results('plg_privacy_j2commerce');
             $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($privacy['warnings'], 1), true), 'Privacy AJAX route exclusion was ignored.');
         }
         foreach (['format=html', 'format=json&task=capabilities'] as $parameters) {
             $conditions = "RewriteCond %{QUERY_STRING} plugin=privacyrequests [NC]\nRewriteCond %{QUERY_STRING} group=system [NC]\nRewriteCond %{QUERY_STRING} " . $parameters . " [NC]\n";
             $rule = $conditions . "RewriteRule ^index\\.php$ - [F,L]\n";
             file_put_contents(JPATH_ROOT . '/.htaccess', $rule);
-            $privacy = \Advans\Installer\SystemCheck::results('plg_system_privacyrequests');
+            $privacy = \Advans\Installer\V2\SystemCheck::results('plg_system_privacyrequests');
             $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_BLOCKED'), array_column($privacy['warnings'], 1), true), 'Generic privacy form/capability route blocking was missed.');
             file_put_contents(JPATH_ROOT . '/.htaccess', "RewriteCond %{QUERY_STRING} !plugin=privacyrequests [NC]\n" . $rule);
-            $privacy = \Advans\Installer\SystemCheck::results('plg_system_privacyrequests');
+            $privacy = \Advans\Installer\V2\SystemCheck::results('plg_system_privacyrequests');
             $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($privacy['warnings'], 1), true), 'Generic privacy route exclusion was ignored.');
         }
         file_put_contents(JPATH_ROOT . '/.htaccess', "RewriteCond %{QUERY_STRING} plugin=joomlaajaxforms [NC]\nRewriteRule ^index\\.php$ - [F,L]\n");
-        $privacy = \Advans\Installer\SystemCheck::results('plg_system_privacyrequests');
+        $privacy = \Advans\Installer\V2\SystemCheck::results('plg_system_privacyrequests');
         $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($privacy['warnings'], 1), true), 'Generic privacy check incorrectly targeted another AJAX plugin.');
-        $mixedShops = \Advans\Installer\SystemCheck::results('plg_osmap_j2commerce');
+        $mixedShops = \Advans\Installer\V2\SystemCheck::results('plg_osmap_j2commerce');
         $shopRows = array_values(array_filter($mixedShops['passed'], static fn(array $row): bool => $row[0] === \Joomla\CMS\Language\Text::_('ADVANS_CHECK_SHOP')));
         $assert(count($shopRows) === 1 && $shopRows[0][1] === 'com_j2commerce, com_j2store', 'Mixed-shop check hid an enabled shop or implied a shared routing priority.');
         $productSource = $work . '/product-source';
@@ -392,18 +420,18 @@ namespace {
         $productManifest = $productSource . '/plg_j2commerce_productcompare.xml';
         file_put_contents($productManifest, $productXml);
         file_put_contents($canonical . '/productcompare.xml', '<foreign/>');
-        $productFiles = \Advans\Installer\Destinations::files(simplexml_load_string($productXml), $productSource, $productManifest);
-        $productOwned = \Advans\Installer\Destinations::owned(simplexml_load_string($productXml), $productSource);
-        $assert(\Advans\Installer\Destinations::isOwned($canonical . '/productcompare.xml', $productOwned), 'The options manifest lies in the plugin folder and is its own file.');
-        $assert(!\Advans\Installer\Destinations::isOwned($mirror . '/payload.php', $productOwned), 'The Joomla 5 mirror lies in J2Store\'s plugin group and is foreign territory.');
-        $assert(\Advans\Installer\Destinations::isOwned(JPATH_ADMINISTRATOR . '/language/en-GB/plg_j2commerce_productcompare.ini', $productOwned), 'The plugin language file is its own file.');
-        $assert(!\Advans\Installer\Destinations::isOwned(JPATH_ADMINISTRATOR . '/language/en-GB/plg_j2store_other.ini', $productOwned), 'Another extension\'s language file is foreign.');
+        $productFiles = \Advans\Installer\V2\Destinations::files(simplexml_load_string($productXml), $productSource, $productManifest);
+        $productOwned = \Advans\Installer\V2\Destinations::owned(simplexml_load_string($productXml), $productSource);
+        $assert(\Advans\Installer\V2\Destinations::isOwned($canonical . '/productcompare.xml', $productOwned), 'The options manifest lies in the plugin folder and is its own file.');
+        $assert(!\Advans\Installer\V2\Destinations::isOwned($mirror . '/payload.php', $productOwned), 'The Joomla 5 mirror lies in J2Store\'s plugin group and is foreign territory.');
+        $assert(\Advans\Installer\V2\Destinations::isOwned(JPATH_ADMINISTRATOR . '/language/en-GB/plg_j2commerce_productcompare.ini', $productOwned), 'The plugin language file is its own file.');
+        $assert(!\Advans\Installer\V2\Destinations::isOwned(JPATH_ADMINISTRATOR . '/language/en-GB/plg_j2store_other.ini', $productOwned), 'Another extension\'s language file is foreign.');
         require dirname(__DIR__, 2) . '/j2commerce/plg_j2commerce_productcompare/script.php';
         $decide = new \ReflectionMethod(\PlgJ2commerceProductcompareInstallerScript::class, 'foreignDecision');
-        $mirrorPayload = \Advans\Installer\FileGuard::normalize($mirror . '/payload.php');
-        $assert($decide->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $mirrorPayload, str_repeat('0', 64), false) === \Advans\Installer\Planner::REPLACE, 'A mirror that holds only this plugin\'s files must be replaced after a backup.');
+        $mirrorPayload = \Advans\Installer\V2\FileGuard::normalize($mirror . '/payload.php');
+        $assert($decide->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $mirrorPayload, str_repeat('0', 64), false) === \Advans\Installer\V2\Planner::REPLACE, 'A mirror that holds only this plugin\'s files must be replaced after a backup.');
         file_put_contents($mirror . '/other.xml', '<extension type="plugin" group="j2store"><name>plg_j2store_other</name></extension>');
-        $assert($decide->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $mirrorPayload, str_repeat('0', 64), false) === \Advans\Installer\Planner::SKIP, 'A mirror folder owned by another extension must be left untouched.');
+        $assert($decide->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $mirrorPayload, str_repeat('0', 64), false) === \Advans\Installer\V2\Planner::SKIP, 'A mirror folder owned by another extension must be left untouched.');
         unlink($mirror . '/other.xml');
         $optionsInstaller = new \ReflectionMethod(\PlgJ2commerceProductcompareInstallerScript::class, 'installOptionsManifest');
         $optionsParent = new class($productManifest) {

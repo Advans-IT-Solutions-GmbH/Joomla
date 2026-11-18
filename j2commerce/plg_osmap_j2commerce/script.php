@@ -13,7 +13,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     : dirname(__DIR__, 2) . '/shared/installer/load.php';
 
 use Joomla\CMS\Factory;
-use Advans\Installer\InstallerScript;
+use Advans\Installer\V2\InstallerScript;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -55,9 +55,9 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
      */
     protected function foreignDecision(string $destination, string $existing, bool $known): string
     {
-        $factory = \Advans\Installer\FileGuard::normalize(JPATH_ADMINISTRATOR . '/components/com_osmap/library/Alledia/OSMap/Factory.php');
+        $factory = \Advans\Installer\V2\FileGuard::normalize(JPATH_ADMINISTRATOR . '/components/com_osmap/library/Alledia/OSMap/Factory.php');
 
-        return $destination === $factory ? \Advans\Installer\Planner::ADJUST : parent::foreignDecision($destination, $existing, $known);
+        return $destination === $factory ? \Advans\Installer\V2\Planner::ADJUST : parent::foreignDecision($destination, $existing, $known);
     }
 
     protected function extensionPostflight(string $type, object $parent): void

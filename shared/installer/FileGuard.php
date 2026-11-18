@@ -9,7 +9,7 @@
 
 declare(strict_types=1);
 
-namespace Advans\Installer;
+namespace Advans\Installer\V2;
 
 use JsonException;
 use RuntimeException;
