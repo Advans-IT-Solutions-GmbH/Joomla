@@ -126,10 +126,45 @@ try {
             && str_contains($decoded, 'METHOD:' . $method . "\r\n"), 'Every reschedule recipient receives one invitation with the updated original UID');
     }
     $outsider = new AppointmentsHttp('http://localhost', 'lifecycle-used-link');
-    $outsider->request($reschedule);
+    $html = $outsider->request($reschedule);
     $check($outsider->status === 404, 'Used reschedule signature is rejected');
-    $outsider->request($cancel);
-    $check($outsider->status === 404, 'Pre-reschedule cancel link is also invalidated');
+    // Audit 18.11.2026, B7: the link of the mail before the reschedule opens a page that explains
+    // what happened and offers a new booking, not a bare error page. Still 404, still nothing of the
+    // appointment: no title, date, address or form.
+    $invalidPage = static function (string $html): array {
+        $document = new DOMDocument();
+        @$document->loadHTML($html);
+        $xpath = new DOMXPath($document);
+        $page = $xpath->query('//div[contains(concat(" ", normalize-space(@class), " "), " com-appointments-invalid-link ")]')->item(0);
+
+        return [
+            'text' => $page instanceof DOMElement ? trim((string) preg_replace('/\s+/', ' ', $page->textContent)) : '',
+            'again' => $xpath->query('//a[contains(concat(" ", normalize-space(@class), " "), " com-appointments-book-again ")]/@href')->item(0)?->nodeValue ?? '',
+            'heading' => trim((string) $xpath->query('//h1')->item(0)?->textContent),
+        ];
+    };
+    $stale = $invalidPage($html);
+    $eventTitle = (string) $fixture->db->query("SELECT title FROM {$fixture->prefix}appointments_eventtypes WHERE id={$event}")->fetch_row()[0];
+    $check(str_contains($stale['text'], 'This link is not valid.') && str_contains($stale['text'], 'most recent email')
+        && $stale['heading'] === 'Link no longer valid' && $stale['again'] !== ''
+        && !str_contains($html, $eventTitle) && !str_contains($html, 'invitee@example.test') && !str_contains($html, 'com-appointments-summary')
+        && !str_contains($html, 'booking.manage') && !str_contains($html, 'name="start"'),
+        'The link of the mail before a reschedule explains that it no longer applies and offers a new booking, without the appointment');
+    $html = $outsider->request($cancel);
+    $check($outsider->status === 404 && $invalidPage($html)['text'] === $stale['text'], 'Pre-reschedule cancel link is also invalidated, with the same page');
+    $unknownPage = $invalidPage($outsider->request($fixture->link(['id' => 2147483001, 'modified_utc' => $moved['modified_utc']], 'reschedule')));
+    $check($outsider->status === 404 && $unknownPage === $stale,
+        'An unknown appointment gets exactly the same page as an outdated link, so the page reveals nothing');
+    // A form left open in another tab before the reschedule: submitting it changes nothing and lands
+    // on the same page.
+    $staleToken = $outsider->token($outsider->request($fixture->link($moved, 'reschedule')));
+    parse_str((string) parse_url($reschedule, PHP_URL_QUERY), $staleQuery);
+    $html = $outsider->request('/index.php?option=com_appointments&task=booking.manage', array_replace($staleQuery, [
+        $staleToken => 1, 'confirm' => 1, 'start' => $day . ' 15:00:00', 'month' => substr($day, 0, 7), 'timezone' => 'UTC',
+    ]));
+    $check($outsider->status === 404 && $invalidPage($html)['text'] === $stale['text']
+        && $fixture->row((int) $booking['id'])['start_utc'] === $day . ' 11:00:00',
+        'The form of an outdated link changes nothing and shows the page of the outdated link');
 
     $fresh = $fixture->link($moved, 'reschedule');
     $form = $client->request($fresh);
@@ -379,6 +414,39 @@ try {
             && (int) $fixture->row((int) $replacement['id'])['state'] === 2,
             'A failed notification remains a requested Joomla message with a ' . $override . ' template override');
     }
+
+    // Audit 18.11.2026, B6 and B8: the booking person cancels with a reason. The host's mail names
+    // the reason; the booking person's mail offers only the erase link (no reschedule or cancel link
+    // for an appointment that no longer exists); the guest learns neither. Every mail still carries
+    // the calendar cancellation of the same entry.
+    $reasonEvent = $fixture->event();
+    $reasonDay = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+6 days')->format('Y-m-d');
+    $reasonCase = $fixture->booking($reasonEvent, $reasonDay . ' 10:00:00', ['guests' => 'guest@example.test']);
+    $reasonText = 'Private reason: Ä, comma; semicolon';
+    $before = AppointmentsMail::snapshot();
+    $fixture->apply($reasonCase['browser'], $fixture->link($reasonCase['booking'], 'cancel'), ['reason' => $reasonText]);
+    $cancelledRow = $fixture->row((int) $reasonCase['booking']['id']);
+    $check((int) $cancelledRow['state'] === 2 && $cancelledRow['cancel_reason'] === $reasonText, 'Fixture: the booking person cancels with a reason');
+    $hostAddress = strtolower((string) $fixture->db->query("SELECT email FROM {$fixture->prefix}users WHERE id={$fixture->host}")->fetch_row()[0]);
+    $byRecipient = [];
+    foreach (AppointmentsMail::messagesSince($before) as $mime) {
+        preg_match('/^To:.*?([a-z0-9.+-]+@[a-z0-9.-]+)/mi', (string) preg_replace('/\r?\n[ \t]+/', ' ', $mime), $to);
+        $byRecipient[strtolower($to[1] ?? '')] = $mime;
+    }
+    $text = static fn (string $mime): string => str_replace("\r\n", "\n", implode("\n", AppointmentsMail::parts($mime, 'text/plain')));
+    $hostMail = $byRecipient[$hostAddress] ?? '';
+    $inviteeMail = $byRecipient['invitee@example.test'] ?? '';
+    $guestMail = $byRecipient['guest@example.test'] ?? '';
+    $check(count($byRecipient) === 3 && str_contains($text($hostMail), 'Reason for cancellation: ' . $reasonText . "\n")
+        && AppointmentsMail::isInvitation($hostMail, AppointmentsMail::expectedMethod($hostMail, 'CANCEL')),
+        'The host cancellation mail names the reason the booking person gave');
+    $inviteeText = $text($inviteeMail);
+    $check(str_contains($inviteeText, 'action=erase') && !str_contains($inviteeText, 'action=reschedule') && !str_contains($inviteeText, 'action=cancel')
+        && !str_contains(AppointmentsMail::decoded($inviteeMail), 'action=reschedule') && AppointmentsMail::isInvitation($inviteeMail, 'CANCEL'),
+        'The cancellation mail of the booking person offers only the erase link and cancels the calendar entry');
+    $check($guestMail !== '' && !str_contains(AppointmentsMail::decoded($guestMail), 'Private reason')
+        && !str_contains(AppointmentsMail::decoded($inviteeMail), 'Private reason'),
+        'Neither the guest nor the booking person receives the reason in the mail');
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;

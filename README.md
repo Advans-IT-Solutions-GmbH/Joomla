@@ -207,6 +207,7 @@ Every extension has a help page that administrators reach where they work with t
 |---|---|
 | Appointments | Component view «Help & tips» (submenu entry, toolbar Help button in every backend view) |
 | Appointments bundled plugins | Note at the top of each plugin's options and its toolbar Help button, both open «Help & tips», section «Bundled plugins» |
+| Appointments dashboard module (`com_appointments/modules/mod_appointments`) | «Help» tab in the module's edit screen and a note at the top of its options that points to it; «Help & tips» of the component has a section «Dashboard module» |
 | Import/Export | Component help view, toolbar Help button of the dashboard |
 | Cleanup | Component help page, toolbar Help button and link under the page heading |
 | AJAX Forms, OSMap, Product Compare, Privacy (and its bundled system and task plugins), Privacy Requests | «Help» tab in the plugin's edit screen, the first tab after Joomla's own «Plugin» tab, and a note at the top of the options that points to it |

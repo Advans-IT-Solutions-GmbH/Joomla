@@ -8,6 +8,7 @@
 
 namespace Advans\Component\Appointments\Site\View\Manage;
 
+use Advans\Component\Appointments\Administrator\Service\InvalidBookingLinkException;
 use Advans\Component\Appointments\Site\Helper\BackLink;
 use Advans\Component\Appointments\Site\Helper\NoPageCache;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
@@ -56,11 +57,16 @@ class HtmlView extends BaseHtmlView
         // Nor Joomla's page cache: the page carries signed links and tokens of one browser session.
         NoPageCache::apply($app);
         $model = $this->getModel();
-        $this->action = $model->action();
-        $this->signature = $model->signature();
-        $this->completed = $model->completed();
-        // The item first: an invalid link ends here with the refusal (404), before anything else.
-        $this->item = $model->getItem();
+
+        try {
+            $this->action = $model->action();
+            $this->signature = $model->signature();
+            $this->completed = $model->completed();
+            // The item first: an invalid link ends here with the refusal, before anything else.
+            $this->item = $model->getItem();
+        } catch (InvalidBookingLinkException $e) {
+            return $this->displayInvalid();
+        }
         $this->cancelled = !$this->completed && $model->cancelled($this->item);
         // A page that reports a cancellation (its receipt, or a link of a cancelled appointment)
         // says so in its heading; every other page names the action of its link.
@@ -112,5 +118,24 @@ class HtmlView extends BaseHtmlView
         }
 
         return parent::display($tpl);
+    }
+
+    /**
+     * The page of a signed link that opens nothing: an earlier link of an appointment that was
+     * rescheduled or cancelled since, a used erase link, a tampered link or an unknown appointment.
+     * One page for all of them, still with status 404 and the same text, so it does not tell which
+     * applies (the privacy boundary of the signed pages). It explains that only the links of the
+     * newest mail apply and offers a new booking (BackLink::again(), from the address alone).
+     */
+    private function displayInvalid()
+    {
+        $app = Factory::getApplication();
+        $app->setHeader('status', '404', true);
+        $this->applyPageTitle('manage', Text::_('COM_APPOINTMENTS_MANAGE_INVALID_TITLE'));
+        $this->useAppointmentsAssets(false);
+        $this->bookAgain = BackLink::again();
+        $this->setLayout('invalid');
+
+        return parent::display();
     }
 }

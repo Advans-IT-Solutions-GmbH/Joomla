@@ -234,12 +234,37 @@ activation and effective content access.
 | [`system/appointmentsattribution`](plugins/system/appointmentsattribution/README.md) | Records the origin of a visit in the session for the [origin of bookings](#origin-of-bookings-campaign-attribution) | Enabled, also when an update introduces it |
 | [`user/appointments`](plugins/user/appointments/README.md) | Password/key sessions, lockout and account/device cleanup | Disabled until deliberate setup |
 
+The ZIP also installs one administrator module, [`modules/mod_appointments`](#dashboard-module).
+
 Updates preserve existing enabled/disabled states. Start with [Internet calendars](#internet-calendars)
 for server prerequisites and deliberate activation, then use [Roles](#roles),
 [Devices and app passwords](#devices-and-app-passwords) and
 [Privacy requests and retention](#privacy-requests-and-retention) for the applicable administration,
 key/grant and data-handling boundaries. Administrative configuration access is not a substitute for
 the key/grant requirements of the action being performed.
+
+### Dashboard module
+
+The administrator module **Appointments - Next appointments** (`modules/mod_appointments`) is
+installed with the component. On its first installation the component publishes it once at the
+position `cpanel` of the Home Dashboard with the title «Next appointments» in the installing
+administrator's language; an update leaves position, title, state and settings as they are, and
+uninstalling the component removes it with its instances. It shows:
+
+- the next pending or confirmed appointments (setting **Number of appointments**, 1 to 20, default 5),
+  with date and time in the site time zone (Global Configuration), the event type and the name of
+  the booking person; pending ones are marked «Awaiting approval», each links to its booking;
+- the number of bookings made since the user's last visit: the module stores the time of the last
+  view of the dashboard per account in `#__user_profiles` (`mod_appointments.lastvisit`), and the
+  first view of a session takes that time as its reference for the whole session; on the very first
+  visit there is no number; erased bookings are not counted;
+- a link into the bookings list.
+
+It follows the bookings list exactly: «Access Administration Interface» on the component and «Edit»
+on the event type (the same scope as the list), and only the bookings of those event types.
+Everybody else gets no output at all, so the dashboard shows neither the module nor its title. Its
+own help is the «Help» tab of the module edit screen. Uninstalling the component also removes the
+stored visit times.
 
 ## Updating
 
@@ -1928,7 +1953,12 @@ contents, `calendar_busy`, `calendar_busy_moved` and `calendar_free` for the fre
 [Notifications](#notifications)). They know the placeholder `{calendar_title}` in addition and
 append a link to «My calendars», where each user switches them off.
 An update adds missing templates, including the guest and host templates on an existing
-installation, and never overwrites a template you edited. If you customised the invitee templates
+installation, and never overwrites a template you edited. A site-wide template that still holds
+exactly the default of the installed version (subject and body, byte for byte) follows the new
+default; a template you changed and every template of a single event type stay as they are. When
+the new default adds a placeholder that such a kept template lacks (for example `{cancel_reason}` in
+`host_cancellation`), the update message names each of them with language, scope and the missing
+placeholder, so you can add it by hand. If you customised the invitee templates
 of those purposes for the host as well, adapt the new host templates.
 An event-specific template takes precedence over the published site-wide template for that purpose
 and language. If neither is available, the shipped default of that **same language** is used.
@@ -1997,9 +2027,19 @@ A reschedule or cancel link of the version that was cancelled (by the invitee, i
 the host) opens a notice that the appointment is already cancelled, with its date and time, a way to
 a new booking and no form. The bookings table keeps that version for this purpose
 (`cancelled_version_utc`). Every other link that opens nothing (an older version, a tampered
-signature, an unknown id, an erased booking) answers 404 with one message in the site's error page,
-«This link is not valid. After every change to an appointment, only the links in the latest email
-about it apply.», so the answer does not reveal which of these cases applies.
+signature, an unknown id, an erased booking, a used erase link) answers 404 with one page of the
+component, «Link no longer valid»: «This link is not valid. After every change to an appointment,
+only the links in the latest email about it apply.», why that happens (rescheduled, cancelled or
+already used) and **Book a new appointment**. The page is the same for all of these cases and shows
+nothing of the appointment, so it does not reveal which case applies; the way to a new booking comes
+from the menu item of the address (`BackLink::again()`), never from the booking the link names. A
+form of such a link that is still open in another tab changes nothing and leads to the same page.
+
+The cancellation mail to the booking person offers only the erase link: an appointment that is
+cancelled can no longer be rescheduled or cancelled, so its mails carry neither link, also not in
+the placeholders `{reschedule_url}` and `{cancel_url}` of an edited template. The host's
+cancellation mail (`host_cancellation`) names the reason the booking person gave; the line is left
+out when there is none. The booking person's and the guests' mails do not repeat it.
 
 Rescheduling keeps the booking ID and calendar UID, advances `SEQUENCE`, checks the new slot under
 the same host lock as creation, excludes the current booking from its availability/cap checks and
@@ -2041,7 +2081,12 @@ deliberately excludes that domain. The system check reports the oldest retained 
 
 ### Booking administration and system checks
 
-The booking list and CSV use the same per-event edit permission. Filters combine event type, state
+The booking list and CSV use the same per-event edit permission. The toolbar of the list shows
+**Approve** and **Cancel appointment** only with «Edit State», **Erase personal data** only with
+«Delete» on at least one listed event type, so no button ends in a refusal. Whoever may see the
+bookings of an event type («Edit») may also change them; there is no separate reading permission in
+the administrator. The help page, section «Permissions», explains every permission and how to give
+another account access. Filters combine event type, state
 (including pending `0`), an inclusive UTC start-date range and a search in the invitee's full,
 first and last name and email address. The list sorts by start (default, latest first) or by last
 name, then first name. The CSV has the columns `invitee_name`, `invitee_first_name` and
@@ -2234,7 +2279,8 @@ Verify the backup before deleting component data:
 Only after a successful restore and any needed readable exports should you select **Delete all
 Appointments data** in the component options and uninstall.
 
-A successful uninstall removes the bundled plugins, their Scheduler tasks and the component files.
+A successful uninstall removes the bundled plugins, the dashboard module with its instances and
+stored visit times, their Scheduler tasks and the component files.
 When keeping data, preflight preserves the permission tree and replay-protection anchor before
 Joomla starts removal. A conflicting retained permission tree or failed anchor migration stops
 the uninstall before cleanup; resolve the reported problem before trying again.
@@ -2331,8 +2377,9 @@ The authoritative list and order is [`tests/test.env`](tests/test.env):
 | Feeds / Scheduler | Credentials, conditional responses, independent rotation, reminders and bounded retention |
 | Conference | Automatic links, JWT separation, explicit failure, retry and lifecycle teardown |
 | Privacy | Real typed Joomla privacy events, Unicode isolation, export/removal and legal blocking |
-| Administration | Filters, CSV safety, reschedule, system checks, restricted event ACL by exact list/CSV row identity across pagination, Close action POST/token/component-administrator guards, and scoped mobile queue layout |
+| Administration | Filters, CSV safety, reschedule, system checks, restricted event ACL by exact list/CSV row identity across pagination, toolbar buttons only with their permission, the dashboard module's scope, the help on permissions, Close action POST/token/component-administrator guards, and scoped mobile queue layout |
 | Origin of bookings | Landing article with campaign parameters and click IDs, referrer from another host, last-touch rules, encrypted storage, host mail only, escaped administrator page, CSV columns, campaign statistics, privacy export, erasure and the option switched off |
+| Dashboard module | Installed at cpanel, next appointments in the site zone and their order, pending mark, erased bookings left out, number since the last visit per session, the limit setting and its own help tab |
 | List filters | Search tools of every administrator list: each filter narrows by exact row identity, permission scope of filters and their choices, paging and number per page, clearing, earlier flat links, refused forged values and the per-event-type drag order of booking fields |
 | Backend views | Shared HTTP rendering checks for every administrator view |
 | Installer messages | Shared install/update checks in en-GB, de-DE and fr-FR |

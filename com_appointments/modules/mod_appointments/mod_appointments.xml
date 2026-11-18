@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    @copyright (C) 2026 Advans IT Solutions GmbH
+    @license GNU General Public License version 3 or later; see LICENSE.txt
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<extension type="module" client="administrator" method="upgrade">
+    <name>MOD_APPOINTMENTS</name>
+    <element>mod_appointments</element>
+    <author>Advans IT Solutions GmbH</author>
+    <creationDate>2026-11</creationDate>
+    <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
+    <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
+    <version>1.0.0</version>
+    <description>MOD_APPOINTMENTS_XML_DESCRIPTION</description>
+    <namespace path="src">Advans\Module\Appointments</namespace>
+
+    <files module="mod_appointments">
+        <folder>language</folder>
+        <folder>services</folder>
+        <folder>src</folder>
+        <folder>tmpl</folder>
+        <filename>index.html</filename>
+        <filename>LICENSE.txt</filename>
+    </files>
+
+    <languages>
+        <language tag="en-GB">language/en-GB/mod_appointments.ini</language>
+        <language tag="en-GB">language/en-GB/mod_appointments.sys.ini</language>
+        <language tag="de-DE">language/de-DE/mod_appointments.ini</language>
+        <language tag="de-DE">language/de-DE/mod_appointments.sys.ini</language>
+        <language tag="fr-FR">language/fr-FR/mod_appointments.ini</language>
+        <language tag="fr-FR">language/fr-FR/mod_appointments.sys.ini</language>
+    </languages>
+
+    <config>
+        <fields name="params" addfieldprefix="Advans\Module\Appointments\Administrator\Field">
+            <fieldset name="basic">
+                <field name="help_note" type="note" class="alert alert-info" description="MOD_APPOINTMENTS_HELP_NOTE" filter="unset"/>
+                <field
+                    name="count"
+                    type="number"
+                    label="MOD_APPOINTMENTS_FIELD_COUNT_LABEL"
+                    description="MOD_APPOINTMENTS_FIELD_COUNT_DESC"
+                    default="5"
+                    min="1"
+                    max="20"
+                    filter="integer"
+                    validate="number"
+                />
+            </fieldset>
+            <fieldset name="help" label="MOD_APPOINTMENTS_HELP_TAB">
+                <field name="helppage" type="helppage" hiddenLabel="true">
+                    <section title="MOD_APPOINTMENTS_HELP_WHAT_TITLE">
+                        <p>MOD_APPOINTMENTS_HELP_WHAT_P1</p>
+                        <ul>
+                            <li>MOD_APPOINTMENTS_HELP_WHAT_LI1</li>
+                            <li>MOD_APPOINTMENTS_HELP_WHAT_LI2</li>
+                            <li>MOD_APPOINTMENTS_HELP_WHAT_LI3</li>
+                            <li>MOD_APPOINTMENTS_HELP_WHAT_LI4</li>
+                        </ul>
+                    </section>
+                    <section title="MOD_APPOINTMENTS_HELP_ACCESS_TITLE">
+                        <p>MOD_APPOINTMENTS_HELP_ACCESS_P1</p>
+                        <note>MOD_APPOINTMENTS_HELP_ACCESS_NOTE</note>
+                    </section>
+                    <section title="MOD_APPOINTMENTS_HELP_SETUP_TITLE">
+                        <ol>
+                            <li>MOD_APPOINTMENTS_HELP_SETUP_STEP1</li>
+                            <li>MOD_APPOINTMENTS_HELP_SETUP_STEP2</li>
+                            <li>MOD_APPOINTMENTS_HELP_SETUP_STEP3</li>
+                        </ol>
+                    </section>
+                    <section title="MOD_APPOINTMENTS_HELP_PROBLEMS_TITLE">
+                        <ul>
+                            <li>MOD_APPOINTMENTS_HELP_PROBLEMS_LI1</li>
+                            <li>MOD_APPOINTMENTS_HELP_PROBLEMS_LI2</li>
+                            <li>MOD_APPOINTMENTS_HELP_PROBLEMS_LI3</li>
+                        </ul>
+                    </section>
+                </field>
+            </fieldset>
+            <fieldset name="advanced">
+                <field
+                    name="layout"
+                    type="modulelayout"
+                    label="JFIELD_ALT_LAYOUT_LABEL"
+                />
+                <field
+                    name="moduleclass_sfx"
+                    type="textarea"
+                    label="COM_MODULES_FIELD_MODULECLASS_SFX_LABEL"
+                    rows="3"
+                    validate="CssIdentifier"
+                />
+            </fieldset>
+        </fields>
+    </config>
+</extension>

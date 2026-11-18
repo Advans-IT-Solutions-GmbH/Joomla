@@ -15,12 +15,13 @@
  *     - a declared administrator submenu has an entry for view=help
  *
  *   Plugin or module (also the plugins a component or plugin bundles under
- *   plugins/<group>/<element>/) has one of
+ *   plugins/<group>/<element>/ and the modules under modules/<element>/) has one of
  *     a) its own «Help» tab: the first parameter fieldset after "basic" and
  *        "description" is named "help" and holds a field of type "helppage"
  *        with at least three sections, the field class ships under
  *        <namespace path>/Field/HelppageField.php and is registered with
- *        addfieldprefix, and the first field of "basic" is a note that points
+ *        addfieldprefix (for a module with the Administrator or Site segment
+ *        Joomla adds to its namespace), and the first field of "basic" is a note that points
  *        to the tab;
  *     b) a link to the help view of the component it is delivered with
  *        (bundled below the component's plugins/ folder, or listed in the
@@ -268,7 +269,12 @@ function hl_check_addon(string $dir, SimpleXMLElement $xml, string $name, array 
 
         $namespace = trim((string) $xml->namespace);
         $path      = trim((string) ($xml->namespace['path'] ?? 'src'));
-        $prefix    = $namespace . '\\Field';
+        // Joomla maps a module's namespace with the segment of its client
+        // (Administrator or Site); a plugin's namespace has none.
+        $segment   = (string) $xml['type'] === 'module'
+            ? ((string) $xml['client'] === 'administrator' ? '\\Administrator' : '\\Site')
+            : '';
+        $prefix    = $namespace . $segment . '\\Field';
         $declared  = (string) ($xml->config->fields['addfieldprefix'] ?? '') . '|' . (string) ($tab['addfieldprefix'] ?? '');
 
         if ($namespace === '' || !str_contains($declared, $prefix)) {
@@ -422,6 +428,16 @@ foreach ($targets as $dir) {
 
         $label = $name . '/plugins/' . basename(dirname($bundled)) . '/' . basename($bundled);
         hl_check_addon($bundled, simplexml_load_file($bundledManifest), $label, $components, $fail, $copies);
+    }
+
+    foreach (glob($dir . '/modules/*', GLOB_ONLYDIR) ?: [] as $bundled) {
+        $bundledManifest = hl_manifest($bundled);
+
+        if ($bundledManifest === null) {
+            continue;
+        }
+
+        hl_check_addon($bundled, simplexml_load_file($bundledManifest), $name . '/modules/' . basename($bundled), $components, $fail, $copies);
     }
 }
 

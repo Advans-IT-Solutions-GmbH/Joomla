@@ -159,6 +159,27 @@ final class BackLink
     }
 
     /**
+     * The way to a new booking on the page of a signed link that no longer applies, HTML-escaped by
+     * Route: the booking page or event type list of the menu item the link came through (the mails
+     * frame their links with it, ManageMenuItem) while the visitor can open it, else the list of all
+     * event types or the home page (overview()). Decided by the address alone, never by the booking
+     * the link names, so the page says nothing about whether that booking exists.
+     */
+    public static function again(): string
+    {
+        $active = Factory::getApplication()->getMenu()->getActive();
+        $query = $active !== null && is_array($active->query ?? null) ? $active->query : [];
+
+        if ($active !== null && ($active->type ?? '') === 'component' && ($query['option'] ?? '') === 'com_appointments'
+            && in_array($query['view'] ?? '', ['eventtype', 'eventtypes'], true) && self::opens($active)
+        ) {
+            return Route::_('index.php?Itemid=' . (int) $active->id);
+        }
+
+        return self::overview();
+    }
+
+    /**
      * Whether the visitor can open the page of $item. A booking page of this component answers 404
      * once its event type or schedule is unpublished, or for another access level or language,
      * although its menu item is still published (EventtypeModel::getItem); the signed pages of an

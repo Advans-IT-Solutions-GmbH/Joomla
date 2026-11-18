@@ -38,6 +38,14 @@ class Com_appointmentsInstallerScript extends InstallerScript
     private bool $hasLegacyFeedTokens = false;
 
     /**
+     * Stored templates the update kept although the new default adds placeholders they lack:
+     * [purpose, language, event type id (0 = site-wide), missing placeholders] (noteKeptTemplates()).
+     *
+     * @var list<array{0: string, 1: string, 2: int, 3: list<string>}>
+     */
+    private array $keptTemplates = [];
+
+    /**
      * The plugins this package bundles: [group, element, enabled when first installed].
      * The team calendar plugins (CalDAV endpoint, key handling at sign-in) stay
      * disabled until an operator enables them: nothing is reachable by default.
@@ -52,6 +60,53 @@ class Com_appointmentsInstallerScript extends InstallerScript
         ['system', 'appointmentsattribution', true],
         ['user', 'appointments', false],
     ];
+
+    /**
+     * The administrator modules this package bundles below modules/<element>/. The dashboard
+     * module is published at the position cpanel when it is installed the first time; an update
+     * leaves its instances as the operator set them.
+     */
+    private const BUNDLED_MODULES = ['mod_appointments'];
+
+    /** The names of the mail templates, as in the template list, for the update message (reportKeptTemplates()). */
+    private const PURPOSE_LABELS = [
+        'confirmation' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_CONFIRMATION',
+        'pending' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_PENDING',
+        'approved' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_APPROVED',
+        'reschedule' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_RESCHEDULE',
+        'cancellation' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_CANCELLATION',
+        'reminder' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_REMINDER',
+        'host_notice' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_NOTICE',
+        'host_approved' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_APPROVED',
+        'host_reschedule' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_RESCHEDULE',
+        'host_cancellation' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_CANCELLATION',
+        'host_reminder' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_HOST_REMINDER',
+        'erasure_notice' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_ERASURE_NOTICE',
+        'guest_confirmation' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_CONFIRMATION',
+        'guest_pending' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_PENDING',
+        'guest_approved' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_APPROVED',
+        'guest_reschedule' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_RESCHEDULE',
+        'guest_cancellation' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_CANCELLATION',
+        'guest_reminder' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_GUEST_REMINDER',
+        'calendar_booked' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_BOOKED',
+        'calendar_approved' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_APPROVED',
+        'calendar_rescheduled' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_RESCHEDULED',
+        'calendar_cancelled' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_CANCELLED',
+        'calendar_reminder' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_REMINDER',
+        'calendar_busy' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_BUSY',
+        'calendar_busy_moved' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_BUSY_MOVED',
+        'calendar_free' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_CALENDAR_FREE',
+        'team_device_added' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_DEVICE_ADDED',
+        'team_invitation' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_INVITATION',
+        'team_invitation_accepted' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_INVITATION_ACCEPTED',
+        'team_grant_changed' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_GRANT_CHANGED',
+        'team_access_suspended' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_ACCESS_SUSPENDED',
+        'team_calendar_deleted' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_CALENDAR_DELETED',
+        'team_account_locked' => 'COM_APPOINTMENTS_TEMPLATE_PURPOSE_TEAM_ACCOUNT_LOCKED',
+    ];
+
+    /** The #__user_profiles key the dashboard module stores the last visit under (removed on uninstall). */
+    private const MODULE_PROFILE_KEY = 'mod_appointments.lastvisit';
 
     private const APPOINTMENT_TABLES = [
         'close_delivery',
@@ -267,6 +322,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->ensureCopyRestoreTable();
         $this->seedMailTemplates($parent);
         $this->installBundledPlugins($parent);
+        $this->installBundledModules($parent);
         $this->initialiseLegacyFeedSetting($type);
         $this->encryptExistingBookings($type);
         $this->convertLegacyFeedTokens();
@@ -293,6 +349,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 Text::sprintf('COM_APPOINTMENTS_POSTINSTALL_UPDATED', htmlspecialchars($version)),
                 'message'
             );
+            $this->reportKeptTemplates();
 
             return true;
         }
@@ -463,6 +520,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
         $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__scheduler_tasks'))
             ->whereIn($db->quoteName('type'), self::SCHEDULER_TASK_TYPES, ParameterType::STRING))->execute();
+        $this->removeBundledModules($db);
 
         if ($deleteData) {
             foreach (self::APPOINTMENT_TABLES as $table) {
@@ -705,6 +763,139 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     ->where($db->quoteName('element') . ' = ' . $db->quote($element)))->execute();
             }
         }
+    }
+
+    /**
+     * Installs (or updates) the bundled administrator modules. A module installed for the first
+     * time is published once at the position cpanel of the administrator dashboard, with a title
+     * in the language of the installing administrator; it shows nothing to users who may not see
+     * the bookings list. An update leaves position, title, state and settings as they are.
+     */
+    private function installBundledModules($parent): void
+    {
+        $source = $parent->getParent()->getPath('source');
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+
+        foreach (self::BUNDLED_MODULES as $element) {
+            $folder = $source . '/modules/' . $element;
+
+            if (!is_file($folder . '/' . $element . '.xml')) {
+                throw new \RuntimeException('The bundled appointments module package is invalid.');
+            }
+
+            $existed = $this->moduleExtensionId($db, $element) > 0;
+            $installer = new Installer();
+            $installer->setDatabase($db);
+
+            if (!$installer->install($folder)) {
+                throw new \RuntimeException('The bundled appointments module could not be installed.');
+            }
+
+            if (!$existed) {
+                $this->publishDashboardModule($db, $element);
+            }
+        }
+    }
+
+    private function moduleExtensionId(DatabaseInterface $db, string $element): int
+    {
+        $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
+            ->from($db->quoteName('#__extensions'))
+            ->where($db->quoteName('type') . ' = ' . $db->quote('module'))
+            ->where($db->quoteName('element') . ' = ' . $db->quote($element))
+            ->where($db->quoteName('client_id') . ' = 1');
+
+        return (int) $db->setQuery($query)->loadResult();
+    }
+
+    /**
+     * The instance Joomla's installer created (unpublished, without position), or a new one when
+     * there is none, published at cpanel for every administrator page (#__modules_menu 0).
+     */
+    private function publishDashboardModule(DatabaseInterface $db, string $element): void
+    {
+        $query = $this->createDbQuery($db)->select($db->quoteName('id'))
+            ->from($db->quoteName('#__modules'))
+            ->where($db->quoteName('module') . ' = ' . $db->quote($element))
+            ->where($db->quoteName('client_id') . ' = 1')
+            ->order($db->quoteName('id'));
+        $id = (int) $db->setQuery($query)->loadResult();
+        $title = $this->text('COM_APPOINTMENTS_MODULE_DEFAULT_TITLE', 'Next appointments');
+
+        if ($id < 1) {
+            $db->setQuery($this->createDbQuery($db)->insert($db->quoteName('#__modules'))
+                ->columns($db->quoteName(['title', 'note', 'content', 'ordering', 'position', 'published', 'module', 'access',
+                    'showtitle', 'params', 'client_id', 'language']))
+                ->values(implode(',', [$db->quote($title), $db->quote(''), $db->quote(''), 0, $db->quote('cpanel'), 1,
+                    $db->quote($element), 1, 1, $db->quote('{"count":"5"}'), 1, $db->quote('*')])))->execute();
+            $id = (int) $db->insertid();
+        } else {
+            $db->setQuery($this->createDbQuery($db)->update($db->quoteName('#__modules'))
+                ->set($db->quoteName('title') . ' = ' . $db->quote($title))
+                ->set($db->quoteName('position') . ' = ' . $db->quote('cpanel'))
+                ->set($db->quoteName('published') . ' = 1')
+                ->set($db->quoteName('showtitle') . ' = 1')
+                ->where($db->quoteName('id') . ' = ' . $id))->execute();
+        }
+
+        $assigned = (int) $db->setQuery($this->createDbQuery($db)->select('COUNT(*)')->from($db->quoteName('#__modules_menu'))
+            ->where($db->quoteName('moduleid') . ' = ' . $id))->loadResult();
+
+        if ($assigned === 0) {
+            $db->setQuery($this->createDbQuery($db)->insert($db->quoteName('#__modules_menu'))
+                ->columns($db->quoteName(['moduleid', 'menuid']))->values($id . ', 0'))->execute();
+        }
+    }
+
+    /**
+     * Removes the bundled modules with their instances, their files and language files, and the
+     * last visits the dashboard module stored. Joomla does not remove them with the component.
+     */
+    private function removeBundledModules(DatabaseInterface $db): void
+    {
+        foreach (self::BUNDLED_MODULES as $element) {
+            $instances = $db->setQuery($this->createDbQuery($db)->select($db->quoteName('id'))->from($db->quoteName('#__modules'))
+                ->where($db->quoteName('module') . ' = ' . $db->quote($element)))->loadColumn() ?: [];
+            $instances = array_map('intval', $instances);
+
+            if ($instances !== []) {
+                $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__modules_menu'))
+                    ->whereIn($db->quoteName('moduleid'), $instances))->execute();
+                $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__assets'))
+                    ->whereIn($db->quoteName('name'), array_map(static fn (int $id): string => 'com_modules.module.' . $id, $instances),
+                        ParameterType::STRING))->execute();
+                $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__modules'))
+                    ->whereIn($db->quoteName('id'), $instances))->execute();
+            }
+
+            $id = $this->moduleExtensionId($db, $element);
+
+            if ($id > 0) {
+                foreach (['#__schemas', '#__extensions'] as $table) {
+                    $db->setQuery($this->createDbQuery($db)->delete($db->quoteName($table))
+                        ->where($db->quoteName('extension_id') . ' = ' . $id))->execute();
+                }
+            }
+
+            $folder = JPATH_ADMINISTRATOR . '/modules/' . $element;
+
+            if (is_dir($folder) && !Folder::delete($folder)) {
+                throw new \RuntimeException('The bundled appointments module could not be removed.');
+            }
+
+            foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+                foreach (['ini', 'sys.ini'] as $suffix) {
+                    $file = JPATH_ADMINISTRATOR . '/language/' . $tag . '/' . $element . '.' . $suffix;
+
+                    if (is_file($file) && !File::delete($file)) {
+                        throw new \RuntimeException('The bundled appointments module language could not be removed.');
+                    }
+                }
+            }
+        }
+
+        $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__user_profiles'))
+            ->where($db->quoteName('profile_key') . ' = ' . $db->quote(self::MODULE_PROFILE_KEY)))->execute();
     }
 
     /**
@@ -1267,7 +1458,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
     {
         $source = $parent->getParent()->getPath('source');
         require_once JPATH_ADMINISTRATOR . '/components/com_appointments/src/Helper/DefaultTemplates.php';
+        require_once JPATH_ADMINISTRATOR . '/components/com_appointments/src/Helper/TemplateUpgrade.php';
         $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $this->keptTemplates = [];
 
         foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
             $file = $source . '/administrator/language/' . $tag . '/com_appointments.ini';
@@ -1299,8 +1492,10 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 $body = str_replace('\\n', "\n", $strings[$bodyKey]);
 
                 if (is_array($previous) && isset($previous[$subjectKey], $previous[$bodyKey])) {
-                    $this->followDefault($db, $purpose, $tag, (string) $previous[$subjectKey],
-                        str_replace('\\n', "\n", (string) $previous[$bodyKey]), $subject, $body);
+                    $oldBody = str_replace('\\n', "\n", (string) $previous[$bodyKey]);
+                    $this->followDefault($db, $purpose, $tag, (string) $previous[$subjectKey], $oldBody, $subject, $body);
+                    $this->noteKeptTemplates($db, $purpose, $tag,
+                        \Advans\Component\Appointments\Administrator\Helper\TemplateUpgrade::added($oldBody, $body));
                 }
 
                 $sql = 'INSERT INTO ' . $db->quoteName('#__appointments_templates')
@@ -1333,7 +1528,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
             ->where($db->quoteName('language') . ' = ' . $db->quote($tag));
         $row = $db->setQuery($query)->loadAssoc();
 
-        if (!$row || (string) $row['subject'] !== $oldSubject || (string) $row['body'] !== $oldBody) {
+        if (!$row || \Advans\Component\Appointments\Administrator\Helper\TemplateUpgrade::decide((string) $row['subject'], (string) $row['body'],
+            $oldSubject, $oldBody, $subject, $body) !== \Advans\Component\Appointments\Administrator\Helper\TemplateUpgrade::FOLLOW) {
             return;
         }
 
@@ -1343,6 +1539,58 @@ class Com_appointmentsInstallerScript extends InstallerScript
             ->set($db->quoteName('body') . ' = ' . $db->quote($body))
             ->where($db->quoteName('id') . ' = ' . (int) $row['id']);
         $db->setQuery($update)->execute();
+    }
+
+    /**
+     * Remembers the stored templates of $purpose in $tag (site-wide and per event type) that this
+     * update keeps although the new default adds $added placeholders they lack: a template the
+     * operator changed, or one of a single event type. Run after followDefault(), so a template
+     * that followed the new default is not reported. extensionPostflight() names them.
+     *
+     * @param   list<string>  $added
+     */
+    private function noteKeptTemplates(DatabaseInterface $db, string $purpose, string $tag, array $added): void
+    {
+        if ($added === []) {
+            return;
+        }
+
+        $query = $this->createDbQuery($db)
+            ->select($db->quoteName(['eventtype_id', 'body']))
+            ->from($db->quoteName('#__appointments_templates'))
+            ->where($db->quoteName('purpose') . ' = ' . $db->quote($purpose))
+            ->where($db->quoteName('language') . ' = ' . $db->quote($tag))
+            ->order($db->quoteName('eventtype_id'));
+
+        foreach ($db->setQuery($query)->loadAssocList() as $row) {
+            $missing = \Advans\Component\Appointments\Administrator\Helper\TemplateUpgrade::missing((string) $row['body'], $added);
+
+            if ($missing !== []) {
+                $this->keptTemplates[] = [$purpose, $tag, (int) $row['eventtype_id'], $missing];
+            }
+        }
+    }
+
+    /**
+     * The update message about the templates noteKeptTemplates() found: which template (purpose,
+     * language, site-wide or event type) lacks which new placeholder. Nothing when there is none.
+     */
+    private function reportKeptTemplates(): void
+    {
+        if ($this->keptTemplates === []) {
+            return;
+        }
+
+        $items = '';
+
+        foreach ($this->keptTemplates as [$purpose, $tag, $eventtype, $missing]) {
+            $label = isset(self::PURPOSE_LABELS[$purpose]) ? Text::_(self::PURPOSE_LABELS[$purpose]) : $purpose;
+            $scope = $eventtype > 0 ? Text::sprintf('COM_APPOINTMENTS_POSTINSTALL_TEMPLATE_EVENTTYPE', $eventtype)
+                : Text::_('COM_APPOINTMENTS_TEMPLATE_SITE_WIDE');
+            $items .= '<li>' . htmlspecialchars($label . ' (' . $tag . ', ' . $scope . '): ' . implode(', ', $missing), ENT_QUOTES, 'UTF-8') . '</li>';
+        }
+
+        Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_POSTINSTALL_TEMPLATES_KEPT') . '<ul>' . $items . '</ul>', 'warning');
     }
 
     /**
