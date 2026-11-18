@@ -14,7 +14,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
 
 use Joomla\CMS\Access\Access;
 use Joomla\CMS\Factory;
-use Advans\Installer\InstallerScript;
+use Advans\Installer\V2\InstallerScript;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;

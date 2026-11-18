@@ -9,7 +9,7 @@
 
 declare(strict_types=1);
 
-namespace Advans\Installer;
+namespace Advans\Installer\V2;
 
 use JsonException;
 use RuntimeException;
@@ -17,6 +17,132 @@ use RuntimeException;
 final class FileGuard
 {
     private const BACKUP_HEADER = "<?php http_response_code(404); exit; ?>\n";
+
+    /**
+     * Compare candidate files with their destinations without changing or backing up anything.
+     *
+     * @param array<string, string> $files Absolute destination => absolute candidate source.
+     * @return array{incoming: array<string, string>, differing: array<string, array{existing: string, incoming: string}>}
+     *         Hashes keyed by the normalized destination path.
+     */
+    public static function compare(array $files): array
+    {
+        $incomingHashes = [];
+        $differing = [];
+
+        foreach ($files as $destination => $source) {
+            if (!is_string($destination) || !is_string($source)) {
+                throw new RuntimeException('File destinations and sources must be absolute path strings.');
+            }
+
+            $destination = self::normalizePath($destination);
+            $source = self::normalizePath($source);
+            self::assertNoSymlinkInPath($destination);
+
+            if (!is_file($source) || !is_readable($source)) {
+                throw new RuntimeException('The candidate source is not a readable regular file.');
+            }
+
+            $incoming = hash_file('sha256', $source);
+
+            if (!is_string($incoming)) {
+                throw new RuntimeException('The candidate source could not be hashed.');
+            }
+
+            $incomingHashes[$destination] = $incoming;
+
+            if (!file_exists($destination)) {
+                continue;
+            }
+
+            if (!is_file($destination) || !is_readable($destination)) {
+                throw new RuntimeException('The destination is not a readable regular file.');
+            }
+
+            $existing = hash_file('sha256', $destination);
+
+            if (!is_string($existing)) {
+                throw new RuntimeException('The destination could not be hashed.');
+            }
+
+            if (!hash_equals($existing, $incoming)) {
+                $differing[$destination] = ['existing' => $existing, 'incoming' => $incoming];
+            }
+        }
+
+        return ['incoming' => $incomingHashes, 'differing' => $differing];
+    }
+
+    /**
+     * Write (or reuse) a verified backup of one destination whose current content has the given hash.
+     *
+     * @throws BackupFailure When the backup cannot be written or verified.
+     */
+    public static function backup(string $destination, string $existingHash, string $backupRoot): string
+    {
+        try {
+            $destination = self::normalizePath($destination);
+            $backupRoot = self::normalizePath($backupRoot);
+            self::assertNoSymlinkInPath($destination);
+            self::assertNoSymlinkInPath($backupRoot);
+
+            if (!is_dir($backupRoot)) {
+                throw new RuntimeException('The backup root must be an existing directory.');
+            }
+
+            return self::preserveDestination($destination, $existingHash, $backupRoot);
+        } catch (\Throwable $exception) {
+            throw new BackupFailure($destination, $exception);
+        }
+    }
+
+    /**
+     * Remove backups that are older than the retention period, except the ones named in $keep.
+     *
+     * @param list<string> $keep Backup paths written or reused by the current installation.
+     * @return int Number of removed backups.
+     */
+    public static function prune(string $backupRoot, int $maximumAgeSeconds, array $keep, ?int $now = null): int
+    {
+        $backupRoot = self::normalizePath($backupRoot);
+        self::assertNoSymlinkInPath($backupRoot);
+
+        if (!is_dir($backupRoot)) {
+            return 0;
+        }
+
+        $now ??= time();
+        $kept = array_map(static fn(string $path): string => self::normalizePath($path), $keep);
+        $removed = 0;
+
+        foreach (glob($backupRoot . DIRECTORY_SEPARATOR . '*.php') ?: [] as $backup) {
+            $normalized = self::normalizePath($backup);
+
+            if (is_link($backup) || !is_file($backup) || in_array($normalized, $kept, true)) {
+                continue;
+            }
+
+            $modified = filemtime($backup);
+
+            if (is_int($modified) && $modified < $now - $maximumAgeSeconds && unlink($backup)) {
+                $removed++;
+            }
+        }
+
+        return $removed;
+    }
+
+    /**
+     * Decode a verified backup and return the original bytes.
+     */
+    public static function restoreBytes(string $backupPath, string $destination, string $existingHash): string
+    {
+        self::verifyBackup($backupPath, $destination, $existingHash);
+        $contents = (string) file_get_contents(self::normalizePath($backupPath));
+        $record = json_decode(substr($contents, strlen(self::BACKUP_HEADER)), true, 512, JSON_THROW_ON_ERROR);
+
+        return (string) base64_decode((string) $record['content'], true);
+    }
 
     /**
      * Inspect candidate files, preserving changed destinations before reporting conflicts.
@@ -107,6 +233,12 @@ final class FileGuard
         }
 
         return $conflicts;
+    }
+
+    /** Normalized absolute path, as used for destinations, backups and approvals. */
+    public static function normalize(string $path): string
+    {
+        return self::normalizePath($path);
     }
 
     private static function normalizePath(string $path): string
@@ -205,7 +337,7 @@ final class FileGuard
 
     private static function preserveDestination(string $destination, string $expectedHash, string $backupRoot): string
     {
-        $bytes = file_get_contents($destination);
+        $bytes = @file_get_contents($destination);
 
         if (!is_string($bytes) || !hash_equals($expectedHash, hash('sha256', $bytes))) {
             throw new RuntimeException('The destination changed or could not be read while being backed up.');
@@ -220,6 +352,8 @@ final class FileGuard
 
         if (file_exists($backupPath)) {
             self::verifyBackup($backupPath, $destination, $expectedHash);
+            // A reused backup belongs to this installation again: restart its retention period.
+            @touch($backupPath);
 
             return $backupPath;
         }
@@ -234,7 +368,7 @@ final class FileGuard
             throw new RuntimeException('The destination backup could not be encoded.');
         }
 
-        $handle = fopen($backupPath, 'x+b');
+        $handle = @fopen($backupPath, 'x+b');
 
         if ($handle === false) {
             if (is_link($backupPath)) {
@@ -274,7 +408,7 @@ final class FileGuard
         }
 
         if (!$writeSucceeded || $offset !== strlen($contents)) {
-            unlink($backupPath);
+            @unlink($backupPath);
             throw new RuntimeException('The destination backup could not be written completely.');
         }
 
@@ -327,5 +461,16 @@ final class FileGuard
         if (!is_string($original) || !hash_equals($expectedHash, hash('sha256', $original))) {
             throw new RuntimeException('The existing backup content does not match its recorded hash.');
         }
+    }
+}
+
+/**
+ * A backup could not be written or verified. The installation must stop before it changes anything.
+ */
+final class BackupFailure extends RuntimeException
+{
+    public function __construct(public readonly string $destination, \Throwable $previous)
+    {
+        parent::__construct('The backup of a destination could not be written or verified: ' . $previous->getMessage(), 0, $previous);
     }
 }

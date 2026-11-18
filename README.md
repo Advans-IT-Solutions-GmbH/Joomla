@@ -106,50 +106,76 @@ Keep using DMARC Reports' existing
 **System Check** view for its deeper IMAP/DNS/MTA-STS diagnostics; the common tab does not contact
 external systems or replace that view.
 
-**Existing files are not permission to overwrite them.** Before Joomla copies files, the
-installer compares every declared destination, including media, languages, bundled plugins,
-the Joomla 5 Product Compare mirror and the known installer-managed external changes.
-Identical files and absent destinations need no approval. Differing existing files are backed
-up byte-for-byte, the installation stops, and a review plan identifies each destination, its
-old/new SHA-256 hashes, backup and operation. This intentionally applies to ordinary upgrades
-as well as customised or foreign files: a previous release's changed file is still an existing file.
-Obsolete declared paths and known legacy-file retirement actions also require approval.
-Unrelated files in the Product Compare mirror are retained rather than deleting the whole tree.
-Existing template overrides that are not being retired are left untouched.
+**Updates decide by themselves.** Before Joomla copies anything, the installer compares every
+declared destination (media, languages, bundled plugins, package children, the Joomla 5 Product
+Compare mirror and the known installer-managed changes to other extensions' files) with the
+incoming file. Identical and absent destinations need no decision. For every other one the
+installer decides without asking, and an administrator who does not know the topic is never asked a
+technical question:
 
-Backups and guarded JSON state are stored in **`administrator/advans-installer-state/`**, outside
-Joomla's disposable cache and extension directories. Backup containers are non-executable PHP
-envelopes containing the original bytes as base64, their hash and destination binding. Opening
-one over HTTP does not disclose its contents. No automatic cleanup removes these backups;
-the server administrator must retain them securely for the required rollback period.
+| Destination | Its current bytes | Decision |
+|---|---|---|
+| Own territory: the extension's folders, its media folder, its manifest storage, its language files by name | written or shipped by this extension (untouched) | replaced |
+| Own territory | changed on this site | backed up, then replaced or removed; listed in the report |
+| Foreign territory (other extensions, site templates) | per operation, see below | backed up first in every case |
 
-Joomla's installer is not interactive. After an installation stops, the server administrator must:
+"Untouched" means the bytes equal the file this installer wrote during the last successful
+installation on this site (the record `installed.php`) or a file of any earlier release of the
+extension (the catalog `advans-known-hashes.php` at the root of the package, which Joomla never installs). The build creates the
+catalog by rebuilding every earlier release from its merged release commit (`release: <prefix>
+vX.Y.Z`; the publish workflow deletes older tags, the release commits remain) with that commit's own
+build scripts, and hashing the built files, so the manifests and language files the build stamps
+match what sites installed. The CI of every extension proves this against the latest published
+release asset (`.github/scripts/verify-known-hashes.py`). An installation made before this
+mechanism has no record; the catalog covers it.
 
-1. Unpack the intended ZIP privately and review its incoming files against the review plan and
-   decoded backup contents. A `remove` or retirement operation is not an ordinary file update;
-   its incoming hash represents the named operation marker, not replacement content.
-2. Verify the review plan's SHA-256 against the fingerprint printed in the installer error,
-   then explicitly approve that exact plan using the support shipped in the unpacked ZIP:
+The installer changes files of other extensions only in these operations:
 
-   ```text
-   php /path/to/unpacked/advansinstaller/approve.php --approve /path/to/site/administrator/advans-installer-state/EXTENSION/plan.php REVIEWED_PLAN_SHA256
-   ```
+| Operation | Automatic decision |
+|---|---|
+| Product Compare mirror under `plugins/j2store/productcompare` (Joomla 5, J2Store's plugin group) | Holds only this plugin's files: backed up and replaced, a file changed by hand is reported. Belongs to another extension (another manifest there, or a link elsewhere): left byte-identical and the mirror is skipped; the plugin is registered in its own `j2commerce` group, stays inactive under J2Store and the installation says why and how to resolve it (Joomla offers no updates for that registration on Joomla 5, because one feed cannot serve both groups there) |
+| OSMap compatibility patch of `administrator/components/com_osmap/library/Alledia/OSMap/Factory.php` (OSMap 5.1.3 and older) | Backed up, then the one faulty line is changed and every other byte kept (changes on the site included); reported. Applied only while the faulty line is present |
+| J2Commerce Privacy: retirement of an unchanged checkout override that an earlier version copied into a site template | Backed up, then renamed with `.plg_privacy_j2commerce-disabled` (the file stays) and reported. A changed copy is left in place with a warning |
+| J2Commerce Privacy: template overrides for MyProfile and the J2Store checkout | Created only where no file exists, never replaced |
 
-   Run this command as the same filesystem user that performs the Joomla install, so that
-   Joomla can read the protected approval file. The server administrator must arrange that
-   user context; do not make the state directory or approval files publicly readable.
+Any other destination outside the extension's own territory whose bytes are not known is a case
+without a safe automatic choice. The installation then **pauses before anything changes** and
+explains in plain language (in the site's language) which file would be affected and why. Each
+such file is already backed up. A Super User approves by repeating the same installation within
+one hour: **Approve** opens **System → Update → Extensions** (or **System → Install → Extensions**
+when the package was uploaded), and updating (or installing the same package) once more approves
+exactly the reviewed old and new hashes and completes the installation (Joomla renders messages without forms, so the button cannot submit by itself). Other administrators see that a
+Super User has to approve. Server administrators can approve on the command line instead:
 
-3. Retry the same ZIP under **System → Install → Extensions** (or repeat the CLI install).
-   Different incoming or existing bytes require a new backup and approval. A package inspects
-   all child archives first; its exact-hash approval also applies when those children install.
+```text
+php /path/to/unpacked/advansinstaller/approve.php --approve /path/to/site/administrator/advans-installer-state/EXTENSION/plan.php REVIEWED_PLAN_SHA256
+```
 
-Approval requires filesystem-administrator access; there is no public approval endpoint and no
-query-string bypass. Backups must verify before approval is accepted. An unreadable destination,
-symbolic link, invalid manifest or failed backup stops the install rather than claiming success.
-Do not run concurrent installs or edit destination files between review and retry.
-For a first-install conflict, no extension options need to exist yet: use the CLI support in the
-unpacked package. Review plans/approvals do not grant permission to overwrite different bytes
-later, and do not authorise unrelated files or uninstall data deletion.
+Run it as the filesystem user that performs the Joomla install, then repeat the installation.
+Changed bytes need a new pause and approval; an approval never covers other files.
+
+**A backup that cannot be written or verified stops the installation before any file changes**,
+with a message that names the file and the directory the server administrator has to make
+writable. An unreadable destination or a symbolic link stops it the same way. All backups are
+written and verified during preflight, before Joomla copies the first file.
+
+**Report.** After the installation a short notice lists the files that had been changed on this
+site and were replaced or removed, and the adjusted files of other extensions, each with the backup
+location. Customisations belong in template overrides, which updates do not replace.
+
+**Where state and backups live.** Backups, the record and a paused plan
+are stored in **`administrator/advans-installer-state/EXTENSION/`**, outside Joomla's disposable
+cache and extension directories. Backup containers are non-executable PHP envelopes with the
+original bytes as base64, their hash and destination binding; opening one over HTTP discloses
+nothing. **Retention:** the next successful installation of the same extension removes backups
+that are older than 180 days and were not used again; half a year leaves room to notice a lost
+change long after the update without letting backups pile up. Do not run concurrent installs.
+
+**Checksum.** Every `updates/update.xml` carries the `<sha256>` of its release asset, so Joomla
+verifies the download. Package builds are reproducible (`shared/build/deterministic-zip.sh`: fixed
+modes and timestamps, sorted entries, `updates/` left out of the package): the release workflow
+writes the hash of its build into update.xml in the release PR, and the publish workflow rebuilds
+the merged release commit and refuses to upload bytes with another hash.
 
 ## Testing
 
@@ -176,14 +202,15 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 | File under `shared/` | Starts |
 |---|---|
 | `build/**`, `installer/**` | every extension workflow (the DMARC package also stages the support and verifies its assembled bundle) |
-| `tests/installer-*.php` | Infrastructure Tests: offline destination, translation, backup and approval regressions |
+| `tests/installer-*.php` | Infrastructure Tests: offline ownership, automatic decisions, record and catalog, pause and approval, backup-failure stop, retention and translation regressions |
 | `tests/run-tests.sh` | every extension workflow (the local runners delegate here) |
 | `tests/lang-lint.php`, `tests/help-lint.php`, `tests/requirements-check.php`, `tests/deprecated-api-scan.php` | every extension workflow (job `Language Files`); `help-lint.php` also runs over the whole repository in Shared Path Coverage |
 | `tests/scripts/shared-test-helpers.php` | every extension workflow (loaded by the shared suites) |
 | `tests/scripts/shared-install-messages.php` | every extension workflow (installer-message suites) |
 | `tests/scripts/shared-backend-views.php` | Appointments, DMARC Reports component, Import/Export, Cleanup |
 | `tests/scripts/shared-help-pages.php` | Appointments (its bundled plugins), AJAX Forms, OSMap, Product Compare, Privacy, Privacy Requests |
-| `tests/scripts/shared-update-from-previous.php` | AJAX Forms, OSMap, Privacy (job `Update from previous release (J6)`) |
+| `tests/scripts/shared-update-from-previous.php` | AJAX Forms, OSMap, Privacy (job `Update from previous release (J6)`: CLI update from the previous release commit, recognised without a record) |
+| `tests/scripts/shared-backend-update.php` | Appointments, DMARC Reports Package, DMARC Reports Task Plugin (job `Backend update from the published release (J6)`: Check for Updates and Update in the backend from the published release, a file changed by hand, a backup that cannot be written, a pause with Approve), Product Compare (job `Backend update with foreign files (J5)`), OSMap and Privacy (foreign operations in `Update from previous release (J6)`) |
 | `tests/scripts/shared-deprecations.php`, `tests/scripts/shared-deprecation-tracer.php` | AJAX Forms, OSMap, Privacy (production-like lane) |
 | `tests/Dockerfile.template`, `tests/scripts/docker-entrypoint.sh`, `tests/scripts/install-extension.php` | nothing: templates that every extension has copied into its own `tests/` tree, read by no lane |
 
@@ -267,9 +294,9 @@ Releases use a **two-stage, PR-based flow** so that no commit reaches `main` wit
 
 1. Go to **Actions** → select the **Release - …** workflow for the extension
 2. Click **Run workflow** and choose a bump level (or leave empty for auto-detect from commits)
-3. The workflow bumps the version files on a `release/<prefix>-v<version>` branch and opens a **pull request** titled `release: <prefix> v<version>` — it does **not** push to `main`. The version commit is created through the GitHub API with the workflow's `GITHUB_TOKEN` (`.github/scripts/create-verified-commit.py`), so GitHub signs it and it shows as **Verified**, as the ruleset requires for every commit of a pull request; the script checks the tree, parent, message and signature of that commit and only then pushes that same commit to the release branch with the lease of the former force push (rejected if the branch moved after the checkout)
+3. The workflow bumps the version files, builds the package and writes its SHA-256 into `updates/update.xml` (Joomla verifies every download against it; the build is reproducible) on a `release/<prefix>-v<version>` branch and opens a **pull request** titled `release: <prefix> v<version>` — it does **not** push to `main`. The version commit is created through the GitHub API with the workflow's `GITHUB_TOKEN` (`.github/scripts/create-verified-commit.py`), so GitHub signs it and it shows as **Verified**, as the ruleset requires for every commit of a pull request; the script checks the tree, parent, message and signature of that commit and only then pushes that same commit to the release branch with the lease of the former force push (rejected if the branch moved after the checkout)
 4. **Review and merge** that pull request into `main` (squash)
-5. On merge, the matching **Publish - …** workflow triggers automatically: it builds the package, creates and pushes the tag, generates the changelog and creates the GitHub release
+5. On merge, the matching **Publish - …** workflow triggers automatically: it builds the package, refuses to continue if its SHA-256 differs from the one in `update.xml`, creates and pushes the tag, generates the changelog and creates the GitHub release
 
 Run release workflows one at a time. For planned compatibility releases, set the bump explicitly instead of relying on auto-detect.
 

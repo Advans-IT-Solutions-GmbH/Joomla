@@ -7,7 +7,7 @@
 defined('_JEXEC') or die;
 
 return static function (\Joomla\Database\DatabaseInterface $db, string $installedHelper): array {
-    $file = (new ReflectionClass(\Advans\Installer\SystemCheck::class))->getFileName();
+    $file = (new ReflectionClass(\Advans\Installer\V2\SystemCheck::class))->getFileName();
 
     if (realpath($file) !== realpath($installedHelper)) {
         throw new RuntimeException('The actual installed shared helper must be exercised.');
@@ -45,7 +45,7 @@ return static function (\Joomla\Database\DatabaseInterface $db, string $installe
             $out['module_ids'][] = (int) $row->id;
         }
 
-        $out['existing_url'] = \Advans\Installer\SystemCheck::url('mod_dmarcreports');
+        $out['existing_url'] = \Advans\Installer\V2\SystemCheck::url('mod_dmarcreports');
 
         if ($out['existing_url'] !== 'index.php?option=com_modules&task=module.edit&client_id=1&id=' . $out['module_ids'][1]) {
             throw new RuntimeException('The lowest administrator instance must be selected, not the lower site id.');
@@ -53,7 +53,7 @@ return static function (\Joomla\Database\DatabaseInterface $db, string $installe
 
         $db->setQuery('DELETE FROM #__modules WHERE id IN ('
             . $out['module_ids'][1] . ',' . $out['module_ids'][2] . ')')->execute();
-        $out['missing_url'] = \Advans\Installer\SystemCheck::url('mod_dmarcreports');
+        $out['missing_url'] = \Advans\Installer\V2\SystemCheck::url('mod_dmarcreports');
 
         if ($out['missing_url'] !== 'index.php?option=com_modules&task=module.add&client_id=1&eid=' . $out['extension_id']) {
             throw new RuntimeException('A missing administrator instance must link to the registered module add page.');

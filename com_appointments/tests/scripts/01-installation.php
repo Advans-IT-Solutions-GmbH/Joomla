@@ -295,7 +295,7 @@ class InstallationTest
             copy($admin . '/appointments.xml', $admin . '/com_appointments.xml');
             $this->db->query("UPDATE {$this->dbPrefix}extensions SET manifest_cache = JSON_SET(manifest_cache, '$.version', '')"
                 . " WHERE type = 'component' AND element = 'com_appointments'");
-            [$exitCode, $output] = sh_cli_install_reviewed_fixture('/var/www/html', '/tmp/extension.zip');
+            [$exitCode, $output] = sh_cli_install_checked('/var/www/html', '/tmp/extension.zip');
 
             if ($exitCode !== 0) {
                 echo '    ' . $output . "\n";
@@ -321,7 +321,7 @@ class InstallationTest
             return $found;
         };
         $reinstall = function (): bool {
-            [$exitCode, $output] = sh_cli_install_reviewed_fixture('/var/www/html', '/tmp/extension.zip');
+            [$exitCode, $output] = sh_cli_install_checked('/var/www/html', '/tmp/extension.zip');
             if ($exitCode !== 0) {
                 echo '    ' . $output . "\n";
             }

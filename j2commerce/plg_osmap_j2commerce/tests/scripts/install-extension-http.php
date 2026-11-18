@@ -132,7 +132,15 @@ if ($reviewFixture && !str_contains($installResult, 'was successful')
     $plan = '/var/www/html/administrator/advans-installer-state/plg_osmap_j2commerce/plan.php';
     clearstatcache(true, $plan);
 
-    if (is_file($plan) && filemtime($plan) >= $started) {
+    $zip = new ZipArchive();
+    // Only a release built before the shared installer decided by itself (no Planner) may pause
+    // here and be approved for the fixture; a package with the current installer must decide.
+    $legacyInstaller = $zip->open($packagePath) === true && $zip->locateName('advansinstaller/Planner.php') === false;
+    $zip->close();
+
+    if (is_file($plan) && filemtime($plan) >= $started && !$legacyInstaller) {
+        echo "❌ The installer paused for an approval ($plan) instead of deciding by itself\n";
+    } elseif (is_file($plan) && filemtime($plan) >= $started) {
         $work = sys_get_temp_dir() . '/web-reviewed-fixture-' . bin2hex(random_bytes(8));
         $zip = new ZipArchive();
 

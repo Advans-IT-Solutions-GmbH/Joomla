@@ -11,6 +11,7 @@
         <downloads>
             <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/moddmarcreports-v1.3.0/mod_dmarcreports_1.3.0.zip</downloadurl>
         </downloads>
+        <sha256>e4d6e1a5317286262708b993281536f396adc5d533310e0b51501fa4540f4674</sha256>
         <tags>
             <tag>stable</tag>
         </tags>
