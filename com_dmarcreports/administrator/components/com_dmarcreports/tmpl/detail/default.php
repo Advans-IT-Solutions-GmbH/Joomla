@@ -91,9 +91,9 @@ $this->getDocument()->getWebAssetManager()->addInlineStyle(
                                 </span>
                                 <strong><?php echo htmlspecialchars(ActionPresenter::title($item)); ?></strong>
                                 <div><?php echo htmlspecialchars(ActionPresenter::text($item)); ?></div>
-                                <?php $sourceLink = ActionPresenter::sourceLink($item); ?>
-                                <?php if ($sourceLink !== '') : ?>
-                                    <a class="com-dmarcreports-source-link" href="<?php echo htmlspecialchars($sourceLink); ?>"><?php echo Text::_('COM_DMARCREPORTS_ACTION_SHOW_SOURCE'); ?></a>
+                                <?php $sourceAnchor = ActionPresenter::sourceAnchor($item); ?>
+                                <?php if ($sourceAnchor !== '') : ?>
+                                    <a class="com-dmarcreports-source-link" href="#<?php echo htmlspecialchars($sourceAnchor); ?>"><?php echo Text::_('COM_DMARCREPORTS_ACTION_SHOW_SOURCE'); ?></a>
                                 <?php endif; ?>
                             </li>
                         <?php endforeach; ?>

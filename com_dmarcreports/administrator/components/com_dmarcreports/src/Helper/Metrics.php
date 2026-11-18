@@ -467,6 +467,8 @@ final class Metrics
             $row['class']     = SourceClassifier::classify(SourceClassifier::current($row));
         }
 
+        unset($row);
+
         return $rows;
     }
 

@@ -243,6 +243,8 @@ class DashboardModel extends BaseDatabaseModel
             $source['host'] = $names[(string) ($source['ip'] ?? '')] ?? '';
         }
 
+        unset($source);
+
         return $sources;
     }
 

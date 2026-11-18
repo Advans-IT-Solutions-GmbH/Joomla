@@ -150,17 +150,33 @@ final class ActionPresenter
      */
     public static function sourceLink(array $item): string
     {
-        $code     = (string) ($item['code'] ?? '');
-        $params   = array_values((array) ($item['params'] ?? []));
-        $ip       = (string) ($params[0] ?? '');
+        $anchor   = self::sourceAnchor($item);
         $domainId = (int) ($item['domain_id'] ?? 0);
 
-        if (!\in_array($code, ['spf_only_source', 'align_source'], true) || $ip === '' || $domainId <= 0) {
+        if ($anchor === '' || $domainId <= 0) {
             return '';
         }
 
-        return Route::_('index.php?option=com_dmarcreports&view=detail&domain_id=' . $domainId)
-            . '#' . SourceClassifier::anchor($ip);
+        return Route::_('index.php?option=com_dmarcreports&view=detail&domain_id=' . $domainId) . '#' . $anchor;
+    }
+
+    /**
+     * The id of the domain view row of the sending source an item is about, or
+     * '' when the item is not about one source.
+     *
+     * @param   array<string, mixed>  $item
+     */
+    public static function sourceAnchor(array $item): string
+    {
+        $code   = (string) ($item['code'] ?? '');
+        $params = array_values((array) ($item['params'] ?? []));
+        $ip     = (string) ($params[0] ?? '');
+
+        if (!\in_array($code, ['spf_only_source', 'align_source'], true) || $ip === '') {
+            return '';
+        }
+
+        return SourceClassifier::anchor($ip);
     }
 
     /**
