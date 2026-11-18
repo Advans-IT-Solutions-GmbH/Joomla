@@ -331,11 +331,13 @@ class ConfigFormsTest
 
         foreach ($uploads as $label => $upload) {
             $res = $this->uploadReport($upload['content'], $upload['name']);
-            $this->test("Upload of an {$label} reports its reason and one failure", function () use ($res, $upload, $oneFailure) {
+            $reasonText = $this->strings[$upload['reason']] ?? '';
+            $this->test("Upload of an {$label} reports its reason and one failure", function () use ($res, $reasonText, $oneFailure) {
                 return $res['code'] === 200
                     && !$this->hasErrorMarker($res['body'])
                     && !$this->hasSqlError($res['body'])
-                    && $this->containsString($res['body'], $upload['reason'])
+                    && $reasonText !== ''
+                    && $this->pageShows($res['body'], $reasonText)
                     && $oneFailure !== ''
                     && $this->pageShows($res['body'], $oneFailure);
             });
