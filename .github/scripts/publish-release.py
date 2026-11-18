@@ -87,12 +87,16 @@ def verify_asset(repo, tag, package):
         shutil.copyfile(Path(directory) / package.name, package)
 
 
-def publish(repo, prefix, number, sha, package, title, notes):
+def publish(repo, prefix, number, sha, package, title, notes, changelog=None):
     # Repeat the remote preflight immediately before writes, not against stale checkout tags.
     refs, releases = inventory(repo)
     older = preflight(prefix, number, sha, refs, releases)
     tag = prefix + number
     zip_contents(package)
+    if changelog is None:
+        candidate = package.parent / "updates" / "changelog.xml"
+        if candidate.is_file():
+            changelog = candidate
     print(f"Publishing {tag} from built checkout {sha}", flush=True)
     if tag not in refs:
         run("git", "tag", "-a", tag, sha, "-m", f"Release {tag}")
@@ -102,12 +106,23 @@ def publish(repo, prefix, number, sha, package, title, notes):
             "--verify-tag", "--draft", "--title", title, "--notes", notes)
     elif not any(asset["name"] == package.name for asset in releases[tag]["assets"]):
         run("gh", "release", "upload", tag, str(package), "--repo", repo)
+    if changelog is not None:
+        changelog = changelog.resolve()
+        if not changelog.is_file():
+            raise ValueError(f"Changelog XML does not exist: {changelog}")
+        published_assets = releases[tag]["assets"] if tag in releases else []
+        if not any(asset["name"] == changelog.name for asset in published_assets):
+            run("gh", "release", "upload", tag, str(changelog), "--repo", repo)
     # Never delete a working release or clobber an existing asset on a retry.
     # ZIP timestamps may change between builds; compare unpacked payloads instead.
     verify_asset(repo, tag, package)
     run("gh", "release", "edit", tag, "--repo", repo, "--draft=false", "--latest=false")
     published = json.loads(run("gh", "api", f"repos/{repo}/releases/tags/{tag}"))
-    if published["draft"] or not any(asset["name"] == package.name for asset in published["assets"]):
+    required_assets = {package.name}
+    if changelog is not None:
+        required_assets.add(changelog.name)
+    published_names = {asset["name"] for asset in published["assets"]}
+    if published["draft"] or not required_assets.issubset(published_names):
         raise ValueError(f"Release {tag} was not published with its expected asset")
     print(f"Verified published download: {tag}/{package.name}", flush=True)
     # A failure above leaves every previous download intact. Delete only strictly older
@@ -126,6 +141,7 @@ def main():
     parser.add_argument("--prefix", required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--package", type=Path)
+    parser.add_argument("--changelog", type=Path)
     parser.add_argument("--title")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-z][a-z0-9-]*-v", args.prefix):
@@ -143,7 +159,7 @@ def main():
             raise ValueError("Checkout changed since the build preflight")
         if not args.package or not args.title:
             parser.error("publish requires --package and --title")
-        publish(repo, args.prefix, args.version, sha, args.package, args.title, os.environ["NOTES"])
+        publish(repo, args.prefix, args.version, sha, args.package, args.title, os.environ["NOTES"], args.changelog)
 
 
 if __name__ == "__main__":

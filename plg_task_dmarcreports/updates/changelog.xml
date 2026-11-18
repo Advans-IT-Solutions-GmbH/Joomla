@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<changelogs>
+    <changelog>
+        <element>dmarcreports</element>
+        <type>plugin</type>
+        <folder>task</folder>
+        <version>1.3.0</version>
+        <change>
+            <item>See the release notes for this version.</item>
+        </change>
+    </changelog>
+</changelogs>

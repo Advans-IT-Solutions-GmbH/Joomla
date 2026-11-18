@@ -125,6 +125,7 @@ jobs:
           # Joomla verifies the download against this hash. The package build is reproducible,
           # so the publish workflow rebuilds exactly these bytes and checks them before uploading.
           SHA256=$(sha256sum "j2commerce/com_j2commerce_importexport/$PACKAGE" | cut -d ' ' -f 1)
+          sed -i -E 's#<version>[^<]+</version>#<version>'"$VERSION"'</version>#' j2commerce/com_j2commerce_importexport/updates/changelog.xml
           cat > j2commerce/com_j2commerce_importexport/updates/update.xml << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <updates>
@@ -135,7 +136,7 @@ jobs:
                   <type>component</type>
                   <version>$VERSION</version>
                   <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/j2commerce/com_j2commerce_importexport</infourl>
-                  <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/importexport-v$VERSION</changelogurl>
+                  <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/importexport-v$VERSION/changelog.xml</changelogurl>
                   <downloads>
                       <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/importexport-v$VERSION/$PACKAGE</downloadurl>
                   </downloads>

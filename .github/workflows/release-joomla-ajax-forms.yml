@@ -125,6 +125,7 @@ jobs:
           # Joomla verifies the download against this hash. The package build is reproducible,
           # so the publish workflow rebuilds exactly these bytes and checks them before uploading.
           SHA256=$(sha256sum "plg_ajax_joomlaajaxforms/$PACKAGE" | cut -d ' ' -f 1)
+          sed -i -E 's#<version>[^<]+</version>#<version>'"$VERSION"'</version>#' plg_ajax_joomlaajaxforms/updates/changelog.xml
           cat > plg_ajax_joomlaajaxforms/updates/update.xml << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <updates>
@@ -137,7 +138,7 @@ jobs:
                   <client>site</client>
                   <version>$VERSION</version>
                   <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/plg_ajax_joomlaajaxforms</infourl>
-                  <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/ajaxforms-v$VERSION</changelogurl>
+                  <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/ajaxforms-v$VERSION/changelog.xml</changelogurl>
                   <downloads>
                       <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/ajaxforms-v$VERSION/$PACKAGE</downloadurl>
                   </downloads>

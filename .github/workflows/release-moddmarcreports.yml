@@ -125,6 +125,7 @@ jobs:
           # Joomla verifies the download against this hash. The package build is reproducible,
           # so the publish workflow rebuilds exactly these bytes and checks them before uploading.
           SHA256=$(sha256sum "mod_dmarcreports/$PACKAGE" | cut -d ' ' -f 1)
+          sed -i -E 's#<version>[^<]+</version>#<version>'"$VERSION"'</version>#' mod_dmarcreports/updates/changelog.xml
           cat > mod_dmarcreports/updates/update.xml << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <updates>
@@ -136,7 +137,7 @@ jobs:
                   <client>administrator</client>
                   <version>$VERSION</version>
                   <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/mod_dmarcreports</infourl>
-                  <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/moddmarcreports-v$VERSION</changelogurl>
+                  <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/moddmarcreports-v$VERSION/changelog.xml</changelogurl>
                   <downloads>
                       <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/moddmarcreports-v$VERSION/$PACKAGE</downloadurl>
                   </downloads>

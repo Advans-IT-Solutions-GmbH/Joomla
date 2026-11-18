@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<changelogs>
+    <changelog>
+        <element>j2commerce</element>
+        <type>plugin</type>
+        <folder>osmap</folder>
+        <version>1.5.0</version>
+        <change>
+            <item>See the release notes for this version.</item>
+        </change>
+    </changelog>
+</changelogs>

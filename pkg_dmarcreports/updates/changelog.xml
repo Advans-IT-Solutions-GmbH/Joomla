@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<changelogs>
+    <changelog>
+        <element>pkg_dmarcreports</element>
+        <type>package</type>
+        <version>1.3.0</version>
+        <change>
+            <item>See the release notes for this version.</item>
+        </change>
+    </changelog>
+</changelogs>
