@@ -531,6 +531,32 @@ class MetricsTest
                     && $rows['10.0.3.5']['class'] === SourceClassifier::SPF_ONLY;
             });
 
+            $this->test('Source rows expose complete DMARC evidence for the reporting window', function () use ($rows, $domain) {
+                $row = $rows['10.0.3.2'] ?? [];
+
+                foreach ([
+                    'source_ip', 'policy_domain', 'policy_adkim', 'policy_aspf', 'header_from',
+                    'dkim_pass_aligned', 'dkim_pass_unaligned', 'dkim_not_pass',
+                    'spf_pass_aligned', 'spf_pass_unaligned', 'spf_not_pass',
+                    'disposition_none', 'disposition_quarantine', 'disposition_reject',
+                    'total', 'last_seen',
+                ] as $key) {
+                    if (!array_key_exists($key, $row)) {
+                        return false;
+                    }
+                }
+
+                return ($row['source_ip'] ?? '') === '10.0.3.2'
+                    && (int) ($row['total'] ?? 0) === 7
+                    && (int) ($row['spf_pass_aligned'] ?? 0) === 7
+                    && (int) ($row['dkim_pass_aligned'] ?? 0) === 0
+                    && (int) ($row['disposition_none'] ?? 0) === 7
+                    && ($row['policy_domain'] ?? '') === $domain
+                    && ($row['header_from'] ?? '') === $domain
+                    && ($row['policy_adkim'] ?? '') !== ''
+                    && ($row['policy_aspf'] ?? '') !== '';
+            });
+
             $this->test('Classification judges the current window, else the whole history', function () use ($metrics, $domainId) {
                 $classes = $metrics->classifySources($domainId, ['10.0.3.1', '10.0.3.3', '10.0.3.6', '10.0.3.7', '10.0.9.9']);
 
