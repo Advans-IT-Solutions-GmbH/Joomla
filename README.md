@@ -133,7 +133,7 @@ The installer changes files of other extensions only in these operations:
 
 | Operation | Automatic decision |
 |---|---|
-| Product Compare mirror under `plugins/j2store/productcompare` (Joomla 5, J2Store's plugin group) | Holds only this plugin's files: backed up and replaced, a file changed by hand is reported. Belongs to another extension (another manifest there, or a link elsewhere): left byte-identical, the mirror is skipped, the plugin stays available for J2Commerce and the report says why |
+| Product Compare mirror under `plugins/j2store/productcompare` (Joomla 5, J2Store's plugin group) | Holds only this plugin's files: backed up and replaced, a file changed by hand is reported. Belongs to another extension (another manifest there, or a link elsewhere): left byte-identical and the mirror is skipped; the plugin is registered in its own `j2commerce` group, stays inactive under J2Store and the installation says why and how to resolve it (Joomla offers no updates for that registration on Joomla 5, because one feed cannot serve both groups there) |
 | OSMap compatibility patch of `administrator/components/com_osmap/library/Alledia/OSMap/Factory.php` (OSMap 5.1.3 and older) | Backed up, then the one faulty line is changed and every other byte kept (changes on the site included); reported. Applied only while the faulty line is present |
 | J2Commerce Privacy: retirement of an unchanged checkout override that an earlier version copied into a site template | Backed up, then renamed with `.plg_privacy_j2commerce-disabled` (the file stays) and reported. A changed copy is left in place with a warning |
 | J2Commerce Privacy: template overrides for MyProfile and the J2Store checkout | Created only where no file exists, never replaced |
