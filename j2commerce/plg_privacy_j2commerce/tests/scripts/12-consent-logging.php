@@ -2065,7 +2065,7 @@ class ConsentLoggingTest
      */
     private function runCliUpdate(string $package): array
     {
-        [$exitCode, $output] = sh_cli_install_reviewed_fixture(JPATH_BASE, $package);
+        [$exitCode, $output] = sh_cli_install_checked(JPATH_BASE, $package);
         $readable = trim(preg_replace('/\s+/', ' ', $output));
 
         return [$exitCode, preg_replace('/\s+/', '', $readable), $readable];

@@ -15,7 +15,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     : dirname(__DIR__) . '/shared/installer/load.php';
 
 use Joomla\CMS\Factory;
-use Advans\Installer\InstallerScript;
+use Advans\Installer\V2\InstallerScript;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -113,7 +113,7 @@ class PlgAjaxJoomlaajaxformsInstallerScript extends InstallerScript
 
     private function analyseHtaccess(string $content): array
     {
-        return (new \Advans\Installer\RoutingCheck())->analyse($content);
+        return (new \Advans\Installer\V2\RoutingCheck())->analyse($content);
     }
 
     /**

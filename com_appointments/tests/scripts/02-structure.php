@@ -980,7 +980,7 @@ class StructureTest
                     . " X'" . bin2hex(random_bytes(32)) . "', X'" . bin2hex(random_bytes(16)) . "', 1, 1, '1', UTC_TIMESTAMP(), UTC_TIMESTAMP(),"
                     . " X'" . bin2hex(random_bytes(32)) . "')");
                 $id = (int) $this->db->insert_id;
-                [$code, $output] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, $package);
+                [$code, $output] = sh_cli_install_checked(JOOMLA_ROOT, $package);
                 $row = $column();
                 $mode = $this->db->query("SELECT removal_mode FROM {$table} WHERE id = {$id}");
                 $mode = $mode ? ($mode->fetch_assoc()['removal_mode'] ?? null) : null;
@@ -1088,7 +1088,7 @@ class StructureTest
                 $this->db->query("UPDATE {$templates} SET body='" . $this->db->real_escape_string($oldDe) . "' WHERE eventtype_id=0 AND purpose='host_notice' AND language='de-DE'");
                 $this->db->query("UPDATE {$templates} SET body='Edited by the operator' WHERE eventtype_id=0 AND purpose='host_notice' AND language='en-GB'");
 
-                [$code, $output] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, $package);
+                [$code, $output] = sh_cli_install_checked(JOOMLA_ROOT, $package);
 
                 if ($code !== 0 || $column() === null) {
                     echo '    update: exit ' . $code . "\n    " . str_replace("\n", "\n    ", substr(trim($output), -1500)) . "\n";

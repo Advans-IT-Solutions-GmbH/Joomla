@@ -107,10 +107,10 @@ namespace {
                     continue;
                 }
 
-                $definition = \Advans\Installer\SystemCheck::definition(strtolower((string) $manifest->name));
-                $installed = \Advans\Installer\SystemCheck::root($definition);
+                $definition = \Advans\Installer\V2\SystemCheck::definition(strtolower((string) $manifest->name));
+                $installed = \Advans\Installer\V2\SystemCheck::root($definition);
                 $source = dirname($manifestFile);
-                $files = \Advans\Installer\Destinations::files($manifest, $source, $manifestFile);
+                $files = \Advans\Installer\V2\Destinations::files($manifest, $source, $manifestFile);
 
                 foreach ($files as $destination => $candidate) {
                     $assert(is_file($candidate), 'Missing candidate for ' . $destination . ': ' . $candidate);
@@ -206,10 +206,10 @@ namespace {
         $incoming = $work . '/incoming.php';
         file_put_contents($original, '<?php echo "original";');
         file_put_contents($incoming, '<?php echo "incoming";');
-        \Advans\Installer\State::directory($work . '/state/fixture/backups');
-        $conflicts = \Advans\Installer\FileGuard::inspect([$original => $incoming], $work . '/state/fixture/backups');
+        \Advans\Installer\V2\State::directory($work . '/state/fixture/backups');
+        $conflicts = \Advans\Installer\V2\FileGuard::inspect([$original => $incoming], $work . '/state/fixture/backups');
         $plan = $work . '/state/fixture/plan.php';
-        \Advans\Installer\State::write($plan, $conflicts);
+        \Advans\Installer\V2\State::write($plan, $conflicts);
         $digest = hash_file('sha256', $plan);
         $run = static function (array $command): array {
             $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
@@ -221,8 +221,8 @@ namespace {
         };
         [$code, $output] = $run([PHP_BINARY, $root . '/shared/installer/approve.php', '--approve', $plan, $digest]);
         $assert($code === 0, 'Exact-content approval failed: ' . $output);
-        $approved = \Advans\Installer\State::read($work . '/state/approved.php');
-        $checked = \Advans\Installer\FileGuard::inspect([$original => $incoming], $work . '/state/fixture/backups', $approved);
+        $approved = \Advans\Installer\V2\State::read($work . '/state/approved.php');
+        $checked = \Advans\Installer\V2\FileGuard::inspect([$original => $incoming], $work . '/state/fixture/backups', $approved);
         $assert($checked[0]['approved'] === true, 'Explicit CLI approval did not bind to the exact file bytes.');
         $assert(file_get_contents($original) === '<?php echo "original";', 'Approval modified the original.');
         [$code] = $run([PHP_BINARY, $root . '/shared/installer/approve.php', '--approve', $plan, str_repeat('0', 64)]);

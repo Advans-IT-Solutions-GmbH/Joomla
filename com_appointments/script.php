@@ -14,7 +14,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     : dirname(__DIR__) . '/shared/installer/load.php';
 
 use Joomla\CMS\Factory;
-use Advans\Installer\InstallerScript;
+use Advans\Installer\V2\InstallerScript;
 use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Table\Asset;

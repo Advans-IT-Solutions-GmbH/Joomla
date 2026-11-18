@@ -10,6 +10,7 @@
         <downloads>
             <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/appointments-v1.6.0/com_appointments_1.6.0.zip</downloadurl>
         </downloads>
+        <sha256>151ee6ce492008c6ab06c6717c01e399feb3106dad518ddb766a93baa3aeae18</sha256>
         <tags>
             <tag>stable</tag>
         </tags>

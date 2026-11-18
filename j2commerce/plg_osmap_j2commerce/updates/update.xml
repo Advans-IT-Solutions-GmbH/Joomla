@@ -12,6 +12,7 @@
         <downloads>
             <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/osmap-j2commerce-v1.5.0/plg_osmap_j2commerce_1.5.0.zip</downloadurl>
         </downloads>
+        <sha256>e228eeb7c45949568744289195f23c07242a76e872030fbd085b281fccf69396</sha256>
         <tags>
             <tag>stable</tag>
         </tags>

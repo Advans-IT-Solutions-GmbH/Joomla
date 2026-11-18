@@ -12,10 +12,11 @@
         <downloads>
             <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/productcompare-v1.3.0/plg_j2commerce_productcompare_1.3.0.zip</downloadurl>
         </downloads>
+        <sha256>9f2f3d37f0070bd2b8ff0b97930d1ca97bbbf80189e13c77f0f80d50622f8a7c</sha256>
         <tags>
             <tag>stable</tag>
         </tags>
-        <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+        <targetplatform name="joomla" version="(6\.[0-9])" />
         <php_minimum>8.1</php_minimum>
     </update>
     <update>
@@ -30,10 +31,11 @@
         <downloads>
             <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/productcompare-v1.3.0/plg_j2commerce_productcompare_1.3.0.zip</downloadurl>
         </downloads>
+        <sha256>9f2f3d37f0070bd2b8ff0b97930d1ca97bbbf80189e13c77f0f80d50622f8a7c</sha256>
         <tags>
             <tag>stable</tag>
         </tags>
-        <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+        <targetplatform name="joomla" version="(5\.[4-9])" />
         <php_minimum>8.1</php_minimum>
     </update>
 </updates>

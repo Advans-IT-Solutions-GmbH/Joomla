@@ -105,7 +105,13 @@ Advans-IT-Solutions-GmbH/Joomla
 Shared installer support and the repeatable administrator check are staged at build time
 (`shared/installer/`, `shared/build/prepare-installer.php`; PHP CLI 8.1+ required).
 See the root `README.md`, section "Installation safety and repeatable system checks", for
-the file-backup/explicit-approval flow and administrator menu paths.
+how updates decide by themselves (own vs foreign territory, record and catalog of released files,
+backups, the pause with Approve for Super Users) and the administrator menu paths. An extension
+with a foreign file operation declares it in `guardedFiles()` and decides it in
+`foreignDecision()`; the README lists every such operation. The runtime lives in the namespace
+`Advans\Installer\V2`: one request can load the runtimes of several extensions (a bulk update), and
+the loader reuses an already loaded class of the same namespace, so an incompatible change of the
+runtime moves it to a new version namespace (and every `script.php` with it).
 
 **Site backups on hosted sites: Akeeba only.** When you install a package on a hosted test
 installation (or a production change is prepared), a site backup is made only with Akeeba Backup.

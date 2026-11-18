@@ -81,6 +81,8 @@ jobs:
           fi
 
       - name: Build extension
+        env:
+          ADVANS_KNOWN_HASHES_STRICT: '1'
         run: |
           cd com_dmarcreports
           chmod +x build.sh
@@ -92,6 +94,24 @@ jobs:
           cd com_dmarcreports
           PACKAGE=$(ls -1 com_dmarcreports_*.zip | head -1)
           echo "file=$PACKAGE" >> $GITHUB_OUTPUT
+
+      - name: Check the package against the SHA-256 in update.xml
+        env:
+          PACKAGE: com_dmarcreports/${{ steps.package.outputs.file }}
+          FEED: com_dmarcreports/updates/update.xml
+        run: |
+          # The release PR announced the SHA-256 of its reproducible build in update.xml, and Joomla
+          # rejects a download whose hash differs. Publish only exactly those bytes.
+          EXPECTED=$(grep -oP '(?<=<sha256>)[0-9a-f]{64}(?=</sha256>)' "$FEED" | sort -u)
+          ACTUAL=$(sha256sum "$PACKAGE" | cut -d ' ' -f 1)
+          echo "update.xml: ${EXPECTED:-none}"
+          echo "built:      $ACTUAL"
+          if [ -z "$EXPECTED" ]; then
+            echo "::warning::update.xml announces no SHA-256 (release prepared before the hash was added)."
+          elif [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::The rebuilt package differs from the SHA-256 in update.xml. Run the release workflow again so that the release PR carries the hash of this build."
+            exit 1
+          fi
 
       - name: Generate changelog
         id: changelog

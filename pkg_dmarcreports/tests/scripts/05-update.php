@@ -95,7 +95,7 @@ class UpdateTest
         $this->db->query("UPDATE {$this->dbPrefix}extensions SET manifest_cache = JSON_SET(manifest_cache, '$.version', '')"
             . " WHERE type = 'component' AND element = 'com_dmarcreports'");
         // Reinstall the same package archive (update path).
-        [$exitCode, $text] = sh_cli_install_reviewed_fixture('/var/www/html', $zip);
+        [$exitCode, $text] = sh_cli_install_checked('/var/www/html', $zip);
         $output = explode("\n", $text);
 
         $this->test('Reinstall (update) command executed', function () use ($exitCode, $output) {
@@ -232,7 +232,7 @@ class UpdateTest
             return false;
         }
 
-        [$exitCode, $text] = sh_cli_install_reviewed_fixture('/var/www/html', $childZip);
+        [$exitCode, $text] = sh_cli_install_checked('/var/www/html', $childZip);
         $output = explode("\n", $text);
         @unlink($childZip);
         @rmdir($work);

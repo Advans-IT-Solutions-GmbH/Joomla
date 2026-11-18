@@ -23,10 +23,10 @@ class JFormFieldAdvanssystemcheck extends \Joomla\CMS\Form\FormField
 
         $id = (string) $this->element['extension'];
 
-        if ((string) $this->element['installedonly'] === '1' && \Advans\Installer\SystemCheck::extension($id) === null) {
+        if ((string) $this->element['installedonly'] === '1' && \Advans\Installer\V2\SystemCheck::extension($id) === null) {
             return '';
         }
 
-        return \Advans\Installer\SystemCheck::render($id);
+        return \Advans\Installer\V2\SystemCheck::render($id);
     }
 }
