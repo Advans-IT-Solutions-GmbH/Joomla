@@ -551,7 +551,7 @@ namespace {
 
         $db->extensions = [
             'plugin:task:j2commerceprivacy' => ['enabled' => 1, 'params' => '{}'],
-            'plugin:privacy:j2commerce'     => ['enabled' => 0, 'params' => '{"retention_years":"7","fiscal_year_end":"06-30","anonymize_orders":"1"}'],
+            'plugin:privacy:j2commerce'     => ['enabled' => 0, 'params' => '{"retention_years":"7","fiscal_year_end":"06-30","anonymize_orders":"0","delete_addresses":"0"}'],
             'component::com_scheduler'      => ['enabled' => 1, 'params' => '{}'],
             'plugin:system:schedulerunner'  => ['enabled' => 1, 'params' => '{}'],
         ];
@@ -615,7 +615,7 @@ namespace {
 
             return array_column($app->saved, 'type');
         };
-        $assert($created('{}') === ['plg_task_appointments.reminders', 'plg_task_appointments.retention'], 'Defaults: reminders and retention are required, nothing else.');
+        $assert($created('{}') === ['plg_task_appointments.reminders', 'plg_task_appointments.retention', 'plg_task_appointments.teamretention'], 'Defaults: reminders, retention and calendar upkeep retention are required.');
         $assert($app->saved[0]['params'] === ['batch_size' => 100] && $app->saved[0]['execution_rules']['interval-minutes'] === 5, 'Reminders: every five minutes, batch size 100.');
         $assert($created('{"reminder_offsets":" , ","teamcal_enabled":"1"}') === ['plg_task_appointments.retention', 'plg_task_appointments.teamcleanup',
             'plg_task_appointments.teamlog', 'plg_task_appointments.teaminvitations', 'plg_task_appointments.teamretention'], 'Without offsets no reminders; internet calendars on need their four tasks.');

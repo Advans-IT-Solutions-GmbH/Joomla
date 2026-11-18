@@ -185,7 +185,8 @@ extension under `tasks` in `catalog.php`, logic in `ScheduledTasks.php`):
 | `plg_task_j2commerceprivacy.autocleanup` | J2Commerce Privacy | **Required** (legally required anonymisation), daily at 02:15 UTC |
 | `plg_task_appointments.retention` | Appointments | **Required** (booking retention), every 24 hours |
 | `plg_task_appointments.reminders` | Appointments | **Required** while reminder offsets are set, otherwise not needed; every five minutes |
-| `plg_task_appointments.teamcleanup`, `.teamlog`, `.teaminvitations`, `.teamretention` | Appointments | **Required** while the internet calendars are switched on, otherwise not needed; every 24 hours |
+| `plg_task_appointments.teamcleanup`, `.teamlog`, `.teaminvitations` | Appointments | **Required** while the internet calendars are switched on, otherwise not needed; every 24 hours |
+| `plg_task_appointments.teamretention` | Appointments | **Required** (calendar-copy repair and booking upkeep), every 24 hours |
 | `plg_task_appointments.close` | Appointments | **Optional**: created switched off by the component, switched on once the transfer to Close is set up |
 | `plg_task_dmarcreports.ingest` | DMARC Reports Task Plugin and Package | **Required** for automatic ingestion (does nothing without a report source); every hour |
 

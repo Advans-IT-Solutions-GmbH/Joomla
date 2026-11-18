@@ -245,8 +245,12 @@ final class ScheduledTasks
 
         if (isset($spec['inherit'])) {
             $stored = self::params($db, $spec['inherit'][0], $spec['inherit'][2], $spec['inherit'][1]);
+            $names = $spec['inherit'][3] ?? array_keys($params);
 
-            foreach (array_keys($params) as $name) {
+            foreach ($names as $name) {
+                if (!array_key_exists($name, $params)) {
+                    continue;
+                }
                 if (isset($stored[$name]) && is_scalar($stored[$name]) && trim((string) $stored[$name]) !== '') {
                     $params[$name] = is_int($params[$name]) ? (int) $stored[$name] : trim((string) $stored[$name]);
                 }

@@ -421,11 +421,13 @@ class InstallationTest
                 && str_contains($plain, 'The required scheduled task “Appointments: retention” was missing. The installation created it and switched it on: it runs once a day.');
         });
 
-        $this->test('Internet calendar tasks are not created while the internet calendars are switched off', function () {
+        $this->test('Calendar upkeep task is created while feature-only internet calendar tasks are not', function () {
             $result = $this->db->query("SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}scheduler_tasks WHERE type IN ('plg_task_appointments.teamcleanup',"
-                . "'plg_task_appointments.teamlog','plg_task_appointments.teaminvitations','plg_task_appointments.teamretention')");
+                . "'plg_task_appointments.teamlog','plg_task_appointments.teaminvitations')");
+            $retention = $this->db->query("SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}scheduler_tasks WHERE type='plg_task_appointments.teamretention'");
 
-            return $result && (int) $result->fetch_assoc()['cnt'] === 0;
+            return $result && (int) $result->fetch_assoc()['cnt'] === 0
+                && $retention && (int) $retention->fetch_assoc()['cnt'] === 1;
         });
         echo "\n=== Installation Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";

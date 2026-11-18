@@ -673,7 +673,7 @@ checks them in **System → Scheduled Tasks** and decides by itself:
 |---|---|---|---|
 | `plg_task_appointments.retention` | Ended-booking, booking-audit and expired rate-limit retention | **Required** (data protection) | Created switched on when missing: every 24 hours, batch size 100 |
 | `plg_task_appointments.reminders` | Due booking reminders | **Required** while **Reminder offsets (minutes)** is not empty (default `1440,60`), otherwise not needed | Created switched on when missing: every five minutes, batch size 100 |
-| `plg_task_appointments.teamretention` | Per-calendar retention plus booking-calendar upkeep | **Required** while the internet calendars are switched on, otherwise not needed | Created switched on when missing: every 24 hours |
+| `plg_task_appointments.teamretention` | Per-calendar retention plus booking-calendar upkeep | **Required** (also when internet calendars are off) | Created switched on when missing: every 24 hours |
 | `plg_task_appointments.teamcleanup` | Blocked-device cleanup and sign-in-counter expiry | **Required** while the internet calendars are switched on | Created switched on when missing: every 24 hours |
 | `plg_task_appointments.teamlog` | Internet-calendar audit retention | **Required** while the internet calendars are switched on | Created switched on when missing: every 24 hours |
 | `plg_task_appointments.teaminvitations` | Expired internet-calendar invitations | **Required** while the internet calendars are switched on | Created switched on when missing: every 24 hours |
@@ -689,7 +689,8 @@ checks them in **System → Scheduled Tasks** and decides by itself:
   the installation and the system check say what then does not happen and give the menu path to
   switch it on. A task deleted permanently is created again by the next installation or update, so
   switch a task off instead of deleting it.
-- **Not needed** routines (internet calendars switched off, no reminder offsets) are neither created
+- **Not needed** routines (no reminder offsets or feature-only internet-calendar routines when the
+  internet calendars are switched off) are neither created
   nor mentioned. If you switch the internet calendars on later, the **System check** tab of the
   options lists their tasks as missing until the next installation or update creates them (or you
   create them yourself).
