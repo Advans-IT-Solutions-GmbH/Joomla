@@ -563,7 +563,7 @@ namespace {
         $assert(count($app->saved) === 1 && $app->saved[0]['type'] === $routine && $app->saved[0]['state'] === 1, 'A missing required task must be created once, switched on.');
         $rules = $app->saved[0]['execution_rules'];
         $assert($rules['rule-type'] === 'interval-days' && $rules['interval-days'] === 1 && $rules['exec-time'] === '02:15' && $rules['exec-day'] === gmdate('d'), 'The anonymisation task must run every day at 02:15 UTC.');
-        $assert($app->saved[0]['params'] === ['retention_years' => 7, 'fiscal_year_end' => '06-30', 'anonymize_orders' => 0, 'delete_addresses' => 0], 'The task must inherit disabled parent privacy controls instead of restoring destructive defaults: ' . json_encode($app->saved[0]['params']));
+        $assert($app->saved[0]['params'] === ['retention_years' => 7, 'fiscal_year_end' => '06-30', 'anonymize_orders' => 1, 'delete_addresses' => 1], 'The task must retain its form defaults for cleanup switches and inherit only retention settings: ' . json_encode($app->saved[0]['params']));
         $assert($app->saved[0]['title'] === 'PLG_TASK_J2COMMERCEPRIVACY_TASK_AUTOCLEANUP_TITLE' && $app->saved[0]['created_by'] === 42, 'The task must carry the routine title and its creator.');
         $assert(count($app->messages) === 2 && $app->messages[0][1] === 'message', 'The created task and an unproven Lazy Scheduler trigger must be reported.');
         $assert(str_contains($text(), 'was missing. The installation created it and switched it on: it runs every day at 02:15 UTC. It anonymises shop orders')

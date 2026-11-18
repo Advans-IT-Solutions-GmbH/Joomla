@@ -37,7 +37,7 @@ return [
         'purpose'  => 'ADVANS_TASK_PURPOSE_PRIVACY_CLEANUP',
         'rules'    => ['rule-type' => 'interval-days', 'interval-days' => 1, 'exec-time' => '02:15'],
         'form'     => 'forms/autocleanup.xml',
-        'inherit'  => ['plugin', 'privacy', 'j2commerce', ['retention_years', 'fiscal_year_end', 'anonymize_orders', 'delete_addresses']],
+        'inherit'  => ['plugin', 'privacy', 'j2commerce', ['retention_years', 'fiscal_year_end']],
         'settings' => ['ADVANS_TASK_SETTINGS_PRIVACY_CLEANUP', ['retention_years', 'fiscal_year_end']],
     ],
     'plg_task_appointments.reminders' => [
