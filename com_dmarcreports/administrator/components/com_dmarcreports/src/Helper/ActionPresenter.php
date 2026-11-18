@@ -150,6 +150,7 @@ final class ActionPresenter
         $rationale = match ((string) ($evidence['assessment'] ?? '')) {
             'legitimate_dkim' => Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT_DKIM_LEGITIMATE'),
             'spf_only_unresolved' => Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT_SPF_ONLY_UNRESOLVED'),
+            'rejected' => Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT_REJECTED'),
             default => Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT_UNRESOLVED'),
         };
 
