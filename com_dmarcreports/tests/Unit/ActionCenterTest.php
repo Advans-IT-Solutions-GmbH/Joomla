@@ -782,7 +782,6 @@ class ActionCenterTest extends TestCase
                 'spf_only' => 12,
                 'fail' => 0,
                 'dkim_pass_aligned' => 0,
-                'dkim_not_pass' => 12,
                 'spf_pass_aligned' => 12,
                 'policy_domain' => 'example.org',
                 'policy_adkim' => 'r',
@@ -811,8 +810,7 @@ class ActionCenterTest extends TestCase
         $this->assertSame(['192.0.2.62', 'gateway.example.net', 7, 0, 7], $item['params']);
         foreach ([
             'source_ip', 'ptr_host', 'reverse_dns_confidence', 'dkim_pass_aligned',
-            'dkim_pass_unaligned', 'dkim_not_pass', 'spf_pass_aligned',
-            'spf_pass_unaligned', 'spf_not_pass', 'disposition_none',
+            'spf_pass_aligned', 'raw_auth_results_available', 'disposition_none',
             'disposition_quarantine', 'disposition_reject', 'message_count',
             'window_start', 'window_end', 'domain', 'header_from',
             'policy_domain', 'adkim', 'aspf', 'assessment',

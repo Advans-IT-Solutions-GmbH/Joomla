@@ -159,12 +159,10 @@ final class ActionPresenter
                 : Text::_('COM_DMARCREPORTS_EVIDENCE_NOT_FORWARD_CONFIRMED')) . ')</dd>'
             . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_DKIM') . '</dt><dd>'
             . Text::_('COM_DMARCREPORTS_EVIDENCE_PASS_ALIGNED') . ': ' . (int) ($evidence['dkim_pass_aligned'] ?? 0)
-            . ', ' . Text::_('COM_DMARCREPORTS_EVIDENCE_PASS_UNALIGNED') . ': ' . (int) ($evidence['dkim_pass_unaligned'] ?? 0)
-            . ', ' . Text::_('COM_DMARCREPORTS_EVIDENCE_NOT_PASS') . ': ' . (int) ($evidence['dkim_not_pass'] ?? 0) . '</dd>'
+            . '; ' . Text::_('COM_DMARCREPORTS_EVIDENCE_RAW_UNAVAILABLE') . '</dd>'
             . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_SPF') . '</dt><dd>'
             . Text::_('COM_DMARCREPORTS_EVIDENCE_PASS_ALIGNED') . ': ' . (int) ($evidence['spf_pass_aligned'] ?? 0)
-            . ', ' . Text::_('COM_DMARCREPORTS_EVIDENCE_PASS_UNALIGNED') . ': ' . (int) ($evidence['spf_pass_unaligned'] ?? 0)
-            . ', ' . Text::_('COM_DMARCREPORTS_EVIDENCE_NOT_PASS') . ': ' . (int) ($evidence['spf_not_pass'] ?? 0) . '</dd>'
+            . '; ' . Text::_('COM_DMARCREPORTS_EVIDENCE_RAW_UNAVAILABLE') . '</dd>'
             . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_DISPOSITION') . '</dt><dd>' . $esc($dispositions) . '</dd>'
             . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_MESSAGE_COUNT') . '</dt><dd>' . (int) ($evidence['message_count'] ?? 0) . '</dd>'
             . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_WINDOW') . '</dt><dd>' . $esc($window) . '</dd>'

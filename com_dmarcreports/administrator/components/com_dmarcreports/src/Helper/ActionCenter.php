@@ -209,8 +209,6 @@ final class ActionCenter
         $headerFrom = (string) ($source['header_from'] ?? '');
         $dkimAligned = (int) ($source['dkim_pass_aligned'] ?? $source['dkim'] ?? 0);
         $spfAligned = (int) ($source['spf_pass_aligned'] ?? $source['spf_only'] ?? 0);
-        $dkimNotPass = (int) ($source['dkim_not_pass'] ?? 0);
-        $spfNotPass = (int) ($source['spf_not_pass'] ?? 0);
 
         $assessment = match ($class) {
             SourceClassifier::DKIM => 'legitimate_dkim',
@@ -225,11 +223,8 @@ final class ActionCenter
             'ptr_host' => $host,
             'reverse_dns_confidence' => $host !== '' ? 'forward_confirmed' : 'not_forward_confirmed',
             'dkim_pass_aligned' => $dkimAligned,
-            'dkim_pass_unaligned' => (int) ($source['dkim_pass_unaligned'] ?? 0),
-            'dkim_not_pass' => $dkimNotPass,
             'spf_pass_aligned' => $spfAligned,
-            'spf_pass_unaligned' => (int) ($source['spf_pass_unaligned'] ?? 0),
-            'spf_not_pass' => $spfNotPass,
+            'raw_auth_results_available' => false,
             'disposition_none' => (int) ($source['disposition_none'] ?? 0),
             'disposition_quarantine' => (int) ($source['disposition_quarantine'] ?? 0),
             'disposition_reject' => (int) ($source['disposition_reject'] ?? 0),

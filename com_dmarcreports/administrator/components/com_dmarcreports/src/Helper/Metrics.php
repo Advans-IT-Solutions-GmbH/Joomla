@@ -536,54 +536,22 @@ final class Metrics
             . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 AND ' . $inWindow
             . ' THEN ' . $this->db->quoteName('rec.count')
             . ' ELSE 0 END), 0) AS dkim_pass_aligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
-            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 0 AND ' . $inWindow
-            . ' THEN ' . $this->db->quoteName('rec.count')
-            . ' ELSE 0 END), 0) AS dkim_pass_unaligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' <> ' . $this->db->quote('pass')
-            . ' AND ' . $inWindow . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS dkim_not_pass';
         $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
             . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 1 AND ' . $inWindow
             . ' THEN ' . $this->db->quoteName('rec.count')
             . ' ELSE 0 END), 0) AS spf_pass_aligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
-            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 0 AND ' . $inWindow
-            . ' THEN ' . $this->db->quoteName('rec.count')
-            . ' ELSE 0 END), 0) AS spf_pass_unaligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' <> ' . $this->db->quote('pass')
-            . ' AND ' . $inWindow . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS spf_not_pass';
         foreach (['none', 'quarantine', 'reject'] as $disposition) {
             $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.disposition') . ' = ' . $this->db->quote($disposition)
                 . ' AND ' . $inWindow . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS disposition_' . $disposition;
         }
         $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
             . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_dkim_pass_aligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
-            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_dkim_pass_unaligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' <> ' . $this->db->quote('pass')
-            . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_dkim_not_pass';
         $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
             . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_spf_pass_aligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
-            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_spf_pass_unaligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' <> ' . $this->db->quote('pass')
-            . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_spf_not_pass';
         foreach (['none', 'quarantine', 'reject'] as $disposition) {
             $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.disposition') . ' = ' . $this->db->quote($disposition)
                 . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_disposition_' . $disposition;
         }
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
-            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_dkim_pass_aligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
-            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_dkim_pass_unaligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' <> ' . $this->db->quote('pass')
-            . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_dkim_not_pass';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
-            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_spf_pass_aligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
-            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_spf_pass_unaligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' <> ' . $this->db->quote('pass')
-            . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_spf_not_pass';
         foreach (['none', 'quarantine', 'reject'] as $disposition) {
             $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.disposition') . ' = ' . $this->db->quote($disposition)
                 . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_disposition_' . $disposition;
@@ -622,8 +590,7 @@ final class Metrics
             $row['pass']      = $row['dkim'] + $row['spf_only'];
             $row['class']     = SourceClassifier::classify(SourceClassifier::current($row));
             foreach ([
-                'dkim_pass_aligned', 'dkim_pass_unaligned', 'dkim_not_pass',
-                'spf_pass_aligned', 'spf_pass_unaligned', 'spf_not_pass',
+                'dkim_pass_aligned', 'spf_pass_aligned',
                 'disposition_none', 'disposition_quarantine', 'disposition_reject',
             ] as $key) {
                 $row[$key] = (int) ($row[$key] ?? 0);
@@ -632,11 +599,7 @@ final class Metrics
             if ($fallback) {
                 foreach ([
                     'dkim_pass_aligned' => 'lifetime_dkim_pass_aligned',
-                    'dkim_pass_unaligned' => 'lifetime_dkim_pass_unaligned',
-                    'dkim_not_pass' => 'lifetime_dkim_not_pass',
                     'spf_pass_aligned' => 'lifetime_spf_pass_aligned',
-                    'spf_pass_unaligned' => 'lifetime_spf_pass_unaligned',
-                    'spf_not_pass' => 'lifetime_spf_not_pass',
                     'disposition_none' => 'lifetime_disposition_none',
                     'disposition_quarantine' => 'lifetime_disposition_quarantine',
                     'disposition_reject' => 'lifetime_disposition_reject',
@@ -692,16 +655,8 @@ final class Metrics
         $select[] = 'MAX(' . $this->db->quoteName('rec.header_from') . ') AS header_from';
         $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
             . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS dkim_pass_aligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
-            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS dkim_pass_unaligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' <> ' . $this->db->quote('pass')
-            . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS dkim_not_pass';
         $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
             . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS spf_pass_aligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
-            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS spf_pass_unaligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' <> ' . $this->db->quote('pass')
-            . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS spf_not_pass';
         foreach (['none', 'quarantine', 'reject'] as $disposition) {
             $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.disposition') . ' = ' . $this->db->quote($disposition)
                 . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS disposition_' . $disposition;
@@ -811,8 +766,7 @@ final class Metrics
         ];
 
         foreach ([
-            'dkim_pass_aligned', 'dkim_pass_unaligned', 'dkim_not_pass',
-            'spf_pass_aligned', 'spf_pass_unaligned', 'spf_not_pass',
+            'dkim_pass_aligned', 'spf_pass_aligned',
             'disposition_none', 'disposition_quarantine', 'disposition_reject',
         ] as $key) {
             $result[$key] = (int) ($row[$key] ?? 0);
@@ -1197,16 +1151,8 @@ final class Metrics
         $select[] = 'MAX(' . $this->db->quoteName('cur.header_from') . ') AS header_from';
         $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.dkim_result') . ' = ' . $this->db->quote('pass')
             . ' AND ' . $this->db->quoteName('cur.dkim_aligned') . ' = 1 THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS dkim_pass_aligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.dkim_result') . ' = ' . $this->db->quote('pass')
-            . ' AND ' . $this->db->quoteName('cur.dkim_aligned') . ' = 0 THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS dkim_pass_unaligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.dkim_result') . ' <> ' . $this->db->quote('pass')
-            . ' THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS dkim_not_pass';
         $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.spf_result') . ' = ' . $this->db->quote('pass')
             . ' AND ' . $this->db->quoteName('cur.spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS spf_pass_aligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.spf_result') . ' = ' . $this->db->quote('pass')
-            . ' AND ' . $this->db->quoteName('cur.spf_aligned') . ' = 0 THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS spf_pass_unaligned';
-        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.spf_result') . ' <> ' . $this->db->quote('pass')
-            . ' THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS spf_not_pass';
         foreach (['none', 'quarantine', 'reject'] as $disposition) {
             $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.disposition') . ' = ' . $this->db->quote($disposition)
                 . ' THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS disposition_' . $disposition;
@@ -1239,8 +1185,7 @@ final class Metrics
             array_keys($conditions),
             [
                 'last_seen', 'evidence_window_end', 'policy_domain', 'policy_adkim', 'policy_aspf', 'header_from',
-                'dkim_pass_aligned', 'dkim_pass_unaligned', 'dkim_not_pass',
-                'spf_pass_aligned', 'spf_pass_unaligned', 'spf_not_pass',
+                'dkim_pass_aligned', 'spf_pass_aligned',
                 'disposition_none', 'disposition_quarantine', 'disposition_reject',
             ]
         );

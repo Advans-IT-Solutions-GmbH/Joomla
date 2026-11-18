@@ -536,8 +536,7 @@ class MetricsTest
 
                 foreach ([
                     'source_ip', 'policy_domain', 'policy_adkim', 'policy_aspf', 'header_from',
-                    'dkim_pass_aligned', 'dkim_pass_unaligned', 'dkim_not_pass',
-                    'spf_pass_aligned', 'spf_pass_unaligned', 'spf_not_pass',
+                    'dkim_pass_aligned', 'spf_pass_aligned',
                     'disposition_none', 'disposition_quarantine', 'disposition_reject',
                     'total', 'last_seen',
                 ] as $key) {
