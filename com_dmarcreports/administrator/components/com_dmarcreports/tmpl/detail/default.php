@@ -268,6 +268,7 @@ $this->getDocument()->getWebAssetManager()->addInlineStyle(
                                             'window_fallback' => (bool) ($src['evidence_window_fallback'] ?? false),
                                             'domain' => (string) ($m['domain'] ?? ''),
                                             'header_from' => (string) ($src['header_from'] ?? ''),
+                                            'policy_context_mixed' => (bool) ($src['policy_context_mixed'] ?? false),
                                             'policy_domain' => (string) ($src['policy_domain'] ?? ''),
                                             'adkim' => (string) ($src['policy_adkim'] ?? ''),
                                             'aspf' => (string) ($src['policy_aspf'] ?? ''),

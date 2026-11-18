@@ -575,10 +575,14 @@ class MetricsTest
                 $ips = ['10.0.3.1', '10.0.3.3', '10.0.3.6', '10.0.3.7'];
                 $single = $metrics->classifySources($domainId, $ips);
                 $bulk = $metrics->classifySourcesAll([$domainId => $ips]);
+                $bulkDomain = (array) ($bulk[$domainId] ?? []);
+                ksort($single);
+                ksort($bulkDomain);
 
-                return ($bulk[$domainId] ?? null) === $single;
+                return $bulkDomain === $single;
             });
 
+            $this->testMixedPolicyContext();
             $this->runManyFlaggedSourcesTest();
 
             $this->test('Stored new-source items of DKIM-confirmed sources close automatically', function () use ($metrics, $domainId) {
@@ -624,6 +628,104 @@ class MetricsTest
                     // A separate source remains DKIM-confirmed and closes normally.
                     && $states['new_source:' . $domainId . ':10.0.3.7'] === 'auto_done/0'
                     && in_array('new_source:' . $domainId . ':10.0.3.7', $auto, true);
+            });
+        } finally {
+            $this->deleteDomain($domainId);
+        }
+    }
+
+    /**
+     * Mixed aggregate-report policy contexts must never be represented by an
+     * arbitrary MAX() policy tuple next to counts summed across those reports.
+     */
+    private function testMixedPolicyContext(): void
+    {
+        $domain = 'mixed-context.' . self::DOMAIN;
+        $domainId = $this->seedSubdomain($domain, self::DOMAIN, 'none', 'reject');
+
+        try {
+            $update = $this->query()
+                ->update($this->db->quoteName('#__dmarc_reports'))
+                ->set($this->db->quoteName('policy_adkim') . ' = ' . $this->db->quote('r'))
+                ->set($this->db->quoteName('policy_aspf') . ' = ' . $this->db->quote('r'))
+                ->where($this->db->quoteName('domain_id') . ' = ' . $domainId);
+            $this->db->setQuery($update)->execute();
+
+            $report = (object) [
+                'domain_id' => $domainId,
+                'source_id' => 0,
+                'org_name' => 'mixed-context-reporter',
+                'org_email' => 'reports@mixed-context-reporter.test',
+                'report_id' => 'mixed-context-' . $domainId,
+                'report_hash' => hash('sha256', $domain . '|mixed-context'),
+                'date_begin' => self::ANCHOR - self::DAY,
+                'date_end' => self::ANCHOR,
+                'policy_domain' => $domain,
+                'policy_adkim' => 's',
+                'policy_aspf' => 's',
+                'policy_p' => 'none',
+                'policy_pct' => 100,
+                'message_count' => 0,
+                'created' => gmdate('Y-m-d H:i:s'),
+            ];
+            $this->db->insertObject('#__dmarc_reports', $report, 'id');
+
+            $record = (object) [
+                'report_id' => (int) $report->id,
+                'domain_id' => $domainId,
+                'source_ip' => '10.0.1.1',
+                'count' => 5,
+                'disposition' => 'none',
+                'dkim_result' => 'fail',
+                'spf_result' => 'pass',
+                'dkim_aligned' => 0,
+                'spf_aligned' => 1,
+                'header_from' => $domain,
+            ];
+            $this->db->insertObject('#__dmarc_records', $record);
+
+            $metrics = new Metrics($this->db);
+            $detail = $metrics->domainMetrics($domainId);
+            $detailSource = null;
+
+            foreach ($detail['top_sources'] as $source) {
+                if ($source['source_ip'] === '10.0.1.1') {
+                    $detailSource = $source;
+                    break;
+                }
+            }
+
+            $summary = null;
+
+            foreach ($metrics->domainSummaries() as $row) {
+                if ((int) ($row['id'] ?? 0) === $domainId) {
+                    $summary = $row;
+                    break;
+                }
+            }
+
+            $bulk = $summary === null ? [] : ($metrics->actionMetricsForAll([$summary])[$domainId]['flagged_sources'] ?? []);
+            $bulkSource = $bulk[0] ?? [];
+
+            $this->test('Detail evidence marks mixed DMARC policy contexts instead of choosing one tuple', function () use ($detailSource) {
+                return \is_array($detailSource)
+                    && !empty($detailSource['policy_context_mixed'])
+                    && $detailSource['policy_domain'] === ''
+                    && $detailSource['policy_adkim'] === ''
+                    && $detailSource['policy_aspf'] === ''
+                    && $detailSource['header_from'] === ''
+                    && (int) $detailSource['dkim_pass_aligned'] === 10
+                    && (int) $detailSource['spf_pass_aligned'] === 5;
+            });
+
+            $this->test('Bulk action evidence marks the same mixed policy context', function () use ($bulkSource) {
+                return \is_array($bulkSource)
+                    && $bulkSource['ip'] === '10.0.1.1'
+                    && !empty($bulkSource['policy_context_mixed'])
+                    && $bulkSource['policy_domain'] === ''
+                    && $bulkSource['policy_adkim'] === ''
+                    && $bulkSource['policy_aspf'] === ''
+                    && $bulkSource['header_from'] === '';
             });
         } finally {
             $this->deleteDomain($domainId);

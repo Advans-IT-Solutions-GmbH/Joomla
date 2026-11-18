@@ -527,10 +527,18 @@ final class Metrics
         }
 
         $select[] = 'MAX(' . $this->db->quoteName('rep.date_end') . ') AS last_seen';
-        $select[] = 'MAX(' . $this->db->quoteName('rep.policy_domain') . ') AS policy_domain';
-        $select[] = 'MAX(' . $this->db->quoteName('rep.policy_adkim') . ') AS policy_adkim';
-        $select[] = 'MAX(' . $this->db->quoteName('rep.policy_aspf') . ') AS policy_aspf';
-        $select[] = 'MAX(' . $this->db->quoteName('rec.header_from') . ') AS header_from';
+        foreach ([
+            'policy_domain' => 'rep.policy_domain',
+            'policy_adkim' => 'rep.policy_adkim',
+            'policy_aspf' => 'rep.policy_aspf',
+            'header_from' => 'rec.header_from',
+        ] as $name => $column) {
+            $select[] = 'MAX(' . $this->db->quoteName($column) . ') AS ' . $name;
+            $select[] = 'MAX(CASE WHEN ' . $inWindow . ' THEN ' . $this->db->quoteName($column)
+                . ' ELSE NULL END) AS w_' . $name;
+        }
+        $select[] = $this->policyContextMixedSelect('rep', 'rec', null, 'lifetime_policy_context_mixed');
+        $select[] = $this->policyContextMixedSelect('rep', 'rec', $inWindow, 'window_policy_context_mixed');
         $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
             . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 AND ' . $inWindow
             . ' THEN ' . $this->db->quoteName('rec.count')
@@ -555,7 +563,6 @@ final class Metrics
             $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.disposition') . ' = ' . $this->db->quote($disposition)
                 . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_disposition_' . $disposition;
         }
-
         $query = $this->query()
             ->select($select)
             ->from($this->db->quoteName('#__dmarc_records', 'rec'))
@@ -595,6 +602,8 @@ final class Metrics
                 $row[$key] = (int) ($row[$key] ?? 0);
             }
             $fallback = (int) ($row['w_total'] ?? 0) === 0;
+            $contextPrefix = $fallback ? '' : 'w_';
+
             if ($fallback) {
                 foreach ([
                     'dkim_pass_aligned' => 'lifetime_dkim_pass_aligned',
@@ -606,14 +615,16 @@ final class Metrics
                     $row[$key] = (int) ($row[$lifetimeKey] ?? 0);
                 }
             }
+            $row['policy_context_mixed'] = (int) ($row[$fallback ? 'lifetime_policy_context_mixed' : 'window_policy_context_mixed'] ?? 0) > 0;
+            foreach (['policy_domain', 'policy_adkim', 'policy_aspf', 'header_from'] as $field) {
+                $row[$field] = $row['policy_context_mixed']
+                    ? ''
+                    : (string) ($row[$contextPrefix . $field] ?? '');
+            }
             $row['evidence_total'] = $fallback ? (int) $row['total'] : (int) $row['w_total'];
             $row['evidence_window_fallback'] = $fallback;
             $row['evidence_window_start'] = $anchor > 0 ? $anchor - (7 * 86400) : 0;
             $row['evidence_window_end'] = $anchor;
-            $row['policy_domain'] = (string) ($row['policy_domain'] ?? '');
-            $row['policy_adkim'] = (string) ($row['policy_adkim'] ?? '');
-            $row['policy_aspf'] = (string) ($row['policy_aspf'] ?? '');
-            $row['header_from'] = (string) ($row['header_from'] ?? '');
         }
 
         unset($row);
@@ -652,6 +663,7 @@ final class Metrics
         $select[] = 'MAX(' . $this->db->quoteName('rep.policy_adkim') . ') AS policy_adkim';
         $select[] = 'MAX(' . $this->db->quoteName('rep.policy_aspf') . ') AS policy_aspf';
         $select[] = 'MAX(' . $this->db->quoteName('rec.header_from') . ') AS header_from';
+        $select[] = $this->policyContextMixedSelect('rep', 'rec');
         $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
             . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS dkim_pass_aligned';
         $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
@@ -721,6 +733,36 @@ final class Metrics
     }
 
     /**
+     * Whether this source's report context varies across the evidence rows.
+     * When a period condition is supplied, only reports in that period count.
+     */
+    private function policyContextMixedSelect(
+        string $reportAlias,
+        string $recordAlias,
+        ?string $condition = null,
+        string $resultAlias = 'policy_context_mixed'
+    ): string {
+        $varies = [];
+
+        foreach ([
+            $reportAlias . '.policy_domain',
+            $reportAlias . '.policy_adkim',
+            $reportAlias . '.policy_aspf',
+            $recordAlias . '.header_from',
+        ] as $column) {
+            $value = $this->db->quoteName($column);
+
+            if ($condition !== null) {
+                $value = 'CASE WHEN ' . $condition . ' THEN ' . $value . ' ELSE NULL END';
+            }
+
+            $varies[] = 'COUNT(DISTINCT ' . $value . ') > 1';
+        }
+
+        return 'CASE WHEN ' . implode(' OR ', $varies) . ' THEN 1 ELSE 0 END AS ' . $resultAlias;
+    }
+
+    /**
      * SQL summing the message count of the records aliased $alias that match
      * $condition.
      */
@@ -762,7 +804,15 @@ final class Metrics
             'policy_adkim'   => (string) ($row['policy_adkim'] ?? ''),
             'policy_aspf'    => (string) ($row['policy_aspf'] ?? ''),
             'header_from'    => (string) ($row['header_from'] ?? ''),
+            'policy_context_mixed' => (int) ($row['policy_context_mixed'] ?? 0) > 0,
         ];
+
+        if ($result['policy_context_mixed']) {
+            $result['policy_domain'] = '';
+            $result['policy_adkim'] = '';
+            $result['policy_aspf'] = '';
+            $result['header_from'] = '';
+        }
 
         foreach ([
             'dkim_pass_aligned', 'spf_pass_aligned',
@@ -1149,6 +1199,7 @@ final class Metrics
         $select[] = 'MAX(' . $this->db->quoteName('rep.policy_adkim') . ') AS policy_adkim';
         $select[] = 'MAX(' . $this->db->quoteName('rep.policy_aspf') . ') AS policy_aspf';
         $select[] = 'MAX(' . $this->db->quoteName('cur.header_from') . ') AS header_from';
+        $select[] = $this->policyContextMixedSelect('rep', 'cur');
         $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.dkim_result') . ' = ' . $this->db->quote('pass')
             . ' AND ' . $this->db->quoteName('cur.dkim_aligned') . ' = 1 THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS dkim_pass_aligned';
         $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.spf_result') . ' = ' . $this->db->quote('pass')
@@ -1185,7 +1236,7 @@ final class Metrics
             array_keys($conditions),
             [
                 'last_seen', 'evidence_window_end', 'policy_domain', 'policy_adkim', 'policy_aspf', 'header_from',
-                'dkim_pass_aligned', 'spf_pass_aligned',
+                'policy_context_mixed', 'dkim_pass_aligned', 'spf_pass_aligned',
                 'disposition_none', 'disposition_quarantine', 'disposition_reject',
             ]
         );

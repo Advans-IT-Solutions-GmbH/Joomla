@@ -234,6 +234,7 @@ final class ActionCenter
             'window_fallback' => (bool) ($source['evidence_window_fallback'] ?? false),
             'domain' => $domain,
             'header_from' => $headerFrom,
+            'policy_context_mixed' => (bool) ($source['policy_context_mixed'] ?? false),
             'policy_domain' => (string) ($source['policy_domain'] ?? ''),
             'adkim' => (string) ($source['policy_adkim'] ?? ''),
             'aspf' => (string) ($source['policy_aspf'] ?? ''),

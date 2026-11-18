@@ -140,6 +140,12 @@ final class ActionPresenter
         }
         $host = (string) ($evidence['ptr_host'] ?? '');
         $confidence = (string) ($evidence['reverse_dns_confidence'] ?? 'not_forward_confirmed');
+        $policyContext = !empty($evidence['policy_context_mixed'])
+            ? Text::sprintf('COM_DMARCREPORTS_EVIDENCE_POLICY_CONTEXT_MIXED', (string) ($evidence['domain'] ?? ''))
+            : Text::_('COM_DMARCREPORTS_EVIDENCE_DOMAIN') . ': ' . (string) ($evidence['domain'] ?? '') . '; '
+                . Text::_('COM_DMARCREPORTS_EVIDENCE_POLICY_DOMAIN') . ': ' . (string) ($evidence['policy_domain'] ?? '') . '; '
+                . Text::_('COM_DMARCREPORTS_EVIDENCE_HEADER_FROM') . ': ' . (string) ($evidence['header_from'] ?? '') . '; adkim='
+                . (string) ($evidence['adkim'] ?? '') . '; aspf=' . (string) ($evidence['aspf'] ?? '');
 
         $rationale = match ((string) ($evidence['assessment'] ?? '')) {
             'legitimate_dkim' => Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT_DKIM_LEGITIMATE'),
@@ -167,9 +173,7 @@ final class ActionPresenter
             . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_MESSAGE_COUNT') . '</dt><dd>' . (int) ($evidence['message_count'] ?? 0) . '</dd>'
             . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_WINDOW') . '</dt><dd>' . $esc($window) . '</dd>'
             . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_DOMAIN_CONTEXT') . '</dt><dd>'
-            . $esc(Text::_('COM_DMARCREPORTS_EVIDENCE_DOMAIN') . ': ' . (string) ($evidence['domain'] ?? '') . '; '
-            . Text::_('COM_DMARCREPORTS_EVIDENCE_POLICY_DOMAIN') . ': ' . (string) ($evidence['policy_domain'] ?? '') . '; '
-            . Text::_('COM_DMARCREPORTS_EVIDENCE_HEADER_FROM') . ': ' . (string) ($evidence['header_from'] ?? '') . '; adkim=' . (string) ($evidence['adkim'] ?? '') . '; aspf=' . (string) ($evidence['aspf'] ?? '')) . '</dd>'
+            . $esc($policyContext) . '</dd>'
             . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT') . '</dt><dd>' . $esc($rationale) . '</dd>'
             . '</dl>';
     }
