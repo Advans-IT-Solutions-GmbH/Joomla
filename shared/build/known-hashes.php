@@ -161,7 +161,7 @@ if ($name === '' || preg_match('/^[a-z][a-z0-9-]*$/', $prefix) !== 1) {
     exit(1);
 }
 
-$catalog = ['extension' => $name, 'complete' => false, 'unreproducible' => [], 'failed' => [], 'hashes' => []];
+$catalog = ['extension' => $name, 'complete' => false, 'historical' => [], 'unreproducible' => [], 'failed' => [], 'hashes' => []];
 $hashes = [];
 
 // The files of the build in progress.
@@ -268,35 +268,14 @@ try {
 
         if ($directory === null) {
             // A release made before the extension had any build configuration was packaged by
-            // hand. Prefer the published release asset over marking the catalog incomplete, so
-            // strict builds can still recognise every file of that historical release.
+            // hand. It is outside the reproducible build catalog; do not contact GitHub or rely
+            // on a release asset that publishing may already have deleted.
             [$ownCode] = $run(['git', '-C', $root, 'cat-file', '-e', $sha . ':' . ($ownPath === '' ? '' : $ownPath . '/') . 'build.env']);
 
             if ($ownCode === 0) {
                 $catalog['failed'][] = "$releaseVersion: the build configuration names another extension";
             } else {
-                $repository = getenv('GITHUB_REPOSITORY');
-                $assetDirectory = sys_get_temp_dir() . '/advans-known-hashes-asset-' . bin2hex(random_bytes(8));
-                mkdir($assetDirectory, 0700, true);
-                $assetCode = 1;
-
-                if ($repository !== false && $repository !== '' && is_dir($assetDirectory)) {
-                    [$assetCode] = $run(['gh', 'release', 'download', $prefix . '-v' . $releaseVersion, '--repo', $repository, '--pattern', '*.zip', '--dir', $assetDirectory]);
-                }
-
-                $assets = glob($assetDirectory . '/*.zip') ?: [];
-
-                if ($assetCode === 0 && count($assets) === 1) {
-                    $hashArchive($assets[0], $hashes);
-                    $versions[] = $releaseVersion;
-                } else {
-                    $catalog['unreproducible'][] = "$releaseVersion: released before the extension had a build configuration and its published asset is unavailable";
-                }
-
-                foreach ($assets as $asset) {
-                    @unlink($asset);
-                }
-                @rmdir($assetDirectory);
+                $catalog['historical'][] = "$releaseVersion: released before the extension had a build configuration";
             }
 
             continue;
