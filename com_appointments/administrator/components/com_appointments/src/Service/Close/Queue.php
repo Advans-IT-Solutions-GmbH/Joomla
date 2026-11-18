@@ -162,6 +162,12 @@ final class Queue
         // Uncertain POSTs remain uncertain even when a newer change arrives.
         $change = ['target_sequence' => (int) $booking['sequence'],
             'state' => $old['state'] === 'uncertain' ? 'uncertain' : 'pending', 'next_attempt' => 0];
+        if ($old['operation'] === 'matching') {
+            // Remote name matching is resumable only for the snapshot that entered it. A booking
+            // change invalidates that snapshot and must requeue normal delivery without reusing
+            // the old remote-match phase.
+            $change['operation'] = '';
+        }
         $object = (object) (['booking_id' => $id] + $change + ['mac' => self::mac(array_replace($old, $change))]);
         if (!$db->updateObject(self::TABLE, $object, 'booking_id')) {
             throw new \RuntimeException('Close delivery change could not be queued.');
@@ -286,6 +292,8 @@ final class Queue
                 . ' ORDER BY last_attempt ASC, booking_id ASC LIMIT ' . max(1, min(100, $limit)))->loadAssocList();
             foreach ($rows as $row) {
                 $counts['processed']++;
+                $snapshotSequence = (int) $row['target_sequence'];
+                $snapshotOperation = (string) $row['operation'];
                 // Destination binding, contact creation and activity are separate crash-safe checkpoints.
                 for ($step = 0; $step < 4; $step++) {
                     $this->profileKey = null;
@@ -295,6 +303,12 @@ final class Queue
                             $counts['deferred']++;
                         }
                         if ($result !== 'next') {
+                            break;
+                        }
+                        $current = $this->find((int) $row['booking_id']);
+                        if ($current !== null
+                            && ((int) $current['target_sequence'] !== $snapshotSequence
+                                || ($snapshotOperation === 'matching' && (string) $current['operation'] !== 'matching'))) {
                             break;
                         }
                     } catch (DeliveryException $e) {

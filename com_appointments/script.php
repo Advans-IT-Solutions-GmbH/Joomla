@@ -267,7 +267,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $source = $parent->getParent()->getPath('source');
-        require_once JPATH_ADMINISTRATOR . '/components/com_appointments/src/Helper/BundledModuleGuard.php';
+        require_once $source . '/administrator/components/com_appointments/src/Helper/BundledModuleGuard.php';
         $files = array_replace($files,
             \Advans\Component\Appointments\Administrator\Helper\BundledModuleGuard::destinations(
                 $source,
