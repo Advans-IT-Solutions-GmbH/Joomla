@@ -64,8 +64,6 @@ final class Destinations
         if ($definition['type'] === 'package') {
             self::add($files, $root . '/LICENSE.txt', $source . '/LICENSE.txt');
             self::tree($files, $source . '/advansinstaller', $root . '/advansinstaller');
-            // The catalog of released files is read from the incoming package only, never installed.
-            unset($files[str_replace('\\', '/', $root . '/advansinstaller/known-hashes.php')]);
         }
 
         // These are installed by the component's postflight, not its <files>.

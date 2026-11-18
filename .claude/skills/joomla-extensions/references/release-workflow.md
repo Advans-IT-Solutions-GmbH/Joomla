@@ -43,7 +43,7 @@ prepare version + PR       review          squash         tag + GitHub release
 - **Every build rebuilds the release history.** `shared/build/known-hashes.php` rebuilds every
   merged `release: <prefix> vX.Y.Z` commit (prefix = `RELEASE_PREFIX` in `build.env`) with that
   commit's own build scripts and ships the hashes of the built files as
-  `advansinstaller/known-hashes.php`; updates use it to recognise untouched files. Builds need the
+  `advans-known-hashes.php` at the package root (never installed); updates use it to recognise untouched files. Builds need the
   full history (`fetch-depth: 0`); CI, release and publish builds set
   `ADVANS_KNOWN_HASHES_STRICT=1`, so a shallow clone or a release that no longer builds fails.
   `ADVANS_KNOWN_HASHES=skip` skips it for a quick local build (the package then reports every

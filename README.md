@@ -121,7 +121,7 @@ technical question:
 
 "Untouched" means the bytes equal the file this installer wrote during the last successful
 installation on this site (the record `installed.php`) or a file of any earlier release of the
-extension (the catalog `advansinstaller/known-hashes.php` in the package). The build creates the
+extension (the catalog `advans-known-hashes.php` at the root of the package, which Joomla never installs). The build creates the
 catalog by rebuilding every earlier release from its merged release commit (`release: <prefix>
 vX.Y.Z`; the publish workflow deletes older tags, the release commits remain) with that commit's own
 build scripts, and hashing the built files, so the manifests and language files the build stamps

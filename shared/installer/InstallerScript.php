@@ -99,7 +99,7 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
             State::directory($state . '/backups');
             $approved = is_file($stateRoot . '/approved.php') ? State::read($stateRoot . '/approved.php') : [];
             [$approved, $fromPausedCopy] = $this->continuePausedInstallation($source, $state, $approved);
-            $knowledge = Knowledge::load($source . '/advansinstaller/' . Knowledge::CATALOG, $state . '/' . Knowledge::RECORD);
+            $knowledge = Knowledge::load($source . '/' . Knowledge::CATALOG, $state . '/' . Knowledge::RECORD);
             $comparison = FileGuard::compare($files);
             $plan = Planner::plan(
                 $comparison['differing'],
@@ -235,11 +235,6 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
 
             if (!\Joomla\Filesystem\Folder::copy($source, $root, '', true)) {
                 throw new \RuntimeException('Cannot install package system-check support.');
-            }
-
-            // The catalog of released files is only needed while installing; it is not installed.
-            if (is_file($root . '/' . Knowledge::CATALOG)) {
-                unlink($root . '/' . Knowledge::CATALOG);
             }
         }
 

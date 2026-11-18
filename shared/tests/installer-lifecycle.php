@@ -192,14 +192,14 @@ namespace {
         $source = $work . '/source';
         $destination = JPATH_PLUGINS . '/ajax/joomlaajaxforms';
         $state = JPATH_ADMINISTRATOR . '/advans-installer-state/plg_ajax_joomlaajaxforms';
-        mkdir($source . '/advansinstaller', 0700, true);
+        mkdir($source, 0700, true);
         mkdir($destination, 0700, true);
         file_put_contents($source . '/payload.php', '<?php echo "new";');
         file_put_contents($source . '/untouched.php', '<?php echo "untouched, new release";');
         file_put_contents($destination . '/payload.php', '<?php echo "changed on this site";');
         file_put_contents($destination . '/untouched.php', '<?php echo "earlier release";');
         // The catalog of earlier releases knows the untouched file, not the changed one.
-        \Advans\Installer\State::write($source . '/advansinstaller/' . \Advans\Installer\Knowledge::CATALOG, [
+        \Advans\Installer\State::write($source . '/' . \Advans\Installer\Knowledge::CATALOG, [
             'complete' => true,
             'hashes'   => [hash('sha256', '<?php echo "earlier release";')],
         ]);

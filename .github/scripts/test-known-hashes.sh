@@ -20,9 +20,9 @@ cat >ext/build.sh <<'EOF'
 set -e
 cd "$(dirname "$0")"
 source build.env
-rm -rf stage && mkdir -p stage/advansinstaller
+rm -rf stage && mkdir -p stage
 cp payload.txt stage/ && printf 'stamped %s' "$VERSION" >stage/manifest.xml
-printf 'catalog of %s at %s' "$VERSION" "$RANDOM" >stage/advansinstaller/known-hashes.php
+printf 'catalog of %s at %s' "$VERSION" "$RANDOM" >stage/advans-known-hashes.php
 (cd stage && zip -q -r "../${EXTENSION_NAME}_${VERSION}.zip" .)
 rm -rf stage
 EOF

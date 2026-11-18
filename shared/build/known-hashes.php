@@ -1,6 +1,6 @@
 <?php
 /**
- * Write the catalog of released file hashes that the shared installer ships in advansinstaller/.
+ * Write the catalog of released file hashes (advans-known-hashes.php at the root of the package).
  *
  * The installer treats an existing file as untouched when its bytes equal a file of any release of
  * the same extension. The catalog therefore holds the SHA-256 of every file, as built, of every
@@ -31,7 +31,7 @@ if (PHP_SAPI !== 'cli' || $argc !== 4 || !is_dir($argv[1]) || !is_dir($argv[3]))
     exit(1);
 }
 
-const CATALOG_PATH = 'advansinstaller/known-hashes.php';
+const CATALOG_PATH = 'advans-known-hashes.php';
 
 $extension = realpath($argv[1]);
 $output = $argv[2];
@@ -81,7 +81,7 @@ $write = static function (array $catalog) use ($output): void {
 };
 
 /** A catalog never lists itself: its bytes depend on the history that is available. */
-$isCatalog = static fn(string $path): bool => str_ends_with(str_replace('\\', '/', $path), CATALOG_PATH);
+$isCatalog = static fn(string $path): bool => basename(str_replace('\\', '/', $path)) === CATALOG_PATH;
 
 $hashBytes = null;
 $hashArchive = static function (string $zipFile, array &$hashes) use (&$hashArchive, &$hashBytes): void {

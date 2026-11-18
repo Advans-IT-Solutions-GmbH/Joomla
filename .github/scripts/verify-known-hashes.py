@@ -2,7 +2,7 @@
 """Prove that a built package recognises every file of the extension's published release.
 
 The installer treats an existing file as untouched when its bytes appear in the package's
-catalog of released file hashes (advansinstaller/known-hashes.php, written at build time by
+catalog of released file hashes (advans-known-hashes.php at the package root, written at build time by
 rebuilding every earlier release). This check downloads the latest published release asset of
 the extension and fails if any of its files (child packages included) is missing from the
 catalog of the candidate package. It therefore verifies, against the bytes that sites actually
@@ -40,8 +40,8 @@ def files(archive, prefix=""):
             if name.endswith("/"):
                 continue
             payload = package.read(name)
-            if name.endswith("advansinstaller/known-hashes.php"):
-                continue  # A catalog never lists itself; the installer's record covers installed catalogs.
+            if name.rsplit("/", 1)[-1] == "advans-known-hashes.php":
+                continue  # A catalog never lists itself.
             if name.lower().endswith(".zip"):
                 result.update(files(io.BytesIO(payload), f"{prefix}{name}!"))
             else:
@@ -51,7 +51,7 @@ def files(archive, prefix=""):
 
 def catalog(package):
     with zipfile.ZipFile(package) as archive:
-        raw = archive.read("advansinstaller/known-hashes.php")
+        raw = archive.read("advans-known-hashes.php")
     if not raw.startswith(ENVELOPE):
         raise ValueError("The catalog has no state envelope")
     return json.loads(raw[len(ENVELOPE):])

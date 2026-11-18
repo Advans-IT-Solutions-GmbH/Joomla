@@ -19,8 +19,11 @@ defined('_JEXEC') or die;
  */
 final class Knowledge
 {
-    /** Catalog of released file hashes, staged into advansinstaller/ of the package at build time. */
-    public const CATALOG = 'known-hashes.php';
+    /**
+     * Catalog of released file hashes at the root of the package, staged at build time. No
+     * manifest declares the package root, so Joomla never installs it.
+     */
+    public const CATALOG = 'advans-known-hashes.php';
 
     /** Per-site record of the files written by the last successful installation. */
     public const RECORD = 'installed.php';

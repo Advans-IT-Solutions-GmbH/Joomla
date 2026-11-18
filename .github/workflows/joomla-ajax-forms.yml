@@ -94,7 +94,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          # The build rebuilds every earlier release from its release commit (known-hashes.php).
+          # The build rebuilds every earlier release from its release commit (advans-known-hashes.php).
           fetch-depth: 0
 
       # The tests use the package produced by build.sh, the same script the
