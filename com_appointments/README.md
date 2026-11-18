@@ -694,6 +694,9 @@ checks them in **System → Scheduled Tasks** and decides by itself:
   nor mentioned. If you switch the internet calendars on later, the **System check** tab of the
   options lists their tasks as missing until the next installation or update creates them (or you
   create them yourself).
+  `teamretention` is never in this not-needed set: it remains required for booking-calendar upkeep
+  and failed guest-erasure copy repair even while internet calendars are off. Do not create a second
+  worker manually; install/update and the shared installer preserve the existing routine row.
 - If a task cannot be created, the installation shows a warning and you create it by hand.
 
 The **System check** tab of the component options and of the task plugin lists every required task

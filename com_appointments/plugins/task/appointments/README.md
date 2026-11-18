@@ -44,7 +44,7 @@ Component uninstall removes this plugin and its Scheduler tasks. Follow the [com
 
 Reminder and booking-retention tasks have `batch_size=100`, validated from **1 to 1000**. Configure offsets, booking/audit retention, erasure mode and public URL in component options. Per-event booking retention can override the default. Internet-calendar routines use their service-specific controls, not this batch form.
 
-Use traffic-triggered lazy scheduling only when its timing is sufficient. For regular unattended execution configure system/web cron; the Joomla CLI entry is `php cli/joomla.php scheduler:run`. The installer creates the calendar tasks while the internet calendars are switched on. Calendar routines normally do nothing while internet calendars are disabled, but `teamretention` still performs booking-calendar upkeep.
+Use traffic-triggered lazy scheduling only when its timing is sufficient. For regular unattended execution configure system/web cron; the Joomla CLI entry is `php cli/joomla.php scheduler:run`. The shared installer creates `teamretention` unconditionally because it repairs failed guest-erasure calendar copies and advances booking-calendar upkeep even while internet calendars are disabled. It creates the three feature-only calendar routines while internet calendars are switched on. Do not create a second `teamretention` worker manually: an existing routine row is never duplicated and operators should switch off or keep the existing row instead.
 
 ## Usage, Permissions and Data Handling
 

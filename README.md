@@ -194,6 +194,8 @@ extension under `tasks` in `catalog.php`, logic in `ScheduledTasks.php`):
   the defaults of the task plugin's form (J2Commerce Privacy: with the retention period and fiscal
   year end stored in the privacy plugin), and the message after the installation names it, its
   schedule and why it matters.
+- The Appointments `teamretention` routine is always required, including when internet calendars
+  are switched off. It repairs booking-calendar copy operations and must not be duplicated manually.
 - An **existing** task is never changed or duplicated. A required task that is **switched off or
   trashed** stays so (someone decided it); the message after the installation and the system check
   say what then does not happen and give the menu path to switch it on.
