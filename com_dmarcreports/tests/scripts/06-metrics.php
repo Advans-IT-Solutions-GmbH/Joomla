@@ -758,7 +758,11 @@ class MetricsTest
                 $bulkIps = array_map(static fn (array $source): string => $source['ip'], $bulk);
 
                 return count($bulk) === Metrics::DASHBOARD_FLAGGED_SOURCE_LIMIT
-                    && $bulkIps === array_slice($detailIps, 0, Metrics::DASHBOARD_FLAGGED_SOURCE_LIMIT);
+                    && $bulkIps === array_slice($detailIps, 0, Metrics::DASHBOARD_FLAGGED_SOURCE_LIMIT)
+                    && !in_array(false, array_map(
+                        static fn (array $source): bool => (int) ($source['evidence_window_end'] ?? 0) === self::ANCHOR,
+                        $bulk
+                    ), true);
             });
 
             $this->test('The domain source table includes all more-than-20 flagged sources', function () use ($detail, $detailIps) {

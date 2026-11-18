@@ -1144,6 +1144,7 @@ final class Metrics
         }
 
         $select[] = 'MAX(' . $this->db->quoteName('rep.date_end') . ') AS last_seen';
+        $select[] = 'MAX(' . $this->db->quoteName('a.anchor') . ') AS evidence_window_end';
         $select[] = 'MAX(' . $this->db->quoteName('rep.policy_domain') . ') AS policy_domain';
         $select[] = 'MAX(' . $this->db->quoteName('rep.policy_adkim') . ') AS policy_adkim';
         $select[] = 'MAX(' . $this->db->quoteName('rep.policy_aspf') . ') AS policy_aspf';
