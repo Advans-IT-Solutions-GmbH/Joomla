@@ -225,6 +225,7 @@ $this->getDocument()->getWebAssetManager()->addInlineStyle(
                     <div class="alert alert-info mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_NO_SOURCES'); ?></div>
                 <?php else : ?>
                     <p class="text-muted"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_SOURCES_INTRO'); ?></p>
+                    <p class="text-muted small"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_SOURCES_PERIOD'); ?></p>
                     <?php if (empty($m['host_name_lookups'])) : ?>
                         <p class="text-muted"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_SOURCES_NAMES_DISABLED'); ?></p>
                     <?php endif; ?>

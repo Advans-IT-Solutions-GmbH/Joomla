@@ -399,6 +399,98 @@ final class Metrics
     }
 
     /**
+     * Classify several domains' pending source addresses in one grouped query.
+     *
+     * @param   array<int, string[]>  $requests
+     *
+     * @return  array<int, array<string, string>>
+     */
+    public function classifySourcesAll(array $requests): array
+    {
+        $domains = [];
+
+        foreach ($requests as $domainId => $ips) {
+            $domainId = (int) $domainId;
+            $ips = array_values(array_unique(array_filter(array_map('strval', (array) $ips), static fn (string $ip): bool => $ip !== '')));
+
+            if ($domainId > 0 && $ips !== []) {
+                $domains[$domainId] = $ips;
+            }
+        }
+
+        if ($domains === []) {
+            return [];
+        }
+
+        $domainIds = array_keys($domains);
+        $inDomains = $this->intList($domainIds);
+        $ips = [];
+
+        foreach ($domains as $domainIps) {
+            foreach ($domainIps as $ip) {
+                $ips[$ip] = true;
+            }
+        }
+
+        $inIps = implode(',', array_map(fn (string $ip): string => $this->db->quote($ip), array_keys($ips)));
+        $window = 7 * 86400;
+
+        $anchor = (string) $this->query()
+            ->select([
+                $this->db->quoteName('domain_id'),
+                'MAX(' . $this->db->quoteName('date_end') . ') AS anchor',
+            ])
+            ->from($this->db->quoteName('#__dmarc_reports'))
+            ->where($this->db->quoteName('domain_id') . ' IN (' . $inDomains . ')')
+            ->group($this->db->quoteName('domain_id'));
+
+        $select = [
+            $this->db->quoteName('rec.domain_id', 'domain_id'),
+            $this->db->quoteName('rec.source_ip', 'source_ip'),
+        ];
+
+        foreach ($this->figureConditions('rec') as $name => $condition) {
+            $select[] = $this->sumWhen($condition, 'rec') . ' AS ' . $name;
+            $windowCondition = '(' . $condition . ') AND '
+                . $this->db->quoteName('rep.date_end') . ' > (' . $this->db->quoteName('a.anchor') . ' - ' . $window . ')'
+                . ' AND ' . $this->db->quoteName('rep.date_end') . ' <= ' . $this->db->quoteName('a.anchor');
+            $select[] = $this->sumWhen($windowCondition, 'rec') . ' AS w_' . $name;
+        }
+
+        $query = $this->query()
+            ->select($select)
+            ->from($this->db->quoteName('#__dmarc_records', 'rec'))
+            ->join(
+                'INNER',
+                $this->db->quoteName('#__dmarc_reports', 'rep'),
+                $this->db->quoteName('rep.id') . ' = ' . $this->db->quoteName('rec.report_id')
+            )
+            ->join(
+                'INNER',
+                '(' . $anchor . ') AS ' . $this->db->quoteName('a'),
+                $this->db->quoteName('a.domain_id') . ' = ' . $this->db->quoteName('rec.domain_id')
+            )
+            ->where($this->db->quoteName('rec.domain_id') . ' IN (' . $inDomains . ')')
+            ->where($this->db->quoteName('rec.source_ip') . ' IN (' . $inIps . ')')
+            ->group($this->db->quoteName('rec.domain_id') . ', ' . $this->db->quoteName('rec.source_ip'));
+
+        $classes = [];
+
+        foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
+            foreach (array_keys($this->figureConditions('rec')) as $name) {
+                $row[$name] = (int) $row[$name];
+                $row['w_' . $name] = (int) $row['w_' . $name];
+            }
+
+            $domainId = (int) $row['domain_id'];
+            $ip = (string) $row['source_ip'];
+            $classes[$domainId][$ip] = SourceClassifier::classify(SourceClassifier::current($row));
+        }
+
+        return $classes;
+    }
+
+    /**
      * Per-source figures of a domain: lifetime totals, the same figures for the
      * current reporting window (prefixed `w_`, the seven days up to the newest
      * report end, as the Action Center measures them) and the end of the newest
@@ -484,7 +576,7 @@ final class Metrics
      *
      * @return array<int, array<string, mixed>>
      */
-    private function flaggedSources(int $domainId, int $anchor, int $limit = 20): array
+    private function flaggedSources(int $domainId, int $anchor, int $limit = 0): array
     {
         if ($anchor === 0) {
             return [];
@@ -518,7 +610,9 @@ final class Metrics
             ->having($this->flaggedHaving('rec'))
             ->order('spf_only DESC, fail_delivered DESC, ' . $this->db->quoteName('rec.source_ip') . ' ASC');
 
-        $query->setLimit($limit);
+        if ($limit > 0) {
+            $query->setLimit($limit);
+        }
 
         return array_map([self::class, 'flaggedRow'], $this->db->setQuery($query)->loadAssocList() ?: []);
     }
@@ -915,8 +1009,9 @@ final class Metrics
     /**
      * The flagged sources of every supplied domain's CURRENT reporting window,
      * keyed by domain id, resolved in a single grouped query and ranked so the
-     * database returns only the top $limit per domain. Mirrors flaggedSources()
-     * for a single domain, but anchors each domain's window on its own newest
+     * query may return every flagged source or apply an optional top $limit per
+     * domain. Mirrors flaggedSources() for a single domain, but anchors each
+     * domain's window on its own newest
      * report through a derived per-domain anchor table so one query serves all
      * domains at once.
      *
@@ -924,7 +1019,7 @@ final class Metrics
      *
      * @return  array<int, array<int, array<string, mixed>>>
      */
-    private function flaggedSourcesAll(array $domainIds, int $limit = 20): array
+    private function flaggedSourcesAll(array $domainIds, int $limit = 0): array
     {
         if ($domainIds === []) {
             return [];
@@ -983,30 +1078,40 @@ final class Metrics
         $columns = array_merge(['domain_id', 'source_ip'], array_keys($conditions), ['last_seen']);
         $quoted  = array_map(fn (string $column): string => $this->db->quoteName($column), $columns);
 
-        // Rank each domain's flagged sources the way flaggedSources() orders them
-        // so the outer query keeps only the top $limit per domain. Ranking and
-        // slicing in the database bounds both the result transfer and PHP memory
-        // to $limit rows per domain; the source_ip tiebreak makes the ranking
-        // deterministic.
-        $ranked = (string) $this->query()
-            ->select(
-                array_merge(
-                    $quoted,
-                    [
-                        'ROW_NUMBER() OVER (PARTITION BY ' . $this->db->quoteName('domain_id')
-                            . ' ORDER BY ' . $this->db->quoteName('spf_only') . ' DESC, '
-                            . $this->db->quoteName('fail_delivered') . ' DESC, '
-                            . $this->db->quoteName('source_ip') . ' ASC) AS rn',
-                    ]
+        // Optional callers can rank and limit each domain. The normal dashboard
+        // path uses no limit, so every SPF-only and delivered-failing source is
+        // returned. The source_ip tiebreak makes rankings deterministic.
+        if ($limit > 0) {
+            $ranked = (string) $this->query()
+                ->select(
+                    array_merge(
+                        $quoted,
+                        [
+                            'ROW_NUMBER() OVER (PARTITION BY ' . $this->db->quoteName('domain_id')
+                                . ' ORDER BY ' . $this->db->quoteName('spf_only') . ' DESC, '
+                                . $this->db->quoteName('fail_delivered') . ' DESC, '
+                                . $this->db->quoteName('source_ip') . ' ASC) AS rn',
+                        ]
+                    )
                 )
-            )
-            ->from('(' . $grouped . ') AS ' . $this->db->quoteName('g'));
+                ->from('(' . $grouped . ') AS ' . $this->db->quoteName('g'));
 
-        $query = $this->query()
-            ->select($quoted)
-            ->from('(' . $ranked . ') AS ' . $this->db->quoteName('r'))
-            ->where($this->db->quoteName('rn') . ' <= ' . (int) max(1, $limit))
-            ->order($this->db->quoteName('domain_id') . ' ASC, ' . $this->db->quoteName('rn') . ' ASC');
+            $query = $this->query()
+                ->select($quoted)
+                ->from('(' . $ranked . ') AS ' . $this->db->quoteName('r'))
+                ->where($this->db->quoteName('rn') . ' <= ' . (int) $limit)
+                ->order($this->db->quoteName('domain_id') . ' ASC, ' . $this->db->quoteName('rn') . ' ASC');
+        } else {
+            $query = $this->query()
+                ->select($quoted)
+                ->from('(' . $grouped . ') AS ' . $this->db->quoteName('g'))
+                ->order(
+                    $this->db->quoteName('domain_id') . ' ASC, '
+                    . $this->db->quoteName('spf_only') . ' DESC, '
+                    . $this->db->quoteName('fail_delivered') . ' DESC, '
+                    . $this->db->quoteName('source_ip') . ' ASC'
+                );
+        }
 
         $map = [];
 

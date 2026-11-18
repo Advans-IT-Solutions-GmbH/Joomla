@@ -21,9 +21,11 @@ defined('_JEXEC') or die;
  * still works and the name is simply left out.
  *
  * Lookups are cached (a confirmed name for seven days, no name for one day) and
- * time-limited: one call starts no new lookup once its budget of lookups or
- * seconds is spent, and the remaining sources are resolved on a later page view.
- * Ingestion never calls this class, so a slow resolver can never hold it up.
+ * best-effort time-limited: one call starts no new lookup once its budget of
+ * lookups or seconds is spent, and checks the shared deadline before PTR and
+ * forward DNS calls. PHP's dns_get_record() has no separate per-call timeout,
+ * so it cannot guarantee that a stalled resolver cannot delay the page.
+ * Ingestion never calls this class.
  *
  * @since  1.4.0
  */
@@ -112,7 +114,7 @@ final class SourceHostNames
             }
 
             $lookups++;
-            $host       = $this->lookup($ip);
+            $host       = $this->lookupWithin($ip, $start + $this->budgetSeconds);
             $names[$ip] = $host;
             $ttl        = $host !== '' ? self::TTL_CONFIRMED : self::TTL_UNCONFIRMED;
             $this->store->set($ip, $host, (int) ($this->clock)() + $ttl);
@@ -127,9 +129,18 @@ final class SourceHostNames
      */
     public function lookup(string $ip): string
     {
+        return $this->lookupWithin($ip, ($this->clock)() + $this->budgetSeconds);
+    }
+
+    private function lookupWithin(string $ip, float $deadline): string
+    {
         $packed = @inet_pton($ip);
 
         if ($packed === false || $this->resolver === null) {
+            return '';
+        }
+
+        if (($this->clock)() >= $deadline) {
             return '';
         }
 
@@ -139,11 +150,19 @@ final class SourceHostNames
             return '';
         }
 
+        if (($this->clock)() >= $deadline) {
+            return '';
+        }
+
         foreach (\array_slice((array) $ptr, 0, self::MAX_NAMES) as $name) {
             $name = strtolower(rtrim((string) $name, '.'));
 
             if (!self::isHostName($name)) {
                 continue;
+            }
+
+            if (($this->clock)() >= $deadline) {
+                return '';
             }
 
             try {

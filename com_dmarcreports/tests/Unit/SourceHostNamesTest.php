@@ -15,7 +15,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * Sender host names: only forward-confirmed names are shown, lookups are cached
- * and time-limited, and a failing resolver never breaks anything.
+ * and checked with a best-effort deadline, and a failing resolver never breaks anything.
  *
  * @since  1.4.0
  */
@@ -154,10 +154,10 @@ class SourceHostNamesTest extends TestCase
         $this->assertSame(['192.0.2.1' => '', '192.0.2.2' => '', '192.0.2.3' => '', '192.0.2.4' => ''], $result);
     }
 
-    public function testTimeBudgetStopsFurtherLookups(): void
+    public function testElapsedTimeCheckStopsFurtherLookups(): void
     {
-        // Every lookup takes 1.5 s on the fake clock; with a 2 s budget the third
-        // address is no longer looked up (it is resolved on a later page view).
+        // Every lookup takes 1.5 s on the fake clock; with a 2 s best-effort
+        // deadline the third address is no longer looked up.
         $now      = 0.0;
         $clock    = static function () use (&$now): float {
             return $now;

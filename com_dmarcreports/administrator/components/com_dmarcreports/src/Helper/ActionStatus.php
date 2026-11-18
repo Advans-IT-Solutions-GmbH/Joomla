@@ -107,7 +107,7 @@ final class ActionStatus
      *
      * @return  int  The number of items resolved.
      */
-    public function resolveConfirmedNewSources(\Closure $classify): int
+    public function resolveConfirmedNewSources(\Closure $classify, ?\Closure $classifyAll = null): int
     {
         $query = $this->query()
             ->select([$this->db->quoteName('id'), $this->db->quoteName('domain_id'), $this->db->quoteName('action_key')])
@@ -130,23 +130,43 @@ final class ActionStatus
         $resolved = 0;
         $now      = gmdate('Y-m-d H:i:s');
 
+        $domainClasses = [];
+
+        if ($classifyAll !== null) {
+            $request = [];
+
+            foreach ($byDomain as $domainId => $rows) {
+                $request[$domainId] = array_values(array_unique($rows));
+            }
+
+            $domainClasses = (array) $classifyAll($request);
+        }
+
         foreach ($byDomain as $domainId => $rows) {
-            $classes = (array) $classify($domainId, array_values(array_unique($rows)));
+            $classes = $domainClasses[$domainId] ?? null;
+
+            if ($classes === null) {
+                $classes = (array) $classify($domainId, array_values(array_unique($rows)));
+            }
 
             foreach ($rows as $id => $ip) {
                 if (($classes[$ip] ?? '') !== SourceClassifier::DKIM) {
                     continue;
                 }
 
-                $update = (object) [
-                    'id'           => $id,
-                    'status'       => self::AUTO_DONE,
-                    'snooze_until' => null,
-                    'modified'     => $now,
-                    'modified_by'  => 0,
-                ];
-                $this->db->updateObject('#__dmarc_actions', $update, 'id', true);
-                $resolved++;
+                $update = $this->query()
+                    ->update($this->db->quoteName('#__dmarc_actions'))
+                    ->set($this->db->quoteName('status') . ' = ' . $this->db->quote(self::AUTO_DONE))
+                    ->set($this->db->quoteName('snooze_until') . ' = NULL')
+                    ->set($this->db->quoteName('modified') . ' = ' . $this->db->quote($now))
+                    ->set($this->db->quoteName('modified_by') . ' = 0')
+                    ->where($this->db->quoteName('id') . ' = ' . (int) $id)
+                    ->where($this->db->quoteName('status') . ' IN (' . $this->db->quote('open') . ', ' . $this->db->quote('snoozed') . ')');
+                $this->db->setQuery($update)->execute();
+
+                if ((int) $this->db->getAffectedRows() === 1) {
+                    $resolved++;
+                }
             }
         }
 

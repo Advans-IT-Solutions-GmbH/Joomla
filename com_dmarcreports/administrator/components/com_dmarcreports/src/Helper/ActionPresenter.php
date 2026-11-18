@@ -157,7 +157,7 @@ final class ActionPresenter
             return '';
         }
 
-        return Route::_('index.php?option=com_dmarcreports&view=detail&domain_id=' . $domainId) . '#' . $anchor;
+        return Route::_('index.php?option=com_dmarcreports&view=detail&domain_id=' . $domainId, false) . '#' . $anchor;
     }
 
     /**

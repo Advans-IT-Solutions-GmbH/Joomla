@@ -84,9 +84,10 @@ class DetailModel extends BaseDatabaseModel
      * source (key `host`). Names are looked up only with the "dns_diagnostics"
      * option on, because each lookup sends the sender address to the configured
      * resolver; otherwise only names already cached are shown. Flagged sources
-     * are resolved first, and the lookups are cached and time-limited
-     * ({@see SourceHostNames}), so a slow resolver costs at most a short delay
-     * and the classification never depends on it.
+     * are resolved first, and the lookups are cached and checked with a
+     * best-effort shared deadline ({@see SourceHostNames}). PHP's DNS resolver
+     * has no separate per-call timeout, so the classification never depends on
+     * DNS and no hard in-flight timeout is guaranteed.
      *
      * @param   array<string, mixed>  $metrics
      *

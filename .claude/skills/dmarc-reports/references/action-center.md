@@ -71,8 +71,8 @@ top 20 by volume plus every flagged source, so each item can link to its row
 (`ActionPresenter::sourceLink()`, anchor `SourceClassifier::anchor()`).
 
 Host names: `SourceHostNames` shows only forward-confirmed PTR names, caches them in Joomla's cache
-(`JoomlaHostNameStore`, 7 days confirmed / 1 day otherwise), limits new lookups per call (10, about
-2 s) and never runs during ingestion. The detail view looks names up only with `dns_diagnostics` on,
+(`JoomlaHostNameStore`, 7 days confirmed / 1 day otherwise), limits new lookups per call (10 with
+a best-effort elapsed-time check, not a guaranteed resolver deadline) and never runs during ingestion. The detail view looks names up only with `dns_diagnostics` on,
 the dashboard reads the cache only. Names never influence the classification.
 
 `new_source` is retired (no longer generated). `ActionStatus::resolveConfirmedNewSources()` closes

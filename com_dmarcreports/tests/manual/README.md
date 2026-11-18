@@ -386,7 +386,7 @@ unattended. It must not re-implement IMAP or parsing.
 | SY-01 | POS | Open the System Check. | It reports the runtime capabilities (`EnvironmentCheck`, including the socket-function check) and the MTA-STS/TLS-RPT diagnostics; it does not claim to show plugin or task status, the last run, or mailbox reachability. Inspect task and source status in their own screens. |
 | SY-02 | POS | In an isolated runtime, disable the `stream_socket_client` function so `EnvironmentCheck::sockets()` reports a warning. | The capability warning is surfaced; manual upload still works. Removing ext-imap or blocking outbound access alone does not change this check. |
 | SY-03 | POS | Leave DNS diagnostics off (default) and open a domain detail view. | No DNS lookup is performed. |
-| SY-04 | POS | Enable DNS diagnostics and open a domain detail view. | Published SPF/DMARC records are checked; only the domain name is disclosed to the resolver, never report contents. |
+| SY-04 | POS | Enable DNS diagnostics and open a domain detail view. | Published SPF/DMARC records are checked; monitored domain names and sending-source IP addresses are disclosed to the resolver, never report contents. |
 | SY-05 | NEG | Point a domain at a missing SPF/DMARC record. | A `dns_*` finding suggests the record to publish. |
 | SY-06 | NEG | Force a DNS lookup error (null) versus a genuinely absent record (`[]`). | A null result emits `dns_lookup_error` and suppresses the publish suggestion; a transient outage is not reported as a missing record. |
 | SY-07 | NEG | Exercise separately: a duplicate DMARC record, a duplicate SPF record, a malformed `p`/`pct`, and a lookalike version token (`v=DMARC10`, `v=spf10`). | The duplicates are reported as `dns_dmarc_duplicate`/`dns_spf_duplicate`; the malformed policy tags as `dns_dmarc_invalid`; the lookalike version is treated as missing via the word-boundary match. |
@@ -459,9 +459,9 @@ These cases do not replace a separate, complete security audit.
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
 | PR-01 | INT | Block outbound Internet for the isolated environment except the configured mailbox; run ingestion and open the dashboard. | Ingestion and the dashboard work; no report data is sent anywhere. |
-| PR-02 | INT | Inspect network activity through a full workflow. | The only outbound connections are the configured IMAP mailbox, the optional DNS lookups (domain name only), Joomla's own update check (version metadata only) and, when MTA-STS diagnostics are enabled, the HTTPS MTA-STS policy fetch to the policy host (`MtaStsDiagnostics::inspectHostedPolicy()` via `HttpPolicyFetcher`). No report contents or mailbox credentials are ever sent, and there is no third-party analysis service. |
+| PR-02 | INT | Inspect network activity through a full workflow. | The only outbound connections are the configured IMAP mailbox, the optional DNS lookups (monitored domain names and sending-source IP addresses), Joomla's own update check (version metadata only) and, when MTA-STS diagnostics are enabled, the HTTPS MTA-STS policy fetch to the policy host (`MtaStsDiagnostics::inspectHostedPolicy()` via `HttpPolicyFetcher`). No report contents or mailbox credentials are ever sent, and there is no third-party analysis service. |
 | PR-03 | POS | After ingestion, inspect where report data lives. | Parsed report data is stored only in the local `#__dmarc_*`/`#__dmarc_tlsrpt_*` tables and is never transmitted. |
-| PR-04 | POS | Confirm DNS diagnostics default state and its disclosure. | Off by default; when enabled, only the domain name is disclosed to the resolver, never report contents. |
+| PR-04 | POS | Confirm DNS diagnostics default state and its disclosure. | Off by default; when enabled, monitored domain names and sending-source IP addresses are disclosed to the resolver, never report contents. |
 | PR-05 | POS | Inspect the stored mailbox password everywhere it could appear. | Encrypted at rest in `password_enc`; never logged and never in `last_message`. |
 | PR-06 | POS | Delete a domain, then uninstall the package. | Deleting a domain removes its data per the documented behaviour; uninstall drops every `#__dmarc_*`/`#__dmarc_tlsrpt_*` table and all collected data. |
 | PR-07 | INT | Export a domain's records as CSV and inspect the file. | Only the authorised domain's records appear; no credentials, secrets or tokens are present. |
@@ -554,7 +554,7 @@ Configure this scenario **only through Joomla administration**, without file or 
 | 6 | Drill into the domain detail. | Top IPs, pass/fail breakdown, timeline and the MTA-STS records card render. |
 | 7 | Upload a TLS-RPT JSON report. | It is stored separately; the TLS reporting card appears. |
 | 8 | Request `/.well-known/mta-sts.txt` on the `mta-sts.` host through the documented rule. | The generated policy is served; changing the mode changes it. |
-| 9 | Enable DNS diagnostics, then open the domain detail page and the System Check. | The domain detail page shows the SPF/DMARC findings (`DetailModel::getDnsDiagnostics()`); the System Check shows the runtime capabilities and the MTA-STS/TLS-RPT diagnostics (which may make the optional HTTPS policy request). Only the domain name is disclosed to the resolver. |
+| 9 | Enable DNS diagnostics, then open the domain detail page and the System Check. | The domain detail page shows the SPF/DMARC findings (`DetailModel::getDnsDiagnostics()`); the System Check shows the runtime capabilities and the MTA-STS/TLS-RPT diagnostics (which may make the optional HTTPS policy request). Monitored domain names and sending-source IP addresses are disclosed to the resolver. |
 | 10 | Export the records as CSV, then uninstall the package on a disposable copy. | The export contains only authorised records; uninstall drops every table and all data. |
 
 Then repeat the core ingest-and-read flow in a second language.

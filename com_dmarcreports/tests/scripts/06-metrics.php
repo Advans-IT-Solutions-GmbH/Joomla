@@ -546,6 +546,8 @@ class MetricsTest
                 ];
             });
 
+            $this->runManyFlaggedSourcesTest();
+
             $this->test('Stored new-source items of DKIM-confirmed sources close automatically', function () use ($metrics, $domainId) {
                 $this->insertAction($domainId, 'new_source:' . $domainId . ':10.0.3.1', 'snoozed');
                 $this->insertAction($domainId, 'new_source:' . $domainId . ':10.0.3.2', 'snoozed');
@@ -648,6 +650,89 @@ class MetricsTest
         }
 
         return $domainId;
+    }
+
+    private function runManyFlaggedSourcesTest(): void
+    {
+        $domainId = $this->insertDomain('many-flags.' . self::DOMAIN);
+
+        try {
+            $report = (object) [
+                'domain_id'     => $domainId,
+                'source_id'     => 0,
+                'org_name'      => 'many-flags',
+                'org_email'     => 'reports@many-flags.test',
+                'report_id'     => 'many-flags-' . $domainId,
+                'report_hash'   => hash('sha256', 'many-flags|' . $domainId . '|' . self::ANCHOR),
+                'date_begin'    => self::ANCHOR - self::DAY,
+                'date_end'      => self::ANCHOR,
+                'policy_domain' => 'many-flags.' . self::DOMAIN,
+                'policy_p'      => 'none',
+                'policy_pct'    => 100,
+                'message_count' => 0,
+                'created'       => gmdate('Y-m-d H:i:s'),
+            ];
+            $this->db->insertObject('#__dmarc_reports', $report, 'id');
+
+            for ($i = 1; $i <= 25; $i++) {
+                $record = (object) [
+                    'report_id'    => (int) $report->id,
+                    'domain_id'    => $domainId,
+                    'source_ip'    => sprintf('10.0.6.%d', $i),
+                    'count'        => 1,
+                    'disposition'  => 'none',
+                    'dkim_result'  => 'fail',
+                    'spf_result'   => 'fail',
+                    'dkim_aligned' => 0,
+                    'spf_aligned'  => 0,
+                    'header_from'  => 'many-flags.' . self::DOMAIN,
+                ];
+                $this->db->insertObject('#__dmarc_records', $record);
+            }
+
+            $metrics = new Metrics($this->db);
+            $detail  = $metrics->domainMetrics($domainId);
+            $detailIps = array_map(static fn (array $source): string => $source['ip'], $detail['flagged_sources']);
+
+            $this->test('More than 20 flagged delivered-failing sources are not truncated in the detail view', function () use ($detail, $detailIps) {
+                return count($detail['flagged_sources']) === 25
+                    && count($detailIps) === 25
+                    && count(array_unique($detailIps)) === 25;
+            });
+
+            $bulk = [];
+            foreach ($metrics->domainSummaries() as $row) {
+                if ((int) ($row['id'] ?? 0) === $domainId) {
+                    $bulk = $metrics->actionMetricsForAll([$row])[$domainId]['flagged_sources'] ?? [];
+                    break;
+                }
+            }
+
+            $this->test('More than 20 flagged delivered-failing sources are not truncated in bulk metrics', function () use ($bulk, $detailIps) {
+                $bulkIps = array_map(static fn (array $source): string => $source['ip'], $bulk);
+
+                return count($bulk) === 25
+                    && $bulkIps === $detailIps;
+            });
+
+            $this->test('The domain source table includes all more-than-20 flagged sources', function () use ($detail, $detailIps) {
+                $rows = [];
+
+                foreach ($detail['top_sources'] as $row) {
+                    $rows[$row['source_ip']] = $row;
+                }
+
+                foreach ($detailIps as $ip) {
+                    if (!isset($rows[$ip])) {
+                        return false;
+                    }
+                }
+
+                return count($rows) === 25;
+            });
+        } finally {
+            $this->deleteDomain($domainId);
+        }
     }
 
     private function insertAction(int $domainId, string $key, string $status): void

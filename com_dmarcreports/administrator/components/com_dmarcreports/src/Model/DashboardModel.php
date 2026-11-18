@@ -131,7 +131,8 @@ class DashboardModel extends BaseDatabaseModel
         // DKIM. A failure here must never keep the dashboard from rendering.
         try {
             $status->resolveConfirmedNewSources(
-                static fn (int $domainId, array $ips): array => $metrics->classifySources($domainId, $ips)
+                static fn (int $domainId, array $ips): array => $metrics->classifySources($domainId, $ips),
+                static fn (array $requests): array => $metrics->classifySourcesAll($requests)
             );
         } catch (\Throwable $e) {
             // The items are resolved on a later page view.
