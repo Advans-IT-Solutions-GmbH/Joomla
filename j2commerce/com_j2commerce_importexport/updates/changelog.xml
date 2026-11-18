@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<changelogs>
+    <changelog>
+        <element>com_j2commerce_importexport</element>
+        <type>component</type>
+        <version>1.2.0</version>
+        <change>
+            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/importexport-v1.2.0</item>
+        </change>
+    </changelog>
+</changelogs>
