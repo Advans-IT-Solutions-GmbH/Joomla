@@ -13,6 +13,9 @@ final class InstallerGuardTest extends TestCase
         self::assertStringContainsString('foreach (self::BUNDLED_MODULES as $element)', $script);
         self::assertStringContainsString('$moduleTarget = JPATH_ADMINISTRATOR . \'/modules/\' . $element;', $script);
         self::assertStringContainsString('$files[$moduleTarget . \'/\' . $relative]', $script);
-        self::assertStringContainsString("JPATH_ADMINISTRATOR . '/language/' . $tag . '/' . $name", $script);
+        self::assertStringContainsString(
+            'JPATH_ADMINISTRATOR . \'/language/\' . $tag . \'/\' . $name',
+            $script
+        );
     }
 }
