@@ -527,6 +527,7 @@ final class Metrics
         }
 
         $select[] = 'MAX(' . $this->db->quoteName('rep.date_end') . ') AS last_seen';
+        $select[] = $this->db->quoteName('a.anchor') . ' AS evidence_window_end';
         $select[] = 'MAX(' . $this->db->quoteName('rep.policy_domain') . ') AS policy_domain';
         $select[] = 'MAX(' . $this->db->quoteName('rep.policy_adkim') . ') AS policy_adkim';
         $select[] = 'MAX(' . $this->db->quoteName('rep.policy_aspf') . ') AS policy_aspf';
@@ -554,6 +555,38 @@ final class Metrics
         foreach (['none', 'quarantine', 'reject'] as $disposition) {
             $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.disposition') . ' = ' . $this->db->quote($disposition)
                 . ' AND ' . $inWindow . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS disposition_' . $disposition;
+        }
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_dkim_pass_aligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_dkim_pass_unaligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' <> ' . $this->db->quote('pass')
+            . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_dkim_not_pass';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_spf_pass_aligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_spf_pass_unaligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' <> ' . $this->db->quote('pass')
+            . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_spf_not_pass';
+        foreach (['none', 'quarantine', 'reject'] as $disposition) {
+            $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.disposition') . ' = ' . $this->db->quote($disposition)
+                . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_disposition_' . $disposition;
+        }
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_dkim_pass_aligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_dkim_pass_unaligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' <> ' . $this->db->quote('pass')
+            . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_dkim_not_pass';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_spf_pass_aligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_spf_pass_unaligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' <> ' . $this->db->quote('pass')
+            . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_spf_not_pass';
+        foreach (['none', 'quarantine', 'reject'] as $disposition) {
+            $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.disposition') . ' = ' . $this->db->quote($disposition)
+                . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS lifetime_disposition_' . $disposition;
         }
 
         $query = $this->query()
@@ -595,6 +628,26 @@ final class Metrics
             ] as $key) {
                 $row[$key] = (int) ($row[$key] ?? 0);
             }
+            $fallback = (int) ($row['w_total'] ?? 0) === 0;
+            if ($fallback) {
+                foreach ([
+                    'dkim_pass_aligned' => 'lifetime_dkim_pass_aligned',
+                    'dkim_pass_unaligned' => 'lifetime_dkim_pass_unaligned',
+                    'dkim_not_pass' => 'lifetime_dkim_not_pass',
+                    'spf_pass_aligned' => 'lifetime_spf_pass_aligned',
+                    'spf_pass_unaligned' => 'lifetime_spf_pass_unaligned',
+                    'spf_not_pass' => 'lifetime_spf_not_pass',
+                    'disposition_none' => 'lifetime_disposition_none',
+                    'disposition_quarantine' => 'lifetime_disposition_quarantine',
+                    'disposition_reject' => 'lifetime_disposition_reject',
+                ] as $key => $lifetimeKey) {
+                    $row[$key] = (int) ($row[$lifetimeKey] ?? 0);
+                }
+            }
+            $row['evidence_total'] = $fallback ? (int) $row['total'] : (int) $row['w_total'];
+            $row['evidence_window_fallback'] = $fallback;
+            $row['evidence_window_start'] = $anchor > 0 ? $anchor - (7 * 86400) : 0;
+            $row['evidence_window_end'] = $anchor;
             $row['policy_domain'] = (string) ($row['policy_domain'] ?? '');
             $row['policy_adkim'] = (string) ($row['policy_adkim'] ?? '');
             $row['policy_aspf'] = (string) ($row['policy_aspf'] ?? '');
@@ -676,7 +729,17 @@ final class Metrics
             $query->setLimit($limit);
         }
 
-        return array_map([self::class, 'flaggedRow'], $this->db->setQuery($query)->loadAssocList() ?: []);
+        $rows = [];
+        foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
+            $flagged = self::flaggedRow($row);
+            $flagged['evidence_total'] = (int) $flagged['total'];
+            $flagged['evidence_window_fallback'] = false;
+            $flagged['evidence_window_start'] = $anchor - (7 * 86400);
+            $flagged['evidence_window_end'] = $anchor;
+            $rows[] = $flagged;
+        }
+
+        return $rows;
     }
 
     /**
@@ -1175,7 +1238,7 @@ final class Metrics
             ['domain_id', 'source_ip'],
             array_keys($conditions),
             [
-                'last_seen', 'policy_domain', 'policy_adkim', 'policy_aspf', 'header_from',
+                'last_seen', 'evidence_window_end', 'policy_domain', 'policy_adkim', 'policy_aspf', 'header_from',
                 'dkim_pass_aligned', 'dkim_pass_unaligned', 'dkim_not_pass',
                 'spf_pass_aligned', 'spf_pass_unaligned', 'spf_not_pass',
                 'disposition_none', 'disposition_quarantine', 'disposition_reject',
@@ -1221,7 +1284,13 @@ final class Metrics
         $map = [];
 
         foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
-            $map[(int) $row['domain_id']][] = self::flaggedRow($row);
+            $flagged = self::flaggedRow($row);
+            $end = (int) ($row['evidence_window_end'] ?? 0);
+            $flagged['evidence_total'] = (int) $flagged['total'];
+            $flagged['evidence_window_fallback'] = false;
+            $flagged['evidence_window_start'] = $end > 0 ? $end - (7 * 86400) : 0;
+            $flagged['evidence_window_end'] = $end;
+            $map[(int) $row['domain_id']][] = $flagged;
         }
 
         return $map;

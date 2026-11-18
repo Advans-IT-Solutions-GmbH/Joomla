@@ -135,6 +135,9 @@ final class ActionPresenter
         $window = $start > 0 && $end > 0
             ? gmdate('Y-m-d H:i:s', $start) . ' UTC - ' . gmdate('Y-m-d H:i:s', $end) . ' UTC'
             : Text::_('COM_DMARCREPORTS_EVIDENCE_WINDOW_UNKNOWN');
+        if (!empty($evidence['window_fallback'])) {
+            $window .= ' (' . Text::_('COM_DMARCREPORTS_EVIDENCE_WINDOW_HISTORY_FALLBACK') . ')';
+        }
         $host = (string) ($evidence['ptr_host'] ?? '');
         $confidence = (string) ($evidence['reverse_dns_confidence'] ?? 'not_forward_confirmed');
 

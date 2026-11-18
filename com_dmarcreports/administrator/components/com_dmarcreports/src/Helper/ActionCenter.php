@@ -166,7 +166,7 @@ final class ActionCenter
 
             $host  = (string) ($source['host'] ?? '');
             $class = SourceClassifier::classify($source);
-            $evidence = self::sourceEvidence($source, $host, $domainId, $metrics);
+            $evidence = self::sourceEvidence($source, $host, $domainId, $metrics, $class);
 
             if ($class === SourceClassifier::SPF_ONLY) {
                 $item = self::item(
@@ -201,9 +201,9 @@ final class ActionCenter
         return self::finalise($items, $domainId, $dnsFindings);
     }
 
-    private static function sourceEvidence(array $source, string $host, int $domainId, array $metrics): array
+    private static function sourceEvidence(array $source, string $host, int $domainId, array $metrics, string $class): array
     {
-        $anchor = (int) ($source['last_seen'] ?? $metrics['latest_report_end'] ?? $metrics['window_end'] ?? 0);
+        $anchor = (int) ($source['evidence_window_end'] ?? $source['last_seen'] ?? $metrics['latest_report_end'] ?? $metrics['window_end'] ?? 0);
         $windowStart = $anchor > 0 ? $anchor - (7 * 86400) : 0;
         $domain = (string) ($metrics['domain'] ?? '');
         $headerFrom = (string) ($source['header_from'] ?? '');
@@ -212,11 +212,13 @@ final class ActionCenter
         $dkimNotPass = (int) ($source['dkim_not_pass'] ?? 0);
         $spfNotPass = (int) ($source['spf_not_pass'] ?? 0);
 
-        $assessment = $dkimAligned > 0
-            ? 'legitimate_dkim'
-            : ($spfAligned > 0
-                ? 'spf_only_unresolved'
-                : 'unresolved');
+        $assessment = match ($class) {
+            SourceClassifier::DKIM => 'legitimate_dkim',
+            SourceClassifier::SPF_ONLY => 'spf_only_unresolved',
+            SourceClassifier::UNAUTHENTICATED => 'unresolved',
+            SourceClassifier::REJECTED => 'rejected',
+            default => 'unresolved',
+        };
 
         return [
             'source_ip' => (string) ($source['ip'] ?? ''),
@@ -231,9 +233,10 @@ final class ActionCenter
             'disposition_none' => (int) ($source['disposition_none'] ?? 0),
             'disposition_quarantine' => (int) ($source['disposition_quarantine'] ?? 0),
             'disposition_reject' => (int) ($source['disposition_reject'] ?? 0),
-            'message_count' => (int) ($source['total'] ?? 0),
+            'message_count' => (int) ($source['evidence_total'] ?? $source['total'] ?? 0),
             'window_start' => $windowStart,
             'window_end' => $anchor,
+            'window_fallback' => (bool) ($source['evidence_window_fallback'] ?? false),
             'domain' => $domain,
             'header_from' => $headerFrom,
             'policy_domain' => (string) ($source['policy_domain'] ?? ''),

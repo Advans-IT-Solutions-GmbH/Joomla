@@ -865,6 +865,7 @@ class ActionCenterTest extends TestCase
         $this->assertCount(1, $sources);
         $this->assertSame('spf_only_source', $sources[0]['code']);
         $this->assertSame(['192.0.2.63', '', 3, 15, 20], $sources[0]['params']);
+        $this->assertSame('spf_only_unresolved', $sources[0]['evidence']['assessment']);
     }
 
     public function testMixedDkimAndRejectedMailForOneAddressIsConfirmed(): void

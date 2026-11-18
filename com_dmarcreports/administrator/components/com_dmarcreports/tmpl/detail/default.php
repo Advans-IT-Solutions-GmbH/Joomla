@@ -265,19 +265,20 @@ $this->getDocument()->getWebAssetManager()->addInlineStyle(
                                             'disposition_none' => (int) ($src['disposition_none'] ?? 0),
                                             'disposition_quarantine' => (int) ($src['disposition_quarantine'] ?? 0),
                                             'disposition_reject' => (int) ($src['disposition_reject'] ?? 0),
-                                            'message_count' => (int) ($src['total'] ?? 0),
-                                            'window_start' => (int) ($src['last_seen'] ?? 0) > 0 ? (int) ($src['last_seen'] ?? 0) - (7 * 86400) : 0,
-                                            'window_end' => (int) ($src['last_seen'] ?? 0),
+                                            'message_count' => (int) ($src['evidence_total'] ?? $src['total'] ?? 0),
+                                            'window_start' => (int) ($src['evidence_window_start'] ?? 0),
+                                            'window_end' => (int) ($src['evidence_window_end'] ?? 0),
+                                            'window_fallback' => (bool) ($src['evidence_window_fallback'] ?? false),
                                             'domain' => (string) ($m['domain'] ?? ''),
                                             'header_from' => (string) ($src['header_from'] ?? ''),
                                             'policy_domain' => (string) ($src['policy_domain'] ?? ''),
                                             'adkim' => (string) ($src['policy_adkim'] ?? ''),
                                             'aspf' => (string) ($src['policy_aspf'] ?? ''),
-                                            'assessment' => (int) ($src['dkim_pass_aligned'] ?? $src['dkim'] ?? 0) > 0
+                                            'assessment' => $class === SourceClassifier::DKIM
                                                 ? 'legitimate_dkim'
-                                                : ((int) ($src['spf_pass_aligned'] ?? $src['spf_only'] ?? 0) > 0
+                                                : ($class === SourceClassifier::SPF_ONLY
                                                     ? 'spf_only_unresolved'
-                                                    : 'unresolved'),
+                                                    : ($class === SourceClassifier::UNAUTHENTICATED ? 'unresolved' : 'rejected')),
                                         ];
                                         echo ActionPresenter::sourceEvidence(['evidence' => $evidence]);
                                         ?>
