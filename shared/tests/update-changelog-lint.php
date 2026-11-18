@@ -39,34 +39,6 @@ foreach ($files as $file) {
         continue;
     }
 
-    $changelogFiles = glob($root . '/*/updates/changelog.xml');
-    $changelogFiles = array_merge(
-        is_array($changelogFiles) ? $changelogFiles : [],
-        glob($root . '/j2commerce/*/updates/changelog.xml') ?: []
-    );
-    sort($changelogFiles, SORT_STRING);
-
-    foreach ($changelogFiles as $file) {
-        $relative = str_replace($root . DIRECTORY_SEPARATOR, '', $file);
-        $relative = str_replace(DIRECTORY_SEPARATOR, '/', $relative);
-        $document = simplexml_load_file($file);
-
-        if ($document === false
-            || $document->getName() !== 'changelogs'
-            || count($document->xpath('/changelogs/changelog')) === 0
-        ) {
-            fwrite(STDERR, "FAIL {$relative}: missing Joomla <changelogs>/<changelog> XML structure\n");
-            $failed = true;
-            continue;
-        }
-
-        $version = trim((string) ($document->changelog->version ?? ''));
-        if (!preg_match('/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/', $version)) {
-            fwrite(STDERR, "FAIL {$relative}: changelog XML has no valid version\n");
-            $failed = true;
-        }
-    }
-
     foreach ($entries as $index => $entry) {
         $version = trim((string) ($entry->version ?? ''));
         $tags = $entry->xpath('./tags/tag');
@@ -92,6 +64,25 @@ foreach ($files as $file) {
             fwrite(STDERR, "FAIL {$relative}: stable update {$version} has no sibling changelog.xml\n");
             $failed = true;
             continue;
+        }
+
+        $changelogDocument = simplexml_load_file($changelogFile);
+        $changelogRelative = str_replace($root . DIRECTORY_SEPARATOR, '', $changelogFile);
+        $changelogRelative = str_replace(DIRECTORY_SEPARATOR, '/', $changelogRelative);
+
+        if ($changelogDocument === false
+            || $changelogDocument->getName() !== 'changelogs'
+            || count($changelogDocument->xpath('/changelogs/changelog')) === 0
+        ) {
+            fwrite(STDERR, "FAIL {$changelogRelative}: missing Joomla <changelogs>/<changelog> XML structure\n");
+            $failed = true;
+            continue;
+        }
+
+        $changelogVersion = trim((string) ($changelogDocument->changelog->version ?? ''));
+        if ($changelogVersion !== $version) {
+            fwrite(STDERR, "FAIL {$changelogRelative}: changelog version {$changelogVersion} does not match update version {$version}\n");
+            $failed = true;
         }
 
         $scheme = parse_url($changelog, PHP_URL_SCHEME);
