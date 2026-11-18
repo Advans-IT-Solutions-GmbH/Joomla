@@ -323,17 +323,18 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $message .= '</table>';
             $message .= '</div>';
 
-            // Step 4
-            $message .= '<div style="' . $sInfo . '">';
-            $message .= '<div style="' . $sStep . '">' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP_LABEL', ++$step) . '</div>';
+            // Step 4 — the required anonymisation task; the shared installer creates or reports it
+            // right after this guide (ScheduledTasks::ensure()).
+            $message .= '<div style="' . $sWarn . '">';
+            $message .= '<div style="' . $sStep . '">' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP_REQUIRED_LABEL', ++$step) . '</div>';
             $message .= '<h3 style="margin-top:0">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP4_TITLE') . '</h3>';
             $message .= '<p>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP4_NAV') . '</p>';
-            $message .= '<ol style="line-height:1.8">';
+            $message .= '<ul style="line-height:1.8">';
             $message .= '<li>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TASK_TYPE') . '</li>';
             $message .= '<li>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TASK_PARAMS') . '</li>';
             $message .= '<li>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TASK_SCHEDULE') . '</li>';
             $message .= '<li>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TASK_ENABLE') . '</li>';
-            $message .= '</ol>';
+            $message .= '</ul>';
             $message .= '<p>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TASK_DESC') . '</p>';
             $message .= '</div>';
 

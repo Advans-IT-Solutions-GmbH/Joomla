@@ -97,6 +97,15 @@
                         </ol>
                         <note>PLG_PRIVACY_J2COMMERCE_HELP_SETUP_NOTE1</note>
                     </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_TASKS_TITLE">
+                        <p>PLG_PRIVACY_J2COMMERCE_HELP_TASKS_P1</p>
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_TASKS_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_TASKS_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_TASKS_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_TASKS_LI4</li>
+                        </ul>
+                    </section>
                     <section title="PLG_PRIVACY_J2COMMERCE_HELP_OVERRIDES_TITLE">
                         <p>PLG_PRIVACY_J2COMMERCE_HELP_OVERRIDES_P1</p>
                         <ul>

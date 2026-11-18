@@ -241,6 +241,8 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
         }
 
         $this->finishGuard();
+        // Required scheduled tasks: create what is missing, report what is switched off.
+        ScheduledTasks::ensure($id);
         Factory::getApplication()->enqueueMessage(SystemCheck::render($id), 'message');
 
         return $result;

@@ -72,7 +72,7 @@ The package has no separate operational settings or Scheduler routine. Configure
 |---|---|
 | Reports, sources, diagnostics and data handling | [Component configuration](../com_dmarcreports/README.md#configuration); administrator access and the component's operation-specific ACL |
 | Backend dashboard tile | [Module configuration](../mod_dmarcreports/README.md#configuration); publish an administrator instance at `cpanel`, with component `core.manage` access for its readers |
-| Automatic ingestion | [Task setup](../plg_task_dmarcreports/README.md#configuration); create/publish a task and configure a working Scheduler trigger |
+| Automatic ingestion | [Scheduled tasks](../plg_task_dmarcreports/README.md#scheduled-tasks): the installation creates the required task **DMARC Reports - Automatic ingestion** (every hour, switched on) when it is missing; configure a working Scheduler trigger |
 | Public MTA-STS policy | [System plugin setup](../plg_system_dmarcmtasts/README.md#configuration); published monitored domain, enabled feature, DNS, valid TLS and the exact web-server route |
 
 Installing the bundle does not prove that the configured mailbox, Scheduler trigger, public policy host or live diagnostics work.

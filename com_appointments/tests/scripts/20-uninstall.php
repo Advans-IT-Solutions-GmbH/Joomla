@@ -221,14 +221,16 @@ class UninstallTest
                 && $eventtypeAsset !== null && $eventtypeAsset['rules'] === $aclFixture['rules']
                 && $row && (int) $row['cnt'] === 1;
         });
-        $this->test('Reinstalled Scheduler routines stay disabled until reviewed', function () {
+        $this->test('Reinstall over kept tables creates the required Scheduler routines switched on and says so', function () use ($output) {
             $types = "'plg_task_appointments.reminders','plg_task_appointments.retention'";
             $result = $this->db->query(
                 "SELECT COUNT(*) AS total, SUM(state = 1) AS enabled FROM {$this->dbPrefix}scheduler_tasks WHERE type IN ({$types})"
             );
             $row = $result ? $result->fetch_assoc() : null;
+            $text = (string) preg_replace('/\s+/u', ' ', implode("\n", $output));
 
-            return $row && (int) $row['total'] === 2 && (int) $row['enabled'] === 0;
+            return $row && (int) $row['total'] === 2 && (int) $row['enabled'] === 2
+                && substr_count($text, 'The installation created it and switched it on') === 2;
         });
 
         $deleteExtensionId = $this->extensionId();

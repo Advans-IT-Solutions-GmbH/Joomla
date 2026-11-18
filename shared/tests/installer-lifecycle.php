@@ -162,29 +162,97 @@ namespace {
         {
             $this->messages[] = [$message, $type];
         }
+
+        /** @var list<array<string, mixed>> Tasks saved through the Scheduler's task model. */
+        public array $saved = [];
+
+        public function getIdentity(): object
+        {
+            return (object) ['id' => 42];
+        }
+
+        public function bootComponent(string $component): object
+        {
+            $app = $this;
+
+            return new class($app) {
+                public function __construct(private object $app) {}
+                public function getMVCFactory(): self { return $this; }
+                public function createModel(string $name, string $prefix, array $config): self { return $this; }
+
+                public function save(array $data): bool
+                {
+                    $this->app->saved[] = $data;
+                    \Joomla\CMS\Factory::$db->tasks[$data['type']][] = ['id' => 100 + count($this->app->saved), 'state' => $data['state'],
+                        'last_execution' => null, 'last_exit_code' => 0, 'times_executed' => 0];
+
+                    return true;
+                }
+            };
+        }
     };
     \Joomla\CMS\Factory::$app = $app;
     \Joomla\CMS\Factory::$db = new class {
         public bool $enabled = false;
+        /** @var array<string, list<array<string, mixed>>> Scheduler tasks by routine. */
+        public array $tasks = [];
+        /** @var array<string, array{enabled: int, params: string}> Extensions by "type:folder:element". */
+        public array $extensions = [];
+        private object $query;
 
         public function createQuery(): object
         {
             return new class {
+                public string $from = '';
+                /** @var list<string> */
+                public array $where = [];
                 public function select($value): self { return $this; }
-                public function from($value): self { return $this; }
-                public function where($value): self { return $this; }
+                public function from($value): self { $this->from = (string) $value; return $this; }
+                public function where($value): self { $this->where[] = (string) $value; return $this; }
                 public function whereIn($column, $values, $type): self { return $this; }
+                public function order($value): self { return $this; }
             };
         }
 
         public function quoteName($value) { return $value; }
         public function quote($value) { return "'" . $value . "'"; }
-        public function setQuery($query): self { return $this; }
-        public function loadObject(): object { return (object) ['extension_id' => 1, 'enabled' => (int) $this->enabled]; }
+        public function setQuery($query): self { $this->query = $query; return $this; }
+
+        private function condition(string $column): ?string
+        {
+            foreach ($this->query->where as $condition) {
+                if (preg_match("/^$column = '(.*)'$/", $condition, $match) === 1) {
+                    return $match[1];
+                }
+            }
+
+            return null;
+        }
+
+        private function key(): string
+        {
+            return $this->condition('type') . ':' . ($this->condition('folder') ?? '') . ':' . $this->condition('element');
+        }
+
+        public function loadObject(): ?object
+        {
+            if (isset($this->extensions[$this->key()])) {
+                return (object) ['extension_id' => 7, 'enabled' => $this->extensions[$this->key()]['enabled']];
+            }
+
+            // Lookups by folder and of the Scheduler component see only what a test registered.
+            if ($this->condition('folder') !== null || $this->condition('element') === 'com_scheduler') {
+                return null;
+            }
+
+            return (object) ['extension_id' => 1, 'enabled' => (int) $this->enabled];
+        }
+
+        public function loadResult(): ?string { return $this->extensions[$this->key()]['params'] ?? null; }
+        public function loadAssocList(): array { return $this->tasks[$this->condition('type')] ?? []; }
         public function getPrefix(): string { return 'test_'; }
-        public function getTableList(): array { return ['test_j2commerce_orders', 'test_j2store_orders']; }
-    };
-    $assert = static function (bool $ok, string $message): void {
+        public function getTableList(): array { return ['test_j2commerce_orders', 'test_j2store_orders', 'test_scheduler_tasks']; }
+    };    $assert = static function (bool $ok, string $message): void {
         if (!$ok) {
             throw new \RuntimeException($message);
         }
@@ -456,6 +524,136 @@ namespace {
             $assert(!is_link($mirror) && is_file($mirror . '/custom.php'), 'Legacy symlink uninstall did not prepare a real directory for Joomla.');
             $assert(is_file($canonical . '/custom.php'), 'Legacy symlink preparation removed its original target.');
         }
+        // 6. Scheduled tasks: a missing required task is created switched on and reported, an
+        //    existing one is never changed or duplicated, one switched off on purpose is reported,
+        //    an extension without required tasks says nothing.
+        $tasks = \Advans\Installer\V2\ScheduledTasks::class;
+        $handled = new \ReflectionProperty($tasks, 'handled');
+        $db = \Joomla\CMS\Factory::$db;
+        $reset = static function () use ($handled, $app): void {
+            $handled->setValue(null, []);
+            $app->messages = [];
+            $app->saved = [];
+        };
+        $app->tag = 'en-GB';
+        \Advans\Installer\V2\SystemCheck::loadLanguage();
+        $strings = \Joomla\CMS\Language\Text::$strings;
+        $text = static fn(): string => html_entity_decode(implode("\n", array_column($app->messages, 0)), ENT_QUOTES, 'UTF-8');
+        $repository = dirname(__DIR__, 2);
+
+        foreach ([
+            'task/j2commerceprivacy/forms/autocleanup.xml' => '/j2commerce/plg_privacy_j2commerce/plugins/task/j2commerceprivacy/forms/autocleanup.xml',
+            'task/appointments/forms/batch.xml'            => '/com_appointments/plugins/task/appointments/forms/batch.xml',
+        ] as $target => $form) {
+            mkdir(dirname(JPATH_PLUGINS . '/' . $target), 0700, true);
+            copy($repository . $form, JPATH_PLUGINS . '/' . $target);
+        }
+
+        $db->extensions = [
+            'plugin:task:j2commerceprivacy' => ['enabled' => 1, 'params' => '{}'],
+            'plugin:privacy:j2commerce'     => ['enabled' => 0, 'params' => '{"retention_years":"7","fiscal_year_end":"06-30","anonymize_orders":"1"}'],
+            'component::com_scheduler'      => ['enabled' => 1, 'params' => '{}'],
+            'plugin:system:schedulerunner'  => ['enabled' => 1, 'params' => '{}'],
+        ];
+        $routine = 'plg_task_j2commerceprivacy.autocleanup';
+
+        // Fresh installation: created once, switched on, daily at 02:15 UTC, form defaults with the plugin's own retention settings.
+        $reset();
+        $tasks::ensure('plg_privacy_j2commerce');
+        $assert(count($app->saved) === 1 && $app->saved[0]['type'] === $routine && $app->saved[0]['state'] === 1, 'A missing required task must be created once, switched on.');
+        $rules = $app->saved[0]['execution_rules'];
+        $assert($rules['rule-type'] === 'interval-days' && $rules['interval-days'] === 1 && $rules['exec-time'] === '02:15' && $rules['exec-day'] === gmdate('d'), 'The anonymisation task must run every day at 02:15 UTC.');
+        $assert($app->saved[0]['params'] === ['retention_years' => 7, 'fiscal_year_end' => '06-30', 'anonymize_orders' => 1, 'delete_addresses' => 1], 'The task must use the form defaults and the plugin\'s own retention settings: ' . json_encode($app->saved[0]['params']));
+        $assert($app->saved[0]['title'] === 'PLG_TASK_J2COMMERCEPRIVACY_TASK_AUTOCLEANUP_TITLE' && $app->saved[0]['created_by'] === 42, 'The task must carry the routine title and its creator.');
+        $assert(count($app->messages) === 1 && $app->messages[0][1] === 'message', 'Exactly one plain message must report the created task.');
+        $assert(str_contains($text(), 'was missing. The installation created it and switched it on: it runs every day at 02:15 UTC. It anonymises shop orders')
+            && str_contains($text(), 'Retention period: 7 years after the end of the fiscal year on 06-30'), 'The report must name the schedule, the purpose and the settings: ' . $text());
+        $passed = array_column(\Advans\Installer\V2\SystemCheck::results('plg_privacy_j2commerce')['passed'], 1);
+        $assert(in_array($strings['ADVANS_CHECK_TASK_NOT_RUN'], $passed, true), 'The system check must list the switched-on task that has not run yet.');
+
+        // Update with the task switched on: nothing saved, nothing said.
+        $reset();
+        $before = $db->tasks;
+        $tasks::ensure('plg_privacy_j2commerce');
+        $assert($app->saved === [] && $db->tasks === $before && $app->messages === [], 'An existing switched-on task must stay unchanged and unmentioned.');
+
+        // Switched off or trashed on purpose: unchanged, reported with the way to switch it on, a blocker in the system check.
+        foreach ([0, -2] as $state) {
+            $db->tasks[$routine] = [['id' => 5, 'state' => $state, 'last_execution' => '2026-01-01 02:15:00', 'last_exit_code' => 0, 'times_executed' => 3]];
+            $before = $db->tasks;
+            $reset();
+            $tasks::ensure('plg_privacy_j2commerce');
+            $assert($app->saved === [] && $db->tasks === $before, 'A task switched off on purpose must not be changed or duplicated.');
+            $assert(count($app->messages) === 1 && $app->messages[0][1] === 'warning' && str_contains($text(), 'is switched off or in the trash')
+                && str_contains($text(), 'System → Manage → Scheduled Tasks'), 'A switched-off required task must be reported with the menu path.');
+            $blockers = array_column(\Advans\Installer\V2\SystemCheck::results('plg_privacy_j2commerce')['blockers'], 1);
+            $assert(in_array($strings['ADVANS_CHECK_TASK_OFF'], $blockers, true), 'The system check must report a switched-off required task as a blocker.');
+        }
+
+        // One report per request: the package and its children check the same routine.
+        $reset();
+        $tasks::ensure('plg_privacy_j2commerce');
+        $count = count($app->messages);
+        $tasks::ensure('plg_task_j2commerceprivacy');
+        $assert($count === 1 && count($app->messages) === 1, 'A routine must be reported once per request.');
+
+        // Extensions without required tasks: no message, nothing created.
+        foreach (['plg_ajax_joomlaajaxforms', 'plg_system_privacyrequests', 'com_j2store_cleanup'] as $id) {
+            $reset();
+            $tasks::ensure($id);
+            $assert($app->messages === [] && $app->saved === [], 'An extension without required tasks must say nothing: ' . $id);
+        }
+
+        // Classification: reminders while offsets are set, retention always, Close never by the shared runtime,
+        // internet calendar routines only while the internet calendars are switched on.
+        $db->extensions['plugin:task:appointments'] = ['enabled' => 1, 'params' => '{}'];
+        $created = static function (string $params) use ($db, $reset, $tasks, $app): array {
+            $db->tasks = [];
+            $db->extensions['component::com_appointments'] = ['enabled' => 1, 'params' => $params];
+            $reset();
+            $tasks::ensure('com_appointments');
+
+            return array_column($app->saved, 'type');
+        };
+        $assert($created('{}') === ['plg_task_appointments.reminders', 'plg_task_appointments.retention'], 'Defaults: reminders and retention are required, nothing else.');
+        $assert($app->saved[0]['params'] === ['batch_size' => 100] && $app->saved[0]['execution_rules']['interval-minutes'] === 5, 'Reminders: every five minutes, batch size 100.');
+        $assert($created('{"reminder_offsets":" , ","teamcal_enabled":"1"}') === ['plg_task_appointments.retention', 'plg_task_appointments.teamcleanup',
+            'plg_task_appointments.teamlog', 'plg_task_appointments.teaminvitations', 'plg_task_appointments.teamretention'], 'Without offsets no reminders; internet calendars on need their four tasks.');
+
+        // Joomla's Scheduler cannot start tasks: reported once; a recent run proves it does.
+        $db->tasks = [$routine => [['id' => 5, 'state' => 1, 'last_execution' => gmdate('Y-m-d H:i:s', time() - 3600), 'last_exit_code' => 0, 'times_executed' => 9]]];
+        $db->extensions['plugin:system:schedulerunner']['enabled'] = 0;
+        $reset();
+        $tasks::ensure('plg_privacy_j2commerce');
+        $assert($app->messages === [], 'A run within two days proves that the Scheduler starts tasks.');
+        $db->tasks[$routine][0]['last_execution'] = '2026-01-01 02:15:00';
+        $reset();
+        $tasks::ensure('plg_privacy_j2commerce');
+        $assert(count($app->messages) === 1 && $app->messages[0][1] === 'warning' && str_contains($text(), 'System - Schedule Runner'), 'A Scheduler without trigger must be reported.');
+        $db->extensions['plugin:system:schedulerunner']['enabled'] = 1;
+        $db->extensions['component::com_scheduler']['params'] = '{"lazy_scheduler":{"enabled":0},"webcron":{"enabled":0}}';
+        $reset();
+        $tasks::ensure('plg_privacy_j2commerce');
+        $assert(str_contains($text(), 'Neither the Lazy Scheduler nor Web Cron'), 'A Scheduler started only by a server cron job must be reported.');
+
+        // Task plugin missing: nothing can be created, the report says why.
+        unset($db->extensions['plugin:task:j2commerceprivacy']);
+        $db->tasks = [];
+        $reset();
+        $tasks::ensure('plg_privacy_j2commerce');
+        $assert($app->saved === [] && str_contains($text(), 'cannot be created, because its task plugin is not installed'), 'A missing task plugin must be reported.');
+        $db->extensions = [];
+        $db->tasks = [];
+
+        foreach (['de-DE', 'fr-FR'] as $tag) {
+            $app->tag = $tag;
+            \Advans\Installer\V2\SystemCheck::loadLanguage();
+            $assert(\Advans\Installer\V2\ScheduledTasks::schedule(['rule-type' => 'interval-days', 'interval-days' => 1, 'exec-time' => '02:15']) !== 'ADVANS_TASKS_DAILY_AT', 'Untranslated schedule in ' . $tag);
+        }
+
+        $app->tag = 'en-GB';
+        \Advans\Installer\V2\SystemCheck::loadLanguage();
+        echo "PASS scheduled tasks: missing required task created switched on and reported, existing task unchanged, switched-off task reported, no message without required tasks, Scheduler trigger checked\n";
         echo "PASS common lifecycle: own files decided automatically with verified backups and record, foreign pause with approval, backup failure stops before changes, translated reports and refreshed state\n";
     } finally {
         $remove($work);

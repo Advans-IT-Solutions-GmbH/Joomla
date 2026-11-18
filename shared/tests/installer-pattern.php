@@ -67,6 +67,50 @@ namespace {
         $catalog = require $root . '/shared/installer/catalog.php';
         $checked = ['standalone' => [], 'bundled' => []];
 
+        // Every scheduled task the catalog names is defined in tasks.php, advertised by its task
+        // plugin with a translated title, and the form that gives its defaults exists.
+        $routines = require $root . '/shared/installer/tasks.php';
+        $taskPlugins = [
+            'task/j2commerceprivacy' => '/j2commerce/plg_privacy_j2commerce/plugins/task/j2commerceprivacy',
+            'task/appointments'      => '/com_appointments/plugins/task/appointments',
+            'task/dmarcreports'      => '/plg_task_dmarcreports',
+        ];
+        $shared = [];
+
+        foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+            $shared[$tag] = parse_ini_file($root . '/shared/installer/language/' . $tag . '/advans_installer.ini', false, INI_SCANNER_RAW);
+        }
+
+        $named = [];
+
+        foreach ($catalog as $id => $definition) {
+            foreach ($definition['tasks'] ?? [] as $routine) {
+                $assert(isset($routines[$routine]), 'The catalog of ' . $id . ' names an undefined scheduled task: ' . $routine);
+                $named[$routine] = true;
+            }
+        }
+
+        foreach ($routines as $routine => $spec) {
+            $assert(isset($named[$routine]), 'No extension checks the scheduled task ' . $routine);
+            $source = $root . ($taskPlugins[implode('/', $spec['plugin'])] ?? '/missing');
+            $code = implode('', array_map('file_get_contents', glob($source . '/src/Extension/*.php') ?: []));
+            $assert(str_contains($code, "'" . $routine . "'"), 'The task plugin does not advertise ' . $routine);
+            $assert(!isset($spec['form']) || is_file($source . '/' . $spec['form']), 'Missing task form of ' . $routine);
+            $assert(is_string($spec['need']) ? in_array($spec['need'], ['required', 'optional'], true) : count($spec['need']['when'] ?? []) === 4, 'Unknown need of ' . $routine);
+            $assert($spec['need'] === 'optional' || isset($spec['rules']['rule-type']), 'A required task needs execution rules: ' . $routine);
+
+            foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {
+                $strings = [];
+
+                foreach (glob($source . '/language/' . $tag . '/' . $spec['language'] . '.ini') ?: [] as $file) {
+                    $strings += parse_ini_file($file, false, INI_SCANNER_RAW);
+                }
+
+                $assert(isset($strings[$spec['title']]), 'Untranslated title of ' . $routine . ' in ' . $tag);
+                $assert(isset($shared[$tag][$spec['purpose']]), 'Untranslated purpose of ' . $routine . ' in ' . $tag);
+            }
+        }
+
         foreach (array_keys($catalog) as $id) {
             $path = is_dir($root . '/' . $id) ? $root . '/' . $id : $root . '/j2commerce/' . $id;
 

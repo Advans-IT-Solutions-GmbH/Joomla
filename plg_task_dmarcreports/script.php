@@ -108,4 +108,35 @@ class PlgTaskDmarcreportsInstallerScript extends InstallerScript
             return true;
         }
     }
+
+    /**
+     * The installation creates the ingestion task (shared installer, ScheduledTasks). Without this
+     * plugin a task of its routine can never run again, so uninstalling removes those tasks, as the
+     * other extensions with bundled task plugins do. Reports and sources stay in the component.
+     */
+    public function uninstall($parent): void
+    {
+        try {
+            $db = Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
+
+            if (!in_array($db->getPrefix() . 'scheduler_tasks', $db->getTableList(), true)) {
+                return;
+            }
+
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->delete($db->quoteName('#__scheduler_tasks'))
+                ->where($db->quoteName('type') . ' = ' . $db->quote('plg_task_dmarcreports.ingest'));
+            $db->setQuery($query)->execute();
+            $removed = (int) $db->getAffectedRows();
+
+            if ($removed > 0) {
+                $app = Factory::getApplication();
+                $app->getLanguage()->load('plg_task_dmarcreports', JPATH_ADMINISTRATOR)
+                    || $app->getLanguage()->load('plg_task_dmarcreports', JPATH_PLUGINS . '/task/dmarcreports');
+                $app->enqueueMessage(Text::sprintf('PLG_TASK_DMARCREPORTS_UNINSTALL_TASKS_REMOVED', $removed), 'message');
+            }
+        } catch (\Throwable $e) {
+            // The plugin is removed in any case; a remaining task only shows as orphaned.
+        }
+    }
 }

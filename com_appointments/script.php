@@ -279,7 +279,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
         $lang->load('com_appointments', JPATH_ADMINISTRATOR);
-        $this->ensureSchedulerTasks($type === 'install' && !$this->hasExistingAppointmentsTables);
+        // The required reminder and retention tasks are created by the shared installer right
+        // after this method (ScheduledTasks, catalog key 'tasks'); here only the optional one.
+        $this->ensureCloseTask();
         $this->removeLegacyManifest();
         $this->ensureTeamGroups();
 
@@ -1116,19 +1118,17 @@ class Com_appointmentsInstallerScript extends InstallerScript
     }
 
     /**
-     * Creates the two Scheduler tasks of the bundled task plugin through the Scheduler's own
-     * task model, the way Joomla's core update creates the tasks of its own plugins. A routine
-     * gets a task only when no task of its type exists at all, in any state: a task the operator
-     * disabled or trashed is never enabled or created again.
+     * Creates the optional Close delivery task of the bundled task plugin through the Scheduler's
+     * own task model, switched off by design (it is needed only once the transfer to Close is set
+     * up). It is created only when no task of its routine exists at all, in any state: a task the
+     * operator switched on, off or trashed is never changed or created again.
      *
-     * A first installation creates them enabled. An update of a site that had no such task
-     * creates them disabled and says so: the retention task would otherwise start anonymising
-     * the site's existing bookings, and the reminder task start writing to their invitees,
-     * without the operator having decided it. The operator enables them under
-     * System > Scheduled Tasks. A failure never fails the installation; it is reported, so the
-     * operator can create the task by hand there.
+     * The required tasks (reminders while reminders are configured, retention, and the internet
+     * calendar routines while internet calendars are switched on) are created switched on by the
+     * shared installer after this postflight, see shared/installer/tasks.php. A failure never
+     * fails the installation; it is reported, so the operator can create the task by hand.
      */
-    private function ensureSchedulerTasks(bool $enabled): void
+    private function ensureCloseTask(): void
     {
         $app = Factory::getApplication();
         $db = Factory::getContainer()->get(DatabaseInterface::class);
@@ -1137,8 +1137,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
             || $lang->load('plg_task_appointments', JPATH_PLUGINS . '/task/appointments');
         $routines = [
             'plg_task_appointments.close' => ['PLG_TASK_APPOINTMENTS_CLOSE_TITLE', ['rule-type' => 'interval-minutes', 'interval-minutes' => 5]],
-            'plg_task_appointments.reminders' => ['PLG_TASK_APPOINTMENTS_REMINDERS_TITLE', ['rule-type' => 'interval-minutes', 'interval-minutes' => 5]],
-            'plg_task_appointments.retention' => ['PLG_TASK_APPOINTMENTS_RETENTION_TITLE', ['rule-type' => 'interval-hours', 'interval-hours' => 24]],
         ];
 
         foreach ($routines as $type => [$titleKey, $rules]) {
@@ -1163,7 +1161,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     'title' => Text::_($titleKey),
                     'type' => $type,
                     'execution_rules' => $rules + ['exec-day' => gmdate('d'), 'exec-time' => gmdate('H:i')],
-                    'state' => $enabled && $type !== 'plg_task_appointments.close' ? 1 : 0,
+                    'state' => 0,
                     'params' => ['batch_size' => 100],
                     'created_by' => (int) $identity->id,
                 ]);
@@ -1172,9 +1170,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     throw new \RuntimeException('The Scheduler task could not be saved.');
                 }
 
-                if (!$enabled || $type === 'plg_task_appointments.close') {
-                    $app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_INSTALL_TASK_DISABLED', Text::_($titleKey)), 'notice');
-                }
+                $app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_INSTALL_TASK_DISABLED', Text::_($titleKey)), 'notice');
             } catch (\Throwable $e) {
                 $app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_INSTALL_TASK_FAILED', Text::_($titleKey)), 'warning');
             }

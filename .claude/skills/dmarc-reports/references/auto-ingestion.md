@@ -47,9 +47,11 @@ The component README and this plugin's README both state the options:
    Scheduler CLI/endpoint on a fixed interval, independent of visitor traffic. This is the right
    choice when reports must be pulled promptly and regularly.
 
-Create the task under **System → Manage → Scheduled Tasks → New → DMARC Reports: Ingest**, set the
-interval (the task's own schedule) and enable it. The configurable interval lives on the task, not in
-the component options.
+The shared installer creates the task **DMARC Reports - Automatic ingestion** switched on (every hour,
+`auto_create_domains` off) after every installation and update of the plugin or the package when it is
+missing; an existing task is never changed, a switched-off one is reported (`shared/installer/tasks.php`,
+root README «Scheduled tasks decide by themselves too»). Uninstalling the plugin deletes the tasks of
+the routine. The configurable interval lives on the task, not in the component options.
 
 ## Tests
 

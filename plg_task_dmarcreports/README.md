@@ -44,8 +44,8 @@ extension/tag family, not the monorepo's global latest release.
 
 Help: the Help button of the plugin edit screen and the note at the top of its options open the **Help & tips** page of the DMARC Reports component (`index.php?option=com_dmarcreports&view=help`), which explains the terms, the Action Center entries and the typical tasks.
 
-1. Create a scheduled task: System → Manage → Scheduled Tasks → New → **DMARC Reports - Automatic ingestion**.
-2. Set the execution rule (for example every 30 minutes).
+1. Nothing to create: the installation creates the scheduled task **DMARC Reports - Automatic ingestion** (see [Scheduled tasks](#scheduled-tasks)).
+2. Adjust its execution rule under System → Manage → Scheduled Tasks if every hour does not suit you.
 3. Optionally enable automatic domain creation. This is a privileged action, so it only takes
    effect when **all three** switches are on: the component options
    *Create unknown domains automatically* (`auto_create_unknown_domains`) and
@@ -55,6 +55,21 @@ Help: the Help button of the plugin edit screen and the note at the top of its o
    domains. It keeps ingesting into the domains that already exist. A created domain is always
    **unpublished**, because anyone can send a report: it is neither monitored nor served an
    MTA-STS policy until an administrator publishes it.
+
+### Scheduled tasks
+
+| Task (routine ID) | Need | What the installer does |
+|---|---|---|
+| **DMARC Reports - Automatic ingestion** (`plg_task_dmarcreports.ingest`) | **Required** for automatic ingestion, the purpose of this plugin; without a report source it does nothing | Created and switched on when missing |
+
+After every installation and update of this plugin or of the DMARC Reports package, the shared installer (`shared/installer/ScheduledTasks.php`) checks the task:
+
+- **Missing:** created through Joomla's Scheduler, switched on, every hour, with the task form's defaults (`auto_create_domains` off), and named in the message after the installation.
+- **Present and switched on:** nothing is changed and nothing is duplicated.
+- **Switched off or trashed:** left as it is, because someone switched it off on purpose; the message after the installation and the system check say so and give the menu path to switch it on.
+- **Scheduler not started:** if this plugin is switched off, or Joomla's Scheduler has no web trigger and no ingestion ran in the last two days, the message says so.
+
+Check it under **System → Manage → Scheduled Tasks** or in the **System check** tab of this plugin. Uninstalling the plugin deletes the tasks of its routine, because they could no longer run.
 
 ### Scheduler trigger — important
 
@@ -71,7 +86,7 @@ Joomla's Scheduler only runs when something triggers it. Choose one:
 
 ## Usage and Data Handling
 
-Enable the plugin, configure a task and trigger, then inspect **Scheduled Tasks → execution history** and the component's per-source run messages. The plugin reuses component credentials and writes reports through the component; it stores no separate report copy and sends no notification mail. Its logs include source identifiers and ingestion summaries. See the [component's privacy and input limits](../com_dmarcreports/README.md#permissions-and-data-handling) for report storage, network access, export and deletion.
+Check that the plugin and the task are switched on and that a trigger runs, then inspect **Scheduled Tasks → execution history** and the component's per-source run messages. The plugin reuses component credentials and writes reports through the component; it stores no separate report copy and sends no notification mail. Its logs include source identifiers and ingestion summaries. See the [component's privacy and input limits](../com_dmarcreports/README.md#permissions-and-data-handling) for report storage, network access, export and deletion.
 
 ## Updating
 
@@ -79,7 +94,7 @@ Install a newer standalone ZIP over this plugin, or update the DMARC package if 
 
 ## Uninstall
 
-Remove the standalone plugin through **System → Manage → Extensions**, or uninstall the owning package. The plugin has no report tables or report-deletion routine; component data remains when only the standalone plugin is removed. Review its Scheduler task entries and stop scheduling this routine before removal. Removing the plugin does not revoke the configured mailbox credentials.
+Remove the standalone plugin through **System → Manage → Extensions**, or uninstall the owning package. The plugin has no report tables or report-deletion routine; component data remains when only the standalone plugin is removed. Uninstalling deletes the Scheduler tasks of this routine (they could no longer run). Removing the plugin does not revoke the configured mailbox credentials.
 
 ## Troubleshooting
 

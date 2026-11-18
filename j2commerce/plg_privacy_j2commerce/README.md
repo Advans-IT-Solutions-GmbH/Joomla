@@ -91,6 +91,21 @@ Not removed:
 - lifetime-license flags in `#__j2commerce_metafields` / `#__j2store_product_customfields` (including a manually created `#__j2store_product_customfields` table)
 - entries already written to `#__action_logs`
 
+### Scheduled tasks
+
+| Task (routine ID) | Need | What the installer does |
+|---|---|---|
+| **J2Commerce - Automatic data cleanup** (`plg_task_j2commerceprivacy.autocleanup`) | **Required**: without it, orders and saved addresses are not anonymised after the retention period, which data protection law requires | Created and switched on when missing |
+
+After every installation and update, the shared installer (`shared/installer/ScheduledTasks.php`) checks the task:
+
+- **Missing:** it creates the task through Joomla's Scheduler, switched on, every day at 02:15 UTC, with the task form's defaults (`anonymize_orders` and `delete_addresses` Yes) and the retention period and fiscal year end stored in this plugin (default 10 years, `12-31`). The message after the installation names the task, its schedule and these settings.
+- **Present and switched on:** nothing is changed and nothing is duplicated.
+- **Switched off or trashed:** left as it is, because someone switched it off on purpose. The message after the installation and the system check say that anonymisation does not run and give the menu path to switch it on.
+- **Scheduler not started:** if the task plugin is switched off, or Joomla's Scheduler has no web trigger (System - Schedule Runner off, or neither Lazy Scheduler nor Web Cron on) and no task of this plugin ran in the last two days, the message says so; a server cron job (`php cli/joomla.php scheduler:run`) is then the only way the task runs.
+
+Check it under **System → Manage → Scheduled Tasks** (task, last run and log) or in the **System check** tab of this plugin, which shows the same and whether the Scheduler is started.
+
 ### Post-Installation Configuration
 
 The plugin requires mandatory configuration before operation. Detailed setup steps are shown in the post-installation message. The following steps must be completed:
@@ -100,7 +115,7 @@ The plugin requires mandatory configuration before operation. Detailed setup ste
 3. **Verify template overrides** — deployed automatically on first install; check the postflight message for which files were copied or skipped (see [Template Integration](#template-integration))
 4. **Create a hidden menu item for Privacy Requests** (see below)
 5. Configure lifetime-license flags if your shop sells perpetual licenses (optional)
-6. Establish automated cleanup scheduling with the bundled task plugin
+6. Check that the automatic cleanup task the installer created is switched on and runs (see [Scheduled tasks](#scheduled-tasks))
 
 Note: Failure to configure the lifetime-license flag for perpetual-license products can result in full anonymization after the retention period expires.
 
@@ -570,18 +585,9 @@ Persist configuration changes.
 
 ### Step 5: Automated Cleanup Scheduling
 
-Navigate to: `System → Manage → Scheduled Tasks → New`
+Nothing to create: the installer creates the task **J2Commerce - Automatic data cleanup** when it is missing (see [Scheduled tasks](#scheduled-tasks)). Check under `System → Manage → Scheduled Tasks` that it is switched on, and adjust its parameters there if your retention rules change.
 
-1. Verify the plugin **Task - J2Commerce Privacy Cleanup** is enabled.
-2. Select task type: **J2Commerce - Automatic data cleanup**
-3. Configure task parameters to match the Privacy plugin retention settings.
-4. Configure execution parameters:
-   - **Execution Frequency:** Daily
-   - **Execution Time:** 02:00 (recommended for minimal system load)
-   - **Status:** Enabled
-5. Save configuration
-
-**Task parameters** (`plugins/task/j2commerceprivacy/forms/autocleanup.xml`). The task reads its own parameters, not the privacy plugin settings:
+**Task parameters** (`plugins/task/j2commerceprivacy/forms/autocleanup.xml`). The task reads its own parameters, not the privacy plugin settings; a task the installer creates starts with the plugin's retention period and fiscal year end:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -838,7 +844,7 @@ The cleanup task anonymizes the order after 31.12.2030 (the user_id of the pseud
 **Result:** • Automatic anonymization of orders outside the retention period
 
 ```
-Scheduled task runs daily (02:00)
+Scheduled task runs daily (02:15 UTC)
   ↓
 Finds users and guest orders outside the retention period
   ↓
@@ -1095,16 +1101,11 @@ These options are evaluated by the deployed MyProfile overrides; see [Profile Pr
 
 ### Scheduled Task Settings
 
-The routine is `plg_task_j2commerceprivacy.autocleanup`. Its parameters are **task-local**, not inherited from the parent plugin: retention years `10` (form range 1–30), fiscal year end `12-31`, anonymize orders `Yes`, delete addresses `Yes`. Set them deliberately when creating/editing the task; changing the privacy plugin's options does not change an existing task's settings.
+The routine is `plg_task_j2commerceprivacy.autocleanup`. Its parameters are **task-local**: retention years `10` (form range 1–30), fiscal year end `12-31`, anonymize orders `Yes`, delete addresses `Yes`. A task the installer creates takes over the retention years and fiscal year end stored in the privacy plugin; changing the privacy plugin's options later does not change an existing task's settings, so change both.
 
-Choose a working Scheduler trigger as well as an execution rule: the lazy scheduler depends on site traffic; system cron calling `php cli/joomla.php scheduler:run` or Joomla's configured web cron is suitable for regular unattended execution. Installation enables the task plugin, but does not itself run retention continuously. There is no dry-run mode; use synthetic data on an isolated test installation and inspect execution history before enabling destructive retention on real data.
+The installer-created task runs every day at 02:15 UTC. Joomla also needs a working Scheduler trigger: the lazy scheduler depends on site traffic; system cron calling `php cli/joomla.php scheduler:run` or Joomla's configured web cron is suitable for regular unattended execution. The system check reports when no trigger can start the task. There is no dry-run mode; use synthetic data on an isolated test installation to try the retention rules.
 
 **Access:** `System → Manage → Scheduled Tasks → J2Commerce - Automatic data cleanup`
-
-**Recommended Settings:**
-- **Frequency:** Daily
-- **Time:** 02:00 (2 AM, low traffic)
-- **Enabled:** Yes
 
 **What it does:**
 - Finds users with expired retention
@@ -1374,6 +1375,7 @@ CI sets `TEST_STRICT_SKIP=1` (a test that would SKIP fails); prefix the command 
 - Check: The row references the correct product ID
 
 **Issue: Scheduled task not running**
+- Check: the **System check** tab of this plugin (task switched on, last run, Scheduler trigger)
 - Check: Joomla Cron configured
 - Test: Run task manually
 - Check: Task logs for errors

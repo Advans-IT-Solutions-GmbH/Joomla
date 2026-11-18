@@ -49,6 +49,12 @@ class UninstallTest
             return !is_dir($this->base);
         });
 
+        $this->test('Scheduler tasks of the ingestion routine removed (they could no longer run)', function () {
+            $result = $this->db->query("SELECT COUNT(*) as cnt FROM {$this->dbPrefix}scheduler_tasks WHERE type = 'plg_task_dmarcreports.ingest'");
+            $row = $result ? $result->fetch_assoc() : null;
+            return $row && (int) $row['cnt'] === 0;
+        });
+
         $this->test('Plugin update sites removed (no orphan links)', function () {
             $result = $this->db->query(
                 "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}update_sites

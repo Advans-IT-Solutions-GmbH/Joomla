@@ -26,7 +26,11 @@ Joomla 5.4.x or 6.x, PHP 8.1+, the component with sodium and MySQL/MariaDB, and 
 
 ## Installation
 
-The component installs/enables **Task - Appointments**. A fresh component installation creates reminder and booking-retention tasks enabled, with five-minute and daily schedules respectively. An update creates a missing task disabled. Any existing task of that routine, including disabled/trashed tasks, prevents recreation; schedules and parameters are not overwritten.
+The component installs/enables **Task - Appointments**.
+
+### Scheduled tasks
+
+After every installation and update the shared installer checks the routines and creates a missing **required** task switched on: retention (every 24 hours, batch size 100) always, reminders (every five minutes, batch size 100) while reminder offsets are set, and the four internet calendar routines (every 24 hours) while the internet calendars are switched on. Close delivery is **optional** and created switched off by the component. Any existing task of a routine, switched on, off or trashed, is never changed or duplicated; a required task that is switched off or trashed is reported with the menu path to switch it on. The **System check** tab of this plugin and of the component options lists every required task with its state and last run. Details: [component `Scheduled tasks`](../../../README.md#scheduled-tasks).
 
 ## Updating
 
@@ -40,7 +44,7 @@ Component uninstall removes this plugin and its Scheduler tasks. Follow the [com
 
 Reminder and booking-retention tasks have `batch_size=100`, validated from **1 to 1000**. Configure offsets, booking/audit retention, erasure mode and public URL in component options. Per-event booking retention can override the default. Internet-calendar routines use their service-specific controls, not this batch form.
 
-Use traffic-triggered lazy scheduling only when its timing is sufficient. For regular unattended execution configure system/web cron; the Joomla CLI entry is `php cli/joomla.php scheduler:run`. Create the additional calendar tasks deliberately. Calendar routines normally do nothing while internet calendars are disabled, but `teamretention` still performs booking-calendar upkeep.
+Use traffic-triggered lazy scheduling only when its timing is sufficient. For regular unattended execution configure system/web cron; the Joomla CLI entry is `php cli/joomla.php scheduler:run`. The installer creates the calendar tasks while the internet calendars are switched on. Calendar routines normally do nothing while internet calendars are disabled, but `teamretention` still performs booking-calendar upkeep.
 
 ## Usage, Permissions and Data Handling
 
