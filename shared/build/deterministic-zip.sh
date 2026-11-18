@@ -22,7 +22,9 @@ esac
 
 rm -f "$archive"
 find "$source_dir" -name '.DS_Store' -type f -delete
-chmod -R u=rwX,go=rX "$source_dir"
+# Explicit modes, whatever the checkout had: Joomla packages need no executable files.
+find "$source_dir" -type d -exec chmod 0755 {} +
+find "$source_dir" -type f -exec chmod 0644 {} +
 # 2024-01-01T00:00:00Z; ZIP stores local time, so the time zone is fixed as well.
 find "$source_dir" -exec touch -h -d '@1704067200' {} +
 (

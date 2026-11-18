@@ -56,6 +56,7 @@ printf 'two' >"$FIXTURE/zip-second/b/c/d.txt"
 printf 'one' >"$FIXTURE/zip-second/a.txt"
 touch -d '2020-05-05 10:00:00' "$FIXTURE/zip-first/a.txt"
 chmod 600 "$FIXTURE/zip-second/a.txt"
+chmod 755 "$FIXTURE/zip-first/b/c/d.txt"
 bash "$ROOT/shared/build/deterministic-zip.sh" "$FIXTURE/zip-first" "$FIXTURE/first.zip"
 sleep 1
 bash "$ROOT/shared/build/deterministic-zip.sh" "$FIXTURE/zip-second" "$FIXTURE/second.zip"

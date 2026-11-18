@@ -236,6 +236,11 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
             if (!\Joomla\Filesystem\Folder::copy($source, $root, '', true)) {
                 throw new \RuntimeException('Cannot install package system-check support.');
             }
+
+            // The catalog of released files is only needed while installing; it is not installed.
+            if (is_file($root . '/' . Knowledge::CATALOG)) {
+                unlink($root . '/' . Knowledge::CATALOG);
+            }
         }
 
         $this->finishGuard();

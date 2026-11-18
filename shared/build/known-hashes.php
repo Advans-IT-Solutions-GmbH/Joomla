@@ -200,6 +200,8 @@ if ($code !== 0 || trim($shallow) !== 'false') {
     exit(0);
 }
 
+[, $ownPath] = $run(['git', '-C', $extension, 'rev-parse', '--show-prefix']);
+$ownPath = rtrim(trim($ownPath), '/');
 $pattern = '/^release: ' . preg_quote($prefix, '/') . ' v(\d+\.\d+\.\d+)(?:\s|$)/';
 $releases = [];
 [, $log] = $run(['git', '-C', $root, 'log', '--format=%H%x09%s', 'HEAD']);
@@ -252,7 +254,17 @@ try {
         }
 
         if ($directory === null) {
-            $catalog['unreproducible'][] = "$releaseVersion: no build configuration in that release";
+            // A release made before the extension had any build configuration was packaged by
+            // hand and cannot be rebuilt; it is listed, not hidden. A build configuration in the
+            // extension's folder under another name is a release this script fails to rebuild.
+            [$ownCode] = $run(['git', '-C', $root, 'cat-file', '-e', $sha . ':' . ($ownPath === '' ? '' : $ownPath . '/') . 'build.env']);
+
+            if ($ownCode === 0) {
+                $catalog['failed'][] = "$releaseVersion: the build configuration names another extension";
+            } else {
+                $catalog['unreproducible'][] = "$releaseVersion: released before the extension had a build configuration";
+            }
+
             continue;
         }
 

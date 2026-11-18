@@ -179,7 +179,8 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
 
         $mirror = JPATH_PLUGINS . '/j2store/productcompare';
 
-        if (!is_link($mirror)) {
+        // Only this plugin's own legacy link is replaced; a link of another extension stays.
+        if (!is_link($mirror) || $this->mirrorOwner() !== null) {
             return;
         }
 
