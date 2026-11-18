@@ -15,6 +15,11 @@ actual tested commit, package and environment in every execution report.
 replace human acceptance. Installation, database inspection, IMAP ingestion and controlled fault
 injection require a technically experienced tester.
 
+**PR 396 execution status:** BLOCKED, not passed. No reachable test Joomla installation or
+credentials were available to the agent; Docker/WSL were unavailable. Edge/Chromium and Firefox
+could therefore not be exercised against a real installation at 375 px and 1600 px. No Live or
+production deployment was attempted and no pass or screenshots are claimed.
+
 The plan contains **194 identified test cases**, plus the end-to-end acceptance scenario in
 section 17. Use the [blank report template](report-template.md) for each execution.
 
