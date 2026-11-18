@@ -19,7 +19,12 @@ class PublishTests(unittest.TestCase):
             package = Path(directory) / "extension.zip"
             changelog = Path(directory) / "changelog.xml"
             package.write_bytes(b"package")
-            changelog.write_text("<changelogs><changelog><version>1.0.0</version></changelog></changelogs>", encoding="utf-8")
+            changelog.write_text(
+                "<changelogs><changelog><version>1.0.0</version><change><item>"
+                "Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/privacy-v1.0.0"
+                "</item></change></changelog></changelogs>",
+                encoding="utf-8",
+            )
 
             calls = []
 
@@ -63,12 +68,52 @@ class PublishTests(unittest.TestCase):
                 publisher.publish("owner/repo", "privacy-v", "1.0.0", "built",
                                   package, "Title", "Notes", changelog)
 
+    def test_stale_changelog_rejects_publication_before_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "extension.zip"
+            changelog = Path(directory) / "changelog.xml"
+            package.write_bytes(b"package")
+            changelog.write_text(
+                "<changelogs><changelog><version>0.9.0</version><change><item>"
+                "Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/privacy-v0.9.0"
+                "</item></change></changelog></changelogs>",
+                encoding="utf-8",
+            )
+            calls = []
+            with patch.object(publisher, "inventory", return_value=({"privacy-v1.0.0": "built"}, {})), \
+                    patch.object(publisher, "zip_contents", return_value={}), \
+                    patch.object(publisher, "run", side_effect=lambda *args: calls.append(args) or ""), \
+                    self.assertRaises(ValueError):
+                publisher.publish("owner/repo", "privacy-v", "1.0.0", "built",
+                                  package, "Title", "Notes", changelog)
+            self.assertEqual(calls, [])
+
+    def test_malformed_changelog_rejects_publication_before_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "extension.zip"
+            changelog = Path(directory) / "changelog.xml"
+            package.write_bytes(b"package")
+            changelog.write_text("<changelogs><changelog>", encoding="utf-8")
+            calls = []
+            with patch.object(publisher, "inventory", return_value=({"privacy-v1.0.0": "built"}, {})), \
+                    patch.object(publisher, "zip_contents", return_value={}), \
+                    patch.object(publisher, "run", side_effect=lambda *args: calls.append(args) or ""), \
+                    self.assertRaises(ValueError):
+                publisher.publish("owner/repo", "privacy-v", "1.0.0", "built",
+                                  package, "Title", "Notes", changelog)
+            self.assertEqual(calls, [])
+
     def test_changelog_upload_failure_preserves_previous_release_and_tag(self):
         with tempfile.TemporaryDirectory() as directory:
             package = Path(directory) / "extension.zip"
             changelog = Path(directory) / "changelog.xml"
             package.write_bytes(b"package")
-            changelog.write_text("<changelogs/>", encoding="utf-8")
+            changelog.write_text(
+                "<changelogs><changelog><version>1.0.0</version><change><item>"
+                "Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/privacy-v1.0.0"
+                "</item></change></changelog></changelogs>",
+                encoding="utf-8",
+            )
             calls = []
 
             def run(*args):
@@ -125,34 +170,44 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(len(releases), 2)
 
     def publication(self, failed_command=None, existing=False, bad_download=False):
-        refs = {"privacy-v0.9.0": "old", "other-v9.0.0": "unrelated"}
-        releases = {"privacy-v0.9.0": {}}
-        if existing:
-            refs["privacy-v1.0.0"] = "built"
-            releases["privacy-v1.0.0"] = {"assets": [{"name": "extension.zip"}]}
-        calls = []
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "extension.zip"
+            changelog = Path(directory) / "changelog.xml"
+            package.write_bytes(b"package")
+            changelog.write_text(
+                "<changelogs><changelog><version>1.0.0</version><change><item>"
+                "Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/privacy-v1.0.0"
+                "</item></change></changelog></changelogs>",
+                encoding="utf-8",
+            )
+            refs = {"privacy-v0.9.0": "old", "other-v9.0.0": "unrelated"}
+            releases = {"privacy-v0.9.0": {}}
+            if existing:
+                refs["privacy-v1.0.0"] = "built"
+                releases["privacy-v1.0.0"] = {"assets": [{"name": "extension.zip"}, {"name": "changelog.xml"}]}
+            calls = []
 
-        def run(*args):
-            calls.append(args)
-            if failed_command and args[:len(failed_command)] == failed_command:
-                raise subprocess.CalledProcessError(1, args)
-            if args[:2] == ("gh", "api"):
-                return '{"draft":false,"assets":[{"name":"extension.zip"}]}'
-            return ""
+            def run(*args):
+                calls.append(args)
+                if failed_command and args[:len(failed_command)] == failed_command:
+                    raise subprocess.CalledProcessError(1, args)
+                if args[:2] == ("gh", "api"):
+                    return '{"draft":false,"assets":[{"name":"extension.zip"},{"name":"changelog.xml"}]}'
+                return ""
 
-        with patch.object(publisher, "inventory", return_value=(refs, releases)), \
-                patch.object(publisher, "zip_contents", return_value={}), \
-                patch.object(publisher, "verify_asset", side_effect=ValueError("Bad download") if bad_download else None) as verify, \
-                patch.object(publisher, "run", side_effect=run):
-            if failed_command or bad_download:
-                with self.assertRaises((subprocess.CalledProcessError, ValueError)):
+            with patch.object(publisher, "inventory", return_value=(refs, releases)), \
+                    patch.object(publisher, "zip_contents", return_value={}), \
+                    patch.object(publisher, "verify_asset", side_effect=ValueError("Bad download") if bad_download else None) as verify, \
+                    patch.object(publisher, "run", side_effect=run):
+                if failed_command or bad_download:
+                    with self.assertRaises((subprocess.CalledProcessError, ValueError)):
+                        publisher.publish("owner/repo", "privacy-v", "1.0.0", "built",
+                                          package, "Title", "Notes", changelog)
+                else:
                     publisher.publish("owner/repo", "privacy-v", "1.0.0", "built",
-                                      Path("extension.zip"), "Title", "Notes")
-            else:
-                publisher.publish("owner/repo", "privacy-v", "1.0.0", "built",
-                                  Path("extension.zip"), "Title", "Notes")
-                verify.assert_called_once()
-        return calls
+                                      package, "Title", "Notes", changelog)
+                    verify.assert_called_once()
+            return calls
 
     def test_failures_preserve_previous_release(self):
         for command in [("git", "push", "origin", "refs/tags/privacy-v1.0.0"),

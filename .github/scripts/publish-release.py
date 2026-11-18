@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+import xml.etree.ElementTree as ElementTree
 
 
 def run(*args):
@@ -87,6 +88,35 @@ def verify_asset(repo, tag, package):
         shutil.copyfile(Path(directory) / package.name, package)
 
 
+def validate_changelog(changelog, prefix, number):
+    if changelog is None or not changelog.is_file():
+        raise ValueError("Missing required Joomla changelog XML")
+    try:
+        document = ElementTree.parse(changelog)
+    except ElementTree.ParseError as error:
+        raise ValueError(f"Malformed Joomla changelog XML: {error}") from error
+    root = document.getroot()
+    if root.tag != "changelogs":
+        raise ValueError("Changelog XML root must be <changelogs>")
+    entries = root.findall("changelog")
+    if not entries:
+        raise ValueError("Changelog XML has no <changelog> entry")
+    matching = []
+    for entry in entries:
+        version = entry.findtext("version")
+        if version == number:
+            matching.append(entry)
+    if not matching:
+        raise ValueError(f"Changelog XML has no entry matching version {number}")
+    expected_tag = prefix + number
+    expected_url = f"https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/{expected_tag}"
+    for entry in matching:
+        for item in entry.findall(".//item"):
+            if (item.text or "").strip() == f"Release notes: {expected_url}":
+                return
+    raise ValueError(f"Changelog XML has no release-notes link for {expected_tag}")
+
+
 def publish(repo, prefix, number, sha, package, title, notes, changelog=None):
     # Repeat the remote preflight immediately before writes, not against stale checkout tags.
     refs, releases = inventory(repo)
@@ -97,6 +127,7 @@ def publish(repo, prefix, number, sha, package, title, notes, changelog=None):
         candidate = package.parent / "updates" / "changelog.xml"
         if candidate.is_file():
             changelog = candidate
+    validate_changelog(changelog, prefix, number)
     print(f"Publishing {tag} from built checkout {sha}", flush=True)
     if tag not in refs:
         run("git", "tag", "-a", tag, sha, "-m", f"Release {tag}")
