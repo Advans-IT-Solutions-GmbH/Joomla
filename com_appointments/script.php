@@ -1523,7 +1523,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     $oldBody = str_replace('\\n', "\n", (string) $previous[$bodyKey]);
                     $this->followDefault($db, $purpose, $tag, (string) $previous[$subjectKey], $oldBody, $subject, $body);
                     $this->noteKeptTemplates($db, $purpose, $tag,
-                        \Advans\Component\Appointments\Administrator\Helper\TemplateUpgrade::added($oldBody, $body));
+                        \Advans\Component\Appointments\Administrator\Helper\TemplateUpgrade::addedPair(
+                            (string) $previous[$subjectKey], $oldBody, $subject, $body));
                 }
 
                 $sql = 'INSERT INTO ' . $db->quoteName('#__appointments_templates')
@@ -1584,14 +1585,15 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $query = $this->createDbQuery($db)
-            ->select($db->quoteName(['eventtype_id', 'body']))
+            ->select($db->quoteName(['eventtype_id', 'subject', 'body']))
             ->from($db->quoteName('#__appointments_templates'))
             ->where($db->quoteName('purpose') . ' = ' . $db->quote($purpose))
             ->where($db->quoteName('language') . ' = ' . $db->quote($tag))
             ->order($db->quoteName('eventtype_id'));
 
         foreach ($db->setQuery($query)->loadAssocList() as $row) {
-            $missing = \Advans\Component\Appointments\Administrator\Helper\TemplateUpgrade::missing((string) $row['body'], $added);
+            $missing = \Advans\Component\Appointments\Administrator\Helper\TemplateUpgrade::missingPair(
+                (string) $row['subject'], (string) $row['body'], $added);
 
             if ($missing !== []) {
                 $this->keptTemplates[] = [$purpose, $tag, (int) $row['eventtype_id'], $missing];

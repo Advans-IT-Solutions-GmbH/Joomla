@@ -52,6 +52,19 @@ final class TemplateUpgrade
     }
 
     /**
+     * The placeholders newly introduced across both subject and body, in subject-then-body order.
+     *
+     * @return  list<string>
+     */
+    public static function addedPair(string $oldSubject, string $oldBody, string $newSubject, string $newBody): array
+    {
+        $old = array_unique(array_merge(self::placeholders($oldSubject), self::placeholders($oldBody)));
+        $new = array_values(array_unique(array_merge(self::placeholders($newSubject), self::placeholders($newBody))));
+
+        return array_values(array_diff($new, $old));
+    }
+
+    /**
      * Of $placeholders those $text does not contain, in order.
      *
      * @param   list<string>  $placeholders
@@ -61,6 +74,19 @@ final class TemplateUpgrade
     public static function missing(string $text, array $placeholders): array
     {
         return array_values(array_filter($placeholders, static fn (string $placeholder): bool => !str_contains($text, $placeholder)));
+    }
+
+    /**
+     * Of $placeholders those occur in neither the kept subject nor the kept body.
+     *
+     * @param   list<string>  $placeholders
+     *
+     * @return  list<string>
+     */
+    public static function missingPair(string $subject, string $body, array $placeholders): array
+    {
+        return array_values(array_filter($placeholders, static fn (string $placeholder): bool =>
+            !str_contains($subject, $placeholder) && !str_contains($body, $placeholder)));
     }
 
     /** @return list<string> */

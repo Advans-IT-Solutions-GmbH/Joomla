@@ -39,6 +39,16 @@ final class TemplateUpgradeTest extends TestCase
         self::assertSame([], TemplateUpgrade::missing("Edited\nWhy: {cancel_reason}", ['{cancel_reason}']));
     }
 
+    public function testAddedAndMissingSubjectPlaceholders(): void
+    {
+        self::assertSame(['{invitee_name}'], TemplateUpgrade::addedPair(
+            'Cancelled', self::OLD, 'Cancelled: {invitee_name}', self::OLD));
+        self::assertSame([], TemplateUpgrade::missingPair(
+            'Cancelled: {invitee_name}', self::OLD, ['{invitee_name}']));
+        self::assertSame(['{invitee_name}'], TemplateUpgrade::missingPair(
+            'Cancelled', self::OLD, ['{invitee_name}']));
+    }
+
     /**
      * @return array<string, array{string}>
      */

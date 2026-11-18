@@ -410,6 +410,30 @@ final class Queue
 
                 // Remote reads are outside the booking lock. The locking revalidation below is not a
                 // historical snapshot: it resumes only this UID and delivery version and rejects stale work.
+                $db->transactionStart();
+                $resumeBooking = $this->booking($id);
+                $resume = $this->find($id, true);
+                $resumeValid = $resume !== null && $resumeBooking !== null
+                    && (int) $resume['target_sequence'] === $sequence
+                    && $resume['state'] !== 'uncertain'
+                    && (string) $resume['operation'] === 'matching'
+                    && $resume['contact_id'] === ''
+                    && hash_equals($resume['uid'], (string) $resumeBooking['uid'])
+                    && hash_equals($resume['uid'], (string) $booking['uid'])
+                    && (int) $resumeBooking['sequence'] === $sequence
+                    && $resumeBooking['anonymised_utc'] === null
+                    && hash_equals((string) $resume['profile'], $profile->key)
+                    && ($resume['binding'] === '' || hash_equals($resume['binding'], $profile->binding));
+                $db->transactionCommit();
+                if (!$resumeValid) {
+                    $db->transactionStart();
+                    if ($this->find($id, true) !== null) {
+                        $this->save($id, ['operation' => '', 'state' => 'pending', 'reason' => '']);
+                    }
+                    $db->transactionCommit();
+                    return 'next';
+                }
+
                 $match = $client->match($opened);
                 $assignment = ['match_rule' => $match['match_rule'], 'match_candidates' => $match['match_candidates']];
 

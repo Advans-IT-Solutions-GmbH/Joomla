@@ -617,6 +617,28 @@ namespace {
     $db->afterCommit = null;
     $check($remote['main']->count('POST', '/api/v1/activity/note/') === $beforePosts && $state(13) === false, 'erasure between intent and send stops the request');
 
+    // A sequence change while the remote matching phase is checkpointed must not authenticate the old
+    // booking snapshot after the rows are released.
+    $racedMatch = $enrol($booking(51, 1, 'raced-match@example.test', $lifeSciences));
+    $remote['main']->contacts['cont_raced_match'] = [
+        'id' => 'cont_raced_match',
+        'lead_id' => 'lead_raced_match',
+        'emails' => [['email' => 'raced-match@example.test']],
+        'name' => 'Raced Match',
+    ];
+    $db->afterCommit = static function () use ($db, $state, $mutate, $racedMatch): void {
+        if (($state(51)['operation'] ?? '') === 'matching') {
+            $db->afterCommit = null;
+            $mutate($racedMatch, ['sequence' => 1]);
+        }
+    };
+    $queue->run();
+    $db->afterCommit = null;
+    $check(($state(51)['match_rule'] ?? '') === 'email'
+        && (int) $state(51)['target_sequence'] === 1
+        && $state(51)['state'] === 'done',
+        'matching revalidates a booking sequence changed after its checkpoint and resumes the new version');
+
     // Configuration faults never break a booking and never reach the network.
     $params->values['close_profiles']['close_profiles1']['eventtypes'] = ['1', '3'];
     $broken = $enrol($booking(14, 1, 'new@example.test', $lifeSciences));
