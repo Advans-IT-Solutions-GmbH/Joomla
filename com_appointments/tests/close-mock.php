@@ -634,10 +634,11 @@ namespace {
     };
     $queue->run();
     $db->afterCommit = null;
-    $check(($state(51)['match_rule'] ?? '') === 'email'
+    $check(($state(51)['match_rule'] ?? '') === ''
         && (int) $state(51)['target_sequence'] === 1
-        && $state(51)['state'] === 'done',
-        'matching revalidates a booking sequence changed after its checkpoint and resumes the new version');
+        && $state(51)['operation'] === ''
+        && $state(51)['state'] === 'pending',
+        'matching rejects a stale booking snapshot after a sequence change and requeues the new version');
 
     // Configuration faults never break a booking and never reach the network.
     $params->values['close_profiles']['close_profiles1']['eventtypes'] = ['1', '3'];
