@@ -294,9 +294,16 @@ try {
         $db->query("UPDATE {$prefix}appointments_templates SET subject='" . $db->real_escape_string($subject) . "' WHERE id=" . (int) $stored['en-GB']['id']);
         $edited = $body($previous($defaults['de-DE'])) . "\nVom Betreiber ergänzt.";
         $setBody((int) $stored['de-DE']['id'], $edited);
-        $db->query("INSERT INTO {$prefix}appointments_templates (eventtype_id,purpose,language,subject,body,published)"
-            . " VALUES ({$eventA},'host_cancellation','en-GB','{$tag} own cancellation','Own text {start}',1)");
-        $templateIds[] = $eventTemplate = (int) $db->insert_id;
+        // The event type's own host cancellation (an earlier step of this suite may have created it).
+        $eventTemplate = $find($eventA, 'host_cancellation', 'en-GB');
+        if ($eventTemplate > 0) {
+            $stored['event'] = $row($eventTemplate);
+            $setBody($eventTemplate, 'Own text {start}');
+        } else {
+            $db->query("INSERT INTO {$prefix}appointments_templates (eventtype_id,purpose,language,subject,body,published)"
+                . " VALUES ({$eventA},'host_cancellation','en-GB','{$tag} own cancellation','Own text {start}',1)");
+            $templateIds[] = $eventTemplate = (int) $db->insert_id;
+        }
         $script = $source . '/run.php';
         file_put_contents($script, '<?php
             require "/var/www/html/tests/scripts/appointments-joomla.php";
