@@ -54,7 +54,12 @@ class PublishTests(unittest.TestCase):
             package = Path(directory) / "extension.zip"
             changelog = Path(directory) / "changelog.xml"
             package.write_bytes(b"package")
-            changelog.write_text("<changelogs/>", encoding="utf-8")
+            changelog.write_text(
+                "<changelogs><changelog><version>1.0.0</version><change><item>"
+                "Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/privacy-v1.0.0"
+                "</item></change></changelog></changelogs>",
+                encoding="utf-8",
+            )
 
             def run(*args):
                 if args[:2] == ("gh", "api"):
