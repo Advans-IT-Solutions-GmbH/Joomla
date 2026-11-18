@@ -166,9 +166,10 @@ final class ActionCenter
 
             $host  = (string) ($source['host'] ?? '');
             $class = SourceClassifier::classify($source);
+            $evidence = self::sourceEvidence($source, $host, $domainId, $metrics);
 
             if ($class === SourceClassifier::SPF_ONLY) {
-                $items[] = self::item(
+                $item = self::item(
                     'spf_only_source',
                     'source',
                     3,
@@ -176,10 +177,14 @@ final class ActionCenter
                     [$ip, $host, (int) ($source['spf_only'] ?? 0), (int) ($source['dkim'] ?? 0), (int) ($source['total'] ?? 0)],
                     $ip
                 );
+                $item['evidence'] = $evidence;
+                $items[] = $item;
             } elseif ($class === SourceClassifier::UNAUTHENTICATED) {
                 $delivered = min((int) ($source['fail'] ?? 0), (int) ($source['fail_delivered'] ?? 0));
                 $share     = $rolloutTotal > 0 ? round($delivered / $rolloutTotal * 100, 1) : 0.0;
-                $items[]   = self::item('align_source', 'alignment', 1, $domainId, [$ip, $host, $delivered, $share], $ip);
+                $item      = self::item('align_source', 'alignment', 1, $domainId, [$ip, $host, $delivered, $share], $ip);
+                $item['evidence'] = $evidence;
+                $items[] = $item;
             }
         }
 
@@ -194,6 +199,49 @@ final class ActionCenter
         }
 
         return self::finalise($items, $domainId, $dnsFindings);
+    }
+
+    private static function sourceEvidence(array $source, string $host, int $domainId, array $metrics): array
+    {
+        $anchor = (int) ($source['last_seen'] ?? $metrics['latest_report_end'] ?? $metrics['window_end'] ?? 0);
+        $windowStart = $anchor > 0 ? $anchor - (7 * 86400) : 0;
+        $domain = (string) ($metrics['domain'] ?? '');
+        $headerFrom = (string) ($source['header_from'] ?? '');
+        $dkimAligned = (int) ($source['dkim_pass_aligned'] ?? $source['dkim'] ?? 0);
+        $spfAligned = (int) ($source['spf_pass_aligned'] ?? $source['spf_only'] ?? 0);
+        $dkimNotPass = (int) ($source['dkim_not_pass'] ?? 0);
+        $spfNotPass = (int) ($source['spf_not_pass'] ?? 0);
+
+        $assessment = $dkimAligned > 0
+            ? 'legitimate_dkim'
+            : ($spfAligned > 0
+                ? 'spf_only_unresolved'
+                : 'unresolved');
+
+        return [
+            'source_ip' => (string) ($source['ip'] ?? ''),
+            'ptr_host' => $host,
+            'reverse_dns_confidence' => $host !== '' ? 'forward_confirmed' : 'not_forward_confirmed',
+            'dkim_pass_aligned' => $dkimAligned,
+            'dkim_pass_unaligned' => (int) ($source['dkim_pass_unaligned'] ?? 0),
+            'dkim_not_pass' => $dkimNotPass,
+            'spf_pass_aligned' => $spfAligned,
+            'spf_pass_unaligned' => (int) ($source['spf_pass_unaligned'] ?? 0),
+            'spf_not_pass' => $spfNotPass,
+            'disposition_none' => (int) ($source['disposition_none'] ?? 0),
+            'disposition_quarantine' => (int) ($source['disposition_quarantine'] ?? 0),
+            'disposition_reject' => (int) ($source['disposition_reject'] ?? 0),
+            'message_count' => (int) ($source['total'] ?? 0),
+            'window_start' => $windowStart,
+            'window_end' => $anchor,
+            'domain' => $domain,
+            'header_from' => $headerFrom,
+            'policy_domain' => (string) ($source['policy_domain'] ?? ''),
+            'adkim' => (string) ($source['policy_adkim'] ?? ''),
+            'aspf' => (string) ($source['policy_aspf'] ?? ''),
+            'assessment' => $assessment,
+            'domain_id' => $domainId,
+        ];
     }
 
     /**

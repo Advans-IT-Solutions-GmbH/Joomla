@@ -63,6 +63,7 @@ $statusLabels = [
                                     <?php echo htmlspecialchars(ActionPresenter::title($item)); ?>
                                 </div>
                                 <?php echo htmlspecialchars(ActionPresenter::text($item)); ?>
+                                <?php echo ActionPresenter::sourceEvidence($item); ?>
                                 <?php $sourceLink = ActionPresenter::sourceLink($item); ?>
                                 <?php if ($sourceLink !== '') : ?>
                                     <div><a class="com-dmarcreports-source-link" href="<?php echo htmlspecialchars($sourceLink); ?>"><?php echo Text::_('COM_DMARCREPORTS_ACTION_SHOW_SOURCE'); ?></a></div>

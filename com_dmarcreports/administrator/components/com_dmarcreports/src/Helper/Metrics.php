@@ -527,6 +527,34 @@ final class Metrics
         }
 
         $select[] = 'MAX(' . $this->db->quoteName('rep.date_end') . ') AS last_seen';
+        $select[] = 'MAX(' . $this->db->quoteName('rep.policy_domain') . ') AS policy_domain';
+        $select[] = 'MAX(' . $this->db->quoteName('rep.policy_adkim') . ') AS policy_adkim';
+        $select[] = 'MAX(' . $this->db->quoteName('rep.policy_aspf') . ') AS policy_aspf';
+        $select[] = 'MAX(' . $this->db->quoteName('rec.header_from') . ') AS header_from';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 AND ' . $inWindow
+            . ' THEN ' . $this->db->quoteName('rec.count')
+            . ' ELSE 0 END), 0) AS dkim_pass_aligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 0 AND ' . $inWindow
+            . ' THEN ' . $this->db->quoteName('rec.count')
+            . ' ELSE 0 END), 0) AS dkim_pass_unaligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' <> ' . $this->db->quote('pass')
+            . ' AND ' . $inWindow . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS dkim_not_pass';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 1 AND ' . $inWindow
+            . ' THEN ' . $this->db->quoteName('rec.count')
+            . ' ELSE 0 END), 0) AS spf_pass_aligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 0 AND ' . $inWindow
+            . ' THEN ' . $this->db->quoteName('rec.count')
+            . ' ELSE 0 END), 0) AS spf_pass_unaligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' <> ' . $this->db->quote('pass')
+            . ' AND ' . $inWindow . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS spf_not_pass';
+        foreach (['none', 'quarantine', 'reject'] as $disposition) {
+            $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.disposition') . ' = ' . $this->db->quote($disposition)
+                . ' AND ' . $inWindow . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS disposition_' . $disposition;
+        }
 
         $query = $this->query()
             ->select($select)
@@ -560,6 +588,17 @@ final class Metrics
             $row['last_seen'] = (int) $row['last_seen'];
             $row['pass']      = $row['dkim'] + $row['spf_only'];
             $row['class']     = SourceClassifier::classify(SourceClassifier::current($row));
+            foreach ([
+                'dkim_pass_aligned', 'dkim_pass_unaligned', 'dkim_not_pass',
+                'spf_pass_aligned', 'spf_pass_unaligned', 'spf_not_pass',
+                'disposition_none', 'disposition_quarantine', 'disposition_reject',
+            ] as $key) {
+                $row[$key] = (int) ($row[$key] ?? 0);
+            }
+            $row['policy_domain'] = (string) ($row['policy_domain'] ?? '');
+            $row['policy_adkim'] = (string) ($row['policy_adkim'] ?? '');
+            $row['policy_aspf'] = (string) ($row['policy_aspf'] ?? '');
+            $row['header_from'] = (string) ($row['header_from'] ?? '');
         }
 
         unset($row);
@@ -594,6 +633,26 @@ final class Metrics
         }
 
         $select[] = 'MAX(' . $this->db->quoteName('rep.date_end') . ') AS last_seen';
+        $select[] = 'MAX(' . $this->db->quoteName('rep.policy_domain') . ') AS policy_domain';
+        $select[] = 'MAX(' . $this->db->quoteName('rep.policy_adkim') . ') AS policy_adkim';
+        $select[] = 'MAX(' . $this->db->quoteName('rep.policy_aspf') . ') AS policy_aspf';
+        $select[] = 'MAX(' . $this->db->quoteName('rec.header_from') . ') AS header_from';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS dkim_pass_aligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.dkim_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS dkim_pass_unaligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_result') . ' <> ' . $this->db->quote('pass')
+            . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS dkim_not_pass';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS spf_pass_aligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('rec.spf_aligned') . ' = 0 THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS spf_pass_unaligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.spf_result') . ' <> ' . $this->db->quote('pass')
+            . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS spf_not_pass';
+        foreach (['none', 'quarantine', 'reject'] as $disposition) {
+            $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.disposition') . ' = ' . $this->db->quote($disposition)
+                . ' THEN ' . $this->db->quoteName('rec.count') . ' ELSE 0 END), 0) AS disposition_' . $disposition;
+        }
 
         $query = $this->query()
             ->select($select)
@@ -674,7 +733,7 @@ final class Metrics
      */
     private static function flaggedRow(array $row): array
     {
-        return [
+        $result = [
             'ip'             => (string) $row['source_ip'],
             'total'          => (int) $row['total'],
             'dkim'           => (int) $row['dkim'],
@@ -682,7 +741,21 @@ final class Metrics
             'fail'           => (int) $row['fail'],
             'fail_delivered' => (int) $row['fail_delivered'],
             'last_seen'      => (int) $row['last_seen'],
+            'policy_domain'  => (string) ($row['policy_domain'] ?? ''),
+            'policy_adkim'   => (string) ($row['policy_adkim'] ?? ''),
+            'policy_aspf'    => (string) ($row['policy_aspf'] ?? ''),
+            'header_from'    => (string) ($row['header_from'] ?? ''),
         ];
+
+        foreach ([
+            'dkim_pass_aligned', 'dkim_pass_unaligned', 'dkim_not_pass',
+            'spf_pass_aligned', 'spf_pass_unaligned', 'spf_not_pass',
+            'disposition_none', 'disposition_quarantine', 'disposition_reject',
+        ] as $key) {
+            $result[$key] = (int) ($row[$key] ?? 0);
+        }
+
+        return $result;
     }
 
     /**
@@ -1055,6 +1128,26 @@ final class Metrics
         }
 
         $select[] = 'MAX(' . $this->db->quoteName('rep.date_end') . ') AS last_seen';
+        $select[] = 'MAX(' . $this->db->quoteName('rep.policy_domain') . ') AS policy_domain';
+        $select[] = 'MAX(' . $this->db->quoteName('rep.policy_adkim') . ') AS policy_adkim';
+        $select[] = 'MAX(' . $this->db->quoteName('rep.policy_aspf') . ') AS policy_aspf';
+        $select[] = 'MAX(' . $this->db->quoteName('cur.header_from') . ') AS header_from';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.dkim_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('cur.dkim_aligned') . ' = 1 THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS dkim_pass_aligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.dkim_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('cur.dkim_aligned') . ' = 0 THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS dkim_pass_unaligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.dkim_result') . ' <> ' . $this->db->quote('pass')
+            . ' THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS dkim_not_pass';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.spf_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('cur.spf_aligned') . ' = 1 THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS spf_pass_aligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.spf_result') . ' = ' . $this->db->quote('pass')
+            . ' AND ' . $this->db->quoteName('cur.spf_aligned') . ' = 0 THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS spf_pass_unaligned';
+        $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.spf_result') . ' <> ' . $this->db->quote('pass')
+            . ' THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS spf_not_pass';
+        foreach (['none', 'quarantine', 'reject'] as $disposition) {
+            $select[] = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.disposition') . ' = ' . $this->db->quote($disposition)
+                . ' THEN ' . $this->db->quoteName('cur.count') . ' ELSE 0 END), 0) AS disposition_' . $disposition;
+        }
 
         // Collapse the CURRENT reporting window (reports whose end falls in the
         // seven days up to the newest report, matching windowTotalsAll) to one
@@ -1078,7 +1171,16 @@ final class Metrics
             ->group($this->db->quoteName('rep.domain_id') . ', ' . $this->db->quoteName('cur.source_ip'))
             ->having($this->flaggedHaving('cur'));
 
-        $columns = array_merge(['domain_id', 'source_ip'], array_keys($conditions), ['last_seen']);
+        $columns = array_merge(
+            ['domain_id', 'source_ip'],
+            array_keys($conditions),
+            [
+                'last_seen', 'policy_domain', 'policy_adkim', 'policy_aspf', 'header_from',
+                'dkim_pass_aligned', 'dkim_pass_unaligned', 'dkim_not_pass',
+                'spf_pass_aligned', 'spf_pass_unaligned', 'spf_not_pass',
+                'disposition_none', 'disposition_quarantine', 'disposition_reject',
+            ]
+        );
         $quoted  = array_map(fn (string $column): string => $this->db->quoteName($column), $columns);
 
         // Optional callers can rank and limit each domain. The normal dashboard

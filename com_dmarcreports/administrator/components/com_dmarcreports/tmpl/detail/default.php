@@ -251,6 +251,36 @@ $this->getDocument()->getWebAssetManager()->addInlineStyle(
                                                 ? htmlspecialchars((string) $src['host'])
                                                 : Text::_('COM_DMARCREPORTS_SOURCE_HOST_UNKNOWN'); ?>
                                         </div>
+                                        <?php
+                                        $evidence = [
+                                            'source_ip' => (string) $src['source_ip'],
+                                            'ptr_host' => (string) ($src['host'] ?? ''),
+                                            'reverse_dns_confidence' => ($src['host'] ?? '') !== '' ? 'forward_confirmed' : 'not_forward_confirmed',
+                                            'dkim_pass_aligned' => (int) ($src['dkim_pass_aligned'] ?? $src['dkim'] ?? 0),
+                                            'dkim_pass_unaligned' => (int) ($src['dkim_pass_unaligned'] ?? 0),
+                                            'dkim_not_pass' => (int) ($src['dkim_not_pass'] ?? 0),
+                                            'spf_pass_aligned' => (int) ($src['spf_pass_aligned'] ?? 0),
+                                            'spf_pass_unaligned' => (int) ($src['spf_pass_unaligned'] ?? 0),
+                                            'spf_not_pass' => (int) ($src['spf_not_pass'] ?? 0),
+                                            'disposition_none' => (int) ($src['disposition_none'] ?? 0),
+                                            'disposition_quarantine' => (int) ($src['disposition_quarantine'] ?? 0),
+                                            'disposition_reject' => (int) ($src['disposition_reject'] ?? 0),
+                                            'message_count' => (int) ($src['total'] ?? 0),
+                                            'window_start' => (int) ($src['last_seen'] ?? 0) > 0 ? (int) ($src['last_seen'] ?? 0) - (7 * 86400) : 0,
+                                            'window_end' => (int) ($src['last_seen'] ?? 0),
+                                            'domain' => (string) ($m['domain'] ?? ''),
+                                            'header_from' => (string) ($src['header_from'] ?? ''),
+                                            'policy_domain' => (string) ($src['policy_domain'] ?? ''),
+                                            'adkim' => (string) ($src['policy_adkim'] ?? ''),
+                                            'aspf' => (string) ($src['policy_aspf'] ?? ''),
+                                            'assessment' => (int) ($src['dkim_pass_aligned'] ?? $src['dkim'] ?? 0) > 0
+                                                ? 'legitimate_dkim'
+                                                : ((int) ($src['spf_pass_aligned'] ?? $src['spf_only'] ?? 0) > 0
+                                                    ? 'spf_only_unresolved'
+                                                    : 'unresolved'),
+                                        ];
+                                        echo ActionPresenter::sourceEvidence(['evidence' => $evidence]);
+                                        ?>
                                     </td>
                                     <td class="text-end"><?php echo (int) $src['total']; ?></td>
                                     <td class="text-end text-success"><?php echo (int) $src['dkim']; ?></td>

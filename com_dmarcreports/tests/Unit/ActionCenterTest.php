@@ -754,6 +754,49 @@ class ActionCenterTest extends TestCase
         $this->assertSame([], $this->sourceItems($items));
     }
 
+    public function testCyonSharedGatewayNeedsAlignedDkimForLegitimateEvidence(): void
+    {
+        $legitimate = $this->itemsWithSources([
+            [
+                'ip' => '192.0.2.223',
+                'host' => 'shared-gateway.example',
+                'total' => 12,
+                'dkim' => 12,
+                'spf_only' => 0,
+                'fail' => 0,
+                'dkim_pass_aligned' => 12,
+                'spf_pass_aligned' => 12,
+                'policy_domain' => 'example.org',
+                'policy_adkim' => 'r',
+                'policy_aspf' => 'r',
+            ],
+        ]);
+        $this->assertSame([], $this->sourceItems($legitimate));
+
+        $spfOnly = $this->itemsWithSources([
+            [
+                'ip' => '192.0.2.61',
+                'host' => 'shared-gateway.example',
+                'total' => 12,
+                'dkim' => 0,
+                'spf_only' => 12,
+                'fail' => 0,
+                'dkim_pass_aligned' => 0,
+                'dkim_not_pass' => 12,
+                'spf_pass_aligned' => 12,
+                'policy_domain' => 'example.org',
+                'policy_adkim' => 'r',
+                'policy_aspf' => 'r',
+            ],
+        ]);
+        $item = $this->find($spfOnly, 'spf_only_source');
+        $this->assertNotNull($item);
+        $this->assertSame('spf_only_unresolved', $item['evidence']['assessment']);
+        $this->assertSame(12, $item['evidence']['spf_pass_aligned']);
+        $this->assertSame(0, $item['evidence']['dkim_pass_aligned']);
+        $this->assertSame('forward_confirmed', $item['evidence']['reverse_dns_confidence']);
+    }
+
     public function testSpfOnlySourceIsAnActNowItemWithNameAndCounts(): void
     {
         $items = $this->itemsWithSources([
@@ -766,6 +809,16 @@ class ActionCenterTest extends TestCase
         $this->assertSame('source', $item['category']);
         $this->assertSame('spf_only_source:1:192.0.2.62', $item['action_key']);
         $this->assertSame(['192.0.2.62', 'gateway.example.net', 7, 0, 7], $item['params']);
+        foreach ([
+            'source_ip', 'ptr_host', 'reverse_dns_confidence', 'dkim_pass_aligned',
+            'dkim_pass_unaligned', 'dkim_not_pass', 'spf_pass_aligned',
+            'spf_pass_unaligned', 'spf_not_pass', 'disposition_none',
+            'disposition_quarantine', 'disposition_reject', 'message_count',
+            'window_start', 'window_end', 'domain', 'header_from',
+            'policy_domain', 'adkim', 'aspf', 'assessment',
+        ] as $key) {
+            $this->assertArrayHasKey($key, $item['evidence']);
+        }
     }
 
     public function testFailingSourceRejectedByThePolicyIsStatisticsOnly(): void

@@ -121,6 +121,58 @@ final class ActionPresenter
         };
     }
 
+    public static function sourceEvidence(array $item): string
+    {
+        $evidence = (array) ($item['evidence'] ?? []);
+
+        if ($evidence === []) {
+            return '';
+        }
+
+        $esc = static fn (mixed $value): string => htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+        $start = (int) ($evidence['window_start'] ?? 0);
+        $end = (int) ($evidence['window_end'] ?? 0);
+        $window = $start > 0 && $end > 0
+            ? gmdate('Y-m-d H:i:s', $start) . ' UTC - ' . gmdate('Y-m-d H:i:s', $end) . ' UTC'
+            : Text::_('COM_DMARCREPORTS_EVIDENCE_WINDOW_UNKNOWN');
+        $host = (string) ($evidence['ptr_host'] ?? '');
+        $confidence = (string) ($evidence['reverse_dns_confidence'] ?? 'not_forward_confirmed');
+
+        $rationale = match ((string) ($evidence['assessment'] ?? '')) {
+            'legitimate_dkim' => Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT_DKIM_LEGITIMATE'),
+            'spf_only_unresolved' => Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT_SPF_ONLY_UNRESOLVED'),
+            default => Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT_UNRESOLVED'),
+        };
+
+        $dispositions = (int) ($evidence['disposition_none'] ?? 0) . ' / '
+            . (int) ($evidence['disposition_quarantine'] ?? 0) . ' / '
+            . (int) ($evidence['disposition_reject'] ?? 0);
+
+        return '<dl class="com-dmarcreports-source-evidence small mb-0 mt-2">'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_SOURCE_IP') . '</dt><dd>' . $esc($evidence['source_ip'] ?? '') . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_PTR') . '</dt><dd>' . $esc($host !== '' ? $host : Text::_('COM_DMARCREPORTS_EVIDENCE_NOT_AVAILABLE'))
+            . ' (' . $esc($confidence === 'forward_confirmed'
+                ? Text::_('COM_DMARCREPORTS_EVIDENCE_FORWARD_CONFIRMED')
+                : Text::_('COM_DMARCREPORTS_EVIDENCE_NOT_FORWARD_CONFIRMED')) . ')</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_DKIM') . '</dt><dd>'
+            . Text::_('COM_DMARCREPORTS_EVIDENCE_PASS_ALIGNED') . ': ' . (int) ($evidence['dkim_pass_aligned'] ?? 0)
+            . ', ' . Text::_('COM_DMARCREPORTS_EVIDENCE_PASS_UNALIGNED') . ': ' . (int) ($evidence['dkim_pass_unaligned'] ?? 0)
+            . ', ' . Text::_('COM_DMARCREPORTS_EVIDENCE_NOT_PASS') . ': ' . (int) ($evidence['dkim_not_pass'] ?? 0) . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_SPF') . '</dt><dd>'
+            . Text::_('COM_DMARCREPORTS_EVIDENCE_PASS_ALIGNED') . ': ' . (int) ($evidence['spf_pass_aligned'] ?? 0)
+            . ', ' . Text::_('COM_DMARCREPORTS_EVIDENCE_PASS_UNALIGNED') . ': ' . (int) ($evidence['spf_pass_unaligned'] ?? 0)
+            . ', ' . Text::_('COM_DMARCREPORTS_EVIDENCE_NOT_PASS') . ': ' . (int) ($evidence['spf_not_pass'] ?? 0) . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_DISPOSITION') . '</dt><dd>' . $esc($dispositions) . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_MESSAGE_COUNT') . '</dt><dd>' . (int) ($evidence['message_count'] ?? 0) . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_WINDOW') . '</dt><dd>' . $esc($window) . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_DOMAIN_CONTEXT') . '</dt><dd>'
+            . $esc(Text::_('COM_DMARCREPORTS_EVIDENCE_DOMAIN') . ': ' . (string) ($evidence['domain'] ?? '') . '; '
+            . Text::_('COM_DMARCREPORTS_EVIDENCE_POLICY_DOMAIN') . ': ' . (string) ($evidence['policy_domain'] ?? '') . '; '
+            . Text::_('COM_DMARCREPORTS_EVIDENCE_HEADER_FROM') . ': ' . (string) ($evidence['header_from'] ?? '') . '; adkim=' . (string) ($evidence['adkim'] ?? '') . '; aspf=' . (string) ($evidence['aspf'] ?? '')) . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT') . '</dt><dd>' . $esc($rationale) . '</dd>'
+            . '</dl>';
+    }
+
     public static function severityLabel(int $severity): string
     {
         return match ($severity) {
