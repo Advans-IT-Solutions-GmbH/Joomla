@@ -12,9 +12,13 @@
 define('_JEXEC', 1);
 
 require_once '/var/www/html/libraries/vendor/autoload.php';
+require_once '/var/www/html/administrator/components/com_dmarcreports/src/Helper/SourceClassifier.php';
 require_once '/var/www/html/administrator/components/com_dmarcreports/src/Helper/Metrics.php';
+require_once '/var/www/html/administrator/components/com_dmarcreports/src/Helper/ActionStatus.php';
 
+use Advans\Component\DmarcReports\Administrator\Helper\ActionStatus;
 use Advans\Component\DmarcReports\Administrator\Helper\Metrics;
+use Advans\Component\DmarcReports\Administrator\Helper\SourceClassifier;
 use Joomla\Database\DatabaseFactory;
 
 class MetricsTest
@@ -89,22 +93,14 @@ class MetricsTest
             return (int) $bundle['current_policy_pct'] === 100;
         });
 
-        $this->test('New sources list every source first seen in the current window', function () use ($bundle) {
-            $ips = array_map(static fn (array $s): string => $s['ip'], $bundle['new_sources']);
+        $this->test('Flagged sources surface a current-window delivered failing source only', function () use ($bundle) {
+            $ips = array_map(static fn (array $s): string => $s['ip'], $bundle['flagged_sources']);
 
-            return in_array('10.0.0.3', $ips, true)
-                && in_array('10.0.0.4', $ips, true)
-                && !in_array('10.0.0.1', $ips, true);
-        });
-
-        $this->test('Unaligned senders surface a current-window failing source only', function () use ($bundle) {
-            $ips = array_map(static fn (array $s): string => $s['ip'], $bundle['unaligned_sources']);
-
-            // 10.0.0.3 fails alignment inside the current rolling window and must
-            // surface; 10.0.0.2 failed only in the previous window, so once a
-            // sender is fixed it drops out of the window-scoped Action Center.
-            return in_array('10.0.0.3', $ips, true)
-                && !in_array('10.0.0.2', $ips, true);
+            // 10.0.0.3 fails alignment inside the current rolling window and its
+            // mail was delivered, so it must surface; 10.0.0.2 failed only in the
+            // previous window, so once a sender is fixed it drops out. The
+            // DKIM-aligned senders 10.0.0.1 and 10.0.0.4 are confirmed.
+            return $ips === ['10.0.0.3'];
         });
 
         $this->test('Timeline is chronological and spans every report day', function () use ($bundle) {
@@ -162,73 +158,11 @@ class MetricsTest
                 && abs((float) $action['pass_rate_prev'] - (float) $bundle['pass_rate_prev']) < 0.01;
         });
 
-        $this->test('Bulk new sources match the current-window sources', function () use ($action) {
-            $ips = array_map(static fn (array $s): string => $s['ip'], $action['new_sources'] ?? []);
-
-            return in_array('10.0.0.3', $ips, true)
-                && in_array('10.0.0.4', $ips, true)
-                && !in_array('10.0.0.1', $ips, true);
+        $this->test('Bulk flagged sources match the detail view', function () use ($action, $bundle) {
+            return ($action['flagged_sources'] ?? null) === $bundle['flagged_sources'];
         });
 
-        $this->test('Bulk unaligned senders surface a current-window failing source only', function () use ($action) {
-            $ips = array_map(static fn (array $s): string => $s['ip'], $action['unaligned_sources'] ?? []);
-
-            return in_array('10.0.0.3', $ips, true)
-                && !in_array('10.0.0.2', $ips, true);
-        });
-
-        $this->test('New sources carry their failing volume and rank failing mail first', function () use ($bundle, $action) {
-            // 10.0.0.4 (100 messages, all aligned) outweighs 10.0.0.3 (20 messages,
-            // all failing), yet only the failing one needs a decision, so it must
-            // rank first and survive the top-10 cut in both paths.
-            foreach ([$bundle['new_sources'], $action['new_sources'] ?? []] as $list) {
-                $byIp = [];
-
-                foreach ($list as $source) {
-                    $byIp[$source['ip']] = $source;
-                }
-
-                if (($list[0]['ip'] ?? '') !== '10.0.0.3'
-                    || ($byIp['10.0.0.3']['fail'] ?? -1) !== 20
-                    || ($byIp['10.0.0.4']['fail'] ?? -1) !== 0
-                    || ($byIp['10.0.0.4']['count'] ?? -1) !== 100) {
-                    return false;
-                }
-            }
-
-            return true;
-        });
-
-        $this->test('Detail and dashboard list the same top new sources for equal volumes', function () {
-            // Twelve new single-message sources tie on volume. The drill-down
-            // used to order by volume only, so its top ten differed from the
-            // dashboard's top ten, which also orders by address.
-            $tieId = $this->seedTiedNewSources('ties.' . self::DOMAIN, 12);
-
-            try {
-                $metrics = new Metrics($this->db);
-                $detail  = array_map(static fn (array $s): string => $s['ip'], $metrics->domainMetrics($tieId)['new_sources']);
-
-                $bulk = [];
-                foreach ($metrics->domainSummaries() as $row) {
-                    if ((int) ($row['id'] ?? 0) === $tieId) {
-                        $bulk = $metrics->actionMetricsForAll([$row])[$tieId]['new_sources'] ?? [];
-                        break;
-                    }
-                }
-
-                $bulk     = array_map(static fn (array $s): string => $s['ip'], $bulk);
-                $expected = [];
-
-                for ($i = 10; $i <= 19; $i++) {
-                    $expected[] = '10.0.2.' . $i;
-                }
-
-                return $detail === $expected && $bulk === $expected;
-            } finally {
-                $this->deleteDomain($tieId);
-            }
-        });
+        $this->runClassificationTests();
 
         $this->test('Subdomain inherits the organizational parent sp policy', function () {
             // A monitored subdomain whose only report was published at the
@@ -543,16 +477,123 @@ class MetricsTest
     }
 
     /**
-     * A domain with one established sender in an older report and $count new,
-     * aligned single-message sources in the current window, inserted in reverse
-     * address order so an insertion-order result cannot pass by accident.
+     * The automatic judgement of sending sources against a real database: the
+     * per-source figures, the flagged list in both paths, the domain-view table
+     * that always lists flagged sources, and the automatic closing of stored
+     * "new source" items whose source is now confirmed through DKIM.
      */
-    private function seedTiedNewSources(string $domain, int $count): int
+    private function runClassificationTests(): void
+    {
+        $domain   = 'classify.' . self::DOMAIN;
+        $domainId = $this->seedClassification($domain);
+
+        try {
+            $metrics = new Metrics($this->db);
+            $bundle  = $metrics->domainMetrics($domainId);
+            $rows    = [];
+
+            foreach ($bundle['top_sources'] as $row) {
+                $rows[$row['source_ip']] = $row;
+            }
+
+            $this->test('Flagged sources: SPF-only first, then delivered failing mail; DKIM and rejected mail are not flagged', function () use ($bundle) {
+                return array_column($bundle['flagged_sources'], 'ip') === ['10.0.3.2', '10.0.3.5', '10.0.3.4'];
+            });
+
+            $this->test('Flagged source figures split DKIM, SPF-only and failing mail', function () use ($bundle) {
+                $mixed = $bundle['flagged_sources'][1];
+
+                return $mixed['total'] === 7 && $mixed['dkim'] === 5 && $mixed['spf_only'] === 2
+                    && $mixed['fail'] === 0 && $mixed['fail_delivered'] === 0
+                    && $mixed['last_seen'] === self::ANCHOR;
+            });
+
+            $this->test('Bulk flagged sources match the detail view for the classified domain', function () use ($metrics, $bundle, $domainId) {
+                foreach ($metrics->domainSummaries() as $row) {
+                    if ((int) ($row['id'] ?? 0) === $domainId) {
+                        return ($metrics->actionMetricsForAll([$row])[$domainId]['flagged_sources'] ?? null) === $bundle['flagged_sources'];
+                    }
+                }
+
+                return false;
+            });
+
+            $this->test('Source table lists the 20 largest sources plus every flagged one', function () use ($rows) {
+                return count($rows) === 23
+                    && isset($rows['10.0.3.2'], $rows['10.0.3.4'], $rows['10.0.3.5'])
+                    && !isset($rows['10.0.3.1'], $rows['10.0.3.3'], $rows['10.0.3.6']);
+            });
+
+            $this->test('Source table rows carry their classification', function () use ($rows) {
+                return $rows['10.0.4.1']['class'] === SourceClassifier::DKIM
+                    && $rows['10.0.3.2']['class'] === SourceClassifier::SPF_ONLY
+                    && $rows['10.0.3.4']['class'] === SourceClassifier::UNAUTHENTICATED
+                    && $rows['10.0.3.5']['class'] === SourceClassifier::SPF_ONLY;
+            });
+
+            $this->test('Classification judges the current window, else the whole history', function () use ($metrics, $domainId) {
+                $classes = $metrics->classifySources($domainId, ['10.0.3.1', '10.0.3.3', '10.0.3.6', '10.0.3.7', '10.0.9.9']);
+
+                ksort($classes);
+
+                // 10.0.3.7 sent SPF-only mail long ago and DKIM-signed mail now;
+                // 10.0.3.6 sent only long ago; 10.0.9.9 never sent and is absent.
+                return $classes === [
+                    '10.0.3.1' => SourceClassifier::DKIM,
+                    '10.0.3.3' => SourceClassifier::REJECTED,
+                    '10.0.3.6' => SourceClassifier::SPF_ONLY,
+                    '10.0.3.7' => SourceClassifier::DKIM,
+                ];
+            });
+
+            $this->test('Stored new-source items of DKIM-confirmed sources close automatically', function () use ($metrics, $domainId) {
+                $this->insertAction($domainId, 'new_source:' . $domainId . ':10.0.3.1', 'snoozed');
+                $this->insertAction($domainId, 'new_source:' . $domainId . ':10.0.3.2', 'snoozed');
+                $this->insertAction($domainId, 'new_source:' . $domainId . ':10.0.3.7', 'ignored');
+
+                $status   = new ActionStatus($this->db);
+                $resolved = $status->resolveConfirmedNewSources(
+                    static fn (int $id, array $ips): array => $metrics->classifySources($id, $ips)
+                );
+
+                $states = [];
+                $query  = $this->query()
+                    ->select([$this->db->quoteName('action_key'), $this->db->quoteName('status'), $this->db->quoteName('modified_by')])
+                    ->from($this->db->quoteName('#__dmarc_actions'))
+                    ->where($this->db->quoteName('domain_id') . ' = ' . (int) $domainId);
+
+                foreach ($this->db->setQuery($query)->loadObjectList() as $row) {
+                    $states[$row->action_key] = $row->status . '/' . $row->modified_by;
+                }
+
+                $auto = array_column($status->autoResolved(), 'action_key');
+
+                return $resolved === 1
+                    // Confirmed through DKIM: closed by the software (modified_by 0).
+                    && $states['new_source:' . $domainId . ':10.0.3.1'] === 'auto_done/0'
+                    // SPF only: stays, the new SPF-only item takes over.
+                    && $states['new_source:' . $domainId . ':10.0.3.2'] === 'snoozed/7'
+                    // Ignored by the administrator: his decision stands.
+                    && $states['new_source:' . $domainId . ':10.0.3.7'] === 'ignored/7'
+                    && in_array('new_source:' . $domainId . ':10.0.3.1', $auto, true);
+            });
+        } finally {
+            $this->deleteDomain($domainId);
+        }
+    }
+
+    /**
+     * A domain whose current window holds one source of every class, a mixed
+     * source, twenty large DKIM-signed sources (so the small flagged ones fall
+     * below the top 20 by volume) and, in an old report, an SPF-only source and a
+     * source that has since switched to DKIM.
+     */
+    private function seedClassification(string $domain): int
     {
         $domainId = $this->insertDomain($domain);
 
-        $insert = function (string $org, int $begin) use ($domainId, $domain): int {
-            $report = (object) [
+        $report = function (string $org, int $begin, int $end, string $policy) use ($domainId, $domain): int {
+            $row = (object) [
                 'domain_id'     => $domainId,
                 'source_id'     => 0,
                 'org_name'      => $org,
@@ -560,42 +601,70 @@ class MetricsTest
                 'report_id'     => $org . '-' . $domainId,
                 'report_hash'   => hash('sha256', $domain . '|' . $org . '|' . $begin),
                 'date_begin'    => $begin,
-                'date_end'      => $begin + self::DAY,
+                'date_end'      => $end,
                 'policy_domain' => $domain,
-                'policy_p'      => 'reject',
+                'policy_p'      => $policy,
                 'policy_pct'    => 100,
                 'message_count' => 0,
                 'created'       => gmdate('Y-m-d H:i:s'),
             ];
-            $this->db->insertObject('#__dmarc_reports', $report, 'id');
+            $this->db->insertObject('#__dmarc_reports', $row, 'id');
 
-            return (int) $report->id;
+            return (int) $row->id;
         };
 
-        $record = function (int $reportId, string $ip) use ($domainId, $domain): void {
+        $record = function (int $reportId, string $ip, int $count, int $dkim, int $spf, string $disposition) use ($domainId, $domain): void {
             $row = (object) [
                 'report_id'    => $reportId,
                 'domain_id'    => $domainId,
                 'source_ip'    => $ip,
-                'count'        => 1,
-                'disposition'  => 'none',
-                'dkim_result'  => 'pass',
-                'spf_result'   => 'fail',
-                'dkim_aligned' => 1,
-                'spf_aligned'  => 0,
+                'count'        => $count,
+                'disposition'  => $disposition,
+                'dkim_result'  => $dkim === 1 ? 'pass' : 'fail',
+                'spf_result'   => $spf === 1 ? 'pass' : 'fail',
+                'dkim_aligned' => $dkim,
+                'spf_aligned'  => $spf,
                 'header_from'  => $domain,
             ];
             $this->db->insertObject('#__dmarc_records', $row);
         };
 
-        $record($insert('tie-old', self::ANCHOR - 30 * self::DAY), '10.0.2.1');
-        $current = $insert('tie-cur', self::ANCHOR - self::DAY);
+        $old = $report('cls-old', self::ANCHOR - 30 * self::DAY, self::ANCHOR - 29 * self::DAY, 'none');
+        $cur = $report('cls-cur', self::ANCHOR - self::DAY, self::ANCHOR, 'reject');
 
-        for ($i = 10 + $count - 1; $i >= 10; $i--) {
-            $record($current, '10.0.2.' . $i);
+        $record($old, '10.0.3.6', 3, 0, 1, 'none');      // SPF only, long ago
+        $record($old, '10.0.3.7', 4, 0, 1, 'none');      // SPF only long ago ...
+        $record($cur, '10.0.3.7', 4, 1, 1, 'none');      // ... DKIM-signed now
+
+        $record($cur, '10.0.3.1', 12, 1, 1, 'none');     // DKIM and SPF aligned
+        $record($cur, '10.0.3.2', 7, 0, 1, 'none');      // SPF only
+        $record($cur, '10.0.3.3', 9, 0, 0, 'reject');    // failing, rejected
+        $record($cur, '10.0.3.4', 4, 0, 0, 'none');      // failing, delivered
+        $record($cur, '10.0.3.5', 5, 1, 1, 'none');      // mixed: DKIM ...
+        $record($cur, '10.0.3.5', 2, 0, 1, 'none');      // ... and SPF only
+
+        for ($i = 1; $i <= 20; $i++) {
+            $record($cur, '10.0.4.' . $i, 100, 1, 1, 'none');
         }
 
         return $domainId;
+    }
+
+    private function insertAction(int $domainId, string $key, string $status): void
+    {
+        $row = (object) [
+            'domain_id'   => $domainId,
+            'action_key'  => $key,
+            'category'    => 'source',
+            'severity'    => 0,
+            'status'      => $status,
+            'params'      => '',
+            'first_seen'  => gmdate('Y-m-d H:i:s'),
+            'last_seen'   => gmdate('Y-m-d H:i:s'),
+            'modified'    => gmdate('Y-m-d H:i:s'),
+            'modified_by' => 7,
+        ];
+        $this->db->insertObject('#__dmarc_actions', $row);
     }
 
     private function deleteDomain(int $id): void
@@ -604,7 +673,7 @@ class MetricsTest
             return;
         }
 
-        foreach (['#__dmarc_records', '#__dmarc_reports', '#__dmarc_domains'] as $table) {
+        foreach (['#__dmarc_actions', '#__dmarc_records', '#__dmarc_reports', '#__dmarc_domains'] as $table) {
             $column = $table === '#__dmarc_domains' ? 'id' : 'domain_id';
             $query  = $this->query()
                 ->delete($this->db->quoteName($table))

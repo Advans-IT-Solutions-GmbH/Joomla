@@ -348,11 +348,11 @@ unattended. It must not re-implement IMAP or parsing.
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
 | ME-01 | POS | Open the dashboard with several domains ingested. | Each domain row shows volume, the combined DMARC aligned-pass rate (`pass_rate`, a percentage) and the would-be-rejected message count (`reject_under_p`, an integer count, not a percentage nor a separate SPF/DKIM rate). |
-| ME-02 | POS | Open a domain's detail view. | Top sending IPs, a pass/fail breakdown and a timeline are shown. |
+| ME-02 | POS | Open a domain's detail view. | The sending sources (address with forward-confirmed server name or «no confirmed name», volume, DKIM aligned, SPF only, failed, assessment badge, latest report) and a timeline are shown, at 1600 and 375 px (table scrolls inside its card). |
 | ME-03 | GRZ | Seed one historical failure, then a clean current window. | The rollout decision reads the current window (`window_total`, `pass_rate_window`, `window_reject_under_p`); the historical failure does not block the next step forever. |
 | ME-04 | POS | Seed a would-be-rejected share at and above 2%. | The share is shown and raised to severity 3 at ≥2%. |
-| ME-05 | POS | Seed a heavy failing sender ranked below the top-20 by total volume. | `unalignedSources()` still surfaces it for an alignment recommendation. |
-| ME-06 | POS | Seed an IP first seen only in a second, contemporaneous report from another reporter in the current window. | `newSources()` flags it across the whole window, not just the single newest report id. |
+| ME-05 | POS | Seed a small SPF-only sender and a small delivered failing sender ranked below the top-20 by total volume. | `flaggedSources()` still surfaces both, and the domain view lists them below the top 20 so the Action Center link reaches their rows. |
+| ME-06 | POS | Seed an IP whose SPF-only mail is only in a second, contemporaneous report from another reporter in the current window. | `flaggedSources()` flags it across the whole window, not just the single newest report id. |
 | ME-07 | GRZ | Seed a window-to-window drop in the aligned-pass rate of more than five percentage points (latest reporting window versus the one immediately before it). | `pass_rate_drop` is reported; a drop of exactly five points or less correctly produces no finding (`$current < $previous - 5`). |
 | ME-08 | POS | Compare `latestPolicy()` (single domain) and `latestPolicyAll()` (bulk dashboard) for a subdomain already covered by `sp=reject`. | Both resolve the effective policy; the subdomain is not told to start its rollout from `none`. |
 | ME-09 | GRZ | Open a domain with no reports. | `no_data`; the metrics degrade to zeroes with no error. |
@@ -372,8 +372,8 @@ unattended. It must not re-implement IMAP or parsing.
 | AC-04 | POS | Seed `p=quarantine` below and then at or above the reject threshold. | `stay_at_quarantine`, then `move_to_reject`. |
 | AC-05 | POS | Seed the configured target reached, a `p=reject` with `pct<100` and a `p=quarantine` with `pct<100`. | `at_target`/`enforced`; `partial_enforcement`; `partial_quarantine` — a partial policy is never reported as the reached target or treated as safe to advance. |
 | AC-06 | POS | Seed a would-be-rejected share at ≥2%. | `would_be_rejected` at severity 3. |
-| AC-07 | POS | Seed an unaligned sender at a small and a large share. | `align_source` with severity scaled by share. |
-| AC-08 | POS | Seed a sending IP not seen before. | `new_source` — review it. |
+| AC-07 | POS | Seed a failing sender whose mail was delivered (disposition none), then the same sender with every failing message rejected or quarantined. | First `align_source` at severity 1 with server name and share; then no item (statistics only, badge «rejected»). |
+| AC-08 | POS | Seed a DKIM-aligned source, an SPF-only source and one source with both. Snooze a stored `new_source` item of the DKIM source first. | DKIM source: no item, badge «confirmed automatically (DKIM)», the stored item turns `auto_done` (`modified_by` 0) and is listed as handled without «Reopen»; SPF-only and mixed source: `spf_only_source` at severity 3 with server name and counts; «Show this source» jumps to the highlighted row. With DNS diagnostics off or the resolver unreachable, the badges are unchanged and the name reads «no confirmed name». |
 | AC-09 | POS | Inspect ordering and badges across mixed findings. | Sorted by severity descending then `action_key`; the presenter maps 3→danger, 2→warning, 1→info, else success. |
 | AC-10 | POS | Mark an item done and snooze another, then re-ingest. | The status and `snooze_until` survive the next ingestion. (`first_seen`/`last_seen` are written only by `ActionsController` on a status override or change, not by ingestion or dashboard generation.) |
 | AC-11 | NEG | Mark an item done or snooze it without a CSRF token or without rights, including by direct POST. | No change. |

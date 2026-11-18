@@ -18,8 +18,9 @@ defined('_JEXEC') or die;
 /**
  * Aggregates stored DMARC records into the numbers the dashboard, the
  * drill-down view and the Action Center work with: volume, SPF/DKIM pass
- * rates, the share that would be rejected under p=reject, top sending IPs,
- * unaligned senders, newly seen sources and a daily timeline.
+ * rates, the share that would be rejected under p=reject, the sending sources
+ * with their DKIM/SPF figures, the sources the Action Center flags and a daily
+ * timeline.
  *
  * @since  1.0.0
  */
@@ -99,6 +100,9 @@ final class Metrics
 
         $latestPolicy = $this->latestPolicy($domainId, (string) ($domain['domain'] ?? ''));
 
+        $anchor  = $this->latestReportEnd($domainId);
+        $flagged = $this->flaggedSources($domainId, $anchor);
+
         $metrics = [
             'domain_id'          => $domainId,
             'domain'             => $domain['domain'] ?? '',
@@ -110,9 +114,8 @@ final class Metrics
             'dkim_pass'         => 0,
             'spf_pass'          => 0,
             'reject_under_p'    => 0,
-            'top_sources'       => $this->topSources($domainId),
-            'unaligned_sources' => $this->unalignedSources($domainId),
-            'new_sources'       => $this->newSources($domainId),
+            'top_sources'       => $this->sourceTable($domainId, $anchor, $flagged),
+            'flagged_sources'   => $flagged,
             'timeline'          => $this->timeline($domainId),
             'pass_rate_prev'    => null,
         ];
@@ -126,7 +129,6 @@ final class Metrics
         // newest report, using volume-weighted rates aggregated across every
         // report in each window. This avoids false drop alerts when adjacent
         // individual reports come from different reporters or overlapping spans.
-        $anchor = $this->latestReportEnd($domainId);
         $window = 7 * 86400;
 
         // The rollout guidance must reflect the current reporting window, not
@@ -184,12 +186,11 @@ final class Metrics
             return [];
         }
 
-        $window     = 7 * 86400;
-        $anchors    = $this->latestReportEndAll($ids);
-        $unaligned  = $this->unalignedSourcesAll($ids);
-        $newSources = $this->newSourcesAll($ids);
-        $current    = $this->windowTotalsAll($ids, $window, 0);
-        $previous   = $this->windowTotalsAll($ids, 2 * $window, $window);
+        $window   = 7 * 86400;
+        $anchors  = $this->latestReportEndAll($ids);
+        $flagged  = $this->flaggedSourcesAll($ids);
+        $current  = $this->windowTotalsAll($ids, $window, 0);
+        $previous = $this->windowTotalsAll($ids, 2 * $window, $window);
 
         $empty  = ['total' => 0, 'pass' => 0, 'reject_under_p' => 0];
         $result = [];
@@ -214,8 +215,7 @@ final class Metrics
                 'total'              => (int) ($summary['total'] ?? 0),
                 'dmarc_pass'         => (int) ($summary['dmarc_pass'] ?? 0),
                 'reject_under_p'     => (int) ($summary['reject_under_p'] ?? 0),
-                'unaligned_sources'  => $unaligned[$domainId] ?? [],
-                'new_sources'        => $anchor > 0 ? ($newSources[$domainId] ?? []) : [],
+                'flagged_sources'    => $anchor > 0 ? ($flagged[$domainId] ?? []) : [],
                 'pass_rate_prev'     => null,
             ];
 
@@ -343,75 +343,163 @@ final class Metrics
     }
 
     /**
-     * @return array<int, array<string, mixed>>
+     * The domain view's table of sending sources: the top $limit sources by
+     * lifetime volume, followed by every source the Action Center flags (so each
+     * flagged item can link to its row even when its volume is small).
+     *
+     * @param   array<int, array<string, mixed>>  $flagged  Rows from flaggedSources().
+     *
+     * @return  array<int, array<string, mixed>>
      */
-    private function topSources(int $domainId, int $limit = 20): array
+    private function sourceTable(int $domainId, int $anchor, array $flagged, int $limit = 20): array
     {
-        $count = $this->db->quoteName('count');
+        $rows  = $this->sourceRows($domainId, $anchor, null, $limit);
+        $shown = array_column($rows, 'source_ip');
+        $extra = [];
 
-        $query = $this->query()
-            ->select(
-                [
-                    $this->db->quoteName('source_ip'),
-                    'COALESCE(SUM(' . $count . '), 0) AS total',
-                    'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('dkim_aligned') . ' = 1 OR '
-                        . $this->db->quoteName('spf_aligned') . ' = 1 THEN ' . $count . ' ELSE 0 END), 0) AS pass',
-                    'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('dkim_aligned') . ' = 0 AND '
-                        . $this->db->quoteName('spf_aligned') . ' = 0 THEN ' . $count . ' ELSE 0 END), 0) AS fail',
-                ]
-            )
-            ->from($this->db->quoteName('#__dmarc_records'))
-            ->where($this->db->quoteName('domain_id') . ' = :domainId')
-            ->bind(':domainId', $domainId, ParameterType::INTEGER)
-            ->group($this->db->quoteName('source_ip'))
-            ->order('total DESC');
+        foreach ($flagged as $source) {
+            $ip = (string) ($source['ip'] ?? '');
 
-        $query->setLimit($limit);
-        $rows = $this->db->setQuery($query)->loadAssocList() ?: [];
+            if ($ip !== '' && !\in_array($ip, $shown, true)) {
+                $extra[] = $ip;
+            }
+        }
 
-        foreach ($rows as &$row) {
-            $row['total']   = (int) $row['total'];
-            $row['pass']    = (int) $row['pass'];
-            $row['fail']    = (int) $row['fail'];
-            $row['aligned'] = $row['fail'] === 0 ? 1 : 0;
+        if ($extra !== []) {
+            $rows = array_merge($rows, $this->sourceRows($domainId, $anchor, $extra, \count($extra)));
         }
 
         return $rows;
     }
 
     /**
-     * Sources with mail that fails DMARC alignment within the CURRENT reporting
-     * window, ranked by failing volume. Scoped to the rolling window (reports
-     * whose end falls in the seven days up to the newest report) and joined
-     * through the reports table so a sender that has since been aligned drops
-     * out of the Action Center instead of lingering forever on its historical
-     * failures. Queried independently of the display-oriented top-source table
-     * so a heavy failing sender ranked below the top N still reaches the Action
-     * Center and can earn an alignment recommendation.
+     * The classification of the given sending addresses of a domain, judged on
+     * their current figures ({@see SourceClassifier::current()}). Addresses
+     * without any record are absent from the result.
+     *
+     * @param   string[]  $ips
+     *
+     * @return  array<string, string>  Class constant of {@see SourceClassifier} keyed by address.
+     */
+    public function classifySources(int $domainId, array $ips): array
+    {
+        $ips = array_values(array_unique(array_filter(array_map('strval', $ips), static fn (string $ip): bool => $ip !== '')));
+
+        if ($domainId <= 0 || $ips === []) {
+            return [];
+        }
+
+        $classes = [];
+
+        foreach ($this->sourceRows($domainId, $this->latestReportEnd($domainId), $ips, \count($ips)) as $row) {
+            $classes[(string) $row['source_ip']] = SourceClassifier::classify(SourceClassifier::current($row));
+        }
+
+        return $classes;
+    }
+
+    /**
+     * Per-source figures of a domain: lifetime totals, the same figures for the
+     * current reporting window (prefixed `w_`, the seven days up to the newest
+     * report end, as the Action Center measures them) and the end of the newest
+     * report that listed the source. Restricted to $ips when given, otherwise the
+     * top $limit sources by lifetime volume.
+     *
+     * @param   string[]|null  $ips
+     *
+     * @return  array<int, array<string, mixed>>
+     */
+    private function sourceRows(int $domainId, int $anchor, ?array $ips, int $limit): array
+    {
+        if ($ips === []) {
+            return [];
+        }
+
+        // The window bounds are integers taken from the database and inlined, so
+        // each can appear in several CASE expressions without repeating a bound
+        // parameter name.
+        $windowStart = $anchor - (7 * 86400);
+        $inWindow    = $anchor > 0
+            ? $this->db->quoteName('rep.date_end') . ' > ' . (int) $windowStart . ' AND '
+                . $this->db->quoteName('rep.date_end') . ' <= ' . (int) $anchor
+            : '1 = 0';
+
+        $select = [$this->db->quoteName('rec.source_ip', 'source_ip')];
+
+        foreach ($this->figureConditions('rec') as $name => $condition) {
+            $select[] = $this->sumWhen($condition, 'rec') . ' AS ' . $name;
+            $select[] = $this->sumWhen('(' . $condition . ') AND ' . $inWindow, 'rec') . ' AS w_' . $name;
+        }
+
+        $select[] = 'MAX(' . $this->db->quoteName('rep.date_end') . ') AS last_seen';
+
+        $query = $this->query()
+            ->select($select)
+            ->from($this->db->quoteName('#__dmarc_records', 'rec'))
+            ->join(
+                'INNER',
+                $this->db->quoteName('#__dmarc_reports', 'rep'),
+                $this->db->quoteName('rep.id') . ' = ' . $this->db->quoteName('rec.report_id')
+            )
+            ->where($this->db->quoteName('rec.domain_id') . ' = :domainId')
+            ->bind(':domainId', $domainId, ParameterType::INTEGER)
+            ->group($this->db->quoteName('rec.source_ip'))
+            ->order('total DESC, ' . $this->db->quoteName('rec.source_ip') . ' ASC');
+
+        if ($ips !== null) {
+            $query->where(
+                $this->db->quoteName('rec.source_ip') . ' IN ('
+                . implode(',', array_map(fn (string $ip): string => $this->db->quote($ip), array_map('strval', $ips))) . ')'
+            );
+        }
+
+        $query->setLimit(max(1, $limit));
+        $rows = $this->db->setQuery($query)->loadAssocList() ?: [];
+
+        foreach ($rows as &$row) {
+            foreach (array_keys($this->figureConditions('rec')) as $name) {
+                $row[$name]        = (int) $row[$name];
+                $row['w_' . $name] = (int) $row['w_' . $name];
+            }
+
+            $row['last_seen'] = (int) $row['last_seen'];
+            $row['pass']      = $row['dkim'] + $row['spf_only'];
+            $row['class']     = SourceClassifier::classify(SourceClassifier::current($row));
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Sources in the CURRENT reporting window that need the administrator: mail
+     * that passed DMARC only through SPF (without the domain's DKIM signature) or
+     * failing mail that was still delivered. Sources whose mail is DKIM-aligned,
+     * or whose failing mail the receivers rejected or quarantined, are left out:
+     * the software confirms the former itself and the policy already handles the
+     * latter. Scoped to the rolling window, so a source that has since been fixed
+     * drops out instead of lingering on its history; ranked by SPF-only volume,
+     * then delivered failing volume.
      *
      * @return array<int, array<string, mixed>>
      */
-    private function unalignedSources(int $domainId, int $limit = 20): array
+    private function flaggedSources(int $domainId, int $anchor, int $limit = 20): array
     {
-        $anchor = $this->latestReportEnd($domainId);
-
         if ($anchor === 0) {
             return [];
         }
 
         $windowStart = $anchor - (7 * 86400);
+        $conditions  = $this->figureConditions('rec');
+        $select      = [$this->db->quoteName('rec.source_ip', 'source_ip')];
 
-        $count = $this->db->quoteName('rec.count');
-        $fail  = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('rec.dkim_aligned') . ' = 0 AND '
-            . $this->db->quoteName('rec.spf_aligned') . ' = 0 THEN ' . $count . ' ELSE 0 END), 0)';
+        foreach ($conditions as $name => $condition) {
+            $select[] = $this->sumWhen($condition, 'rec') . ' AS ' . $name;
+        }
+
+        $select[] = 'MAX(' . $this->db->quoteName('rep.date_end') . ') AS last_seen';
 
         $query = $this->query()
-            ->select(
-                [
-                    $this->db->quoteName('rec.source_ip', 'source_ip'),
-                    $fail . ' AS fail',
-                ]
-            )
+            ->select($select)
             ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
             ->join(
                 'INNER',
@@ -425,103 +513,77 @@ final class Metrics
             ->bind(':windowStart', $windowStart, ParameterType::INTEGER)
             ->bind(':anchor', $anchor, ParameterType::INTEGER)
             ->group($this->db->quoteName('rec.source_ip'))
-            ->having($fail . ' > 0')
-            ->order('fail DESC');
+            ->having($this->flaggedHaving('rec'))
+            ->order('spf_only DESC, fail_delivered DESC, ' . $this->db->quoteName('rec.source_ip') . ' ASC');
 
         $query->setLimit($limit);
-        $rows = $this->db->setQuery($query)->loadAssocList() ?: [];
 
-        return array_map(
-            static fn (array $r): array => ['ip' => $r['source_ip'], 'count' => (int) $r['fail']],
-            $rows
-        );
+        return array_map([self::class, 'flaggedRow'], $this->db->setQuery($query)->loadAssocList() ?: []);
     }
 
     /**
-     * Sources that appear in the current reporting window but never in any
-     * earlier report. A domain commonly receives several overlapping reports
-     * from different organisations for the same window, so detection spans every
-     * report whose range begins inside the window rather than the single newest
-     * report id; otherwise a source first seen in a contemporaneous report from
-     * another reporter would be missed.
+     * The message-count conditions every source figure is built from, for the
+     * records aliased $alias. The receivers' policy_evaluated results already
+     * apply alignment under the domain's adkim/aspf modes, so dkim_aligned = 1
+     * means the mail carried a valid signature of the domain (or an aligned
+     * subdomain).
      *
-     * Each source carries its failing (unaligned) volume, and sources with
-     * failing mail rank first, then by volume, then by address. The address
-     * tiebreak keeps the top 10 identical to newSourcesAll(), so the drill-down
-     * and the dashboard list the same sources.
-     *
-     * @return array<int, array{ip: string, count: int, fail: int}>
+     * @return array<string, string>  Figure name => SQL condition.
      */
-    private function newSources(int $domainId): array
+    private function figureConditions(string $alias): array
     {
-        $anchor = $this->latestReportEnd($domainId);
+        $dkim = $this->db->quoteName($alias . '.dkim_aligned');
+        $spf  = $this->db->quoteName($alias . '.spf_aligned');
+        $fail = $dkim . ' = 0 AND ' . $spf . ' = 0';
 
-        if ($anchor === 0) {
-            return [];
-        }
-
-        $windowStart = $anchor - (7 * 86400);
-
-        $prior = (string) $this->query()
-            ->select('1')
-            ->from($this->db->quoteName('#__dmarc_reports', 'prep'))
-            ->join(
-                'INNER',
-                $this->db->quoteName('#__dmarc_records', 'prec'),
-                $this->db->quoteName('prec.report_id') . ' = ' . $this->db->quoteName('prep.id')
-            )
-            ->where($this->db->quoteName('prep.domain_id') . ' = :domainIdPrev')
-            ->where($this->db->quoteName('prec.source_ip') . ' = ' . $this->db->quoteName('cur.source_ip'))
-            ->where($this->db->quoteName('prep.date_begin') . ' <= :windowStartPrev');
-
-        $query = $this->query()
-            ->select(
-                [
-                    $this->db->quoteName('cur.source_ip'),
-                    'COALESCE(SUM(' . $this->db->quoteName('cur.count') . '), 0) AS total',
-                    $this->failSum('cur') . ' AS fail',
-                ]
-            )
-            ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
-            ->join(
-                'INNER',
-                $this->db->quoteName('#__dmarc_records', 'cur'),
-                $this->db->quoteName('cur.report_id') . ' = ' . $this->db->quoteName('rep.id')
-            )
-            ->where($this->db->quoteName('rep.domain_id') . ' = :domainId')
-            ->where($this->db->quoteName('rep.date_begin') . ' > :windowStart')
-            ->where($this->db->quoteName('rep.date_begin') . ' <= :anchor')
-            ->where('NOT EXISTS (' . $prior . ')')
-            ->bind(':domainId', $domainId, ParameterType::INTEGER)
-            ->bind(':domainIdPrev', $domainId, ParameterType::INTEGER)
-            ->bind(':windowStart', $windowStart, ParameterType::INTEGER)
-            ->bind(':windowStartPrev', $windowStart, ParameterType::INTEGER)
-            ->bind(':anchor', $anchor, ParameterType::INTEGER)
-            ->group($this->db->quoteName('cur.source_ip'))
-            ->order('fail DESC, total DESC, ' . $this->db->quoteName('cur.source_ip') . ' ASC');
-
-        $query->setLimit(10);
-        $rows = $this->db->setQuery($query)->loadAssocList() ?: [];
-
-        return array_map(
-            static fn (array $r): array => [
-                'ip'    => $r['source_ip'],
-                'count' => (int) $r['total'],
-                'fail'  => (int) $r['fail'],
-            ],
-            $rows
-        );
+        return [
+            'total'          => '1 = 1',
+            'dkim'           => $dkim . ' = 1',
+            'spf_only'       => $dkim . ' = 0 AND ' . $spf . ' = 1',
+            'fail'           => $fail,
+            'fail_delivered' => $fail . ' AND ' . $this->db->quoteName($alias . '.disposition') . ' = ' . $this->db->quote('none'),
+        ];
     }
 
     /**
-     * SQL for the failing (neither DKIM- nor SPF-aligned) message volume of the
-     * records aliased $alias, as the per-domain totals count it.
+     * SQL summing the message count of the records aliased $alias that match
+     * $condition.
      */
-    private function failSum(string $alias): string
+    private function sumWhen(string $condition, string $alias): string
     {
-        return 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName($alias . '.dkim_aligned') . ' = 0 AND '
-            . $this->db->quoteName($alias . '.spf_aligned') . ' = 0 THEN ' . $this->db->quoteName($alias . '.count')
+        return 'COALESCE(SUM(CASE WHEN ' . $condition . ' THEN ' . $this->db->quoteName($alias . '.count')
             . ' ELSE 0 END), 0)';
+    }
+
+    /**
+     * HAVING clause keeping only the sources the Action Center flags. Spelt out
+     * rather than using the select aliases, which PostgreSQL does not allow in
+     * HAVING.
+     */
+    private function flaggedHaving(string $alias): string
+    {
+        $conditions = $this->figureConditions($alias);
+
+        return $this->sumWhen($conditions['spf_only'], $alias) . ' > 0 OR '
+            . $this->sumWhen($conditions['fail_delivered'], $alias) . ' > 0';
+    }
+
+    /**
+     * @param   array<string, mixed>  $row
+     *
+     * @return  array<string, mixed>
+     */
+    private static function flaggedRow(array $row): array
+    {
+        return [
+            'ip'             => (string) $row['source_ip'],
+            'total'          => (int) $row['total'],
+            'dkim'           => (int) $row['dkim'],
+            'spf_only'       => (int) $row['spf_only'],
+            'fail'           => (int) $row['fail'],
+            'fail_delivered' => (int) $row['fail_delivered'],
+            'last_seen'      => (int) $row['last_seen'],
+        ];
     }
 
     /**
@@ -849,18 +911,18 @@ final class Metrics
     }
 
     /**
-     * Unaligned sending sources within each domain's CURRENT reporting window,
+     * The flagged sources of every supplied domain's CURRENT reporting window,
      * keyed by domain id, resolved in a single grouped query and ranked so the
-     * database returns only the top $limit per domain (ordered by failing
-     * volume). Mirrors unalignedSources() for a single domain, but anchors each
-     * domain's window on its own newest report through a derived per-domain
-     * anchor table so one query serves all domains at once.
+     * database returns only the top $limit per domain. Mirrors flaggedSources()
+     * for a single domain, but anchors each domain's window on its own newest
+     * report through a derived per-domain anchor table so one query serves all
+     * domains at once.
      *
      * @param   array<int, int>  $domainIds
      *
-     * @return  array<int, array<int, array{ip: string, count: int}>>
+     * @return  array<int, array<int, array<string, mixed>>>
      */
-    private function unalignedSourcesAll(array $domainIds, int $limit = 20): array
+    private function flaggedSourcesAll(array $domainIds, int $limit = 20): array
     {
         if ($domainIds === []) {
             return [];
@@ -868,10 +930,6 @@ final class Metrics
 
         $in     = $this->intList($domainIds);
         $window = 7 * 86400;
-
-        $count = $this->db->quoteName('cur.count');
-        $fail  = 'COALESCE(SUM(CASE WHEN ' . $this->db->quoteName('cur.dkim_aligned') . ' = 0 AND '
-            . $this->db->quoteName('cur.spf_aligned') . ' = 0 THEN ' . $count . ' ELSE 0 END), 0)';
 
         // Anchor each domain's current window on its own newest report end, so
         // one query serves every domain at once.
@@ -886,20 +944,23 @@ final class Metrics
             ->where($this->db->quoteName('domain_id') . ' IN (' . $in . ')')
             ->group($this->db->quoteName('domain_id'));
 
-        // Collapse the CURRENT reporting window to one failing-volume total per
-        // (domain, source_ip), keeping only groups that actually failed
-        // alignment. Restricting to the rolling window (reports whose end falls
-        // in the seven days up to the newest report, matching windowTotalsAll)
-        // means a sender that has since been aligned drops out instead of
-        // lingering forever on its historical failures.
+        $conditions = $this->figureConditions('cur');
+        $select     = [
+            $this->db->quoteName('rep.domain_id', 'domain_id'),
+            $this->db->quoteName('cur.source_ip', 'source_ip'),
+        ];
+
+        foreach ($conditions as $name => $condition) {
+            $select[] = $this->sumWhen($condition, 'cur') . ' AS ' . $name;
+        }
+
+        $select[] = 'MAX(' . $this->db->quoteName('rep.date_end') . ') AS last_seen';
+
+        // Collapse the CURRENT reporting window (reports whose end falls in the
+        // seven days up to the newest report, matching windowTotalsAll) to one
+        // row per (domain, source_ip), keeping only the flagged sources.
         $grouped = (string) $this->query()
-            ->select(
-                [
-                    $this->db->quoteName('rep.domain_id', 'domain_id'),
-                    $this->db->quoteName('cur.source_ip', 'source_ip'),
-                    $fail . ' AS fail',
-                ]
-            )
+            ->select($select)
             ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
             ->join(
                 'INNER',
@@ -915,150 +976,32 @@ final class Metrics
             ->where($this->db->quoteName('rep.date_end') . ' > (' . $this->db->quoteName('a.anchor') . ' - ' . $window . ')')
             ->where($this->db->quoteName('rep.date_end') . ' <= ' . $this->db->quoteName('a.anchor'))
             ->group($this->db->quoteName('rep.domain_id') . ', ' . $this->db->quoteName('cur.source_ip'))
-            ->having($fail . ' > 0');
+            ->having($this->flaggedHaving('cur'));
 
-        // Rank each domain's failing sources by volume so the outer query keeps
-        // only the top $limit per domain. Ranking and slicing in the database
-        // bounds both the result transfer and PHP memory to $limit rows per
-        // domain, instead of materialising every distinct source in the window;
-        // the source_ip tiebreak makes the ranking deterministic for equal
-        // volumes.
+        $columns = array_merge(['domain_id', 'source_ip'], array_keys($conditions), ['last_seen']);
+        $quoted  = array_map(fn (string $column): string => $this->db->quoteName($column), $columns);
+
+        // Rank each domain's flagged sources the way flaggedSources() orders them
+        // so the outer query keeps only the top $limit per domain. Ranking and
+        // slicing in the database bounds both the result transfer and PHP memory
+        // to $limit rows per domain; the source_ip tiebreak makes the ranking
+        // deterministic.
         $ranked = (string) $this->query()
             ->select(
-                [
-                    $this->db->quoteName('domain_id'),
-                    $this->db->quoteName('source_ip'),
-                    $this->db->quoteName('fail'),
-                    'ROW_NUMBER() OVER (PARTITION BY ' . $this->db->quoteName('domain_id')
-                        . ' ORDER BY ' . $this->db->quoteName('fail') . ' DESC, '
-                        . $this->db->quoteName('source_ip') . ' ASC) AS rn',
-                ]
+                array_merge(
+                    $quoted,
+                    [
+                        'ROW_NUMBER() OVER (PARTITION BY ' . $this->db->quoteName('domain_id')
+                            . ' ORDER BY ' . $this->db->quoteName('spf_only') . ' DESC, '
+                            . $this->db->quoteName('fail_delivered') . ' DESC, '
+                            . $this->db->quoteName('source_ip') . ' ASC) AS rn',
+                    ]
+                )
             )
             ->from('(' . $grouped . ') AS ' . $this->db->quoteName('g'));
 
         $query = $this->query()
-            ->select(
-                [
-                    $this->db->quoteName('domain_id'),
-                    $this->db->quoteName('source_ip'),
-                    $this->db->quoteName('fail'),
-                ]
-            )
-            ->from('(' . $ranked . ') AS ' . $this->db->quoteName('r'))
-            ->where($this->db->quoteName('rn') . ' <= ' . (int) max(1, $limit))
-            ->order($this->db->quoteName('domain_id') . ' ASC, ' . $this->db->quoteName('fail') . ' DESC');
-
-        $map = [];
-
-        foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
-            $domainId = (int) $row['domain_id'];
-
-            $map[$domainId][] = ['ip' => $row['source_ip'], 'count' => (int) $row['fail']];
-        }
-
-        return $map;
-    }
-
-    /**
-     * Newly observed sending sources for every supplied domain, keyed by domain
-     * id, resolved in a single grouped query and ranked so the database returns
-     * only the top $limit per domain. Mirrors newSources() for a single domain,
-     * but anchors each domain's current window on its own newest report through a
-     * derived per-domain anchor table so one query serves all domains at once.
-     *
-     * @param   array<int, int>  $domainIds
-     *
-     * Sources with failing mail rank first, as in newSources().
-     *
-     * @return  array<int, array<int, array{ip: string, count: int, fail: int}>>
-     */
-    private function newSourcesAll(array $domainIds, int $limit = 10): array
-    {
-        if ($domainIds === []) {
-            return [];
-        }
-
-        $in     = $this->intList($domainIds);
-        $window = 7 * 86400;
-
-        $anchor = (string) $this->query()
-            ->select(
-                [
-                    $this->db->quoteName('domain_id'),
-                    'MAX(' . $this->db->quoteName('date_end') . ') AS anchor',
-                ]
-            )
-            ->from($this->db->quoteName('#__dmarc_reports'))
-            ->where($this->db->quoteName('domain_id') . ' IN (' . $in . ')')
-            ->group($this->db->quoteName('domain_id'));
-
-        $prior = (string) $this->query()
-            ->select('1')
-            ->from($this->db->quoteName('#__dmarc_reports', 'prep'))
-            ->join(
-                'INNER',
-                $this->db->quoteName('#__dmarc_records', 'prec'),
-                $this->db->quoteName('prec.report_id') . ' = ' . $this->db->quoteName('prep.id')
-            )
-            ->where($this->db->quoteName('prep.domain_id') . ' = ' . $this->db->quoteName('rep.domain_id'))
-            ->where($this->db->quoteName('prec.source_ip') . ' = ' . $this->db->quoteName('cur.source_ip'))
-            ->where($this->db->quoteName('prep.date_begin') . ' <= (' . $this->db->quoteName('a.anchor') . ' - ' . $window . ')');
-
-        // Collapse the window to one new-source total per (domain, source_ip).
-        $grouped = (string) $this->query()
-            ->select(
-                [
-                    $this->db->quoteName('rep.domain_id', 'domain_id'),
-                    $this->db->quoteName('cur.source_ip', 'source_ip'),
-                    'COALESCE(SUM(' . $this->db->quoteName('cur.count') . '), 0) AS total',
-                    $this->failSum('cur') . ' AS fail',
-                ]
-            )
-            ->from($this->db->quoteName('#__dmarc_reports', 'rep'))
-            ->join(
-                'INNER',
-                $this->db->quoteName('#__dmarc_records', 'cur'),
-                $this->db->quoteName('cur.report_id') . ' = ' . $this->db->quoteName('rep.id')
-            )
-            ->join(
-                'INNER',
-                '(' . $anchor . ') AS ' . $this->db->quoteName('a'),
-                $this->db->quoteName('a.domain_id') . ' = ' . $this->db->quoteName('rep.domain_id')
-            )
-            ->where($this->db->quoteName('rep.domain_id') . ' IN (' . $in . ')')
-            ->where($this->db->quoteName('rep.date_begin') . ' > (' . $this->db->quoteName('a.anchor') . ' - ' . $window . ')')
-            ->where($this->db->quoteName('rep.date_begin') . ' <= ' . $this->db->quoteName('a.anchor'))
-            ->where('NOT EXISTS (' . $prior . ')')
-            ->group($this->db->quoteName('rep.domain_id') . ', ' . $this->db->quoteName('cur.source_ip'));
-
-        // Rank each domain's new sources, failing mail first, then by volume, so the outer query keeps only
-        // the top $limit per domain. Ranking and slicing in the database bounds
-        // both the result transfer and PHP memory to $limit rows per domain,
-        // instead of materialising every distinct source seen in the window; the
-        // source_ip tiebreak makes the ranking deterministic for equal volumes.
-        $ranked = (string) $this->query()
-            ->select(
-                [
-                    $this->db->quoteName('domain_id'),
-                    $this->db->quoteName('source_ip'),
-                    $this->db->quoteName('total'),
-                    $this->db->quoteName('fail'),
-                    'ROW_NUMBER() OVER (PARTITION BY ' . $this->db->quoteName('domain_id')
-                        . ' ORDER BY ' . $this->db->quoteName('fail') . ' DESC, ' . $this->db->quoteName('total') . ' DESC, '
-                        . $this->db->quoteName('source_ip') . ' ASC) AS rn',
-                ]
-            )
-            ->from('(' . $grouped . ') AS ' . $this->db->quoteName('g'));
-
-        $query = $this->query()
-            ->select(
-                [
-                    $this->db->quoteName('domain_id'),
-                    $this->db->quoteName('source_ip'),
-                    $this->db->quoteName('total'),
-                    $this->db->quoteName('fail'),
-                ]
-            )
+            ->select($quoted)
             ->from('(' . $ranked . ') AS ' . $this->db->quoteName('r'))
             ->where($this->db->quoteName('rn') . ' <= ' . (int) max(1, $limit))
             ->order($this->db->quoteName('domain_id') . ' ASC, ' . $this->db->quoteName('rn') . ' ASC');
@@ -1066,9 +1009,7 @@ final class Metrics
         $map = [];
 
         foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
-            $domainId = (int) $row['domain_id'];
-
-            $map[$domainId][] = ['ip' => $row['source_ip'], 'count' => (int) $row['total'], 'fail' => (int) $row['fail']];
+            $map[(int) $row['domain_id']][] = self::flaggedRow($row);
         }
 
         return $map;

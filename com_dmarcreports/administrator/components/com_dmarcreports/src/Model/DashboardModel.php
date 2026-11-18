@@ -11,9 +11,11 @@ namespace Advans\Component\DmarcReports\Administrator\Model;
 
 use Advans\Component\DmarcReports\Administrator\Helper\ActionCenter;
 use Advans\Component\DmarcReports\Administrator\Helper\ActionStatus;
+use Advans\Component\DmarcReports\Administrator\Helper\JoomlaHostNameStore;
 use Advans\Component\DmarcReports\Administrator\Helper\Metrics;
 use Advans\Component\DmarcReports\Administrator\Helper\MtaStsDiagnostics;
 use Advans\Component\DmarcReports\Administrator\Helper\MtaStsPolicy;
+use Advans\Component\DmarcReports\Administrator\Helper\SourceHostNames;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
 use Joomla\Database\DatabaseInterface;
@@ -125,13 +127,35 @@ class DashboardModel extends BaseDatabaseModel
         // several queries per domain.
         $allMetrics = $metrics->actionMetricsForAll($summaries);
 
+        // Close stored "new source" items whose source is now confirmed through
+        // DKIM. A failure here must never keep the dashboard from rendering.
+        try {
+            $status->resolveConfirmedNewSources(
+                static fn (int $domainId, array $ips): array => $metrics->classifySources($domainId, $ips)
+            );
+        } catch (\Throwable $e) {
+            // The items are resolved on a later page view.
+        }
+
+        // The names of the flagged sources come from the cache only: the
+        // dashboard never makes an outbound call (see the class comment). The
+        // domain view looks the names up.
+        $hostNames = new SourceHostNames(null, new JoomlaHostNameStore());
+        $domains   = [];
+
         foreach ($summaries as $summary) {
             $domainId = (int) ($summary['id'] ?? 0);
             $domainMetrics = $allMetrics[$domainId] ?? null;
+            $domains[$domainId] = (string) ($summary['domain'] ?? '');
 
             if ($domainMetrics === null) {
                 continue;
             }
+
+            $domainMetrics['flagged_sources'] = self::withHostNames(
+                (array) ($domainMetrics['flagged_sources'] ?? []),
+                $hostNames
+            );
 
             $findings = $this->domainFindings((string) ($summary['domain'] ?? ''), $params);
 
@@ -142,6 +166,19 @@ class DashboardModel extends BaseDatabaseModel
         }
 
         $partition = $status->partition($items);
+
+        // Items the software resolved itself are listed among the handled ones,
+        // so the administrator sees what was confirmed automatically.
+        try {
+            foreach ($status->autoResolved() as $item) {
+                if (isset($domains[(int) $item['domain_id']])) {
+                    $item['domain']              = $domains[(int) $item['domain_id']];
+                    $partition['suppressed'][] = $item;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Only the record of automatic decisions is missing; the list still renders.
+        }
 
         // With live checks on, the drill-down and the System Check verify the
         // published records, so the dashboard leaves the unverified publish
@@ -189,6 +226,24 @@ class DashboardModel extends BaseDatabaseModel
         $mtasts = (new MtaStsDiagnostics())->inspect($generated, false);
 
         return (array) ($mtasts['findings'] ?? []);
+    }
+
+    /**
+     * Add the known host name of each flagged source (key `host`, '' when none).
+     *
+     * @param   array<int, array<string, mixed>>  $sources
+     *
+     * @return  array<int, array<string, mixed>>
+     */
+    public static function withHostNames(array $sources, SourceHostNames $hostNames): array
+    {
+        $names = $hostNames->names(array_map(static fn ($s): string => (string) ($s['ip'] ?? ''), $sources));
+
+        foreach ($sources as &$source) {
+            $source['host'] = $names[(string) ($source['ip'] ?? '')] ?? '';
+        }
+
+        return $sources;
     }
 
     /**

@@ -53,9 +53,9 @@ final class HelpTopics
             'would_be_rejected'   => 'COM_DMARCREPORTS_HELP_ACTION_WOULD_BE_REJECTED',
         ],
         'COM_DMARCREPORTS_HELP_GROUP_SOURCES' => [
-            'align_source'   => 'COM_DMARCREPORTS_HELP_ACTION_ALIGN_SOURCE',
-            'new_source'     => 'COM_DMARCREPORTS_HELP_ACTION_NEW_SOURCE',
-            'pass_rate_drop' => 'COM_DMARCREPORTS_HELP_ACTION_PASS_RATE_DROP',
+            'spf_only_source' => 'COM_DMARCREPORTS_HELP_ACTION_SPF_ONLY_SOURCE',
+            'align_source'    => 'COM_DMARCREPORTS_HELP_ACTION_ALIGN_SOURCE',
+            'pass_rate_drop'  => 'COM_DMARCREPORTS_HELP_ACTION_PASS_RATE_DROP',
         ],
         'COM_DMARCREPORTS_HELP_GROUP_DNS' => [
             'dns_dmarc_missing'         => 'COM_DMARCREPORTS_HELP_ACTION_DNS_DMARC_MISSING',

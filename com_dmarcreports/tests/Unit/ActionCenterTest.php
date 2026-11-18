@@ -418,51 +418,53 @@ class ActionCenterTest extends TestCase
         $this->assertNotContains('move_to_quarantine', $this->codes($items));
     }
 
-    public function testUnalignedSourceWithHighVolumeIsActNow(): void
+    public function testDeliveredFailingSourceUnderNoneIsAnInformationalItem(): void
     {
         $items = ActionCenter::generate(
             [
-                'domain_id'         => 1,
-                'domain'            => 'example.org',
-                'total'             => 1000,
-                'current_policy'    => 'none',
-                'dmarc_pass'        => 990,
-                'unaligned_sources' => [['ip' => '203.0.113.9', 'count' => 80]],
+                'domain_id'       => 1,
+                'domain'          => 'example.org',
+                'total'           => 1000,
+                'current_policy'  => 'none',
+                'dmarc_pass'      => 990,
+                'flagged_sources' => [[
+                    'ip' => '203.0.113.9', 'host' => 'mail.example.net', 'total' => 80,
+                    'dkim' => 0, 'spf_only' => 0, 'fail' => 80, 'fail_delivered' => 80,
+                ]],
             ],
             self::CONFIG
         );
 
         $item = $this->find($items, 'align_source');
         $this->assertNotNull($item);
-        $this->assertSame(3, $item['severity']);
+        $this->assertSame(1, $item['severity']);
         $this->assertSame('align_source:1:203.0.113.9', $item['action_key']);
-        $this->assertSame(['203.0.113.9', 80, 8.0], $item['params']);
+        $this->assertSame(['203.0.113.9', 'mail.example.net', 80, 8.0], $item['params']);
+        $this->assertNull($this->find($items, 'spf_only_source'));
     }
 
     public function testAlignSourceShareUsesCurrentWindowTotal(): void
     {
-        // The failing volume and its share are measured over the current window,
-        // not lifetime: 40 failing of a 500-message window is an 8% share even
-        // though lifetime volume is far larger, so a sender aligned long ago no
-        // longer skews the alignment recommendation.
+        // The delivered failing volume and its share are measured over the
+        // current window, not lifetime: 40 of a 500-message window is 8% even
+        // though lifetime volume is far larger.
         $items = ActionCenter::generate(
             [
-                'domain_id'         => 1,
-                'domain'            => 'example.org',
-                'total'             => 5000,
-                'current_policy'    => 'none',
-                'dmarc_pass'        => 4950,
-                'window_total'      => 500,
-                'pass_rate_window'  => 99.0,
-                'unaligned_sources' => [['ip' => '203.0.113.9', 'count' => 40]],
+                'domain_id'        => 1,
+                'domain'           => 'example.org',
+                'total'            => 5000,
+                'current_policy'   => 'none',
+                'dmarc_pass'       => 4950,
+                'window_total'     => 500,
+                'pass_rate_window' => 99.0,
+                'flagged_sources'  => [['ip' => '203.0.113.9', 'total' => 40, 'fail' => 40, 'fail_delivered' => 40]],
             ],
             self::CONFIG
         );
 
         $item = $this->find($items, 'align_source');
         $this->assertNotNull($item);
-        $this->assertSame(3, $item['severity']);
-        $this->assertSame(['203.0.113.9', 40, 8.0], $item['params']);
+        $this->assertSame(['203.0.113.9', '', 40, 8.0], $item['params']);
     }
 
     public function testWouldBeRejectedIsFlaggedWhenNotYetEnforcing(): void
@@ -708,60 +710,130 @@ class ActionCenterTest extends TestCase
     }
 
     /**
-     * @param   array<int, array<string, mixed>>  $newSources
+     * @param   array<int, array<string, mixed>>  $sources
      *
      * @return  array<int, array<string, mixed>>
      */
-    private function itemsWithNewSources(array $newSources): array
+    private function itemsWithSources(array $sources, string $policy = 'reject'): array
     {
         return ActionCenter::generate(
             [
-                'domain_id'         => 1,
-                'domain'            => 'example.org',
-                'total'             => 1000,
-                'current_policy'    => 'reject',
-                'dmarc_pass'        => 1000,
-                'new_sources'       => $newSources,
+                'domain_id'       => 1,
+                'domain'          => 'example.org',
+                'total'           => 1000,
+                'current_policy'  => $policy,
+                'dmarc_pass'      => 1000,
+                'flagged_sources' => $sources,
             ],
             self::CONFIG
         );
     }
 
-    public function testNewSourceWhoseMailPassesDmarcIsNotAnAction(): void
+    /**
+     * @param   array<int, array<string, mixed>>  $items
+     *
+     * @return  array<int, array<string, mixed>>
+     */
+    private function sourceItems(array $items): array
     {
-        // Mail forwarded by a mailbox provider keeps the domain's DKIM signature and
-        // passes DMARC from a sending IP never seen before. Such a source is already
-        // authenticated and cannot be abuse, so "authenticate it or check for abuse"
-        // was a false alarm that refilled the Action Center with every forwarder.
-        $items = $this->itemsWithNewSources([
-            ['ip' => '192.0.2.10', 'count' => 14, 'fail' => 0],
-            ['ip' => '2001:db8::1', 'count' => 1, 'fail' => 0],
+        return array_values(array_filter(
+            $items,
+            static fn (array $i): bool => \in_array($i['category'], ['source', 'alignment'], true) && $i['code'] !== 'pass_rate_drop'
+        ));
+    }
+
+    public function testDkimAlignedSourceIsConfirmedWithoutAnItem(): void
+    {
+        // A shared gateway of the hosting provider whose every message carried the
+        // domain's aligned DKIM signature (and also passed SPF): only the domain's
+        // own key makes that signature, so the software confirms it by itself.
+        $items = $this->itemsWithSources([
+            ['ip' => '192.0.2.61', 'host' => 'gateway.example.net', 'total' => 12, 'dkim' => 12, 'spf_only' => 0, 'fail' => 0, 'fail_delivered' => 0],
         ]);
+
+        $this->assertSame([], $this->sourceItems($items));
+    }
+
+    public function testSpfOnlySourceIsAnActNowItemWithNameAndCounts(): void
+    {
+        $items = $this->itemsWithSources([
+            ['ip' => '192.0.2.62', 'host' => 'gateway.example.net', 'total' => 7, 'dkim' => 0, 'spf_only' => 7, 'fail' => 0, 'fail_delivered' => 0],
+        ]);
+
+        $item = $this->find($items, 'spf_only_source');
+        $this->assertNotNull($item);
+        $this->assertSame(3, $item['severity']);
+        $this->assertSame('source', $item['category']);
+        $this->assertSame('spf_only_source:1:192.0.2.62', $item['action_key']);
+        $this->assertSame(['192.0.2.62', 'gateway.example.net', 7, 0, 7], $item['params']);
+    }
+
+    public function testFailingSourceRejectedByThePolicyIsStatisticsOnly(): void
+    {
+        // p=reject and the receivers rejected or quarantined every failing message:
+        // the policy works, nothing for the administrator to do.
+        $items = $this->itemsWithSources([
+            ['ip' => '198.51.100.7', 'total' => 30, 'dkim' => 0, 'spf_only' => 0, 'fail' => 30, 'fail_delivered' => 0],
+        ]);
+
+        $this->assertSame([], $this->sourceItems($items));
+
+        $quarantine = $this->itemsWithSources(
+            [['ip' => '198.51.100.7', 'total' => 30, 'fail' => 30, 'fail_delivered' => 0]],
+            'quarantine'
+        );
+        $this->assertNull($this->find($quarantine, 'align_source'));
+    }
+
+    public function testFailingSourceUnderNoneKeepsAnInformationalItem(): void
+    {
+        $items = $this->itemsWithSources(
+            [['ip' => '198.51.100.8', 'total' => 5, 'dkim' => 0, 'spf_only' => 0, 'fail' => 5, 'fail_delivered' => 5]],
+            'none'
+        );
+
+        $sources = $this->sourceItems($items);
+        $this->assertCount(1, $sources);
+        $this->assertSame('align_source', $sources[0]['code']);
+        $this->assertSame(1, $sources[0]['severity']);
+        $this->assertSame('align_source:1:198.51.100.8', $sources[0]['action_key']);
+    }
+
+    public function testMixedRecordsForOneAddressRaiseTheSpfOnlyItemOnce(): void
+    {
+        // One shared gateway: the owner's mail carries DKIM, another customer's mail
+        // passes only through SPF, and some failing mail was still delivered. The
+        // SPF-only part decides: one act-now item, no second item for the address.
+        $items = $this->itemsWithSources([
+            ['ip' => '192.0.2.63', 'host' => '', 'total' => 20, 'dkim' => 15, 'spf_only' => 3, 'fail' => 2, 'fail_delivered' => 2],
+        ]);
+
+        $sources = $this->sourceItems($items);
+        $this->assertCount(1, $sources);
+        $this->assertSame('spf_only_source', $sources[0]['code']);
+        $this->assertSame(['192.0.2.63', '', 3, 15, 20], $sources[0]['params']);
+    }
+
+    public function testMixedDkimAndRejectedMailForOneAddressIsConfirmed(): void
+    {
+        // DKIM-signed mail plus forged mail from the same address that the receivers
+        // rejected: confirmed automatically, the rejected part is statistics only.
+        $items = $this->itemsWithSources([
+            ['ip' => '192.0.2.64', 'total' => 10, 'dkim' => 8, 'spf_only' => 0, 'fail' => 2, 'fail_delivered' => 0],
+        ]);
+
+        $this->assertSame([], $this->sourceItems($items));
+    }
+
+    public function testRetiredNewSourceCodeIsNeverGenerated(): void
+    {
+        $items = $this->itemsWithSources([
+            ['ip' => '192.0.2.10', 'total' => 14, 'dkim' => 14],
+            ['ip' => '2001:db8::1', 'total' => 1, 'spf_only' => 1],
+            ['ip' => '198.51.100.9', 'total' => 3, 'fail' => 3, 'fail_delivered' => 3],
+        ], 'none');
 
         $this->assertNotContains('new_source', $this->codes($items));
-    }
-
-    public function testNewSourceWithFailingMailNeedsADecision(): void
-    {
-        $items = $this->itemsWithNewSources([
-            ['ip' => '192.0.2.10', 'count' => 14, 'fail' => 0],
-            ['ip' => '198.51.100.7', 'count' => 5, 'fail' => 3],
-        ]);
-
-        $new = array_values(array_filter($items, static fn (array $i): bool => $i['code'] === 'new_source'));
-
-        $this->assertCount(1, $new);
-        $this->assertSame('new_source:1:198.51.100.7', $new[0]['action_key']);
-        $this->assertSame(['198.51.100.7', 5], $new[0]['params']);
-        $this->assertSame(2, $new[0]['severity']);
-    }
-
-    public function testNewSourceWithoutAFailFigureIsStillFlagged(): void
-    {
-        // A metrics bundle that does not say how much of the new source failed must
-        // not hide it: without the figure the source is treated as undecided.
-        $items = $this->itemsWithNewSources([['ip' => '198.51.100.8', 'count' => 2]]);
-
-        $this->assertContains('new_source', $this->codes($items));
+        $this->assertContains('spf_only_source:1:2001:db8::1', array_column($items, 'action_key'));
     }
 }

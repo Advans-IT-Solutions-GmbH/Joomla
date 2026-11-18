@@ -141,43 +141,46 @@ final class ActionCenter
             $items[]  = self::item('would_be_rejected', 'policy', $severity, $domainId, [$rejectUnderP, $share]);
         }
 
-        // Unaligned senders with meaningful volume: fix authentication first.
-        // Both the failing volume and the share denominator are measured over
-        // the same current reporting window as the rollout decision, so a sender
-        // that has since been aligned drops out of the list instead of lingering
-        // forever on its historical failures.
-        foreach ((array) ($metrics['unaligned_sources'] ?? []) as $source) {
-            $ip    = (string) ($source['ip'] ?? '');
-            $count = (int) ($source['count'] ?? 0);
-
-            if ($ip === '' || $count <= 0) {
-                continue;
-            }
-
-            $share    = $rolloutTotal > 0 ? round($count / $rolloutTotal * 100, 1) : 0.0;
-            $severity = $share >= 5 ? 3 : ($share >= 1 ? 2 : 1);
-            $items[]  = self::item('align_source', 'alignment', $severity, $domainId, [$ip, $count, $share], $ip);
-        }
-
-        // Newly observed sending sources need a human decision, but only when some
-        // of their mail failed DMARC. A new source whose every message passed is
-        // already authenticated (typically a mailbox provider forwarding mail with
-        // the domain's DKIM signature intact) and cannot be abuse, so flagging it
-        // would only refill the list with every new forwarder. A bundle without the
-        // failing figure is treated as undecided and still flagged.
-        foreach ((array) ($metrics['new_sources'] ?? []) as $source) {
-            $ip    = (string) ($source['ip'] ?? '');
-            $count = (int) ($source['count'] ?? 0);
+        // The software judges every sending source of the current reporting
+        // window itself ({@see SourceClassifier}), so the administrator never
+        // checks SPF or DKIM by hand:
+        // - DKIM-aligned mail is confirmed automatically: only the domain's own
+        //   key can make that signature. No item.
+        // - Mail that passed DMARC only through SPF needs the administrator: the
+        //   SPF record may include a provider's shared gateways that every
+        //   customer of that provider can send through, so SPF alone does not
+        //   prove the domain owner sent it. Act now.
+        // - Failing mail the receivers rejected or quarantined shows the policy
+        //   works. Statistics only, no item.
+        // - Failing mail that was still delivered (p=none, pct below 100 or a
+        //   receiver exception) keeps an informational item.
+        // Measured over the same current window as the rollout decision, so a
+        // source that has since been fixed drops out.
+        foreach ((array) ($metrics['flagged_sources'] ?? []) as $source) {
+            $source = (array) $source;
+            $ip     = (string) ($source['ip'] ?? '');
 
             if ($ip === '') {
                 continue;
             }
 
-            if (\array_key_exists('fail', $source) && (int) $source['fail'] <= 0) {
-                continue;
-            }
+            $host  = (string) ($source['host'] ?? '');
+            $class = SourceClassifier::classify($source);
 
-            $items[] = self::item('new_source', 'source', 2, $domainId, [$ip, $count], $ip);
+            if ($class === SourceClassifier::SPF_ONLY) {
+                $items[] = self::item(
+                    'spf_only_source',
+                    'source',
+                    3,
+                    $domainId,
+                    [$ip, $host, (int) ($source['spf_only'] ?? 0), (int) ($source['dkim'] ?? 0), (int) ($source['total'] ?? 0)],
+                    $ip
+                );
+            } elseif ($class === SourceClassifier::UNAUTHENTICATED) {
+                $delivered = min((int) ($source['fail'] ?? 0), (int) ($source['fail_delivered'] ?? 0));
+                $share     = $rolloutTotal > 0 ? round($delivered / $rolloutTotal * 100, 1) : 0.0;
+                $items[]   = self::item('align_source', 'alignment', 1, $domainId, [$ip, $host, $delivered, $share], $ip);
+            }
         }
 
         // A drop in the pass rate of the latest reporting window against the one

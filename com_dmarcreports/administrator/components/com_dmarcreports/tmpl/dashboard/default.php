@@ -27,6 +27,8 @@ $statusLabels = [
     'done'     => 'COM_DMARCREPORTS_ACTION_STATUS_DONE',
     'ignored'  => 'COM_DMARCREPORTS_ACTION_STATUS_IGNORED',
     'snoozed'  => 'COM_DMARCREPORTS_ACTION_STATUS_SNOOZED',
+    // Resolved by the software itself, for example a source confirmed through DKIM.
+    'auto_done' => 'COM_DMARCREPORTS_ACTION_STATUS_AUTO_DONE',
 ];
 ?>
 <div class="com-dmarcreports-dashboard">
@@ -61,6 +63,10 @@ $statusLabels = [
                                     <?php echo htmlspecialchars(ActionPresenter::title($item)); ?>
                                 </div>
                                 <?php echo htmlspecialchars(ActionPresenter::text($item)); ?>
+                                <?php $sourceLink = ActionPresenter::sourceLink($item); ?>
+                                <?php if ($sourceLink !== '') : ?>
+                                    <div><a class="com-dmarcreports-source-link" href="<?php echo htmlspecialchars($sourceLink); ?>"><?php echo Text::_('COM_DMARCREPORTS_ACTION_SHOW_SOURCE'); ?></a></div>
+                                <?php endif; ?>
                                 <?php if ($canEditState) : ?>
                                 <div class="com-dmarcreports-action-controls d-flex flex-wrap gap-1 mt-2">
                                     <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="m-0">
@@ -118,7 +124,9 @@ $statusLabels = [
                             </span>
                             <?php echo htmlspecialchars((string) $item['domain']); ?> &middot;
                             <?php echo htmlspecialchars(ActionPresenter::title($item)); ?>
-                            <?php if ($canEditState) : ?>
+                            <?php if ((string) $item['status'] === 'auto_done') : ?>
+                                <div><?php echo htmlspecialchars(ActionPresenter::text($item)); ?></div>
+                            <?php elseif ($canEditState) : ?>
                             <div class="com-dmarcreports-action-controls d-flex flex-wrap gap-1 mt-2">
                                 <form action="<?php echo Route::_('index.php?option=com_dmarcreports'); ?>" method="post" class="m-0">
                                     <input type="hidden" name="task" value="actions.reopen">

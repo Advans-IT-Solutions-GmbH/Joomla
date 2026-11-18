@@ -10,6 +10,7 @@
 namespace Advans\Component\DmarcReports\Administrator\Helper;
 
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 
@@ -42,6 +43,7 @@ final class ActionPresenter
             'at_target'             => Text::_('COM_DMARCREPORTS_ACTION_AT_TARGET_TITLE'),
             'would_be_rejected'     => Text::_('COM_DMARCREPORTS_ACTION_WOULD_BE_REJECTED_TITLE'),
             'align_source'          => Text::_('COM_DMARCREPORTS_ACTION_ALIGN_SOURCE_TITLE'),
+            'spf_only_source'       => Text::_('COM_DMARCREPORTS_ACTION_SPF_ONLY_SOURCE_TITLE'),
             'new_source'            => Text::_('COM_DMARCREPORTS_ACTION_NEW_SOURCE_TITLE'),
             'pass_rate_drop'        => Text::_('COM_DMARCREPORTS_ACTION_PASS_RATE_DROP_TITLE'),
             'dns_dmarc_missing'     => Text::_('COM_DMARCREPORTS_ACTION_DNS_DMARC_MISSING_TITLE'),
@@ -89,8 +91,9 @@ final class ActionPresenter
             'partial_quarantine'    => Text::sprintf('COM_DMARCREPORTS_ACTION_PARTIAL_QUARANTINE_TEXT', ...self::pad($params, 2)),
             'at_target'             => Text::sprintf('COM_DMARCREPORTS_ACTION_AT_TARGET_TEXT', ...self::pad($params, 2)),
             'would_be_rejected'     => Text::sprintf('COM_DMARCREPORTS_ACTION_WOULD_BE_REJECTED_TEXT', ...self::pad($params, 2)),
-            'align_source'          => Text::sprintf('COM_DMARCREPORTS_ACTION_ALIGN_SOURCE_TEXT', ...self::pad($params, 3)),
-            'new_source'            => Text::sprintf('COM_DMARCREPORTS_ACTION_NEW_SOURCE_TEXT', ...self::pad($params, 2)),
+            'align_source'          => Text::sprintf('COM_DMARCREPORTS_ACTION_ALIGN_SOURCE_TEXT', ...self::withHost(self::pad($params, 4))),
+            'spf_only_source'       => Text::sprintf('COM_DMARCREPORTS_ACTION_SPF_ONLY_SOURCE_TEXT', ...self::withHost(self::pad($params, 5))),
+            'new_source'            => Text::sprintf('COM_DMARCREPORTS_ACTION_NEW_SOURCE_TEXT', ...self::pad($params, 1)),
             'pass_rate_drop'        => Text::sprintf('COM_DMARCREPORTS_ACTION_PASS_RATE_DROP_TEXT', ...self::pad($params, 2)),
             'dns_dmarc_missing'     => Text::sprintf('COM_DMARCREPORTS_ACTION_DNS_DMARC_MISSING_TEXT', ...self::pad($params, 1)),
             'dns_dmarc_subdomain_check' => Text::sprintf('COM_DMARCREPORTS_ACTION_DNS_DMARC_SUBDOMAIN_CHECK_TEXT', ...self::pad($params, 1)),
@@ -136,6 +139,59 @@ final class ActionPresenter
             1       => 'info',
             default => 'success',
         };
+    }
+
+    /**
+     * The address of the domain view row of the sending source an item is
+     * about, or '' when the item is not about one source. Lets the administrator
+     * jump from an Action Center item straight to the source's figures.
+     *
+     * @param   array<string, mixed>  $item
+     */
+    public static function sourceLink(array $item): string
+    {
+        $code     = (string) ($item['code'] ?? '');
+        $params   = array_values((array) ($item['params'] ?? []));
+        $ip       = (string) ($params[0] ?? '');
+        $domainId = (int) ($item['domain_id'] ?? 0);
+
+        if (!\in_array($code, ['spf_only_source', 'align_source'], true) || $ip === '' || $domainId <= 0) {
+            return '';
+        }
+
+        return Route::_('index.php?option=com_dmarcreports&view=detail&domain_id=' . $domainId)
+            . '#' . SourceClassifier::anchor($ip);
+    }
+
+    /**
+     * The label of a source class badge in the domain view.
+     */
+    public static function sourceClassLabel(string $class): string
+    {
+        return match ($class) {
+            SourceClassifier::DKIM            => Text::_('COM_DMARCREPORTS_SOURCE_CLASS_DKIM'),
+            SourceClassifier::SPF_ONLY        => Text::_('COM_DMARCREPORTS_SOURCE_CLASS_SPF_ONLY'),
+            SourceClassifier::UNAUTHENTICATED => Text::_('COM_DMARCREPORTS_SOURCE_CLASS_UNAUTHENTICATED'),
+            SourceClassifier::REJECTED        => Text::_('COM_DMARCREPORTS_SOURCE_CLASS_REJECTED'),
+            default                           => '',
+        };
+    }
+
+    /**
+     * Replace the host name parameter (position 2) with a readable placeholder
+     * when the source has no forward-confirmed name.
+     *
+     * @param   array<int, mixed>  $params
+     *
+     * @return  array<int, mixed>
+     */
+    private static function withHost(array $params): array
+    {
+        if (trim((string) ($params[1] ?? '')) === '') {
+            $params[1] = Text::_('COM_DMARCREPORTS_SOURCE_HOST_UNKNOWN');
+        }
+
+        return $params;
     }
 
     /**

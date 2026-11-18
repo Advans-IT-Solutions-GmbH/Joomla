@@ -7,6 +7,7 @@
 
 define('_JEXEC', 1);
 
+require_once '/var/www/html/administrator/components/com_dmarcreports/src/Helper/SourceClassifier.php';
 require_once '/var/www/html/administrator/components/com_dmarcreports/src/Helper/ActionCenter.php';
 
 use Advans\Component\DmarcReports\Administrator\Helper\ActionCenter;
@@ -57,18 +58,50 @@ class ActionCenterTest
                 && !in_array('move_to_quarantine', $this->codes($items), true);
         });
 
-        $this->test('Unaligned high-volume source is flagged act now', function () {
+        $sourceItems = function (string $policy, array $source): array {
             $items = ActionCenter::generate([
                 'domain_id' => 1, 'domain' => 'example.org', 'total' => 1000,
-                'current_policy' => 'none', 'dmarc_pass' => 990,
-                'unaligned_sources' => [['ip' => '203.0.113.9', 'count' => 80]],
+                'current_policy' => $policy, 'dmarc_pass' => 990,
+                'flagged_sources' => [$source + ['ip' => '203.0.113.9']],
             ], self::CONFIG);
-            foreach ($items as $item) {
-                if ($item['code'] === 'align_source') {
-                    return $item['severity'] === 3 && $item['action_key'] === 'align_source:1:203.0.113.9';
-                }
-            }
-            return false;
+
+            return array_values(array_filter(
+                $items,
+                static fn (array $i): bool => in_array($i['code'], ['spf_only_source', 'align_source'], true)
+            ));
+        };
+
+        $this->test('DKIM-aligned source is confirmed without an item', function () use ($sourceItems) {
+            return $sourceItems('reject', ['total' => 12, 'dkim' => 12]) === [];
+        });
+
+        $this->test('SPF-only source is flagged act now', function () use ($sourceItems) {
+            $items = $sourceItems('reject', ['total' => 7, 'spf_only' => 7, 'host' => 'gw.example.net']);
+
+            return count($items) === 1
+                && $items[0]['code'] === 'spf_only_source'
+                && $items[0]['severity'] === 3
+                && $items[0]['action_key'] === 'spf_only_source:1:203.0.113.9'
+                && $items[0]['params'] === ['203.0.113.9', 'gw.example.net', 7, 0, 7];
+        });
+
+        $this->test('Failing source rejected by the policy is statistics only', function () use ($sourceItems) {
+            return $sourceItems('reject', ['total' => 9, 'fail' => 9, 'fail_delivered' => 0]) === [];
+        });
+
+        $this->test('Failing source delivered under p=none is an informational item', function () use ($sourceItems) {
+            $items = $sourceItems('none', ['total' => 80, 'fail' => 80, 'fail_delivered' => 80]);
+
+            return count($items) === 1
+                && $items[0]['code'] === 'align_source'
+                && $items[0]['severity'] === 1
+                && $items[0]['action_key'] === 'align_source:1:203.0.113.9';
+        });
+
+        $this->test('Mixed records for one address raise only the SPF-only item', function () use ($sourceItems) {
+            $items = $sourceItems('none', ['total' => 20, 'dkim' => 15, 'spf_only' => 3, 'fail' => 2, 'fail_delivered' => 2]);
+
+            return count($items) === 1 && $items[0]['code'] === 'spf_only_source';
         });
 
         $this->test('DNS findings merge and the list sorts by severity', function () {
