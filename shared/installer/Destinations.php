@@ -77,8 +77,10 @@ final class Destinations
             $files = self::merge($files, self::files($child, dirname($childManifest), $childManifest));
         }
 
-        // Product Compare mirrors the installed plugin for Joomla 5's shop group.
-        if ($id === 'plg_j2commerce_productcompare' && \Joomla\CMS\Version::MAJOR_VERSION < 6) {
+        // Product Compare mirrors the installed plugin for Joomla 5's shop group. A legacy symbolic
+        // link there is replaced by real copies in the plugin's postflight, not inspected here.
+        if ($id === 'plg_j2commerce_productcompare' && \Joomla\CMS\Version::MAJOR_VERSION < 6
+            && !is_link(JPATH_PLUGINS . '/j2store/productcompare')) {
             foreach ($files as $target => $candidate) {
                 if (str_starts_with($target, $root . '/')) {
                     $relative = substr($target, strlen($root) + 1);
@@ -97,6 +99,124 @@ final class Destinations
         self::removedDeclarations($files, $manifest, $source, $manifestTarget, $root);
 
         return $files;
+    }
+
+    /**
+     * The extension's own territory: its folders, its media folder, its manifest storage and its
+     * language files by name, for the manifest and every plugin it bundles under plugins/.
+     *
+     * @return array{prefixes: list<string>, files: list<string>, languages: list<string>}
+     */
+    public static function owned(\SimpleXMLElement $manifest, string $source): array
+    {
+        $id = strtolower((string) $manifest->name);
+        $definition = SystemCheck::definition($id);
+        $element = $definition['element'];
+        $root = SystemCheck::root($definition);
+        $owned = ['prefixes' => [], 'files' => [], 'languages' => [$id]];
+
+        switch ($definition['type']) {
+            case 'component':
+                $owned['prefixes'] = [
+                    JPATH_ROOT . '/components/' . $element,
+                    $root,
+                    JPATH_ROOT . '/media/' . $element,
+                    JPATH_ROOT . '/api/components/' . $element,
+                ];
+                $owned['languages'][] = $element;
+                break;
+            case 'plugin':
+                $owned['prefixes'] = [$root, JPATH_ROOT . '/media/' . $id];
+                break;
+            case 'module':
+                $owned['prefixes'] = [$root, JPATH_ROOT . '/media/' . $element];
+                $owned['languages'][] = $element;
+                break;
+            case 'package':
+                $owned['prefixes'] = [$root];
+                $owned['files'] = [dirname($root) . '/' . $element . '.xml'];
+                $owned['languages'][] = $element;
+                break;
+        }
+
+        foreach ($manifest->media as $media) {
+            $destination = self::relative((string) $media['destination']);
+            $first = strtolower(explode('/', trim($destination, '/'))[0]);
+
+            if ($first !== '' && in_array($first, [strtolower($element), $id], true)) {
+                $owned['prefixes'][] = JPATH_ROOT . '/media/' . $destination;
+            }
+        }
+
+        foreach (glob($source . '/plugins/*/*/*.xml') ?: [] as $childManifest) {
+            $child = simplexml_load_file($childManifest);
+
+            if (!$child instanceof \SimpleXMLElement || (string) $child['type'] !== 'plugin') {
+                throw new \RuntimeException('Invalid bundled plugin manifest.');
+            }
+
+            $owned = self::mergeOwned($owned, self::owned($child, dirname($childManifest)));
+        }
+
+        return $owned;
+    }
+
+    /**
+     * @param array{prefixes: list<string>, files: list<string>, languages: list<string>} $owned
+     * @param array{prefixes: list<string>, files: list<string>, languages: list<string>} $extra
+     * @return array{prefixes: list<string>, files: list<string>, languages: list<string>}
+     */
+    public static function mergeOwned(array $owned, array $extra): array
+    {
+        foreach (['prefixes', 'files', 'languages'] as $key) {
+            $owned[$key] = array_values(array_unique(array_merge($owned[$key], $extra[$key])));
+        }
+
+        return $owned;
+    }
+
+    /** @param array{prefixes: list<string>, files: list<string>, languages: list<string>} $owned */
+    public static function isOwned(string $destination, array $owned): bool
+    {
+        $path = self::comparable($destination);
+
+        foreach ($owned['prefixes'] as $prefix) {
+            if (str_starts_with($path, rtrim(self::comparable($prefix), '/') . '/')) {
+                return true;
+            }
+        }
+
+        foreach ($owned['files'] as $file) {
+            if ($path === self::comparable($file)) {
+                return true;
+            }
+        }
+
+        // Language files count only in Joomla's global language folders, by the extension's name.
+        foreach ([JPATH_ROOT . '/language/', JPATH_ADMINISTRATOR . '/language/'] as $base) {
+            $base = rtrim(self::comparable($base), '/') . '/';
+
+            if (!str_starts_with($path, $base) || substr_count(substr($path, strlen($base)), '/') !== 1) {
+                continue;
+            }
+
+            [$tag, $name] = explode('/', substr($path, strlen($base)));
+
+            foreach ($owned['languages'] as $language) {
+                $language = strtolower($language);
+
+                if (in_array(strtolower($name), [$language . '.ini', $language . '.sys.ini', strtolower($tag) . '.' . $language . '.ini', strtolower($tag) . '.' . $language . '.sys.ini'], true)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static function comparable(string $path): string
+    {
+        return str_replace('\\', '/', FileGuard::normalize(str_replace('\\', '/', $path)));
     }
 
     public static function operation(string $source, string $action): string

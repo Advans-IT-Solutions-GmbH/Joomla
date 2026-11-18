@@ -20,6 +20,7 @@ on:
       - 'shared/tests/requirements-check.php'
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
+      - 'shared/tests/scripts/shared-backend-update.php'
       - 'shared/tests/scripts/shared-install-messages.php'
       - 'shared/tests/scripts/shared-database-check-lib.php'
       - '.github/workflows/pkg-dmarcreports.yml'
@@ -39,6 +40,7 @@ on:
       - 'shared/tests/requirements-check.php'
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
+      - 'shared/tests/scripts/shared-backend-update.php'
       - 'shared/tests/scripts/shared-install-messages.php'
       - 'shared/tests/scripts/shared-database-check-lib.php'
       - '.github/workflows/pkg-dmarcreports.yml'
@@ -59,12 +61,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          # The build rebuilds every earlier release from its release commit (known-hashes.php).
+          fetch-depth: 0
       - name: Build
+        env:
+          ADVANS_KNOWN_HASHES_STRICT: '1'
         run: |
           cd pkg_dmarcreports
           chmod +x build.sh
           ./build.sh
           cp *.zip tests/extension.zip
+      - name: Verify that the package recognises every file of the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/verify-known-hashes.py --prefix pkgdmarcreports --package pkg_dmarcreports/tests/extension.zip
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: extension-package
@@ -260,6 +270,73 @@ jobs:
           cd pkg_dmarcreports/tests
           docker compose -f docker-compose.joomla6.yml down -v
 
+  backend-update:
+    name: Backend update from the published release (J6)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: extension-package
+          path: /tmp/new-package/
+      # The latest published release was built before the installer decided by itself, so it
+      # left no record of its files: the first update covers the bootstrap through the catalog.
+      - name: Download the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIX: pkgdmarcreports
+          TESTS: pkg_dmarcreports/tests
+        run: |
+          TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isDraft \
+            --jq "[.[] | select(.isDraft | not) | select(.tagName | startswith(\"$PREFIX-v\"))][0].tagName")
+          if [ -z "$TAG" ]; then
+            echo "::error::No published release for $PREFIX"
+            exit 1
+          fi
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.zip' --dir /tmp/published
+          cp /tmp/published/*.zip "$TESTS/extension.zip"
+          echo "Installed first: $TAG"
+      - name: Start Joomla with the published release (J6)
+        run: |
+          cd pkg_dmarcreports/tests
+          for attempt in 1 2 3; do
+            if docker compose -f docker-compose.joomla6.yml up -d --build; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            docker compose -f docker-compose.joomla6.yml down -v || true
+            sleep 20
+          done
+          timeout 600 bash -c 'until docker exec pkg_dmarcreports_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+      - name: Update with Check for Updates and Update in the backend
+        env:
+          C: pkg_dmarcreports_j6_test
+          SCENARIOS: clean,modified,backup-failure
+        run: |
+          docker cp /tmp/new-package/extension.zip "$C:/tmp/extension-new.zip"
+          docker cp pkg_dmarcreports/updates/update.xml "$C:/tmp/update.xml"
+          docker exec "$C" mkdir -p /var/www/html/tests/scripts
+          docker cp shared/tests/scripts/shared-test-helpers.php "$C:/var/www/html/tests/scripts/"
+          docker cp shared/tests/scripts/shared-backend-update.php "$C:/var/www/html/tests/scripts/"
+          docker exec -e EXPECT_BOOTSTRAP=1 -e SCENARIOS="$SCENARIOS" "$C" php /var/www/html/tests/scripts/shared-backend-update.php
+      - name: Show container logs
+        if: always()
+        run: |
+          cd pkg_dmarcreports/tests
+          docker compose -f docker-compose.joomla6.yml logs joomla 2>&1 | tail -100 || true
+      - name: Cleanup
+        if: always()
+        run: |
+          cd pkg_dmarcreports/tests
+          docker compose -f docker-compose.joomla6.yml down -v
+
   all-jobs:
     name: DMARC Reports Package / all jobs
     runs-on: ubuntu-latest
@@ -269,6 +346,7 @@ jobs:
       - language-lint
       - test-j5
       - test-j6
+      - backend-update
     if: always()
     permissions:
       actions: read

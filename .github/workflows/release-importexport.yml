@@ -102,6 +102,8 @@ jobs:
 
       - name: Build extension
         if: steps.version.outputs.bump != 'none'
+        env:
+          ADVANS_KNOWN_HASHES_STRICT: '1'
         run: |
           cd j2commerce/com_j2commerce_importexport
           chmod +x build.sh
@@ -120,6 +122,9 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.new }}"
           PACKAGE="${{ steps.package.outputs.file }}"
+          # Joomla verifies the download against this hash. The package build is reproducible,
+          # so the publish workflow rebuilds exactly these bytes and checks them before uploading.
+          SHA256=$(sha256sum "j2commerce/com_j2commerce_importexport/$PACKAGE" | cut -d ' ' -f 1)
           cat > j2commerce/com_j2commerce_importexport/updates/update.xml << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <updates>
@@ -133,6 +138,7 @@ jobs:
                   <downloads>
                       <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/importexport-v$VERSION/$PACKAGE</downloadurl>
                   </downloads>
+                  <sha256>$SHA256</sha256>
                   <tags>
                       <tag>stable</tag>
                   </tags>

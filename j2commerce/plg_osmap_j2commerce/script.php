@@ -47,6 +47,19 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
         return [$file => $this->replacementCandidate($parent, str_replace($buggy, $fixed, $content))];
     }
 
+    /**
+     * The OSMap compatibility patch changes one line of OSMap's own Factory.php and keeps every
+     * other byte of the current file, including changes made on this site. It is applied after a
+     * verified backup, which restores the file completely, and reported. Any other foreign file
+     * follows the shared rule.
+     */
+    protected function foreignDecision(string $destination, string $existing, bool $known): string
+    {
+        $factory = \Advans\Installer\FileGuard::normalize(JPATH_ADMINISTRATOR . '/components/com_osmap/library/Alledia/OSMap/Factory.php');
+
+        return $destination === $factory ? \Advans\Installer\Planner::ADJUST : parent::foreignDecision($destination, $existing, $known);
+    }
+
     protected function extensionPostflight(string $type, object $parent): void
     {
         if ($type !== 'install' && $type !== 'update') {

@@ -12,6 +12,7 @@
         <downloads>
             <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/task-dmarcreports-v1.3.0/plg_task_dmarcreports_1.3.0.zip</downloadurl>
         </downloads>
+        <sha256>7a70a7f28a0298ab64e1f8c4eae8d604950de7dea5360b32c25a40d571a985ab</sha256>
         <tags>
             <tag>stable</tag>
         </tags>

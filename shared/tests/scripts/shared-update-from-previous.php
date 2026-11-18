@@ -147,7 +147,13 @@ $db->query("INSERT INTO $sitesMap (update_site_id, extension_id) VALUES ($legacy
 echo "Inserted legacy update site #$legacySiteId: $legacyUrl\n\n";
 
 // 2. Install the new package over the previous version.
-[$code, $output] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, $updatePackage);
+$zip = new ZipArchive();
+$zip->open($newPackage);
+$installerId = strtolower(trim((string) simplexml_load_string((string) $zip->getFromName($manifest['xmlfile']))->name));
+$zip->close();
+$installerState = JOOMLA_ROOT . '/administrator/advans-installer-state/' . $installerId;
+$backupsBefore = glob($installerState . '/backups/*.php') ?: [];
+[$code, $output] = sh_cli_install_checked(JOOMLA_ROOT, $updatePackage);
 $clean = sh_strip_ansi($output);
 echo $clean . "\n\n";
 
@@ -155,6 +161,12 @@ up_check('CLI update exits with 0', $code === 0, "exit code $code");
 $rawKeys = sh_find_raw_language_keys($clean);
 up_check('no untranslated language keys in installer output', !$rawKeys, implode(', ', $rawKeys));
 up_check('no [ERROR] message in installer output', !preg_match('/\[ERROR\]/', $clean));
+// The previous release left no record of its files; the package's catalog of released files
+// recognises every one of them, so nothing is reported as changed and nothing is backed up.
+clearstatcache();
+up_check('every file of the previous release was recognised (no change report)', !str_contains(sh_plain_text($clean), 'Changed on this site'));
+up_check('no backup was needed', (glob($installerState . '/backups/*.php') ?: []) === $backupsBefore);
+up_check('the installer recorded the files it wrote', is_file($installerState . '/installed.php'));
 
 // 3. Verification.
 $extensionIdAfter = sh_find_extension_id($manifest);

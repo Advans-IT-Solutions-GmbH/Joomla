@@ -29,6 +29,59 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         return parent::preflight($type, $parent);
     }
 
+    /**
+     * The Joomla 5 mirror under plugins/j2store/productcompare lies in J2Store's plugin group.
+     * While it holds only this plugin's files, they are replaced after a verified backup. When
+     * another extension owns that folder, its files are left untouched and the mirror is skipped
+     * (see setGroupForInstalledStack()): overwriting them would break that extension.
+     */
+    protected function foreignDecision(string $destination, string $existing, bool $known): string
+    {
+        $mirror = rtrim(str_replace('\\', '/', \Advans\Installer\FileGuard::normalize(JPATH_PLUGINS . '/j2store/productcompare')), '/') . '/';
+
+        if (str_starts_with(str_replace('\\', '/', $destination), $mirror)) {
+            return $this->mirrorOwner() === null ? \Advans\Installer\Planner::REPLACE : \Advans\Installer\Planner::SKIP;
+        }
+
+        return parent::foreignDecision($destination, $existing, $known);
+    }
+
+    /**
+     * Name of another extension that owns plugins/j2store/productcompare, or null when the folder
+     * is absent, holds only this plugin's files or is a legacy link to this plugin's own folder.
+     */
+    private function mirrorOwner(): ?string
+    {
+        $mirror = JPATH_PLUGINS . '/j2store/productcompare';
+
+        if (is_link($mirror)) {
+            $target = realpath($mirror);
+
+            return $target !== false && $target === realpath(JPATH_PLUGINS . '/j2commerce/productcompare') ? null : basename((string) readlink($mirror));
+        }
+
+        foreach (is_dir($mirror) ? (glob($mirror . '/*.xml') ?: []) : [] as $manifestFile) {
+            $previous = libxml_use_internal_errors(true);
+
+            try {
+                $manifest = simplexml_load_file($manifestFile);
+            } finally {
+                libxml_clear_errors();
+                libxml_use_internal_errors($previous);
+            }
+
+            if ($manifest instanceof \SimpleXMLElement && $manifest->getName() === 'extension') {
+                $name = trim((string) $manifest->name);
+
+                if ($name !== '' && strtolower($name) !== 'plg_j2commerce_productcompare') {
+                    return $name;
+                }
+            }
+        }
+
+        return null;
+    }
+
     protected function extensionPostflight($type, $parent)
     {
         $isJ6 = (int) \Joomla\CMS\Version::MAJOR_VERSION >= 6;
@@ -317,6 +370,24 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
         }
 
         $dest = JPATH_PLUGINS . '/j2store/productcompare';
+        $owner = $this->mirrorOwner();
+
+        if ($owner !== null) {
+            // Leave the other extension intact; the plugin stays in its own j2commerce group.
+            Factory::getApplication()->enqueueMessage(
+                Text::sprintf('PLG_J2COMMERCE_PRODUCTCOMPARE_MIRROR_OCCUPIED', htmlspecialchars($owner, ENT_QUOTES, 'UTF-8')),
+                'warning'
+            );
+
+            return;
+        }
+
+        // Older versions linked the mirror to this plugin's folder; Joomla cannot remove a
+        // linked plugin folder, so the link is replaced by real copies below.
+        if (is_link($dest) && !@unlink($dest)) {
+            throw new \RuntimeException('The legacy mirror link could not be replaced.');
+        }
+
         $files = Destinations::files(
             $parent->getManifest(),
             (string) $parent->getParent()->getPath('source'),

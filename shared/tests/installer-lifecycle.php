@@ -78,10 +78,14 @@ namespace Joomla\CMS\Log {
     final class Log
     {
         public const ERROR = 1;
+        public const WARNING = 2;
+
+        /** @var list<string> */
+        public static array $entries = [];
 
         public static function add(string $message, int $level, string $category): void
         {
-            throw new \RuntimeException('Unexpected guard failure: ' . $message);
+            self::$entries[] = $message;
         }
     }
 }
@@ -187,11 +191,19 @@ namespace {
         $assert(class_exists(\Advans\Installer\InstallerScript::class, false), 'Loading another extension did not reuse the shared runtime.');
         $source = $work . '/source';
         $destination = JPATH_PLUGINS . '/ajax/joomlaajaxforms';
-        mkdir($source, 0700, true);
+        $state = JPATH_ADMINISTRATOR . '/advans-installer-state/plg_ajax_joomlaajaxforms';
+        mkdir($source . '/advansinstaller', 0700, true);
         mkdir($destination, 0700, true);
         file_put_contents($source . '/payload.php', '<?php echo "new";');
-        file_put_contents($destination . '/payload.php', '<?php echo "foreign";');
-        $xml = '<extension type="plugin" group="ajax"><name>PLG_AJAX_JOOMLAAJAXFORMS</name><files><filename>payload.php</filename></files></extension>';
+        file_put_contents($source . '/untouched.php', '<?php echo "untouched, new release";');
+        file_put_contents($destination . '/payload.php', '<?php echo "changed on this site";');
+        file_put_contents($destination . '/untouched.php', '<?php echo "earlier release";');
+        // The catalog of earlier releases knows the untouched file, not the changed one.
+        \Advans\Installer\State::write($source . '/advansinstaller/' . \Advans\Installer\Knowledge::CATALOG, [
+            'complete' => true,
+            'hashes'   => [hash('sha256', '<?php echo "earlier release";')],
+        ]);
+        $xml = '<extension type="plugin" group="ajax"><name>PLG_AJAX_JOOMLAAJAXFORMS</name><files><filename>payload.php</filename><filename>untouched.php</filename></files></extension>';
         file_put_contents($source . '/joomlaajaxforms.xml', $xml);
         $parent = new class($source, simplexml_load_string($xml)) {
             public function __construct(private string $source, private \SimpleXMLElement $manifest) {}
@@ -200,29 +212,102 @@ namespace {
             public function getPath(string $key): string { return $key === 'manifest' ? $this->source . '/joomlaajaxforms.xml' : $this->source; }
         };
         $installer = new class extends \Advans\Installer\InstallerScript {
+            /** @var array<string, string> */
+            public array $foreign = [];
+
+            protected function guardedFiles(string $type, object $parent): array
+            {
+                return $this->foreign;
+            }
+
             protected function extensionPostflight($type, $parent)
             {
                 return true;
             }
         };
-        $assert($installer->preflight('install', $parent) === false, 'Foreign destination was not blocked.');
-        $assert(file_get_contents($destination . '/payload.php') === '<?php echo "foreign";', 'Blocked preflight changed a destination.');
-        $plan = JPATH_ADMINISTRATOR . '/advans-installer-state/plg_ajax_joomlaajaxforms/plan.php';
-        $assert(is_file($plan), 'Blocked preflight did not preserve a review plan.');
+        $install = static function () use ($source, $destination): void {
+            foreach (['payload.php', 'untouched.php', 'joomlaajaxforms.xml'] as $name) {
+                copy($source . '/' . $name, $destination . '/' . $name);
+            }
+        };
+        $backups = static fn(): array => glob($state . '/backups/*.php') ?: [];
+        $messageText = static fn(): string => html_entity_decode(implode("\n", array_column($app->messages, 0)), ENT_QUOTES, 'UTF-8');
+
+        // 1. Own files: the update decides by itself. The changed file is backed up, the untouched one is not.
+        $app->messages = [];
+        $assert($installer->preflight('update', $parent) === true, 'An update of own files must not stop.');
+        $assert(file_get_contents($destination . '/payload.php') === '<?php echo "changed on this site";', 'Preflight changed a destination.');
+        $assert(count($backups()) === 1, 'Exactly the changed own file must be backed up.');
+        $changedBackup = $backups()[0];
+        $assert(
+            \Advans\Installer\FileGuard::restoreBytes($changedBackup, $destination . '/payload.php', hash('sha256', '<?php echo "changed on this site";')) === '<?php echo "changed on this site";',
+            'The backup does not hold the changed bytes.'
+        );
+        $install();
+        $assert($installer->postflight('update', $parent) === true, 'Successful extension postflight was not preserved.');
+        $report = $messageText();
+        $assert(str_contains($report, 'plugins/ajax/joomlaajaxforms/payload.php') && !str_contains($report, 'untouched.php'), 'The report must name exactly the changed own file.');
+        $assert(str_contains($report, 'advans-installer-state/plg_ajax_joomlaajaxforms/backups'), 'The report must name the backup location.');
+        $record = \Advans\Installer\State::read($state . '/' . \Advans\Installer\Knowledge::RECORD);
+        $assert(($record['files']['plugins/ajax/joomlaajaxforms/payload.php'] ?? '') === hash('sha256', '<?php echo "new";'), 'The record lacks a written file.');
+
+        // 2. The record makes the next update recognise the files this installation wrote.
+        file_put_contents($source . '/payload.php', '<?php echo "newer";');
+        $app->messages = [];
+        $assert($installer->preflight('update', $parent) === true, 'An update over recorded files must not stop.');
+        $assert(count($backups()) === 1, 'A recorded, untouched file must not be backed up again.');
+        $install();
+        $installer->postflight('update', $parent);
+        $assert(!str_contains($messageText(), 'payload.php'), 'An untouched file must not be reported.');
+
+        // 3. A foreign file without a safe automatic choice pauses the installation, with a plain explanation.
+        $foreign = JPATH_ROOT . '/media/other_extension/other.php';
+        mkdir(dirname($foreign), 0700, true);
+        file_put_contents($foreign, '<?php echo "other extension";');
+        file_put_contents($source . '/foreign-incoming.php', '<?php echo "ours";');
+        $installer->foreign = [$foreign => $source . '/foreign-incoming.php'];
+        $app->tag = 'de-DE';
+        \Advans\Installer\SystemCheck::loadLanguage();
+        $app->messages = [];
+        $assert($installer->preflight('update', $parent) === false, 'An unclassified foreign file must pause the installation.');
+        $assert(file_get_contents($foreign) === '<?php echo "other extension";', 'The pause changed the foreign file.');
+        $paused = $messageText();
+        $assert(str_contains($paused, 'Es wurde nichts verändert') && str_contains($paused, 'media/other_extension/other.php'), 'The pause must explain in the site language which file is affected.');
+        $plan = $state . '/plan.php';
+        $assert(is_file($plan) && str_contains($paused, hash_file('sha256', $plan)), 'The pause must name the review plan for the command-line approval.');
         $process = proc_open([PHP_BINARY, $support . '/approve.php', '--approve', $plan, hash_file('sha256', $plan)], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
         $output = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
         fclose($pipes[1]);
         fclose($pipes[2]);
         $assert(proc_close($process) === 0, 'Approval command failed: ' . $output);
-        $assert($installer->preflight('install', $parent) === true, 'Approved retry was not accepted.');
-        copy($source . '/payload.php', $destination . '/payload.php');
-        copy($source . '/joomlaajaxforms.xml', $destination . '/joomlaajaxforms.xml');
+        $app->tag = 'en-GB';
+        \Advans\Installer\SystemCheck::loadLanguage();
+        $app->messages = [];
+        $assert($installer->preflight('update', $parent) === true, 'Approved retry was not accepted.');
+        copy($source . '/foreign-incoming.php', $foreign);
+        $install();
+        $installer->postflight('update', $parent);
+        $assert(str_contains($messageText(), 'media/other_extension/other.php'), 'The approved foreign change must be reported.');
+        $assert(!is_file($plan), 'A successful installation must remove the paused plan.');
+        $installer->foreign = [];
+
+        // 4. A backup that cannot be written stops the installation before anything changes.
+        file_put_contents($destination . '/payload.php', '<?php echo "changed again";');
+        mkdir($state . '/backups/' . hash('sha256', \Advans\Installer\FileGuard::normalize($destination . '/payload.php') . "\0" . hash('sha256', '<?php echo "changed again";')) . '.php');
+        $app->messages = [];
+        $assert($installer->preflight('update', $parent) === false, 'A failed backup must stop the installation.');
+        $assert(str_contains($messageText(), 'plugins/ajax/joomlaajaxforms/payload.php could not be written or checked'), 'The backup failure must be explained.');
+        $assert(file_get_contents($destination . '/payload.php') === '<?php echo "changed again";', 'A failed backup changed a destination.');
+        $assert(\Joomla\CMS\Log\Log::$entries !== [], 'A failed backup must be logged.');
+        \Joomla\CMS\Log\Log::$entries = [];
+        file_put_contents($destination . '/payload.php', '<?php echo "newer";');
 
         foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
             $app->tag = $tag;
             $app->messages = [];
+            $assert($installer->preflight('update', $parent) === true, 'Untouched update must not stop.');
             $assert($installer->postflight('install', $parent) === true, 'Successful extension postflight was not preserved.');
-            $html = $app->messages[0][0];
+            $html = (string) (array_values(array_filter(array_column($app->messages, 0), static fn(string $message): bool => str_contains($message, 'advans-system-check')))[0] ?? '');
             $strings = \Joomla\CMS\Language\Text::$strings;
 
             foreach (['ADVANS_CHECK_PASSED', 'ADVANS_CHECK_BLOCKERS', 'ADVANS_CHECK_WARNINGS', 'ADVANS_CHECK_REPEAT'] as $key) {
@@ -308,12 +393,18 @@ namespace {
         file_put_contents($productManifest, $productXml);
         file_put_contents($canonical . '/productcompare.xml', '<foreign/>');
         $productFiles = \Advans\Installer\Destinations::files(simplexml_load_string($productXml), $productSource, $productManifest);
-        mkdir($work . '/options-backups', 0700);
-        $optionsPlan = \Advans\Installer\FileGuard::inspect($productFiles, $work . '/options-backups');
-        $assert(count($optionsPlan) === 1 && !$optionsPlan[0]['approved'], 'A foreign options manifest must require explicit approval.');
-        $assert(file_get_contents($canonical . '/productcompare.xml') === '<foreign/>', 'Options manifest inventory changed existing bytes.');
-        \Advans\Installer\FileGuard::verifyBackup($optionsPlan[0]['backup'], $optionsPlan[0]['destination'], $optionsPlan[0]['existing']);
+        $productOwned = \Advans\Installer\Destinations::owned(simplexml_load_string($productXml), $productSource);
+        $assert(\Advans\Installer\Destinations::isOwned($canonical . '/productcompare.xml', $productOwned), 'The options manifest lies in the plugin folder and is its own file.');
+        $assert(!\Advans\Installer\Destinations::isOwned($mirror . '/payload.php', $productOwned), 'The Joomla 5 mirror lies in J2Store\'s plugin group and is foreign territory.');
+        $assert(\Advans\Installer\Destinations::isOwned(JPATH_ADMINISTRATOR . '/language/en-GB/plg_j2commerce_productcompare.ini', $productOwned), 'The plugin language file is its own file.');
+        $assert(!\Advans\Installer\Destinations::isOwned(JPATH_ADMINISTRATOR . '/language/en-GB/plg_j2store_other.ini', $productOwned), 'Another extension\'s language file is foreign.');
         require dirname(__DIR__, 2) . '/j2commerce/plg_j2commerce_productcompare/script.php';
+        $decide = new \ReflectionMethod(\PlgJ2commerceProductcompareInstallerScript::class, 'foreignDecision');
+        $mirrorPayload = \Advans\Installer\FileGuard::normalize($mirror . '/payload.php');
+        $assert($decide->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $mirrorPayload, str_repeat('0', 64), false) === \Advans\Installer\Planner::REPLACE, 'A mirror that holds only this plugin\'s files must be replaced after a backup.');
+        file_put_contents($mirror . '/other.xml', '<extension type="plugin" group="j2store"><name>plg_j2store_other</name></extension>');
+        $assert($decide->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $mirrorPayload, str_repeat('0', 64), false) === \Advans\Installer\Planner::SKIP, 'A mirror folder owned by another extension must be left untouched.');
+        unlink($mirror . '/other.xml');
         $optionsInstaller = new \ReflectionMethod(\PlgJ2commerceProductcompareInstallerScript::class, 'installOptionsManifest');
         $optionsParent = new class($productManifest) {
             public function __construct(private string $manifest) {}
@@ -337,7 +428,7 @@ namespace {
             $assert(!is_link($mirror) && is_file($mirror . '/custom.php'), 'Legacy symlink uninstall did not prepare a real directory for Joomla.');
             $assert(is_file($canonical . '/custom.php'), 'Legacy symlink preparation removed its original target.');
         }
-        echo "PASS common lifecycle: abort, verified backup, explicit approval, retry, translated reports and refreshed state\n";
+        echo "PASS common lifecycle: own files decided automatically with verified backups and record, foreign pause with approval, backup failure stops before changes, translated reports and refreshed state\n";
     } finally {
         $remove($work);
     }

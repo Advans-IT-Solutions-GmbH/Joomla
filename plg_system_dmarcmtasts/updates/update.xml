@@ -12,6 +12,7 @@
         <downloads>
             <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/system-dmarcmtasts-v1.3.0/plg_system_dmarcmtasts_1.3.0.zip</downloadurl>
         </downloads>
+        <sha256>20ba7d4d31dec0b61a74729a9c1fa3f1210196e8e0e1da99808fbb4f49d07e90</sha256>
         <tags>
             <tag>stable</tag>
         </tags>

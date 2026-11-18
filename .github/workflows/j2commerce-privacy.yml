@@ -17,6 +17,7 @@ on:
       - 'shared/tests/requirements-check.php'
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
+      - 'shared/tests/scripts/shared-backend-update.php'
       - 'shared/tests/scripts/shared-install-messages.php'
       - 'shared/tests/scripts/shared-update-from-previous.php'
       - 'shared/tests/scripts/shared-deprecations.php'
@@ -38,6 +39,7 @@ on:
       - 'shared/tests/requirements-check.php'
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
+      - 'shared/tests/scripts/shared-backend-update.php'
       - 'shared/tests/scripts/shared-install-messages.php'
       - 'shared/tests/scripts/shared-update-from-previous.php'
       - 'shared/tests/scripts/shared-deprecations.php'
@@ -95,13 +97,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          # The build rebuilds every earlier release from its release commit (known-hashes.php).
+          fetch-depth: 0
       - name: Build
+        env:
+          ADVANS_KNOWN_HASHES_STRICT: '1'
         run: |
           cd j2commerce/plg_privacy_j2commerce
           chmod +x build.sh
           ./build.sh
           mkdir -p tests
           cp *.zip tests/extension.zip
+      - name: Verify that the package recognises every file of the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/verify-known-hashes.py --prefix privacy --package j2commerce/plg_privacy_j2commerce/tests/extension.zip
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: extension-package
@@ -610,6 +620,18 @@ jobs:
           docker cp shared/tests/scripts/shared-test-helpers.php "$C:/var/www/html/tests/scripts/"
           docker cp shared/tests/scripts/shared-update-from-previous.php "$C:/var/www/html/tests/scripts/"
           docker exec -e TEST_STRICT_SKIP=1 "$C" php /var/www/html/tests/scripts/shared-update-from-previous.php
+      # Foreign territory: an unchanged checkout override of an earlier release (1.5.4/1.5.5) in
+      # the site template is retired through the backend update after a backup and reported.
+      - name: Retire an earlier checkout override through the backend update
+        env:
+          C: plg_privacy_j2commerce_j6_test
+        run: |
+          git show 4f2dab56b:j2commerce/plg_privacy_j2commerce/overrides/com_j2commerce/checkout/default_shipping_payment.php > /tmp/bundled-override.php
+          docker cp /tmp/bundled-override.php "$C:/tmp/bundled-override.php"
+          docker cp j2commerce/plg_privacy_j2commerce/updates/update.xml "$C:/tmp/update.xml"
+          docker cp shared/tests/scripts/shared-backend-update.php "$C:/var/www/html/tests/scripts/"
+          docker exec -e SCENARIOS=privacy-override -e PRIVACY_OVERRIDE=/tmp/bundled-override.php "$C" \
+            php /var/www/html/tests/scripts/shared-backend-update.php
       - name: Show container logs
         if: always()
         run: |

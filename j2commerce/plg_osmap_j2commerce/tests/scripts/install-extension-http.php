@@ -12,8 +12,6 @@
  *   STRICT_MESSAGES=1      fail when the installer queues a warning or an
  *                          error message, or when a message contains an
  *                          untranslated language key
- *   REVIEW_TRUSTED_FIXTURE=1 explicitly approve a verified file plan and retry
- *                          in this disposable Docker fixture only
  */
 
 $baseUrl = 'http://localhost';
@@ -22,7 +20,6 @@ $adminPass = getenv('JOOMLA_ADMIN_PASSWORD') ?: 'Admin123!@#';
 $packagePath = getenv('PACKAGE_PATH') ?: '/tmp/extension.zip';
 $extensionName = getenv('EXTENSION_NAME') ?: 'Extension';
 $strictMessages = getenv('STRICT_MESSAGES') === '1';
-$reviewFixture = getenv('REVIEW_TRUSTED_FIXTURE') === '1';
 
 echo "=== Installing $extensionName via HTTP ===\n\n";
 
@@ -127,54 +124,13 @@ curl_setopt($ch, CURLOPT_POSTFIELDS, $uploadFields);
 $started = time();
 $installResult = (string) curl_exec($ch);
 
-if ($reviewFixture && !str_contains($installResult, 'was successful')
-    && !str_contains($installResult, 'successfully installed')) {
+if (!str_contains($installResult, 'was successful') && !str_contains($installResult, 'successfully installed')) {
     $plan = '/var/www/html/administrator/advans-installer-state/plg_osmap_j2commerce/plan.php';
     clearstatcache(true, $plan);
 
     if (is_file($plan) && filemtime($plan) >= $started) {
-        $work = sys_get_temp_dir() . '/web-reviewed-fixture-' . bin2hex(random_bytes(8));
-        $zip = new ZipArchive();
-
-        if ($zip->open($packagePath) !== true || !mkdir($work, 0700, true) || !chown($work, 'www-data')) {
-            throw new RuntimeException('Cannot stage explicit web-fixture approval.');
-        }
-
-        try {
-            foreach (['approve.php', 'FileGuard.php', 'State.php'] as $name) {
-                $bytes = $zip->getFromName('advansinstaller/' . $name);
-
-                if ($bytes === false || file_put_contents($work . '/' . $name, $bytes) !== strlen($bytes)
-                    || !chown($work . '/' . $name, 'www-data')) {
-                    throw new RuntimeException('Missing web-fixture approval support.');
-                }
-            }
-
-            $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($work . '/approve.php')
-                . ' --approve ' . escapeshellarg($plan) . ' ' . escapeshellarg(hash_file('sha256', $plan));
-            $approvalOutput = [];
-            exec('su -s /bin/sh www-data -c ' . escapeshellarg($command) . ' 2>&1', $approvalOutput, $approvalCode);
-
-            if ($approvalCode !== 0) {
-                throw new RuntimeException('Web-fixture approval failed: ' . implode("\n", $approvalOutput));
-            }
-
-            echo "PASS web fixture: install blocked, originals and backups verified by the packaged approval command, exact plan explicitly approved\n";
-            curl_setopt($ch, CURLOPT_URL, "$baseUrl/administrator/index.php?option=com_installer&view=install");
-            curl_setopt($ch, CURLOPT_POST, true);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $uploadFields);
-            $installResult = (string) curl_exec($ch);
-        } finally {
-            $zip->close();
-
-            foreach (['approve.php', 'FileGuard.php', 'State.php'] as $name) {
-                if (is_file($work . '/' . $name)) {
-                    unlink($work . '/' . $name);
-                }
-            }
-
-            rmdir($work);
-        }
+        // The shared installer decides by itself; a pause here is a regression, not a step to approve.
+        echo "❌ The installer paused for an approval ($plan) instead of deciding by itself\n";
     }
 }
 

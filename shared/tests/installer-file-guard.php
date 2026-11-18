@@ -191,6 +191,53 @@ try {
             'Symlink rejection must occur before creating any backup.');
         $passed++;
     }
+
+    // compare() reports differing destinations and every incoming hash without writing anything.
+    $compareRoot = $base . DIRECTORY_SEPARATOR . 'compare';
+    mkdir($compareRoot);
+    $changed = $compareRoot . DIRECTORY_SEPARATOR . 'changed.php';
+    writeFile($changed, $existingBytes);
+    $comparison = FileGuard::compare([$changed => $source, $identicalDestination => $identicalSource, $absentDestination => $source]);
+    expect(count($comparison['incoming']) === 3, 'compare() must hash every incoming file.');
+    expect(array_keys($comparison['differing']) === [FileGuard::normalize($changed)], 'compare() must list only differing existing destinations.');
+    expect(iterator_count(new FilesystemIterator($compareRoot, FilesystemIterator::SKIP_DOTS)) === 1, 'compare() must not write backups.');
+    $passed++;
+
+    // backup() writes a verified, deduplicated backup whose decoded bytes are the original bytes.
+    $compareBackups = $compareRoot . DIRECTORY_SEPARATOR . 'backups';
+    mkdir($compareBackups);
+    $existingHash = hash('sha256', $existingBytes);
+    $backup = FileGuard::backup($changed, $existingHash, $compareBackups);
+    expect(FileGuard::restoreBytes($backup, $changed, $existingHash) === $existingBytes, 'A backup must decode to the exact original bytes.');
+    expect(FileGuard::backup($changed, $existingHash, $compareBackups) === $backup, 'The same bytes must reuse the same backup.');
+    $passed++;
+
+    // A backup that cannot be written is a BackupFailure naming the destination.
+    $blocked = $compareRoot . DIRECTORY_SEPARATOR . 'blocked.php';
+    writeFile($blocked, 'blocked original');
+    $blockedHash = hash('sha256', 'blocked original');
+    mkdir($compareBackups . DIRECTORY_SEPARATOR . hash('sha256', FileGuard::normalize($blocked) . "\0" . $blockedHash) . '.php');
+
+    try {
+        FileGuard::backup($blocked, $blockedHash, $compareBackups);
+        throw new RuntimeException('An unwritable backup must fail.');
+    } catch (\Advans\Installer\BackupFailure $failure) {
+        expect($failure->destination === FileGuard::normalize($blocked), 'The backup failure must name the destination.');
+    }
+
+    expect(file_get_contents($blocked) === 'blocked original', 'A failed backup must leave the destination unchanged.');
+    $passed++;
+
+    // prune() removes only backups past the retention period that this installation did not use.
+    $old = $compareBackups . DIRECTORY_SEPARATOR . str_repeat('a', 64) . '.php';
+    $oldKept = $compareBackups . DIRECTORY_SEPARATOR . str_repeat('b', 64) . '.php';
+    writeFile($old, 'old');
+    writeFile($oldKept, 'old but used');
+    touch($old, time() - 200 * 86400);
+    touch($oldKept, time() - 200 * 86400);
+    expect(FileGuard::prune($compareBackups, 180 * 86400, [$oldKept]) === 1, 'Exactly one expired backup must be removed.');
+    expect(!is_file($old) && is_file($oldKept) && is_file($backup), 'Retention must keep recent and in-use backups.');
+    $passed++;
 } finally {
     removeTree($base);
 }

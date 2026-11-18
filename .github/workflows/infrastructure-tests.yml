@@ -47,8 +47,10 @@ jobs:
         run: python3 .github/scripts/test-create-verified-commit.py
       - name: Test required workflow gate with fixture API responses
         run: bash .github/scripts/test-collect-results.sh
-      - name: Test mandatory package verification
+      - name: Test mandatory package verification and reproducible archives
         run: bash .github/scripts/test-package-build.sh
+      - name: Test the catalog of released file hashes against a disposable history
+        run: bash .github/scripts/test-known-hashes.sh
       - name: Check installer backups and exact-content approvals
         run: php shared/tests/installer-file-guard.php
       - name: Check shared installer staging and destination coverage

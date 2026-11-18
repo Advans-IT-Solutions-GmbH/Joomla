@@ -83,21 +83,26 @@ rsync -av --exclude="$BUILD_DIR" \
     --exclude="vendor" \
     --exclude="phpunit.xml" \
     --exclude="composer.json" \
+    --exclude="/updates" \
     ./ "$BUILD_DIR/"
 
-php "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/prepare-installer.php" "$BUILD_DIR"
+# updates/update.xml is the update server's file, not part of the extension. Leaving it out of
+# the package keeps the package bytes independent of the SHA-256 that update.xml announces.
+SHARED_BUILD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+php "$SHARED_BUILD/prepare-installer.php" "$BUILD_DIR"
+
+# Hashes of the files of every earlier release, so that updates recognise untouched files.
+php "$SHARED_BUILD/known-hashes.php" . "$BUILD_DIR/advansinstaller/known-hashes.php"
 
 # Create installation package
 echo "Creating installation package..."
-cd "$BUILD_DIR"
-zip -r "../$PACKAGE_NAME" . -x "*.DS_Store" > /dev/null
-cd ..
+bash "$SHARED_BUILD/deterministic-zip.sh" "$BUILD_DIR" "$PACKAGE_NAME"
 
 # Get package size
 PACKAGE_SIZE=$(du -h "$PACKAGE_NAME" | cut -f1)
 
 # Verification enforces the supported language set in the archive.
-VERIFY_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/verify-package.sh"
+VERIFY_SCRIPT="$SHARED_BUILD/verify-package.sh"
 bash "$VERIFY_SCRIPT"
 
 echo ""
