@@ -176,7 +176,6 @@ verifies the download. Package builds are reproducible (`shared/build/determinis
 modes and timestamps, sorted entries, `updates/` left out of the package): the release workflow
 writes the hash of its build into update.xml in the release PR, and the publish workflow rebuilds
 the merged release commit and refuses to upload bytes with another hash.
-
 **Scheduled tasks decide by themselves too.** After every installation and update the installer
 checks the Joomla Scheduler tasks the extension needs (`shared/installer/tasks.php`, named per
 extension under `tasks` in `catalog.php`, logic in `ScheduledTasks.php`):
