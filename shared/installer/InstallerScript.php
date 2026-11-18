@@ -364,7 +364,9 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
             // Joomla renders messages without forms, so the approval is the Super User's repetition
             // of this installation (Joomla's own CSRF-protected request) within the approval period.
             State::write($state . '/pending.php', ['plan' => $digest, 'expires' => time() + self::APPROVAL_SECONDS]);
-            $fromUpdate = $app->getInput()->getCmd('task') === 'update.update';
+            // Extensions: Update posts to view=update (task update.update, which Joomla's dispatcher splits).
+            $input = $app->getInput();
+            $fromUpdate = $input->getCmd('view') === 'update' || in_array($input->getCmd('task'), ['update', 'update.update'], true);
 
             if (self::isSuperUser()) {
                 $message .= '<p>' . Text::sprintf(

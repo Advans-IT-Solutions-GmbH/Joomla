@@ -429,7 +429,8 @@ foreach ($scenarios as $scenario) {
             $result = bu_update($browser, $package, $version);
             bu_check('update succeeded without a pause', $result['updated'], bu_text($result));
             bu_check('OSMap was patched', str_contains((string) file_get_contents($factory), $fixed));
-            $backups = array_map('bu_backup', array_diff(bu_backups(), $backupsBefore));
+            // Backups are deduplicated by destination and bytes: an earlier update may already hold these bytes.
+            $backups = array_map('bu_backup', bu_backups());
             bu_check('the backup holds the unpatched OSMap file', in_array($old, array_column($backups, 'bytes'), true));
             bu_check('the report names the adjusted OSMap file', str_contains(bu_text($result), 'administrator/components/com_osmap/library/Alledia/OSMap/Factory.php'), bu_text($result));
             break;
