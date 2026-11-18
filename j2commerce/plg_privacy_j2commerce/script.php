@@ -13,7 +13,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     : dirname(__DIR__, 2) . '/shared/installer/load.php';
 
 use Joomla\CMS\Factory;
-use Advans\Installer\InstallerScript;
+use Advans\Installer\V2\InstallerScript;
 use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
@@ -126,6 +126,28 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         }
 
         return $files;
+    }
+
+    /**
+     * Foreign operations of this plugin in site templates:
+     *  - an unchanged copy of a checkout override that an earlier version deployed is retired by
+     *    renaming it (the file stays next to it) after a verified backup, and reported;
+     *  - a changed copy may contain shop changes: it is left in place and the update warns;
+     *  - new overrides are only created where no file exists, so they never replace anything.
+     */
+    protected function foreignDecision(string $destination, string $existing, bool $known): string
+    {
+        if (preg_match('#/templates/[^/]+/html/com_j2commerce/checkout/default_shipping_payment\.php$#i', str_replace('\\', '/', $destination)) === 1) {
+            $content = @file_get_contents($destination);
+
+            return is_string($content)
+                && str_contains($content, self::BUNDLED_OVERRIDE_MARKER)
+                && in_array(hash('sha256', str_replace("\r\n", "\n", $content)), self::BUNDLED_CHECKOUT_OVERRIDE_HASHES, true)
+                ? \Advans\Installer\V2\Planner::ADJUST
+                : \Advans\Installer\V2\Planner::SKIP;
+        }
+
+        return parent::foreignDecision($destination, $existing, $known);
     }
 
     protected function extensionPostflight($type, $parent)

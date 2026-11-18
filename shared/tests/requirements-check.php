@@ -46,6 +46,21 @@ $fail = static function (string $message) use (&$failures): void {
     $failures[] = $message;
 };
 
+/**
+ * Every targetplatform of a file must be TARGET_REGEX. A feed with one <update> entry per plugin
+ * group (Joomla keeps only the first of several entries with the same version) may instead split
+ * the range into its Joomla 5 and Joomla 6 parts, as long as the entries together cover both.
+ */
+$checkTargets = static function (array $values, string $label) use ($fail): void {
+    $parts = ['(5\.[4-9])', '(6\.[0-9])'];
+    $split = $values !== [] && array_diff($values, $parts) === [] && array_diff($parts, $values) === [];
+
+    foreach ($values as $value) {
+        if ($value !== TARGET_REGEX && !$split) {
+            $fail("$label: targetplatform must be " . TARGET_REGEX . " (found $value)");
+        }
+    }
+};
 // script.php
 $script = "$dir/script.php";
 
@@ -97,13 +112,8 @@ foreach ($xmlFiles as $path) {
         $fail("$path: <targetplatform> is missing");
     }
 
-    foreach ($targets[1] as $value) {
-        $checkedTarget++;
-
-        if ($value !== TARGET_REGEX) {
-            $fail("$path: targetplatform must be " . TARGET_REGEX . " (found $value)");
-        }
-    }
+    $checkedTarget += count($targets[1]);
+    $checkTargets($targets[1], $path);
 
     preg_match_all('/<php_minimum>([^<]*)<\/php_minimum>/', $content, $phps);
 
@@ -219,11 +229,7 @@ foreach ($workflows as $workflow) {
         $fail(basename($workflow) . ': <targetplatform> is missing');
     }
 
-    foreach ($targets[1] as $value) {
-        if ($value !== TARGET_REGEX) {
-            $fail(basename($workflow) . ': targetplatform must be ' . TARGET_REGEX . " (found $value)");
-        }
-    }
+    $checkTargets($targets[1], basename($workflow));
 }
 
 if (!$matched) {

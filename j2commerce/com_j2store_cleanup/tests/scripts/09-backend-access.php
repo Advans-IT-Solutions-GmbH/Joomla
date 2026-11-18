@@ -213,7 +213,7 @@ try {
     $upgrade = sys_get_temp_dir() . '/cleanup-upgrade-' . bin2hex(random_bytes(4)) . '.zip';
     $built   = $manifest !== null && copy($package, $upgrade)
         && sh_set_package_version($upgrade, $manifest['xmlfile'], sh_bump_version($manifest['version'])) !== null;
-    [$upgradeCode] = $built ? sh_cli_install_reviewed_fixture(JPATH_BASE, $upgrade) : [1, ''];
+    [$upgradeCode] = $built ? sh_cli_install_checked(JPATH_BASE, $upgrade) : [1, ''];
     @unlink($upgrade);
     ba_check('The package upgrades the installed component', $built && $upgradeCode === 0);
     clearstatcache();

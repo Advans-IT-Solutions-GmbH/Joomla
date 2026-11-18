@@ -39,10 +39,7 @@ strip_update_servers() {
     done < <(find "$work" -maxdepth 2 -name '*.xml' -print0)
 
     rm -f "$archive"
-    (
-        cd "$work"
-        zip -r "$archive" . -x "*.DS_Store" > /dev/null
-    )
+    bash ../shared/build/deterministic-zip.sh "$work" "$archive"
 
     rm -rf "$work"
 }
@@ -119,11 +116,12 @@ rsync -a --exclude=".*" language "$BUILD_DIR/"
 
 php ../shared/build/prepare-installer.php "$BUILD_DIR"
 
+# Hashes of the files of every earlier package release (children included), so that updates
+# recognise untouched files.
+php ../shared/build/known-hashes.php . "$BUILD_DIR/advans-known-hashes.php" "$BUILD_DIR"
+
 echo "Creating installation package..."
-(
-    cd "$BUILD_DIR"
-    zip -r "../$PACKAGE_NAME" . -x "*.DS_Store" > /dev/null
-)
+bash ../shared/build/deterministic-zip.sh "$BUILD_DIR" "$PACKAGE_NAME"
 
 PACKAGE_SIZE=$(du -h "$PACKAGE_NAME" | cut -f1)
 

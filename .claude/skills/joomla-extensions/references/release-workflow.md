@@ -40,6 +40,18 @@ prepare version + PR       review          squash         tag + GitHub release
   Consequence: an older version cannot be downloaded from GitHub, so the CI job
   `Update from previous release (J6)` rebuilds the previous version with
   `build.sh` from the last `release: <prefix> v` commit on `main`.
+- **Every build rebuilds the release history.** `shared/build/known-hashes.php` rebuilds every
+  merged `release: <prefix> vX.Y.Z` commit (prefix = `RELEASE_PREFIX` in `build.env`) with that
+  commit's own build scripts and ships the hashes of the built files as
+  `advans-known-hashes.php` at the package root (never installed); updates use it to recognise untouched files. Builds need the
+  full history (`fetch-depth: 0`); CI, release and publish builds set
+  `ADVANS_KNOWN_HASHES_STRICT=1`, so a shallow clone or a release that no longer builds fails.
+  `ADVANS_KNOWN_HASHES=skip` skips it for a quick local build (the package then reports every
+  differing file as changed). Details: README, "Installation safety".
+- **`update.xml` carries `<sha256>`.** The release workflow writes the SHA-256 of its reproducible
+  build into update.xml in the release PR; the publish workflow rebuilds the merged release commit
+  and stops before uploading when the hash differs (then run the release workflow again). Packages
+  are zipped by `shared/build/deterministic-zip.sh`; `updates/` is not part of the package.
 - Release preparation keeps `GITHUB_TOKEN` authentication. Owner permission and
   manual approval of the generated PR's CI are documented in
   [README → Release permissions and CI approval](../../../../README.md#release-permissions-and-ci-approval).

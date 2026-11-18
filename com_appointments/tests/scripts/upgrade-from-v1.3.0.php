@@ -350,7 +350,7 @@ function upgrade_update(): void
     $candidatePackage = getenv('CANDIDATE_PACKAGE') ?: '/tmp/extension-candidate-reference.zip';
     upgrade_require(is_file($candidatePackage), 'exact candidate package is present for Joomla CLI update');
 
-    [$code, $output] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, $candidatePackage);
+    [$code, $output] = sh_cli_install_checked(JOOMLA_ROOT, $candidatePackage);
     $clean = sh_strip_ansi($output);
     echo $clean . "\n";
 
@@ -646,7 +646,7 @@ function upgrade_verify(): void
     $db->query("UPDATE `$extensionsTable` SET params = '" . $db->real_escape_string(json_encode($pendingParams, JSON_THROW_ON_ERROR))
         . "' WHERE extension_id = " . (int) $fixture['extension_id']);
     $db->query("UPDATE `$eventtypesTable` SET feed_token = '$pendingToken' WHERE id = $eventId");
-    [$code] = sh_cli_install_reviewed_fixture(JOOMLA_ROOT, getenv('CANDIDATE_PACKAGE') ?: '/tmp/extension-candidate-reference.zip');
+    [$code] = sh_cli_install_checked(JOOMLA_ROOT, getenv('CANDIDATE_PACKAGE') ?: '/tmp/extension-candidate-reference.zip');
     $retried = $db->query("SELECT feed_token FROM `$eventtypesTable` WHERE id = $eventId")->fetch_assoc();
     upgrade_check('a pending conversion is repeated by the next installation and then marked done',
         $code === 0 && $conversion() === 'done'

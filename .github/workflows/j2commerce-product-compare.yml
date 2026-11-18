@@ -17,6 +17,7 @@ on:
       - 'shared/tests/requirements-check.php'
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
+      - 'shared/tests/scripts/shared-backend-update.php'
       - 'shared/tests/scripts/shared-install-messages.php'
       - '.github/workflows/j2commerce-product-compare.yml'
       - '.github/actions/resolve-shops/**'
@@ -35,6 +36,7 @@ on:
       - 'shared/tests/requirements-check.php'
       - 'shared/tests/deprecated-api-scan.php'
       - 'shared/tests/scripts/shared-test-helpers.php'
+      - 'shared/tests/scripts/shared-backend-update.php'
       - 'shared/tests/scripts/shared-install-messages.php'
       - '.github/workflows/j2commerce-product-compare.yml'
       - '.github/actions/resolve-shops/**'
@@ -89,12 +91,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          # The build rebuilds every earlier release from its release commit (advans-known-hashes.php).
+          fetch-depth: 0
       - name: Build
+        env:
+          ADVANS_KNOWN_HASHES_STRICT: '1'
         run: |
           cd j2commerce/plg_j2commerce_productcompare
           chmod +x build.sh
           ./build.sh
           cp *.zip tests/extension.zip
+      - name: Verify that the package recognises every file of the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/verify-known-hashes.py --prefix productcompare --package j2commerce/plg_j2commerce_productcompare/tests/extension.zip
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: extension-package
@@ -387,6 +397,61 @@ jobs:
 
   # Result of this workflow. Deliberately not named "Collect Results": that
   # required check is produced only by collect-results.yml.
+  backend-update:
+    name: Backend update with foreign files (J5)
+    runs-on: ubuntu-latest
+    needs: [build, resolve-shops]
+    permissions:
+      contents: read
+    env:
+      J2C4_URL: ${{ needs.resolve-shops.outputs.j2store_url }}
+      J2C4_SHA256: ${{ needs.resolve-shops.outputs.j2store_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: extension-package
+          path: j2commerce/plg_j2commerce_productcompare/tests/
+      - name: Start environment (J5)
+        run: |
+          cd j2commerce/plg_j2commerce_productcompare/tests
+          for attempt in 1 2 3; do
+            if docker compose up -d; then
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              exit 1
+            fi
+            docker compose down -v || true
+            sleep 20
+          done
+          timeout 300 bash -c 'until docker exec plg_j2commerce_productcompare_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+      # The Joomla 5 mirror in J2Store's plugin group is foreign territory: a changed mirror file is
+      # backed up and replaced, a mirror folder owned by another extension stays untouched.
+      - name: Update with Check for Updates and Update in the backend
+        env:
+          C: plg_j2commerce_productcompare_test
+        run: |
+          docker cp j2commerce/plg_j2commerce_productcompare/tests/extension.zip "$C:/tmp/extension-new.zip"
+          docker cp j2commerce/plg_j2commerce_productcompare/updates/update.xml "$C:/tmp/update.xml"
+          docker exec "$C" mkdir -p /var/www/html/tests/scripts
+          docker cp shared/tests/scripts/shared-test-helpers.php "$C:/var/www/html/tests/scripts/"
+          docker cp shared/tests/scripts/shared-backend-update.php "$C:/var/www/html/tests/scripts/"
+          docker exec -e INSTALLED_PLUGIN_FOLDERS=j2store -e SCENARIOS=modified,mirror-changed,mirror-occupied "$C" \
+            php /var/www/html/tests/scripts/shared-backend-update.php
+      - name: Show container logs
+        if: always()
+        run: |
+          cd j2commerce/plg_j2commerce_productcompare/tests
+          docker compose logs joomla 2>&1 | tail -100 || true
+      - name: Cleanup
+        if: always()
+        run: |
+          cd j2commerce/plg_j2commerce_productcompare/tests
+          docker compose down -v
+
   all-jobs:
     name: Product Compare / all jobs
     runs-on: ubuntu-latest
@@ -399,6 +464,7 @@ jobs:
       - test-j6
       - official-j5-j2c4
       - official-j6-j2c6
+      - backend-update
     if: always()
     permissions:
       actions: read
