@@ -14,6 +14,83 @@ spec.loader.exec_module(publisher)
 
 
 class PublishTests(unittest.TestCase):
+    def test_changelog_upload_is_verified_before_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "extension.zip"
+            changelog = Path(directory) / "changelog.xml"
+            package.write_bytes(b"package")
+            changelog.write_text("<changelogs><changelog><version>1.0.0</version></changelog></changelogs>", encoding="utf-8")
+
+            calls = []
+
+            def run(*args):
+                calls.append(args)
+                if args[:2] == ("gh", "api"):
+                    return '{"draft":false,"assets":[{"name":"extension.zip"},{"name":"changelog.xml"}]}'
+                return ""
+
+            refs = {"privacy-v1.0.0": "built"}
+            releases = {}
+            with patch.object(publisher, "inventory", return_value=(refs, releases)), \
+                    patch.object(publisher, "zip_contents", return_value={}), \
+                    patch.object(publisher, "verify_asset"), \
+                    patch.object(publisher, "run", side_effect=run):
+                publisher.publish("owner/repo", "privacy-v", "1.0.0", "built",
+                                  package, "Title", "Notes", changelog)
+
+            self.assertTrue(any(call[:4] == ("gh", "release", "edit", "privacy-v1.0.0") for call in calls))
+            self.assertTrue(any(call[:4] == ("gh", "release", "upload", "privacy-v1.0.0")
+                                and call[-2:] == ("--repo", "owner/repo")
+                                and Path(call[4]).name == "changelog.xml"
+                                for call in calls))
+
+    def test_missing_changelog_asset_rejects_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "extension.zip"
+            changelog = Path(directory) / "changelog.xml"
+            package.write_bytes(b"package")
+            changelog.write_text("<changelogs/>", encoding="utf-8")
+
+            def run(*args):
+                if args[:2] == ("gh", "api"):
+                    return '{"draft":false,"assets":[{"name":"extension.zip"}]}'
+                return ""
+
+            with patch.object(publisher, "inventory", return_value=({"privacy-v1.0.0": "built"}, {})), \
+                    patch.object(publisher, "zip_contents", return_value={}), \
+                    patch.object(publisher, "verify_asset"), \
+                    patch.object(publisher, "run", side_effect=run), self.assertRaises(ValueError):
+                publisher.publish("owner/repo", "privacy-v", "1.0.0", "built",
+                                  package, "Title", "Notes", changelog)
+
+    def test_changelog_upload_failure_preserves_previous_release_and_tag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "extension.zip"
+            changelog = Path(directory) / "changelog.xml"
+            package.write_bytes(b"package")
+            changelog.write_text("<changelogs/>", encoding="utf-8")
+            calls = []
+
+            def run(*args):
+                calls.append(args)
+                if args[:4] == ("gh", "release", "upload", "privacy-v1.0.0"):
+                    raise subprocess.CalledProcessError(1, args)
+                if args[:2] == ("gh", "api"):
+                    return '{"draft":false,"assets":[{"name":"extension.zip"},{"name":"changelog.xml"}]}'
+                return ""
+
+            refs = {"privacy-v0.9.0": "old", "privacy-v1.0.0": "built"}
+            releases = {"privacy-v0.9.0": {"assets": []},
+                        "privacy-v1.0.0": {"assets": [{"name": "extension.zip"}]}}
+            with patch.object(publisher, "inventory", return_value=(refs, releases)), \
+                    patch.object(publisher, "zip_contents", return_value={}), \
+                    patch.object(publisher, "verify_asset"), \
+                    patch.object(publisher, "run", side_effect=run), self.assertRaises(subprocess.CalledProcessError):
+                publisher.publish("owner/repo", "privacy-v", "1.0.0", "built",
+                                  package, "Title", "Notes", changelog)
+
+            self.assertFalse(any(call[:3] == ("gh", "release", "delete") for call in calls))
+            self.assertFalse(any("--delete" in call for call in calls))
     def test_numeric_order_and_family_isolation(self):
         refs = {"privacy-v1.9.0": "a", "privacy-v1.10.0": "b", "other-v99.0.0": "c"}
         self.assertEqual(publisher.preflight("privacy-v", "1.11.0", "d", refs, {}),
