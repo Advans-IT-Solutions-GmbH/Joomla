@@ -85,6 +85,33 @@ foreach ($files as $file) {
             $failed = true;
         }
 
+        $element = trim((string) ($changelogDocument->changelog->element ?? ''));
+        $type = trim((string) ($changelogDocument->changelog->type ?? ''));
+        $folder = trim((string) ($changelogDocument->changelog->folder ?? ''));
+        $client = trim((string) ($changelogDocument->changelog->client ?? ''));
+        $identityMatches = false;
+
+        foreach ($entries as $siblingEntry) {
+            $siblingElement = trim((string) ($siblingEntry->element ?? ''));
+            $siblingType = trim((string) ($siblingEntry->type ?? ''));
+            $siblingFolder = trim((string) ($siblingEntry->folder ?? ''));
+            $siblingClient = trim((string) ($siblingEntry->client ?? ''));
+
+            if ($element === $siblingElement
+                && $type === $siblingType
+                && ($siblingFolder === '' || $folder === '' || $folder === $siblingFolder)
+                && ($siblingClient === '' || $client === '' || $client === $siblingClient)
+            ) {
+                $identityMatches = true;
+                break;
+            }
+        }
+
+        if (!$identityMatches) {
+            fwrite(STDERR, "FAIL {$changelogRelative}: changelog extension identity does not match update entry {$relative}\n");
+            $failed = true;
+        }
+
         $releaseNotes = $changelogDocument->xpath('/changelogs/changelog/item | /changelogs/changelog/change/item | /changelogs/changelog/note/item');
         $releaseNotesText = is_array($releaseNotes)
             ? array_map(static fn($item): string => trim((string) $item), $releaseNotes)
