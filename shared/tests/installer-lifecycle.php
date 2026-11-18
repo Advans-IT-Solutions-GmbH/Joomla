@@ -638,7 +638,16 @@ namespace {
         $db->extensions['component::com_scheduler']['params'] = '{"lazy_scheduler":{"enabled":1},"webcron":{"enabled":0}}';
         $reset();
         $tasks::ensure('plg_privacy_j2commerce');
-        $assert(count($app->messages) === 1 && str_contains($text(), 'started by visits'), 'Configured Lazy Scheduler must be reported until a real recent run proves it.');
+        $assert(count($app->messages) === 1 && $app->messages[0][1] === 'message' && str_contains($text(), 'started by visits'), 'Configured Lazy Scheduler is informational until a real recent run proves it.');
+
+        // Duplicate routines: report the task that actually ran, not the lowest-ID duplicate.
+        $db->tasks[$routine] = [
+            ['id' => 3, 'state' => 1, 'last_execution' => null, 'last_exit_code' => 0, 'times_executed' => 0],
+            ['id' => 7, 'state' => 1, 'last_execution' => gmdate('Y-m-d H:i:s', time() - 3600), 'last_exit_code' => 0, 'times_executed' => 4],
+        ];
+        $inspected = \Advans\Installer\V2\ScheduledTasks::inspect('plg_privacy_j2commerce');
+        $routineRow = array_values(array_filter($inspected, static fn(array $row): bool => $row['routine'] === $routine))[0] ?? null;
+        $assert($routineRow !== null && (int) ($routineRow['task']['id'] ?? 0) === 7, 'Duplicate enabled tasks must prefer the task with the most recent execution.');
 
         // Task plugin missing: nothing can be created, the report says why.
         unset($db->extensions['plugin:task:j2commerceprivacy']);

@@ -78,13 +78,14 @@ final class ScheduledTasks
             self::loadLanguage($spec);
             $tasks = $table ? self::tasks($db, $routine) : [];
             $enabled = array_values(array_filter($tasks, static fn(array $task): bool => (int) $task['state'] === 1));
+            $task = self::preferredTask($enabled !== [] ? $enabled : $tasks);
             $rows[] = [
                 'routine' => $routine,
                 'spec'    => $spec,
                 'title'   => Text::_($spec['title']),
                 'need'    => self::need($db, $spec['need']),
                 'status'  => $tasks === [] ? self::MISSING : ($enabled !== [] ? self::ENABLED : self::SWITCHED_OFF),
-                'task'    => $enabled[0] ?? $tasks[0] ?? null,
+                'task'    => $task,
                 'plugin'  => self::extension($db, 'plugin', $spec['plugin'][1], $spec['plugin'][0]),
             ];
         }
@@ -155,7 +156,7 @@ final class ScheduledTasks
                 $trigger = self::trigger($rows);
 
                 if (!$trigger['proven']) {
-                    $app->enqueueMessage(self::escape($trigger['text']), 'warning');
+                    $app->enqueueMessage(self::escape($trigger['text']), $trigger['runs'] ? 'message' : 'warning');
                 }
             }
         } catch (\Throwable $error) {
@@ -284,6 +285,29 @@ final class ScheduledTasks
         }
 
         return $params;
+    }
+
+    /** Prefer a task that has run, then the most recent execution, for duplicate routine rows. */
+    private static function preferredTask(array $tasks): ?array
+    {
+        if ($tasks === []) {
+            return null;
+        }
+
+        usort($tasks, static function (array $left, array $right): int {
+            $leftRuns = (int) ($left['times_executed'] ?? 0);
+            $rightRuns = (int) ($right['times_executed'] ?? 0);
+
+            if ($leftRuns > 0 !== $rightRuns > 0) {
+                return $leftRuns > 0 ? -1 : 1;
+            }
+
+            $execution = strcmp((string) ($right['last_execution'] ?? ''), (string) ($left['last_execution'] ?? ''));
+
+            return $execution !== 0 ? $execution : ((int) ($right['id'] ?? 0) <=> (int) ($left['id'] ?? 0));
+        });
+
+        return $tasks[0];
     }
 
     /**
