@@ -41,17 +41,22 @@ final class Digest
      * shows what arrived since the previous visit, not since the last reload. Without a stored time
      * (the first visit ever) there is no reference and nothing is counted.
      *
-     * @param   string|null  $session  What the session kept ('' = no reference), null on its first view.
+     * @param   string|null  $session  What the session kept (NO_REFERENCE = none), null on its first view.
      * @param   string|null  $stored   The stored time of the last visit (UTC, Y-m-d H:i:s), null for none.
      *
      * @return  array{since: ?string, keep: string}  The reference (null for none) and the session value.
      */
     public static function baseline(?string $session, ?string $stored): array
     {
-        $value = $session ?? (self::isTime($stored) ? (string) $stored : '');
+        // Joomla's session registry returns its default for an empty string, so «no reference» is
+        // kept as a word of its own; anything that is not a stored time counts as none.
+        $value = $session !== null && $session !== '' ? $session : (self::isTime($stored) ? (string) $stored : self::NO_REFERENCE);
 
-        return ['since' => $value === '' ? null : $value, 'keep' => $value];
+        return ['since' => self::isTime($value) ? $value : null, 'keep' => self::isTime($value) ? $value : self::NO_REFERENCE];
     }
+
+    /** The session value of a session without a reference (the very first visit). */
+    public const NO_REFERENCE = 'none';
 
     /**
      * The name of the booking person: the full name, else first and last name; '' for none.

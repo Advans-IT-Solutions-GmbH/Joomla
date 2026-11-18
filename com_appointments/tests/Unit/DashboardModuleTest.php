@@ -38,10 +38,11 @@ final class DashboardModuleTest extends TestCase
 
     public function testTheVeryFirstVisitHasNoReference(): void
     {
-        self::assertSame(['since' => null, 'keep' => ''], Digest::baseline(null, null));
-        self::assertSame(['since' => null, 'keep' => ''], Digest::baseline('', '2026-11-18 09:30:00'),
-            'The whole first session counts nothing');
-        self::assertSame(['since' => null, 'keep' => ''], Digest::baseline(null, 'not a time'), 'A damaged stored value counts as none');
+        self::assertSame(['since' => null, 'keep' => Digest::NO_REFERENCE], Digest::baseline(null, null));
+        self::assertSame(['since' => null, 'keep' => Digest::NO_REFERENCE], Digest::baseline(Digest::NO_REFERENCE, '2026-11-18 09:30:00'),
+            'The whole first session counts nothing, also after the visit was stored');
+        self::assertSame(['since' => null, 'keep' => Digest::NO_REFERENCE], Digest::baseline(null, 'not a time'), 'A damaged stored value counts as none');
+        self::assertNotSame('', Digest::NO_REFERENCE, 'Joomla\'s session registry would return its default for an empty string');
     }
 
     public function testStoredTimesAreStrict(): void
