@@ -21,6 +21,19 @@ on:
       - '.github/workflows/**'
       - '.github/scripts/check-shared-path-coverage.sh'
       - '.github/scripts/test-language-delivery.py'
+      - 'com_appointments/updates/update.xml'
+      - 'com_dmarcreports/updates/update.xml'
+      - 'j2commerce/com_j2commerce_importexport/updates/update.xml'
+      - 'j2commerce/com_j2store_cleanup/updates/update.xml'
+      - 'j2commerce/plg_j2commerce_productcompare/updates/update.xml'
+      - 'j2commerce/plg_osmap_j2commerce/updates/update.xml'
+      - 'j2commerce/plg_privacy_j2commerce/updates/update.xml'
+      - 'mod_dmarcreports/updates/update.xml'
+      - 'pkg_dmarcreports/updates/update.xml'
+      - 'plg_ajax_joomlaajaxforms/updates/update.xml'
+      - 'plg_system_dmarcmtasts/updates/update.xml'
+      - 'plg_system_privacyrequests/updates/update.xml'
+      - 'plg_task_dmarcreports/updates/update.xml'
   pull_request:
     branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
@@ -28,6 +41,19 @@ on:
       - '.github/workflows/**'
       - '.github/scripts/check-shared-path-coverage.sh'
       - '.github/scripts/test-language-delivery.py'
+      - 'com_appointments/updates/update.xml'
+      - 'com_dmarcreports/updates/update.xml'
+      - 'j2commerce/com_j2commerce_importexport/updates/update.xml'
+      - 'j2commerce/com_j2store_cleanup/updates/update.xml'
+      - 'j2commerce/plg_j2commerce_productcompare/updates/update.xml'
+      - 'j2commerce/plg_osmap_j2commerce/updates/update.xml'
+      - 'j2commerce/plg_privacy_j2commerce/updates/update.xml'
+      - 'mod_dmarcreports/updates/update.xml'
+      - 'pkg_dmarcreports/updates/update.xml'
+      - 'plg_ajax_joomlaajaxforms/updates/update.xml'
+      - 'plg_system_dmarcmtasts/updates/update.xml'
+      - 'plg_system_privacyrequests/updates/update.xml'
+      - 'plg_task_dmarcreports/updates/update.xml'
 
 permissions: {}
 

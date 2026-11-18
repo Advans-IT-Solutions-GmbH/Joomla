@@ -31,6 +31,8 @@ SELF_WORKFLOW="${SELF_WORKFLOW:-shared-path-coverage.yml}"
 # be pure waste. Each extension has its own copy under `<extension>/tests/`,
 # which is covered by that extension's own path filter.
 UNCOVERED_ON_PURPOSE=(
+    # Runs in Shared Path Coverage, which is the sole consumer.
+    "shared/tests/update-changelog-lint.php"
     "shared/tests/Dockerfile.template"
     "shared/tests/scripts/docker-entrypoint.sh"
     "shared/tests/scripts/install-extension.php"
