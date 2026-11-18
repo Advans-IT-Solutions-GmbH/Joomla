@@ -822,17 +822,22 @@ class MetricsTest
             ];
             $this->db->insertObject('#__dmarc_reports', $report, 'id');
 
-            for ($i = 1; $i <= 205; $i++) {
+            $expectedIps = [];
+
+            for ($i = 1; $i <= 505; $i++) {
+                $ip = sprintf('2001:db8:6::%x', $i);
+                $spfOnly = $i % 2 === 0;
+                $expectedIps[] = $ip;
                 $record = (object) [
                     'report_id'    => (int) $report->id,
                     'domain_id'    => $domainId,
-                    'source_ip'    => sprintf('10.0.6.%d', $i),
+                    'source_ip'    => $ip,
                     'count'        => 1,
                     'disposition'  => 'none',
                     'dkim_result'  => 'fail',
-                    'spf_result'   => 'fail',
+                    'spf_result'   => $spfOnly ? 'pass' : 'fail',
                     'dkim_aligned' => 0,
-                    'spf_aligned'  => 0,
+                    'spf_aligned'  => (int) $spfOnly,
                     'header_from'  => 'many-flags.' . self::DOMAIN,
                 ];
                 $this->db->insertObject('#__dmarc_records', $record);
@@ -842,45 +847,32 @@ class MetricsTest
             $detail  = $metrics->domainMetrics($domainId);
             $detailIps = array_map(static fn (array $source): string => $source['ip'], $detail['flagged_sources']);
 
-            $this->test('More than 20 flagged delivered-failing sources are not truncated in the detail view', function () use ($detail, $detailIps) {
-                return count($detail['flagged_sources']) === 205
-                    && count($detailIps) === 205
-                    && count(array_unique($detailIps)) === 205;
+            $this->test('Detail metrics include every SPF-only and delivered-failing source beyond 500', function () use ($detailIps, $expectedIps) {
+                sort($detailIps, SORT_STRING);
+                sort($expectedIps, SORT_STRING);
+
+                return $detailIps === $expectedIps;
             });
 
-            $bulk = [];
-            foreach ($metrics->domainSummaries() as $row) {
-                if ((int) ($row['id'] ?? 0) === $domainId) {
-                    $bulk = $metrics->actionMetricsForAll([$row])[$domainId]['flagged_sources'] ?? [];
-                    break;
-                }
-            }
+            $bulk = $metrics->actionMetricsForAll($metrics->domainSummaries())[$domainId]['flagged_sources'] ?? [];
 
-            $this->test('More than 20 flagged delivered-failing sources are not truncated in bulk metrics', function () use ($bulk, $detailIps) {
+            $this->test('Bulk metrics return the same complete, ranked flagged-source list', function () use ($bulk, $detailIps, $expectedIps) {
                 $bulkIps = array_map(static fn (array $source): string => $source['ip'], $bulk);
 
-                return count($bulk) === Metrics::DASHBOARD_FLAGGED_SOURCE_LIMIT
-                    && $bulkIps === array_slice($detailIps, 0, Metrics::DASHBOARD_FLAGGED_SOURCE_LIMIT)
+                return count($bulk) === count($expectedIps)
+                    && $bulkIps === $detailIps
                     && !in_array(false, array_map(
                         static fn (array $source): bool => (int) ($source['evidence_window_end'] ?? 0) === self::ANCHOR,
                         $bulk
                     ), true);
             });
 
-            $this->test('The domain source table includes all more-than-20 flagged sources', function () use ($detail, $detailIps) {
-                $rows = [];
+            $this->test('The domain source table includes all flagged sources beyond 500', function () use ($detail, $expectedIps) {
+                $tableIps = array_column($detail['top_sources'], 'source_ip');
+                sort($tableIps, SORT_STRING);
+                sort($expectedIps, SORT_STRING);
 
-                foreach ($detail['top_sources'] as $row) {
-                    $rows[$row['source_ip']] = $row;
-                }
-
-                foreach ($detailIps as $ip) {
-                    if (!isset($rows[$ip])) {
-                        return false;
-                    }
-                }
-
-                return count($rows) === 205;
+                return $tableIps === $expectedIps;
             });
         } finally {
             $this->deleteDomain($domainId);
