@@ -137,6 +137,7 @@ jobs:
                   <client>site</client>
                   <version>$VERSION</version>
                   <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/plg_ajax_joomlaajaxforms</infourl>
+                  <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/ajaxforms-v$VERSION</changelogurl>
                   <downloads>
                       <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/ajaxforms-v$VERSION/$PACKAGE</downloadurl>
                   </downloads>

@@ -140,6 +140,7 @@ jobs:
                   <type>component</type>
                   <version>$VERSION</version>
                   <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/com_appointments</infourl>
+                  <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/appointments-v$VERSION</changelogurl>
                   <downloads>
                       <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/appointments-v$VERSION/$PACKAGE</downloadurl>
                   </downloads>
