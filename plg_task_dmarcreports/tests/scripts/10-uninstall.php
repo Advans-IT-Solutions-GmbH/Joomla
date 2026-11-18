@@ -31,6 +31,15 @@ class UninstallTest
             return $extensionId > 0;
         });
 
+        $taskIds = [];
+        $taskResult = $this->db->query(
+            "SELECT id FROM {$this->dbPrefix}scheduler_tasks WHERE type = 'plg_task_dmarcreports.ingest'"
+        );
+
+        while ($taskResult && ($taskRow = $taskResult->fetch_assoc())) {
+            $taskIds[] = (int) $taskRow['id'];
+        }
+
         $output = [];
         $exitCode = 0;
         exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $extensionId --no-interaction 2>&1", $output, $exitCode);
@@ -53,6 +62,26 @@ class UninstallTest
             $result = $this->db->query("SELECT COUNT(*) as cnt FROM {$this->dbPrefix}scheduler_tasks WHERE type = 'plg_task_dmarcreports.ingest'");
             $row = $result ? $result->fetch_assoc() : null;
             return $row && (int) $row['cnt'] === 0;
+        });
+
+        $this->test('Scheduler task permission assets are removed with their task rows', function () use ($taskIds) {
+            if ($taskIds === []) {
+                return false;
+            }
+
+            foreach ($taskIds as $taskId) {
+                $assetName = $this->db->real_escape_string('com_scheduler.task.' . $taskId);
+                $result = $this->db->query(
+                    "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}assets WHERE name = '{$assetName}'"
+                );
+                $row = $result ? $result->fetch_assoc() : null;
+
+                if (!$row || (int) $row['cnt'] !== 0) {
+                    return false;
+                }
+            }
+
+            return true;
         });
 
         $this->test('Plugin update sites removed (no orphan links)', function () {
