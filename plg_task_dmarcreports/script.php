@@ -129,7 +129,7 @@ class PlgTaskDmarcreportsInstallerScript extends InstallerScript
                 ->where($db->quoteName('type') . ' = ' . $db->quote('plg_task_dmarcreports.ingest'));
             $taskIds = array_map('intval', (array) $db->setQuery($query)->loadColumn());
             $taskTable = Factory::getApplication()->bootComponent('com_scheduler')->getMVCFactory()
-                ->createTable('Task', 'Administrator');
+                ->createTable('Task', 'Administrator', ['dbo' => $db]);
             $removed = 0;
 
             if ($taskIds !== [] && !$taskTable) {

@@ -469,7 +469,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
             ->whereIn($db->quoteName('type'), self::SCHEDULER_TASK_TYPES, ParameterType::STRING);
         $taskIds = array_map('intval', (array) $db->setQuery($query)->loadColumn());
         $taskTable = Factory::getApplication()->bootComponent('com_scheduler')->getMVCFactory()
-            ->createTable('Task', 'Administrator');
+            ->createTable('Task', 'Administrator', ['dbo' => $db]);
 
         if ($taskIds !== [] && !$taskTable) {
             throw new \RuntimeException('The Scheduler task table is unavailable for asset cleanup.');

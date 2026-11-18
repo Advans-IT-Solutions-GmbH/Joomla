@@ -1767,7 +1767,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                 ->bind(':taskType', $taskType);
             $taskIds = array_map('intval', (array) $db->setQuery($query)->loadColumn());
             $taskTable = $app->bootComponent('com_scheduler')->getMVCFactory()
-                ->createTable('Task', 'Administrator');
+                ->createTable('Task', 'Administrator', ['dbo' => $db]);
             $removedTasks = 0;
 
             if ($taskIds !== [] && !$taskTable) {
