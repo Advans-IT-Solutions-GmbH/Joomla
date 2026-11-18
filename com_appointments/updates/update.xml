@@ -7,6 +7,7 @@
         <type>component</type>
         <version>1.6.0</version>
         <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/com_appointments</infourl>
+        <changelogurl>https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/com_appointments/updates/changelog.xml</changelogurl>
         <downloads>
             <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/appointments-v1.6.0/com_appointments_1.6.0.zip</downloadurl>
         </downloads>
