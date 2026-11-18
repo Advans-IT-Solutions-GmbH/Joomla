@@ -60,10 +60,12 @@ class HtmlView extends BaseHtmlView
             $toolbar->standardButton('cancel')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CANCEL'))->task('bookings.cancel')->listCheck(true);
         }
 
-        $toolbar->standardButton('retry')->text(Text::_('COM_APPOINTMENTS_CONFERENCE_RETRY'))->task('bookings.retryConference')->listCheck(true);
-        $toolbar->standardButton('export')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CSV'))->task('bookings.exportCsv');
-        // The non-personal campaign aggregate, which outlives the anonymisation of the bookings.
-        $toolbar->standardButton('campaigns')->icon('icon-chart')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CAMPAIGNS_CSV'))->task('bookings.exportCampaigns');
+        if ($may('core.edit')) {
+            $toolbar->standardButton('retry')->text(Text::_('COM_APPOINTMENTS_CONFERENCE_RETRY'))->task('bookings.retryConference')->listCheck(true);
+            $toolbar->standardButton('export')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CSV'))->task('bookings.exportCsv');
+            // The non-personal campaign aggregate, which outlives the anonymisation of the bookings.
+            $toolbar->standardButton('campaigns')->icon('icon-chart')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CAMPAIGNS_CSV'))->task('bookings.exportCampaigns');
+        }
         if ($may('core.delete')) {
             ToolbarHelper::deleteList(Text::_('COM_APPOINTMENTS_BOOKINGS_ERASE_CONFIRM'), 'bookings.erase', 'COM_APPOINTMENTS_BOOKINGS_ERASE');
         }

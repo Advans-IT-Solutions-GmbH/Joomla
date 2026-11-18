@@ -267,32 +267,13 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $source = $parent->getParent()->getPath('source');
-        foreach (self::BUNDLED_MODULES as $element) {
-            $moduleSource = $source . '/modules/' . $element;
-            $moduleTarget = JPATH_ADMINISTRATOR . '/modules/' . $element;
-            if (!is_dir($moduleSource)) {
-                continue;
-            }
-            $iterator = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($moduleSource, \FilesystemIterator::SKIP_DOTS)
-            );
-            foreach ($iterator as $file) {
-                if (!$file->isFile()) {
-                    continue;
-                }
-                $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($moduleSource) + 1));
-                $files[$moduleTarget . '/' . $relative] = $file->getPathname();
-            }
-            foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
-                foreach (['ini', 'sys.ini'] as $suffix) {
-                    $name = $element . '.' . $suffix;
-                    $candidate = $moduleSource . '/language/' . $tag . '/' . $name;
-                    if (is_file($candidate)) {
-                        $files[JPATH_ADMINISTRATOR . '/language/' . $tag . '/' . $name] = $candidate;
-                    }
-                }
-            }
-        }
+        require_once JPATH_ADMINISTRATOR . '/components/com_appointments/src/Helper/BundledModuleGuard.php';
+        $files = array_replace($files,
+            \Advans\Component\Appointments\Administrator\Helper\BundledModuleGuard::destinations(
+                $source,
+                JPATH_ADMINISTRATOR,
+                self::BUNDLED_MODULES
+            ));
 
         if ($type === 'install') {
             foreach (glob($root . '/data/epochs.php*') ?: [] as $file) {
