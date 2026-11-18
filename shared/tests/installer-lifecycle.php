@@ -565,7 +565,7 @@ namespace {
         $assert($rules['rule-type'] === 'interval-days' && $rules['interval-days'] === 1 && $rules['exec-time'] === '02:15' && $rules['exec-day'] === gmdate('d'), 'The anonymisation task must run every day at 02:15 UTC.');
         $assert($app->saved[0]['params'] === ['retention_years' => 7, 'fiscal_year_end' => '06-30', 'anonymize_orders' => 1, 'delete_addresses' => 1], 'The task must use the form defaults and the plugin\'s own retention settings: ' . json_encode($app->saved[0]['params']));
         $assert($app->saved[0]['title'] === 'PLG_TASK_J2COMMERCEPRIVACY_TASK_AUTOCLEANUP_TITLE' && $app->saved[0]['created_by'] === 42, 'The task must carry the routine title and its creator.');
-        $assert(count($app->messages) === 1 && $app->messages[0][1] === 'message', 'Exactly one plain message must report the created task.');
+        $assert(count($app->messages) === 2 && $app->messages[0][1] === 'message', 'The created task and an unproven Lazy Scheduler trigger must be reported.');
         $assert(str_contains($text(), 'was missing. The installation created it and switched it on: it runs every day at 02:15 UTC. It anonymises shop orders')
             && str_contains($text(), 'Retention period: 7 years after the end of the fiscal year on 06-30'), 'The report must name the schedule, the purpose and the settings: ' . $text());
         $passed = array_column(\Advans\Installer\V2\SystemCheck::results('plg_privacy_j2commerce')['passed'], 1);
@@ -575,7 +575,7 @@ namespace {
         $reset();
         $before = $db->tasks;
         $tasks::ensure('plg_privacy_j2commerce');
-        $assert($app->saved === [] && $db->tasks === $before && $app->messages === [], 'An existing switched-on task must stay unchanged and unmentioned.');
+        $assert($app->saved === [] && $db->tasks === $before && count($app->messages) === 1 && str_contains($text(), 'Lazy Scheduler'), 'An existing switched-on task must stay unchanged and the unproven trigger must be reported.');
 
         // Switched off or trashed on purpose: unchanged, reported with the way to switch it on, a blocker in the system check.
         foreach ([0, -2] as $state) {
@@ -584,8 +584,8 @@ namespace {
             $reset();
             $tasks::ensure('plg_privacy_j2commerce');
             $assert($app->saved === [] && $db->tasks === $before, 'A task switched off on purpose must not be changed or duplicated.');
-            $assert(count($app->messages) === 1 && $app->messages[0][1] === 'warning' && str_contains($text(), 'is switched off or in the trash')
-                && str_contains($text(), 'System → Manage → Scheduled Tasks'), 'A switched-off required task must be reported with the menu path.');
+            $assert(count($app->messages) === 2 && str_contains($text(), 'is switched off or in the trash')
+                && str_contains($text(), 'System → Manage → Scheduled Tasks') && str_contains($text(), 'Lazy Scheduler'), 'A switched-off required task must be reported with the menu path and the trigger warning.');
             $blockers = array_column(\Advans\Installer\V2\SystemCheck::results('plg_privacy_j2commerce')['blockers'], 1);
             $assert(in_array($strings['ADVANS_CHECK_TASK_OFF'], $blockers, true), 'The system check must report a switched-off required task as a blocker.');
         }
@@ -595,7 +595,7 @@ namespace {
         $tasks::ensure('plg_privacy_j2commerce');
         $count = count($app->messages);
         $tasks::ensure('plg_task_j2commerceprivacy');
-        $assert($count === 1 && count($app->messages) === 1, 'A routine must be reported once per request.');
+        $assert($count === 2 && count($app->messages) === 2, 'A routine and its trigger must be reported once per request.');
 
         // Extensions without required tasks: no message, nothing created.
         foreach (['plg_ajax_joomlaajaxforms', 'plg_system_privacyrequests', 'com_j2store_cleanup'] as $id) {
@@ -635,6 +635,10 @@ namespace {
         $reset();
         $tasks::ensure('plg_privacy_j2commerce');
         $assert(str_contains($text(), 'Neither the Lazy Scheduler nor Web Cron'), 'A Scheduler started only by a server cron job must be reported.');
+        $db->extensions['component::com_scheduler']['params'] = '{"lazy_scheduler":{"enabled":1},"webcron":{"enabled":0}}';
+        $reset();
+        $tasks::ensure('plg_privacy_j2commerce');
+        $assert(count($app->messages) === 1 && str_contains($text(), 'started by visits'), 'Configured Lazy Scheduler must be reported until a real recent run proves it.');
 
         // Task plugin missing: nothing can be created, the report says why.
         unset($db->extensions['plugin:task:j2commerceprivacy']);

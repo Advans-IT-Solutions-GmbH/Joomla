@@ -91,6 +91,11 @@ ADVANS_KNOWN_HASHES=skip php "$GENERATOR" ext "$FIXTURE/skipped.php" "$FIXTURE/s
 catalog "$FIXTURE/skipped.php" | grep -q '"complete":false'
 catalog "$FIXTURE/skipped.php" | grep -q "$(sha 'stamped 1.2.0')"
 echo 'PASS: a skipped catalog is marked incomplete and still lists the build in progress'
+if ADVANS_KNOWN_HASHES=skip ADVANS_KNOWN_HASHES_STRICT=1 php "$GENERATOR" ext "$FIXTURE/strict-skipped.php" "$FIXTURE/stage" >/dev/null 2>&1; then
+    echo 'FAIL: a strict build accepted skipped earlier releases'
+    exit 1
+fi
+echo 'PASS: skipped earlier releases fail a strict build'
 
 git clone -q --depth 1 "file://$REPO" "$FIXTURE/shallow"
 php "$GENERATOR" "$FIXTURE/shallow/ext" "$FIXTURE/shallow.php" "$FIXTURE/stage" >/dev/null

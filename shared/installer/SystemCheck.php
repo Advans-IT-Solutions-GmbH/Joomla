@@ -177,7 +177,7 @@ final class SystemCheck
             // A configured web trigger cannot prove that it fires, and a host cron is invisible:
             // only a recent run of one of these tasks proves that the Scheduler is started.
             $trigger = ScheduledTasks::trigger($tasks);
-            $group = $trigger['proven'] ? 'passed' : ($trigger['runs'] || !$required ? 'warnings' : 'blockers');
+            $group = $trigger['proven'] ? 'passed' : 'warnings';
             $results[$group][] = [Text::_('ADVANS_CHECK_SCHEDULER'), $trigger['text'], $trigger['proven'] ? '' : Text::_('ADVANS_CHECK_SCHEDULER_PATH')];
         }
 

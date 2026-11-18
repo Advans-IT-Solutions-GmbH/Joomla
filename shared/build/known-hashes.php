@@ -179,6 +179,12 @@ $finish = static function (array $catalog, array $hashes) use ($write): void {
 if (getenv('ADVANS_KNOWN_HASHES') === 'skip') {
     $catalog['unreproducible'][] = 'earlier releases skipped (ADVANS_KNOWN_HASHES=skip)';
     $finish($catalog, $hashes);
+
+    if ($strict) {
+        fwrite(STDERR, "Known-hashes catalog for $name is incomplete: earlier releases were skipped.\n");
+        exit(1);
+    }
+
     echo "Known-hashes catalog for $name: earlier releases skipped\n";
     exit(0);
 }
@@ -306,7 +312,7 @@ try {
     $removeTree($work);
 }
 
-$catalog['complete'] = $catalog['failed'] === [];
+$catalog['complete'] = $catalog['failed'] === [] && $catalog['unreproducible'] === [];
 $finish($catalog, $hashes);
 echo 'Known-hashes catalog for ' . $name . ': releases ' . (implode(', ', $versions) ?: 'none')
     . ' and the build in progress, ' . count($hashes) . " distinct files\n";

@@ -154,7 +154,7 @@ final class ScheduledTasks
                 self::$handled['#trigger'] = true;
                 $trigger = self::trigger($rows);
 
-                if (!$trigger['runs']) {
+                if (!$trigger['proven']) {
                     $app->enqueueMessage(self::escape($trigger['text']), 'warning');
                 }
             }
