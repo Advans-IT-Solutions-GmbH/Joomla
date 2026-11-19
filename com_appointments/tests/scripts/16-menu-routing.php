@@ -572,13 +572,13 @@ try {
         'The confirmation page links the signed pages with the Itemid and leads back to the booking page: '
         . $first($links($html, 'com-appointments-return')));
 
-    /** The values of the options of a select, in order. */
-    $optionValues = static function (string $html, string $id): array {
+    /** The values of the available reschedule radio buttons, in document order. */
+    $slotValues = static function (string $html): array {
         $document = new DOMDocument();
         @$document->loadHTML($html);
 
-        return array_map(static fn (DOMElement $option): string => $option->getAttribute('value'),
-            iterator_to_array((new DOMXPath($document))->query('//select[@id="' . $id . '"]/option')));
+        return array_map(static fn (DOMElement $input): string => $input->getAttribute('value'),
+            iterator_to_array((new DOMXPath($document))->query('//input[@type="radio"][@name="start"]')));
     };
 
     // Reschedule with the link of the confirmation mail: the receipt stands at the booking page and
@@ -593,9 +593,32 @@ try {
         $html = $mover->request($oldReschedule);
         $check($mover->status === 200 && preg_match($bookingPage, $first($links($html, 'com-appointments-return'))) === 1,
             'The reschedule page of the mail link runs in the frame of the booking page: ' . $first($links($html, 'com-appointments-return')));
+        $calendar = new DOMDocument();
+        @$calendar->loadHTML($html);
+        $calendarXpath = new DOMXPath($calendar);
+        $dayUrl = '';
+        foreach ($calendarXpath->query('//a[contains(concat(" ", normalize-space(@class), " "), " com-appointments-day-available ")]') as $dayLink) {
+            if (!$dayLink instanceof DOMElement) {
+                continue;
+            }
+
+            $href = html_entity_decode($dayLink->getAttribute('href'), ENT_QUOTES | ENT_HTML5);
+            parse_str((string) parse_url($href, PHP_URL_QUERY), $dayQuery);
+
+            if (($dayQuery['day'] ?? '') === $day) {
+                $dayUrl = $href;
+                break;
+            }
+        }
+        $check($dayUrl !== '', 'The reschedule calendar offers the booking day');
+        if ($dayUrl !== '') {
+            $html = $mover->request($dayUrl);
+        }
+        $availableSlots = $slotValues($html);
+        $check($mover->status === 200 && $availableSlots !== [], 'Choosing the booking day offers reschedule time buttons');
         [$action, $fields] = $formData($html, '//form[contains(@class, "com-appointments-manage-form")]');
         $current = (string) $fixture->row((int) $booking['id'])['start_utc'];
-        $other = array_values(array_filter($optionValues($html, 'new-start'), static fn (string $value): bool => $value !== $current));
+        $other = array_values(array_filter($availableSlots, static fn (string $value): bool => $value !== $current));
         $fields['start'] = $other[0] ?? '';
         $fields[$mover->token($html)] = 1;
         $fields['confirm'] = 1;
