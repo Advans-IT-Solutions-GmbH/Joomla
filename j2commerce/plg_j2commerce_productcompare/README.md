@@ -235,8 +235,7 @@ All HTML rendered by this plugin can be overridden from your active Joomla templ
 The plugin uses `Joomla\CMS\Layout\FileLayout` with the following resolution order (first match wins):
 
 1. `templates/{your-template}/html/plg_j2commerce_productcompare/{layout}.php`
-2. `plugins/j2commerce/productcompare/tmpl/{layout}.php` ← plugin default (Joomla 6)
-3. `plugins/j2store/productcompare/tmpl/{layout}.php` ← plugin default (Joomla 5 mirror)
+2. `plugins/{registered-group}/productcompare/tmpl/{layout}.php` ← plugin default (`j2commerce` on Joomla 6, `j2store` for the Joomla 5 mirror). The plugin does not search the other group.
 
 ### Available layouts
 
