@@ -155,7 +155,7 @@ if (($argv[1] ?? '') === '--self-check-scan-only') {
     exit(0);
 }
 
-if (in_array($argv[1] ?? '', ['--php-readiness', '--race-erase'], true)) {
+if (in_array($argv[1] ?? '', ['--php-readiness', '--race-erase', '--race-matching'], true)) {
     $readiness = $argv[$argv[1] === '--php-readiness' ? 2 : 5];
     if (file_put_contents($readiness . '.tmp', json_encode(closePhpReadiness(), JSON_THROW_ON_ERROR)) === false
         || !rename($readiness . '.tmp', $readiness)) {
@@ -170,6 +170,39 @@ if (($argv[1] ?? '') === '--self-check-php') {
     closeScanOnlySelfCheck();
     echo "PASS pinned PHP configuration and different-ini negative control\n";
     exit(0);
+}
+
+if (($argv[1] ?? '') === '--race-matching') {
+    try {
+        require __DIR__ . '/appointments-joomla.php';
+        $store = new \Advans\Component\Appointments\Administrator\Service\BookingStore($joomlaDb);
+        $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $joomlaDb->setQuery('SET SESSION innodb_lock_wait_timeout=1')->execute();
+        $lockTimeout = false;
+        $result = null;
+        try {
+            $result = $store->erase((int) $argv[2], $now, 'admin', actor: (int) $argv[4]);
+        } catch (Throwable $error) {
+            for ($cause = $error; $cause !== null; $cause = $cause->getPrevious()) {
+                if ((int) $cause->getCode() === 1205) {
+                    $lockTimeout = true;
+                    break;
+                }
+            }
+            if (!$lockTimeout) {
+                throw $error;
+            }
+        }
+        $linked = (int) $joomlaDb->setQuery('SELECT COUNT(*) FROM ' . $joomlaDb->quoteName('#__appointments_close_delivery')
+            . ' WHERE booking_id = ' . (int) $argv[2])->loadResult();
+        file_put_contents($argv[3], $lockTimeout ? 'lock-timeout' : 'erased-no-lock');
+        echo json_encode(['lock_timeout' => $lockTimeout,
+            'erased' => (bool) ($result['changed'] ?? false), 'linked' => $linked > 0], JSON_THROW_ON_ERROR);
+        exit($lockTimeout || $linked ? 1 : 0);
+    } catch (Throwable $error) {
+        echo json_encode(['error' => get_class($error)], JSON_THROW_ON_ERROR);
+        exit(1);
+    }
 }
 
 if (($argv[1] ?? '') === '--race-erase') {
@@ -253,21 +286,59 @@ $raceProcess = null;
 $racePipes = [];
 $raceSignal = null;
 $raceReadiness = null;
+$raceMatchingId = 0;
+$raceMatchingProcess = null;
+$raceMatchingPipes = [];
+$raceMatchingSignal = null;
+$raceMatchingReadiness = null;
 $requestId = random_int(1000000000, 2000000000);
 // The key each client was created with: [profile, stored key or null for the profile variable].
 $keysUsed = [];
 $transport = static function (\Advans\Component\Appointments\Administrator\Service\Close\Profile $profile, ?string $key = null) use (
-    &$requests, &$notes, &$timeout, &$raceId, &$raceProcess, &$racePipes, &$raceSignal, &$raceReadiness, $fixture, &$keysUsed
+    &$requests, &$notes, &$timeout, &$raceId, &$raceProcess, &$racePipes, &$raceSignal, &$raceReadiness,
+    &$raceMatchingId, &$raceMatchingProcess, &$raceMatchingPipes, &$raceMatchingSignal, &$raceMatchingReadiness,
+    $fixture, &$keysUsed
 ): \Closure {
     $keysUsed[] = [$profile->key, $key];
     return static function (string $method, string $path, ?array $payload) use (
-        $profile, &$requests, &$notes, &$timeout, &$raceId, &$raceProcess, &$racePipes, &$raceSignal, &$raceReadiness, $fixture
+        $profile, &$requests, &$notes, &$timeout, &$raceId, &$raceProcess, &$racePipes, &$raceSignal, &$raceReadiness,
+        &$raceMatchingId, &$raceMatchingProcess, &$raceMatchingPipes, &$raceMatchingSignal, &$raceMatchingReadiness, $fixture
     ): array {
         $requests[] = [$profile->key, $method, $path, $payload];
         if ($method === 'GET' && $path === '/api/v1/me/') {
             return ['code' => 200, 'data' => ['organizations' => [['id' => 'orga_' . $profile->key]]]];
         }
         if ($path === '/api/v1/data/search/') {
+            if ($raceMatchingId > 0) {
+                $raceMatchingSignal = tempnam(sys_get_temp_dir(), 'appointments-close-match-race-');
+                $raceMatchingReadiness = tempnam(sys_get_temp_dir(), 'appointments-close-match-ready-');
+                if ($raceMatchingReadiness === false) {
+                    throw new RuntimeException('Cannot create matching race PHP readiness fixture.');
+                }
+                unlink($raceMatchingReadiness);
+                $raceMatchingProcess = proc_open(array_merge(closePhpCommand(),
+                    ['--race-matching', (string) $raceMatchingId, $raceMatchingSignal,
+                        (string) $fixture->host, $raceMatchingReadiness]),
+                    [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+                    $raceMatchingPipes, null, getenv());
+                if (!is_resource($raceMatchingProcess)) {
+                    throw new RuntimeException('The matching race process did not start.');
+                }
+                fclose($raceMatchingPipes[0]);
+                closeAssertChildReadiness($raceMatchingReadiness);
+                $deadline = microtime(true) + 10;
+                do {
+                    clearstatcache(true, $raceMatchingSignal);
+                    if (file_get_contents($raceMatchingSignal) === 'erased-no-lock') {
+                        break;
+                    }
+                    usleep(20000);
+                } while (microtime(true) < $deadline);
+                if (file_get_contents($raceMatchingSignal) !== 'erased-no-lock') {
+                    throw new RuntimeException('Erasure waited for a booking lock during Close matching.');
+                }
+                $raceMatchingId = 0;
+            }
             return ['code' => 200, 'data' => ['data' => [['id' => 'cont_' . $profile->key, 'lead_id' => 'lead_' . $profile->key,
                 'emails' => [['email' => 'invitee@example.test']]]], 'cursor' => null]];
         }
@@ -497,6 +568,29 @@ try {
     $check($authentic && (int) $link($id)['target_sequence'] === (int) $other['target_sequence'] && $link($id)['reason'] === 'probe',
         'A save after a concurrent committed change authenticates the current record, not an older snapshot');
 
+    $matchingRace = $book($event);
+    $matchingRaceId = (int) $matchingRace['id'];
+    $raceMatchingId = $matchingRaceId;
+    $queue->run();
+    $deadline = microtime(true) + 20;
+    while (($matchingStatus = proc_get_status($raceMatchingProcess))['running'] && microtime(true) < $deadline) {
+        usleep(20000);
+    }
+    if ($matchingStatus['running']) {
+        throw new RuntimeException('The matching race process did not finish.');
+    }
+    $matchingStdout = stream_get_contents($raceMatchingPipes[1]);
+    $matchingStderr = stream_get_contents($raceMatchingPipes[2]);
+    fclose($raceMatchingPipes[1]);
+    fclose($raceMatchingPipes[2]);
+    proc_close($raceMatchingProcess);
+    $raceMatchingProcess = null;
+    $matchingResult = json_decode($matchingStdout, true, 16, JSON_THROW_ON_ERROR);
+    $check($matchingStatus['exitcode'] === 0 && $matchingResult['erased']
+        && !$matchingResult['lock_timeout'] && !$matchingResult['linked']
+        && $fixture->stored($matchingRaceId)['anonymised_utc'] !== null,
+        'Real InnoDB erasure succeeds during Close matching without holding the booking lock');
+
     $booking = $book($event);
     $id = (int) $booking['id'];
     $raceId = $id;
@@ -566,6 +660,25 @@ try {
     $check(false, 'Installed Close mock failed: ' . get_class($e) . ' in ' . basename($e->getFile()) . ' at line ' . $e->getLine()
         . ' (called from ' . implode(' < ', $frames) . ')');
 } finally {
+    if (is_resource($raceMatchingProcess)) {
+        proc_terminate($raceMatchingProcess);
+        foreach ($raceMatchingPipes as $pipe) {
+            if (is_resource($pipe)) {
+                fclose($pipe);
+            }
+        }
+        proc_close($raceMatchingProcess);
+    }
+    if ($raceMatchingSignal !== null && is_file($raceMatchingSignal)) {
+        unlink($raceMatchingSignal);
+    }
+    if ($raceMatchingReadiness !== null) {
+        foreach ([$raceMatchingReadiness, $raceMatchingReadiness . '.tmp'] as $file) {
+            if (is_file($file)) {
+                unlink($file);
+            }
+        }
+    }
     if (is_resource($raceProcess)) {
         proc_terminate($raceProcess);
         foreach ($racePipes as $pipe) {

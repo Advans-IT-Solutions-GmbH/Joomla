@@ -73,8 +73,14 @@ $inspect = static function (array $before, array $booking, string $method, strin
             && str_contains($ics, 'SEQUENCE:' . $booking['sequence'] . "\r\n"), 'Actual calendar carries stable UID, state and sequence');
         $decoded = AppointmentsMail::decoded($mime);
         if (preg_match('/^To:.*invitee@example\.test/mi', $unfolded)) {
-            $check(str_contains($decoded, 'action=reschedule') && str_contains($decoded, 'action=cancel')
-                && str_contains($decoded, 'action=erase'), 'Mandatory action links survive customized template content');
+            if ($method === 'CANCEL') {
+                // Audit 18.11.2026, B6: a cancelled appointment can only have its data erased.
+                $check(!str_contains($decoded, 'action=reschedule') && !str_contains($decoded, 'action=cancel')
+                    && str_contains($decoded, 'action=erase'), 'The cancellation mail offers only the erase link, no reschedule or cancel link');
+            } else {
+                $check(str_contains($decoded, 'action=reschedule') && str_contains($decoded, 'action=cancel')
+                    && str_contains($decoded, 'action=erase'), 'Mandatory action links survive customized template content');
+            }
             if ($localizedSubject === 'Validé :') {
                 $decoded = AppointmentsMail::decoded($mime);
                 $check(str_contains($decoded, "Modifier l'horaire") && str_contains($decoded, 'Supprimer vos données à tout moment'),

@@ -76,6 +76,29 @@ class InstallationTest
             return $row && (int) $row['enabled'] === 1 && $missing === [];
         });
 
+        $this->test('The dashboard module is installed and published once at cpanel on every administrator page', function () {
+            $extension = $this->db->query("SELECT enabled, client_id FROM {$this->dbPrefix}extensions WHERE element='mod_appointments' AND type='module'")->fetch_assoc();
+            $instances = $this->db->query("SELECT id, position, published, client_id, title FROM {$this->dbPrefix}modules WHERE module='mod_appointments'")->fetch_all(MYSQLI_ASSOC);
+            $assigned = $instances === [] ? 0 : (int) $this->db->query("SELECT COUNT(*) FROM {$this->dbPrefix}modules_menu WHERE moduleid=" . (int) $instances[0]['id'] . ' AND menuid=0')->fetch_row()[0];
+            $files = [
+                '/var/www/html/administrator/modules/mod_appointments/mod_appointments.xml',
+                '/var/www/html/administrator/modules/mod_appointments/services/provider.php',
+                '/var/www/html/administrator/modules/mod_appointments/LICENSE.txt',
+                '/var/www/html/administrator/language/en-GB/mod_appointments.ini',
+                '/var/www/html/administrator/language/en-GB/mod_appointments.sys.ini',
+            ];
+            $missing = array_values(array_filter($files, static fn (string $file): bool => !is_file($file)));
+            $ok = $extension && (int) $extension['enabled'] === 1 && (int) $extension['client_id'] === 1 && count($instances) === 1
+                && $instances[0]['position'] === 'cpanel' && (int) $instances[0]['published'] === 1 && (int) $instances[0]['client_id'] === 1
+                && $instances[0]['title'] === 'Next appointments' && $assigned === 1 && $missing === [];
+
+            if (!$ok) {
+                echo '    module: ' . json_encode([$extension, $instances, $assigned, $missing]) . "\n";
+            }
+
+            return $ok;
+        });
+
         $this->test('Bookings have the encrypted origin column and the campaign aggregate exists', function () {
             $column = $this->db->query("SHOW COLUMNS FROM {$this->dbPrefix}appointments_bookings LIKE 'attribution'");
             $names = [];

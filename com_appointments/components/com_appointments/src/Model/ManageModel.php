@@ -208,7 +208,7 @@ class ManageModel extends BaseDatabaseModel
             if ($start === null) {
                 throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_SLOT'));
             }
-            $timezone = Factory::getApplication()->getInput()->getString('timezone', $booking->invitee_timezone);
+            $timezone = Factory::getApplication()->getInput()->post->getString('timezone', $booking->invitee_timezone);
             $messageBooking = $store->reschedule((int) $booking->id, $start, $now, $this->links(), $this->signature(), $timezone);
             $purpose = 'reschedule';
         }

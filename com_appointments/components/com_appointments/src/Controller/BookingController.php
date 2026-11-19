@@ -19,6 +19,7 @@ use Advans\Component\Appointments\Administrator\Helper\SlotTakenException;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Service\AttributionTracker;
 use Advans\Component\Appointments\Administrator\Service\FeedService;
+use Advans\Component\Appointments\Administrator\Service\InvalidBookingLinkException;
 use Advans\Component\Appointments\Administrator\Service\RateLimiter;
 use Advans\Component\Appointments\Site\Helper\PrivacyLink;
 use Joomla\CMS\Component\ComponentHelper;
@@ -136,6 +137,8 @@ class BookingController extends BaseController
         $this->app->setUserState('com_appointments.booking.' . $eventId, null);
         $this->app->setUserState('com_appointments.booking_errors.' . $eventId, null);
         $this->app->setUserState('com_appointments.confirmation.id', (int) $booking['id']);
+        $this->app->setUserState('com_appointments.confirmation.modified_utc', (string) $booking['modified_utc']);
+        $this->app->setUserState('com_appointments.confirmation.sequence', (int) $booking['sequence']);
         // The confirmation lands at its card, so modules a template places above the component
         // do not push the outcome out of the first screen; the booking script focuses its status.
         $this->setRedirect(Route::_('index.php?option=com_appointments&view=booking' . $this->frame($eventId), false) . '#appointment-confirmation');
@@ -189,7 +192,19 @@ class BookingController extends BaseController
             throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
         }
         $model = $this->getModel('Manage');
-        $booking = $model->getItem();
+
+        try {
+            $booking = $model->getItem();
+        } catch (InvalidBookingLinkException $e) {
+            // The form of a link that no longer applies, such as a tab left open while the appointment
+            // was rescheduled elsewhere: the page of that link explains it (status 404, the same page
+            // for every refused link). Nothing is changed and nothing is looked up for the frame.
+            $this->setRedirect(Route::_('index.php?option=com_appointments&view=manage&id=' . $this->input->getInt('id')
+                . '&action=' . $this->input->getCmd('action') . '&signature=' . urlencode($this->input->getString('signature', ''))
+                . $this->frame(0), false));
+
+            return false;
+        }
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $keys = new KeyProvider((string) $this->app->get('secret'));
@@ -200,12 +215,16 @@ class BookingController extends BaseController
         // getItem() verified the signature (or found this session's receipt), so an unsigned
         // request learns nothing about a booking.
         $url .= $this->frame($booking !== null ? (int) $booking->eventtype_id : 0);
-        $month = $this->input->getString('month', '');
-        $zone = $this->input->getString('timezone', '');
+        $month = $this->input->post->getString('month', $this->input->getString('month', ''));
+        $zone = $this->input->post->getString('timezone', $this->input->getString('timezone', ''));
+        $day = $this->input->post->getString('day', $this->input->getString('day', ''));
         if ($month !== '') {
             $url .= '&month=' . urlencode($month);
             if (in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
                 $url .= '&timezone=' . urlencode($zone);
+            }
+            if (UtcTimestamp::isDate($day) && substr($day, 0, 7) === $month) {
+                $url .= '&day=' . urlencode($day);
             }
         }
         $this->setRedirect(Route::_($url, false));
@@ -270,6 +289,10 @@ class BookingController extends BaseController
         } catch (\DomainException $e) {
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_ERROR_STATE'), 'error');
             $this->app->setUserState($focusKey, true);
+            return false;
+        } catch (InvalidBookingLinkException $e) {
+            // Changed by someone else between the check above and the change: the page of the link
+            // (the redirect set above) now explains that the link no longer applies.
             return false;
         }
         $this->app->setUserState('com_appointments.cancel_reason', null);

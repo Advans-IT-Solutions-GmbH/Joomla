@@ -256,6 +256,102 @@ try {
     $check($http->status === 200 && str_contains($html, $tag) && !str_contains($html, $tag . ' fallback edited'), 'Event-specific list filter excludes site-wide overrides');
     $batch($http, 'delete', $id);
     $check($row($id) === null, 'Delete task removes an authorised template');
+
+    // The update path of the stored templates (audit 18.11.2026, B8: the host's cancellation now
+    // names the reason). The installer's own template step runs against a «previous version» whose
+    // host cancellation had no {cancel_reason}: the unchanged en-GB default follows the new default,
+    // the edited de-DE template and a template of one event type stay and are named in the update
+    // message. The installed language copies are the previous version only during the step: the
+    // step itself copies the package's files back.
+    $local = '/var/www/html/administrator/components/com_appointments/language';
+    $source = sys_get_temp_dir() . '/appointments-template-update-' . bin2hex(random_bytes(4));
+    $key = 'COM_APPOINTMENTS_MAIL_HOST_CANCELLATION_BODY';
+    $previous = static fn (string $ini): string => (string) preg_replace_callback('/^' . $key . '=.*$/m',
+        static fn (array $line): string => (string) preg_replace('/\\\\n[^"\\\\]*\{cancel_reason\}/', '', $line[0]), $ini);
+    $defaults = [];
+    foreach (['en-GB', 'de-DE', 'fr-FR'] as $language) {
+        $defaults[$language] = file_get_contents($local . '/' . $language . '/com_appointments.ini');
+        mkdir($source . '/administrator/language/' . $language, 0700, true);
+        file_put_contents($source . '/administrator/language/' . $language . '/com_appointments.ini', $defaults[$language]);
+    }
+    $body = static fn (string $ini): string => str_replace('\n', "\n", (string) parse_ini_string($ini, false, INI_SCANNER_RAW)[$key]);
+    $stored = [];
+    foreach (['en-GB', 'de-DE'] as $language) {
+        $stored[$language] = $db->query("SELECT id, subject, body FROM {$prefix}appointments_templates WHERE eventtype_id=0"
+            . " AND purpose='host_cancellation' AND language='{$language}'")->fetch_assoc();
+    }
+    try {
+        $check(!str_contains($body($previous($defaults['en-GB'])), '{cancel_reason}') && str_contains($body($defaults['en-GB']), '{cancel_reason}'),
+            'Fixture: the previous version has no reason in the host cancellation');
+        foreach (['en-GB', 'de-DE'] as $language) {
+            file_put_contents($local . '/' . $language . '/com_appointments.ini', $previous($defaults[$language]));
+        }
+        $setBody = static function (int $id, string $text) use ($db, $prefix): void {
+            $db->query("UPDATE {$prefix}appointments_templates SET body='" . $db->real_escape_string($text) . "' WHERE id={$id}");
+        };
+        $setBody((int) $stored['en-GB']['id'], $body($previous($defaults['en-GB'])));
+        $subject = (string) parse_ini_string($defaults['en-GB'], false, INI_SCANNER_RAW)['COM_APPOINTMENTS_MAIL_HOST_CANCELLATION_SUBJECT'];
+        $db->query("UPDATE {$prefix}appointments_templates SET subject='" . $db->real_escape_string($subject) . "' WHERE id=" . (int) $stored['en-GB']['id']);
+        $edited = $body($previous($defaults['de-DE'])) . "\nVom Betreiber ergänzt.";
+        $setBody((int) $stored['de-DE']['id'], $edited);
+        // The event type's own host cancellation (an earlier step of this suite may have created it).
+        $eventTemplate = $find($eventA, 'host_cancellation', 'en-GB');
+        if ($eventTemplate > 0) {
+            $stored['event'] = $row($eventTemplate);
+            $setBody($eventTemplate, 'Own text {start}');
+        } else {
+            $db->query("INSERT INTO {$prefix}appointments_templates (eventtype_id,purpose,language,subject,body,published)"
+                . " VALUES ({$eventA},'host_cancellation','en-GB','{$tag} own cancellation','Own text {start}',1)");
+            $templateIds[] = $eventTemplate = (int) $db->insert_id;
+        }
+        $script = $source . '/run.php';
+        file_put_contents($script, '<?php
+            require "/var/www/html/tests/scripts/appointments-joomla.php";
+            require_once JPATH_ADMINISTRATOR . "/components/com_appointments/script.php";
+            $application->getLanguage()->load("com_appointments", JPATH_ADMINISTRATOR);
+            $installer = new class (' . var_export($source, true) . ') { public function __construct(private string $source) {} public function getPath(string $name): string { return $this->source; } };
+            $parent = new class ($installer) { public function __construct(private object $installer) {} public function getParent(): object { return $this->installer; } };
+            $script = new Com_appointmentsInstallerScript();
+            foreach (["seedMailTemplates" => [$parent], "reportKeptTemplates" => []] as $method => $arguments) {
+                $reflection = new ReflectionMethod($script, $method);
+                $reflection->setAccessible(true);
+                $reflection->invoke($script, ...$arguments);
+            }
+            echo "\n@@UPDATE@@" . json_encode(array_column($application->getMessageQueue(), "message"));');
+        $output = [];
+        exec('cd /var/www/html && php ' . escapeshellarg($script) . ' 2>&1', $output);
+        $text = implode("\n", $output);
+        $at = strrpos($text, '@@UPDATE@@');
+        $messages = $at === false ? $text : implode("\n", (array) json_decode(substr($text, $at + 10), true));
+        $check($at !== false && $row((int) $stored['en-GB']['id'])['body'] === $body($defaults['en-GB']),
+            'An unchanged default template follows the new default with the reason line: ' . substr($text, 0, 300));
+        $check($row((int) $stored['de-DE']['id'])['body'] === $edited && $row($eventTemplate)['body'] === 'Own text {start}',
+            'A template the operator changed and a template of one event type stay as they are');
+        $check(str_contains($messages, 'gained new placeholders')
+            && str_contains($messages, 'Host: booking cancelled (de-DE, Site-wide fallback): {cancel_reason}')
+            && str_contains($messages, 'Host: booking cancelled (en-GB, event type ' . $eventA . '): {cancel_reason}')
+            && !str_contains($messages, '(en-GB, Site-wide fallback)'),
+            'The update message names every kept template that lacks the new placeholder, not the one that followed');
+        $check(file_get_contents($local . '/en-GB/com_appointments.ini') === $defaults['en-GB']
+            && file_get_contents($local . '/de-DE/com_appointments.ini') === $defaults['de-DE'],
+            'The template step installs the language copies of the package again');
+    } finally {
+        foreach ($defaults as $language => $content) {
+            file_put_contents($local . '/' . $language . '/com_appointments.ini', $content);
+            @unlink($source . '/administrator/language/' . $language . '/com_appointments.ini');
+            @rmdir($source . '/administrator/language/' . $language);
+        }
+        @unlink($source . '/run.php');
+        @rmdir($source . '/administrator/language');
+        @rmdir($source . '/administrator');
+        @rmdir($source);
+        foreach ($stored as $original) {
+            if ($original) {
+                $db->query("UPDATE {$prefix}appointments_templates SET subject='" . $db->real_escape_string($original['subject'])
+                    . "', body='" . $db->real_escape_string($original['body']) . "' WHERE id=" . (int) $original['id']);
+            }
+        }
+    }
 } catch (Throwable $e) {
     echo 'FAIL ' . $e->getMessage() . "\n";
     $failed++;

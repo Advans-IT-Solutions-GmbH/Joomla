@@ -114,6 +114,10 @@ final class AppointmentsFixture
         $html = $client->request($link);
         $token = $client->token($html);
         parse_str(parse_url($link, PHP_URL_QUERY), $query);
+        $fields = array_replace($fields, ($query['action'] ?? '') === 'reschedule'
+            && is_string($fields['start'] ?? null) && !isset($fields['day'])
+                ? ['day' => substr($fields['start'], 0, 10)]
+                : []);
 
         return $client->request('/index.php?option=com_appointments&task=booking.manage', array_replace($query, [
             $token => 1, 'confirm' => 1,

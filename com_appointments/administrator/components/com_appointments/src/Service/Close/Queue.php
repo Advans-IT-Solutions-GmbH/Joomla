@@ -29,6 +29,15 @@ final class Queue
     /** Unreleased evaluation layout; it held erasure obligations that no longer exist. */
     public const LEGACY_TABLE = '#__appointments_close';
 
+    /**
+     * Columns added after the first release of the table. The MAC leaves them out while they are
+     * empty, so the rows of an earlier version stay authentic after the update.
+     */
+    private const MATCH_COLUMNS = [
+        'match_rule' => "VARCHAR(32) NOT NULL DEFAULT ''",
+        'match_candidates' => "VARCHAR(1200) NOT NULL DEFAULT ''",
+    ];
+
     private ?string $profileKey = null;
     /** @var array<string, Client> */
     private array $clients = [];
@@ -66,8 +75,18 @@ final class Queue
             next_attempt BIGINT NOT NULL DEFAULT 0,
             last_attempt BIGINT NOT NULL DEFAULT 0,
             mac CHAR(64) NOT NULL,
+            match_rule VARCHAR(32) NOT NULL DEFAULT \'\',
+            match_candidates VARCHAR(1200) NOT NULL DEFAULT \'\',
             INDEX delivery_due (state, next_attempt)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
+        // How a transfer was assigned to a contact and its possible duplicates (Client::match()): lead
+        // IDs only, no booking data. Added to the table of an earlier version; empty in its rows.
+        $columns = $db->getTableColumns(self::TABLE);
+        foreach (self::MATCH_COLUMNS as $column => $definition) {
+            if (!array_key_exists($column, $columns)) {
+                $db->setQuery('ALTER TABLE ' . $db->quoteName(self::TABLE) . ' ADD COLUMN ' . $db->quoteName($column) . ' ' . $definition)->execute();
+            }
+        }
         // Bookings the retention erased after the longest wait without reaching Close (dashboard warning).
         $db->setQuery('CREATE TABLE IF NOT EXISTS ' . $db->quoteName('#__appointments_close_missed') . ' (
             booking_id INT UNSIGNED NOT NULL PRIMARY KEY,
@@ -143,6 +162,12 @@ final class Queue
         // Uncertain POSTs remain uncertain even when a newer change arrives.
         $change = ['target_sequence' => (int) $booking['sequence'],
             'state' => $old['state'] === 'uncertain' ? 'uncertain' : 'pending', 'next_attempt' => 0];
+        if ($old['operation'] === 'matching') {
+            // Remote name matching is resumable only for the snapshot that entered it. A booking
+            // change invalidates that snapshot and must requeue normal delivery without reusing
+            // the old remote-match phase.
+            $change['operation'] = '';
+        }
         $object = (object) (['booking_id' => $id] + $change + ['mac' => self::mac(array_replace($old, $change))]);
         if (!$db->updateObject(self::TABLE, $object, 'booking_id')) {
             throw new \RuntimeException('Close delivery change could not be queued.');
@@ -267,6 +292,8 @@ final class Queue
                 . ' ORDER BY last_attempt ASC, booking_id ASC LIMIT ' . max(1, min(100, $limit)))->loadAssocList();
             foreach ($rows as $row) {
                 $counts['processed']++;
+                $snapshotSequence = (int) $row['target_sequence'];
+                $snapshotOperation = (string) $row['operation'];
                 // Destination binding, contact creation and activity are separate crash-safe checkpoints.
                 for ($step = 0; $step < 4; $step++) {
                     $this->profileKey = null;
@@ -276,6 +303,12 @@ final class Queue
                             $counts['deferred']++;
                         }
                         if ($result !== 'next') {
+                            break;
+                        }
+                        $current = $this->find((int) $row['booking_id']);
+                        if ($current !== null
+                            && ((int) $current['target_sequence'] !== $snapshotSequence
+                                || ($snapshotOperation === 'matching' && (string) $current['operation'] !== 'matching'))) {
                             break;
                         }
                     } catch (DeliveryException $e) {
@@ -374,12 +407,74 @@ final class Queue
                 $db->transactionCommit();
                 return 'next';
             }
+            $assignment = [];
             if ($row['contact_id'] === '') {
                 $client->validateLeadFields();
-                $match = $client->contact((string) ($opened['invitee_email'] ?? ''));
-                if ($match !== null) {
+                if ((string) ($row['operation'] ?? '') !== 'matching') {
+                    // Persist the matching phase without holding the booking and delivery rows while
+                    // e-mail, telephone and name/company searches use the remote service.
+                    $this->save($id, ['operation' => 'matching', 'state' => 'pending', 'reason' => '',
+                        'binding' => $profile->binding]);
+                    $db->transactionCommit();
+                    return 'next';
+                }
+
+                $sequence = (int) $row['target_sequence'];
+                $db->transactionCommit();
+
+                // Remote reads are outside the booking lock. The locking revalidation below is not a
+                // historical snapshot: it resumes only this UID and delivery version and rejects stale work.
+                $db->transactionStart();
+                $resumeBooking = $this->booking($id);
+                $resume = $this->find($id, true);
+                $resumeValid = $resume !== null && $resumeBooking !== null
+                    && (int) $resume['target_sequence'] === $sequence
+                    && $resume['state'] !== 'uncertain'
+                    && (string) $resume['operation'] === 'matching'
+                    && $resume['contact_id'] === ''
+                    && hash_equals($resume['uid'], (string) $resumeBooking['uid'])
+                    && hash_equals($resume['uid'], (string) $booking['uid'])
+                    && (int) $resumeBooking['sequence'] === $sequence
+                    && $resumeBooking['anonymised_utc'] === null
+                    && hash_equals((string) $resume['profile'], $profile->key)
+                    && ($resume['binding'] === '' || hash_equals($resume['binding'], $profile->binding));
+                $db->transactionCommit();
+                if (!$resumeValid) {
+                    $db->transactionStart();
+                    if ($this->find($id, true) !== null) {
+                        $this->save($id, ['operation' => '', 'state' => 'pending', 'reason' => '']);
+                    }
+                    $db->transactionCommit();
+                    return 'next';
+                }
+
+                $match = $client->match($opened);
+                $assignment = ['match_rule' => $match['match_rule'], 'match_candidates' => $match['match_candidates']];
+
+                $db->transactionStart();
+                $currentBooking = $this->booking($id);
+                $current = $this->find($id, true);
+                if ($current === null || !$currentBooking
+                    || (int) $current['target_sequence'] !== $sequence
+                    || $current['state'] === 'uncertain'
+                    || (string) $current['operation'] !== 'matching'
+                    || $current['contact_id'] !== ''
+                    || !hash_equals($current['uid'], (string) $currentBooking['uid'])
+                    || !hash_equals($current['uid'], (string) $booking['uid'])
+                    || (int) $currentBooking['sequence'] !== $sequence
+                    || $currentBooking['anonymised_utc'] !== null
+                    || !hash_equals((string) $current['profile'], $profile->key)
+                    || ($current['binding'] !== '' && !hash_equals($current['binding'], $profile->binding))) {
+                    if ($current !== null) {
+                        $this->save($id, ['operation' => '', 'state' => 'pending', 'reason' => '']);
+                    }
+                    $db->transactionCommit();
+                    return 'next';
+                }
+                if (isset($match['contact_id'], $match['lead_id'])) {
                     // Existing leads and contacts are never changed.
-                    $this->save($id, $match + ['binding' => $profile->binding, 'state' => 'pending', 'reason' => '']);
+                    $this->save($id, ['contact_id' => $match['contact_id'], 'lead_id' => $match['lead_id']] + $assignment
+                        + ['operation' => '', 'binding' => $profile->binding, 'state' => 'pending', 'reason' => '']);
                     $db->transactionCommit();
                     return 'next';
                 }
@@ -388,7 +483,8 @@ final class Queue
                 $path = '/api/v1/lead/';
                 $operation = 'create_contact';
             } else {
-                $context = $this->context($opened, $profile, (int) $row['contact_created'] === 1);
+                $context = $this->context($opened, $profile, (int) $row['contact_created'] === 1)
+                    + ['match_rule' => (string) ($row['match_rule'] ?? ''), 'match_candidates' => (string) ($row['match_candidates'] ?? '')];
                 if ($profile->mode === Profile::MODE_ACTIVITY) {
                     $client->validateActivityFields();
                     $payload = $client->activity($opened, $context);
@@ -409,7 +505,7 @@ final class Queue
             $create = $method === 'POST';
             // Persist BEFORE the request; a crash cannot replay an uncertain POST.
             $this->save($id, ['state' => $create ? 'uncertain' : 'retry', 'operation' => $operation,
-                'binding' => $profile->binding, 'reason' => 'in_flight', 'attempts' => (int) $row['attempts'] + 1]);
+                'binding' => $profile->binding, 'reason' => 'in_flight', 'attempts' => (int) $row['attempts'] + 1] + $assignment);
             $db->transactionCommit();
         } catch (\Throwable $e) {
             $db->transactionRollback();
@@ -610,6 +706,11 @@ final class Queue
     private static function mac(array $row): string
     {
         unset($row['mac']);
+        foreach (array_keys(self::MATCH_COLUMNS) as $column) {
+            if ((string) ($row[$column] ?? '') === '') {
+                unset($row[$column]);
+            }
+        }
         ksort($row);
         $row = array_map(static fn ($value): string => (string) $value, $row);
         $key = (new KeyProvider((string) Factory::getApplication()->get('secret', '')))->key('close-delivery-metadata');
