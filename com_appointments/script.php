@@ -337,7 +337,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
             }
             if ($firstReview !== null) {
                 try {
-                    AppointmentsConflictGuard::apply($this->conflictReview, $this->conflictFiles);
+                    AppointmentsConflictGuard::apply(
+                        $this->conflictReview, $this->conflictFiles, (string) $parent->getParent()->getPath('source')
+                    );
                     AppointmentsConflictGuard::journal($this->conflictState(), $this->conflictReview);
                 } catch (\RuntimeException | \JsonException $error) {
                     $this->reportConflictError($error);
@@ -390,6 +392,10 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->conflictReview = [];
 
         try {
+            if (!method_exists(AppointmentsConflictGuard::class, 'assertFreshSource')) {
+                throw new \RuntimeException('An older Appointments recovery runtime is loaded. Retry Appointments separately.');
+            }
+            AppointmentsConflictGuard::assertFreshSource($source);
             $manifestFile = (string) $parent->getParent()->getPath('manifest');
             $files = Destinations::merge(
                 Destinations::files($manifest, $source, $manifestFile),

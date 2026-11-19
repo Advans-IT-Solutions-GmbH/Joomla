@@ -196,7 +196,10 @@ shared installer plan does not override this protection.
    each file. Installer metadata, shared sources, removals and other files that cannot safely
    use substitute copy inputs do not offer **Keep local**. Accept the release operation only
    after reviewing the backup and impact; otherwise the update stays paused.
-3. Retry the same update. A changed candidate or destination invalidates the plan. Kept files
+3. Retry by uploading the same unmodified release ZIP, which Joomla extracts afresh. An installation
+   directory used to stage **Keep local** choices cannot be reused, even after an interrupted
+   attempt: its copy inputs contain local bytes, not pristine release files.
+   A changed candidate or destination invalidates the plan. Kept files
    still belong to the Joomla manifest but are not recorded as release bytes; a future update
    may ask about them again. Keeping old code can be incompatible with the new release.
 4. The companion shows verified backups from the last reviewed installation attempt. For eligible

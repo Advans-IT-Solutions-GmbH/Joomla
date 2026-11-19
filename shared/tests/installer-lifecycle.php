@@ -441,6 +441,8 @@ namespace {
 
         $recovery = \Advans\Installer\AppointmentsConflict\V1\Guard::class;
         $reviewState = $appointmentState . '/review-tests';
+        $reviewSource = $appointmentSource . '/review-staging';
+        mkdir($reviewSource, 0700, true);
         $reviewFiles = [];
         foreach ([
             JPATH_ADMINISTRATOR . '/components/com_appointments/src/recovery.php',
@@ -451,7 +453,7 @@ namespace {
             if (!is_dir(dirname($path))) {
                 mkdir(dirname($path), 0700, true);
             }
-            $candidate = $appointmentSource . '/review-' . $i . '.php';
+            $candidate = $reviewSource . '/review-' . $i . '.php';
             file_put_contents($path, 'unknown recovery ' . $i);
             file_put_contents($candidate, 'release recovery ' . $i);
             $reviewFiles[\Advans\Installer\V2\FileGuard::normalize($path)] = $candidate;
@@ -479,14 +481,17 @@ namespace {
         $refused(static fn() => $recovery::decide($reviewState, $review['id'], '../configuration.php', 'replace'));
         $refused(static fn() => $recovery::decide($reviewState, $review['id'], $file, 'approve'));
         $refused(static fn() => $recovery::decide($reviewState, $review['id'], array_key_first($metadata), 'keep'));
-        $refused(static fn() => $recovery::apply($review, $reviewFiles));
+        $refused(static fn() => $recovery::apply($review, $reviewFiles, $reviewSource));
         $assert($recovery::current($reviewState)['choices'] === [],
             'Refused requests must not save any choice.');
         foreach ($review['rows'] as $rowId => $row) {
             $recovery::decide($reviewState, $review['id'], $rowId, $rowId === $file ? 'keep' : 'replace');
         }
         $approved = $recovery::current($reviewState);
-        $recovery::apply($approved, $reviewFiles);
+        $releaseHashes = \Advans\Installer\V2\FileGuard::compare($reviewFiles)['incoming'];
+        $recovery::apply($approved, $reviewFiles, $reviewSource);
+        $refused(static fn() => $recovery::assertFreshSource($reviewSource));
+        $refused(static fn() => $recovery::apply($approved, $reviewFiles, $reviewSource));
         foreach ($approved['rows'] as $rowId => $row) {
             $expected = $rowId === $file ? $row['existing'] : $row['incoming'];
             $assert(hash_file('sha256', $reviewFiles[$row['destination']]) === $expected,
@@ -495,6 +500,10 @@ namespace {
         }
         $recovery::journal($reviewState, $approved);
         $recovery::verifyInstalled($approved);
+        \Advans\Installer\V2\Knowledge::record($reviewState . '/installed.php', 'fixture', $releaseHashes);
+        $keptRelative = \Advans\Installer\V2\Knowledge::relative($approved['rows'][$file]['destination']);
+        $assert(!isset(\Advans\Installer\V2\State::read($reviewState . '/installed.php')['files'][$keptRelative]),
+            'Kept local bytes must not enter the release ledger, and their staged source must not be reusable.');
         $stagingBefore = glob(realpath(sys_get_temp_dir()) . '/appointments-*') ?: [];
         $restoreId = array_key_first(array_diff_key($eligible, [$file => true]));
         $restoreRow = $approved['rows'][$restoreId];
@@ -651,6 +660,12 @@ namespace {
         rmdir($moduleRoot . '/src/obsolete');
 
         $appointmentInstaller = new \Com_appointmentsInstallerScript();
+        copy($reviewSource . '/.advans-recovery-staged.php', $appointmentSource . '/.advans-recovery-staged.php');
+        $app->messages = [];
+        $assert($appointmentInstaller->preflight('update', $appointmentParent) === false
+            && str_contains($messageText(), 'COM_APPOINTMENTS_INSTALL_CONFLICT_ERROR'),
+            'The real installer must reject a reused staging directory before the shared installer can trust its local bytes.');
+        unlink($appointmentSource . '/.advans-recovery-staged.php');
         $app->messages = [];
         $assert($appointmentInstaller->preflight('update', $appointmentParent) === false,
             'The Appointments installer must stop before Joomla copies files.');

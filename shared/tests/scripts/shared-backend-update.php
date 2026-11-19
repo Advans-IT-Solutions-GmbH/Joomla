@@ -468,6 +468,23 @@ foreach ($scenarios as $scenario) {
                     && !isset($record['files']['plugins/task/appointments/src/Extension/Appointments.php'])
                     && !isset($record['files']['plugins/task/appointments/src/extension/appointments.php'])
                     && (string) simplexml_load_file($installRoot . '/appointments.xml')->version === $version);
+                $reused = sys_get_temp_dir() . '/appointments-reused-' . bin2hex(random_bytes(8)) . '.zip';
+                copy($package, $reused);
+                $zip = new ZipArchive();
+                $zip->open($reused);
+                $zip->addFromString('plugins/task/appointments/src/Extension/Appointments.php', $latePlugin);
+                $zip->addFromString('.advans-recovery-staged.php', '<?php defined("_JEXEC") or die; return [];');
+                $zip->close();
+                $ledgerBefore = file_get_contents($state . '/installed.php');
+                try {
+                    $reusedResult = bu_update($browser, $reused, sh_bump_version($version));
+                    bu_check('reused Keep staging cannot promote local bytes into the release ledger',
+                        !$reusedResult['updated'] && file_get_contents($pluginFile) === $latePlugin
+                        && file_get_contents($state . '/installed.php') === $ledgerBefore
+                        && bu_installed_version() === $version, bu_text($reusedResult));
+                } finally {
+                    unlink($reused);
+                }
                 $releaseBytes = (string) file_get_contents($modifyFile);
                 $later = $releaseBytes . "\n// Written after the update\n";
                 file_put_contents($modifyFile, $later);

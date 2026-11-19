@@ -20,6 +20,15 @@ use Advans\Installer\V2\State;
 final class Guard
 {
     public const REVIEW = 'recovery/review.php';
+    private const STAGED = '.advans-recovery-staged.php';
+
+    public static function assertFreshSource(string $source): void
+    {
+        $marker = $source . '/' . self::STAGED;
+        if (file_exists($marker) || is_link($marker)) {
+            throw new \RuntimeException('This installation directory contains staged local bytes. Upload a fresh release ZIP.');
+        }
+    }
 
     /**
      * @param array<string, string> $files Destination to staged source.
@@ -129,8 +138,13 @@ final class Guard
     }
 
     /** Stage only package inputs. Keep the unmodified hashes in the caller's installer ledger. */
-    public static function apply(array $review, array $files): void
+    public static function apply(array $review, array $files, string $sourceRoot = ''): void
     {
+        if ($sourceRoot === '') {
+            throw new \RuntimeException('A fresh installation source directory is required.');
+        }
+        self::assertFreshSource($sourceRoot);
+        $marked = false;
         $sources = array_combine(array_map([FileGuard::class, 'normalize'], array_keys($files)), array_values($files));
         foreach ($review['rows'] as $id => $row) {
             $source = $sources[$row['destination']] ?? '';
@@ -142,6 +156,10 @@ final class Guard
             }
             $bytes = self::backupBytes($row);
             if ($choice === 'keep') {
+                if (!$marked) {
+                    State::write($sourceRoot . '/' . self::STAGED, ['review' => $review['id']]);
+                    $marked = true;
+                }
                 if (!self::canKeep($row['destination'], $source, $files) || is_link($source)
                     || file_put_contents($source, $bytes, LOCK_EX) !== strlen($bytes)
                     || hash_file('sha256', $source) !== $row['existing']) {
