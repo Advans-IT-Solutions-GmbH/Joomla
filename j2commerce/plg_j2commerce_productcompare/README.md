@@ -236,6 +236,12 @@ The plugin uses `Joomla\CMS\Layout\FileLayout` with the following resolution ord
 
 1. `templates/{your-template}/html/plg_j2commerce_productcompare/{layout}.php`
 2. `plugins/{registered-group}/productcompare/tmpl/{layout}.php` ← plugin default (`j2commerce` on Joomla 6, `j2store` for the Joomla 5 mirror). The plugin does not search the other group.
+3. `templates/{your-template}/html/layouts/{active-component}/{layout}.php`, then the same path in the parent template if inherited
+4. `components/{active-component}/layouts/{layout}.php`
+5. `templates/{your-template}/html/layouts/{layout}.php`, then the same path in the parent template if inherited
+6. `layouts/{layout}.php` in the Joomla root
+
+Paths 3–6 are Joomla's standard lower-priority fallbacks if neither plugin-specific path contains the layout. Component-specific paths apply only when Joomla resolves an active component.
 
 ### Available layouts
 
