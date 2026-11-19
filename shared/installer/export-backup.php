@@ -25,6 +25,9 @@ $created = false;
 try {
     $bytes = FileGuard::restoreBytes($argv[2], $argv[3], $argv[4]);
     $output = FileGuard::normalize($argv[5]);
+    if ($output === FileGuard::normalize($argv[3])) {
+        throw new RuntimeException('Export must use a different path from the installed destination.');
+    }
     FileGuard::compare([$output => $argv[2]]);
     $previousMask = umask(0077);
     try {

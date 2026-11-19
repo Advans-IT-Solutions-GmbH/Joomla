@@ -1069,8 +1069,31 @@ class StructureTest
                 return $result && $result->num_rows === 1;
             };
             $stats = static fn (): bool => $exists($statsTable) && $exists($totalsTable);
+            $fixtureDirectory = sys_get_temp_dir() . '/appointments-legacy-templates-' . bin2hex(random_bytes(6));
+            $legacyPackage = $fixtureDirectory . '/extension.zip';
 
             try {
+                if (!mkdir($fixtureDirectory, 0700) || !copy($package, $legacyPackage)) {
+                    throw new \RuntimeException('Cannot prepare the legacy-template package fixture.');
+                }
+                $legacyZip = new \ZipArchive();
+                if ($legacyZip->open($legacyPackage) !== true) {
+                    throw new \RuntimeException('Cannot open the legacy-template package fixture.');
+                }
+                foreach ($saved as $tag => $ini) {
+                    if (!$legacyZip->addFromString('administrator/language/' . $tag . '/com_appointments.ini', $old($ini))) {
+                        throw new \RuntimeException('Cannot stage the legacy-template language fixture.');
+                    }
+                }
+                if (!$legacyZip->close()) {
+                    throw new \RuntimeException('Cannot save the legacy-template package fixture.');
+                }
+                // Install the simulated older bytes normally so their provenance is recorded.
+                [$legacyCode, $legacyOutput] = sh_cli_install_checked(JOOMLA_ROOT, $legacyPackage);
+                if ($legacyCode !== 0) {
+                    echo "    legacy template fixture: {$legacyOutput}\n";
+                    return false;
+                }
                 $this->db->query("ALTER TABLE {$table} DROP COLUMN cancelled_version_utc");
                 $this->db->query("ALTER TABLE {$fields} DROP COLUMN max_length");
                 $this->db->query("ALTER TABLE {$table} DROP COLUMN attribution");
@@ -1081,9 +1104,6 @@ class StructureTest
                     return false;
                 }
 
-                foreach ($saved as $tag => $ini) {
-                    file_put_contents($copy($tag), $old($ini));
-                }
                 $oldDe = str_replace('\n', "\n", $old(str_replace("\n", '\n', $rows['de-DE'])));
                 $this->db->query("UPDATE {$templates} SET body='" . $this->db->real_escape_string($oldDe) . "' WHERE eventtype_id=0 AND purpose='host_notice' AND language='de-DE'");
                 $this->db->query("UPDATE {$templates} SET body='Edited by the operator' WHERE eventtype_id=0 AND purpose='host_notice' AND language='en-GB'");
@@ -1110,6 +1130,12 @@ class StructureTest
                     && str_contains($refreshed, '{attribution}') && $origin() && $stats()
                     && $refreshed === $rows['de-DE'] && $kept === 'Edited by the operator';
             } finally {
+                if (is_file($legacyPackage)) {
+                    unlink($legacyPackage);
+                }
+                if (is_dir($fixtureDirectory)) {
+                    rmdir($fixtureDirectory);
+                }
                 if ($column() === null) {
                     $this->db->query("ALTER TABLE {$table} ADD COLUMN cancelled_version_utc DATETIME DEFAULT NULL AFTER cancel_reason");
                 }

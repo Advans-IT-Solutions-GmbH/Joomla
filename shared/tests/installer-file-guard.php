@@ -109,6 +109,13 @@ try {
         'Export must reject a backup that does not match the reviewed hash.');
     expect($export($conflicts[0]['existing'], $destination) !== 0 && file_get_contents($destination) === $existingBytes,
         'Export must never overwrite the live destination.');
+    unlink($destination);
+    expect($export($conflicts[0]['existing'], $destination) !== 0 && !file_exists($destination),
+        'Export must not recreate a missing installed destination.');
+    $destinationAlias = dirname($destination) . DIRECTORY_SEPARATOR . '.' . DIRECTORY_SEPARATOR . basename($destination);
+    expect($export($conflicts[0]['existing'], $destinationAlias) !== 0 && !file_exists($destination),
+        'Export must reject a normalized alias of a missing installed destination.');
+    file_put_contents($destination, $existingBytes);
     $passed++;
 
     expectRuntimeException(
