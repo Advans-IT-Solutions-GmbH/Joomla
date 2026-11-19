@@ -496,9 +496,11 @@ namespace {
         && $main->searches === ['contact_email', 'contact_phone'] && $main->searchModes === ['exact_value', 'exact_value']
         && str_contains($noteOf(41), 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH: COM_APPOINTMENTS_CLOSE_NOTE_MATCH_PHONE')
         && str_contains($noteOf(41), 'COM_APPOINTMENTS_CLOSE_NOTE_EMAIL: private-address@example.test')
-        && str_contains($noteOf(41), 'COM_APPOINTMENTS_CLOSE_NOTE_PHONE: +4100000041'),
+        && str_contains($noteOf(41), 'COM_APPOINTMENTS_CLOSE_NOTE_PHONE: 0041 000 000 41'),
         'formatted invitee input searches the documented canonical Close phone field without changing the existing contact');
-    $check($main->contacts['cont_phone']['emails'] === [['email' => 'office@phone.example.test']] && $main->objects['lead_phone'] === ['name' => 'Phone Company AG'],
+    $check($main->contacts['cont_phone']['emails'] === [['email' => 'office@phone.example.test']]
+        && $main->contacts['cont_phone']['phones'] === [['phone' => '+4100000041', 'phone_formatted' => 'display +4100000041']]
+        && $main->objects['lead_phone'] === ['name' => 'Phone Company AG'],
         'the lead and contact found by telephone are not changed');
 
     // An e-mail match wins over a telephone match of another contact.
