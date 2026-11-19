@@ -206,7 +206,7 @@ final class Client
         }
         $named = $this->search(['type' => 'field_condition',
             'field' => ['type' => 'regular_field', 'object_type' => 'contact', 'field_name' => 'name'],
-            'condition' => ['type' => 'text', 'mode' => 'exact_value', 'value' => trim($name)]], 'name',
+            'condition' => ['type' => 'text', 'mode' => 'full_words', 'value' => trim($name)]], 'name',
             static fn (array $contact): bool => is_string($contact['name'] ?? null) && self::comparable($contact['name']) === self::comparable($name),
             self::NAME_PAGE, self::NAME_LIMIT);
         $companies = [];
