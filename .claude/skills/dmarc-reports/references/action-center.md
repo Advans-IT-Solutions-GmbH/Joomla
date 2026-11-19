@@ -26,8 +26,8 @@ are positional and fed into the matching language key by `ActionPresenter::title
 | `partial_enforcement` | policy | At `p=reject` but `pct<100`, so only that share of mail is enforced — not full enforcement |
 | `partial_quarantine` | policy | At `p=quarantine` but `pct<100`, so quarantine is only partly exercised — raise `pct` to 100 before advancing or calling quarantine the reached target |
 | `would_be_rejected` | policy | Share of mail that would be blocked today under `p=reject` (sev 3 if ≥2%) |
-| `align_source` | alignment | An unaligned sender (IP) — fix SPF/DKIM before tightening (sev by share) |
-| `new_source` | source | A sending IP not seen before whose current-window mail partly failed DMARC — review it. A new source whose mail all passes (forwarding with the DKIM signature intact) is already authenticated and is not listed; a bundle without the `fail` figure is still flagged |
+| `spf_only_source` | source | A current-window source with mail that passed DMARC only through SPF (no aligned DKIM), sev 3, params `[ip, host, spf_only, dkim, total]` |
+| `align_source` | alignment | A current-window source with failing mail that was still delivered (disposition `none`), sev 1, params `[ip, host, delivered, share]` |
 | `pass_rate_drop` | alignment | Aligned-pass rate fell vs the previous period |
 | `dns_*` | dns | From `DnsDiagnostics` — missing/broken SPF or DMARC record (see below) |
 
@@ -52,10 +52,38 @@ organizational parent (`policy_domain` is a parent of the monitored name), the s
 Both the single-domain (`latestPolicy()`) and bulk dashboard (`latestPolicyAll()`) paths apply this
 so a subdomain already covered by `sp=reject` is not told to start its rollout from `none`.
 
-`align_source` is driven by `Metrics::unalignedSources()`, which queries failing senders
-independently of the display-oriented `topSources()` top-N list (`GROUP BY source_ip HAVING
-SUM(fail) > 0 ORDER BY fail DESC`). A heavy failing sender ranked below the top 20 by total volume
-therefore still reaches the Action Center and earns an alignment recommendation.
+## Source classification
+
+`SourceClassifier` judges every sending IP itself from the stored `dkim_aligned` / `spf_aligned`
+(the receivers' `policy_evaluated` results, which already apply `adkim`/`aspf`) and `disposition`:
+`dkim` (aligned DKIM, confirmed automatically, no item), `spf_only` (passed only through SPF, act
+now), `rejected` (failed and quarantined/rejected, statistics only) and `unauthenticated` (failed
+and delivered, informational). Mixed records take the most urgent class (spf_only >
+unauthenticated > dkim > rejected). SPF alone is never trusted: shared provider gateways included
+in SPF pass for every customer of the provider. `SourceClassifier::current()` judges the current
+window when the source sent mail there, otherwise its lifetime.
+
+`Metrics::flaggedSources()` / `flaggedSourcesAll()` (detail and dashboard paths, identical
+results) return only current-window sources with SPF-only or delivered failing mail, ranked by
+SPF-only then delivered failing volume, top 20. `Metrics::sourceRows()` feeds the domain-view
+table (lifetime figures, `w_`-prefixed window figures, `last_seen`, `class`). The table lists the
+top 20 by volume plus every flagged source, so each item can link to its row
+(`ActionPresenter::sourceLink()`, anchor `SourceClassifier::anchor()`).
+
+Host names: `SourceHostNames` shows only forward-confirmed PTR names, caches them in Joomla's cache
+(`JoomlaHostNameStore`, 7 days confirmed / 1 day otherwise), limits new lookups per call (10) and
+checks a shared elapsed-time deadline. `SystemReverseDnsResolver` adds a one-second alarm where
+POSIX `pcntl` controls are available; platforms without `pcntl` cannot guarantee a hard in-flight
+timeout. It never runs during ingestion. The detail view looks names up only with `dns_diagnostics` on,
+the dashboard reads the cache only. Names never influence the classification.
+Dashboard/all-domain and detail metrics return every flagged source in the current reporting
+window. Incomplete shared-deadline DNS outcomes are not cached, so later
+page views can retry them.
+
+`new_source` is retired (no longer generated). `ActionStatus::resolveConfirmedNewSources()` closes
+stored `new_source:*` rows (status open/snoozed) whose source is now DKIM-confirmed with status
+`auto_done` and `modified_by = 0`. `autoResolved()` lists them among the handled items. Ignored rows
+stay.
 
 ## DNS diagnostics
 
@@ -75,18 +103,6 @@ a whole number 0–100 — is reported as invalid (`dns_dmarc_invalid`) rather t
 a working policy. The version token is matched on a word boundary: `v=DMARC1` / `v=spf1` must end
 at the prefix or be followed by a separator, so a lookalike such as `v=DMARC10` or `v=spf10` is not
 mistaken for a valid version and the record is treated as missing.
-
-## New-source detection
-
-`Metrics::newSources()` flags sending IPs that appear in the **current reporting window** (every
-report whose range begins in the latest rolling window) but never in any earlier report. Detection
-spans the whole window rather than the single newest report id, because a domain commonly receives
-several overlapping reports from different organisations for the same window; a source first seen in
-a contemporaneous report from another reporter would otherwise be missed.
-
-Each new source carries its failing volume (`fail`). `newSources()` and `newSourcesAll()` both rank failing
-mail first, then volume, then address, so the top 10 is the same in the drill-down and on the dashboard and a
-failing new source is never crowded out by aligned forwarders.
 
 ## Help coverage
 

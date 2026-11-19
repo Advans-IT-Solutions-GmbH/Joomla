@@ -10,6 +10,7 @@
 namespace Advans\Component\DmarcReports\Administrator\Helper;
 
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
 
@@ -42,6 +43,7 @@ final class ActionPresenter
             'at_target'             => Text::_('COM_DMARCREPORTS_ACTION_AT_TARGET_TITLE'),
             'would_be_rejected'     => Text::_('COM_DMARCREPORTS_ACTION_WOULD_BE_REJECTED_TITLE'),
             'align_source'          => Text::_('COM_DMARCREPORTS_ACTION_ALIGN_SOURCE_TITLE'),
+            'spf_only_source'       => Text::_('COM_DMARCREPORTS_ACTION_SPF_ONLY_SOURCE_TITLE'),
             'new_source'            => Text::_('COM_DMARCREPORTS_ACTION_NEW_SOURCE_TITLE'),
             'pass_rate_drop'        => Text::_('COM_DMARCREPORTS_ACTION_PASS_RATE_DROP_TITLE'),
             'dns_dmarc_missing'     => Text::_('COM_DMARCREPORTS_ACTION_DNS_DMARC_MISSING_TITLE'),
@@ -89,8 +91,9 @@ final class ActionPresenter
             'partial_quarantine'    => Text::sprintf('COM_DMARCREPORTS_ACTION_PARTIAL_QUARANTINE_TEXT', ...self::pad($params, 2)),
             'at_target'             => Text::sprintf('COM_DMARCREPORTS_ACTION_AT_TARGET_TEXT', ...self::pad($params, 2)),
             'would_be_rejected'     => Text::sprintf('COM_DMARCREPORTS_ACTION_WOULD_BE_REJECTED_TEXT', ...self::pad($params, 2)),
-            'align_source'          => Text::sprintf('COM_DMARCREPORTS_ACTION_ALIGN_SOURCE_TEXT', ...self::pad($params, 3)),
-            'new_source'            => Text::sprintf('COM_DMARCREPORTS_ACTION_NEW_SOURCE_TEXT', ...self::pad($params, 2)),
+            'align_source'          => Text::sprintf('COM_DMARCREPORTS_ACTION_ALIGN_SOURCE_TEXT', ...self::withHost(self::pad($params, 4))),
+            'spf_only_source'       => Text::sprintf('COM_DMARCREPORTS_ACTION_SPF_ONLY_SOURCE_TEXT', ...self::withHost(self::pad($params, 5))),
+            'new_source'            => Text::sprintf('COM_DMARCREPORTS_ACTION_NEW_SOURCE_TEXT', ...self::pad($params, 1)),
             'pass_rate_drop'        => Text::sprintf('COM_DMARCREPORTS_ACTION_PASS_RATE_DROP_TEXT', ...self::pad($params, 2)),
             'dns_dmarc_missing'     => Text::sprintf('COM_DMARCREPORTS_ACTION_DNS_DMARC_MISSING_TEXT', ...self::pad($params, 1)),
             'dns_dmarc_subdomain_check' => Text::sprintf('COM_DMARCREPORTS_ACTION_DNS_DMARC_SUBDOMAIN_CHECK_TEXT', ...self::pad($params, 1)),
@@ -118,6 +121,64 @@ final class ActionPresenter
         };
     }
 
+    public static function sourceEvidence(array $item): string
+    {
+        $evidence = (array) ($item['evidence'] ?? []);
+
+        if ($evidence === []) {
+            return '';
+        }
+
+        $esc = static fn (mixed $value): string => htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+        $start = (int) ($evidence['window_start'] ?? 0);
+        $end = (int) ($evidence['window_end'] ?? 0);
+        $window = $start > 0 && $end > 0
+            ? gmdate('Y-m-d H:i:s', $start) . ' UTC - ' . gmdate('Y-m-d H:i:s', $end) . ' UTC'
+            : Text::_('COM_DMARCREPORTS_EVIDENCE_WINDOW_UNKNOWN');
+        if (!empty($evidence['window_fallback'])) {
+            $window .= ' (' . Text::_('COM_DMARCREPORTS_EVIDENCE_WINDOW_HISTORY_FALLBACK') . ')';
+        }
+        $host = (string) ($evidence['ptr_host'] ?? '');
+        $confidence = (string) ($evidence['reverse_dns_confidence'] ?? 'not_forward_confirmed');
+        $policyContext = !empty($evidence['policy_context_mixed'])
+            ? Text::sprintf('COM_DMARCREPORTS_EVIDENCE_POLICY_CONTEXT_MIXED', (string) ($evidence['domain'] ?? ''))
+            : Text::_('COM_DMARCREPORTS_EVIDENCE_DOMAIN') . ': ' . (string) ($evidence['domain'] ?? '') . '; '
+                . Text::_('COM_DMARCREPORTS_EVIDENCE_POLICY_DOMAIN') . ': ' . (string) ($evidence['policy_domain'] ?? '') . '; '
+                . Text::_('COM_DMARCREPORTS_EVIDENCE_HEADER_FROM') . ': ' . (string) ($evidence['header_from'] ?? '') . '; adkim='
+                . (string) ($evidence['adkim'] ?? '') . '; aspf=' . (string) ($evidence['aspf'] ?? '');
+
+        $rationale = match ((string) ($evidence['assessment'] ?? '')) {
+            'legitimate_dkim' => Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT_DKIM_LEGITIMATE'),
+            'spf_only_unresolved' => Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT_SPF_ONLY_UNRESOLVED'),
+            'rejected' => Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT_REJECTED'),
+            default => Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT_UNRESOLVED'),
+        };
+
+        $dispositions = (int) ($evidence['disposition_none'] ?? 0) . ' / '
+            . (int) ($evidence['disposition_quarantine'] ?? 0) . ' / '
+            . (int) ($evidence['disposition_reject'] ?? 0);
+
+        return '<dl class="com-dmarcreports-source-evidence small mb-0 mt-2">'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_SOURCE_IP') . '</dt><dd>' . $esc($evidence['source_ip'] ?? '') . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_PTR') . '</dt><dd>' . $esc($host !== '' ? $host : Text::_('COM_DMARCREPORTS_EVIDENCE_NOT_AVAILABLE'))
+            . ' (' . $esc($confidence === 'forward_confirmed'
+                ? Text::_('COM_DMARCREPORTS_EVIDENCE_FORWARD_CONFIRMED')
+                : Text::_('COM_DMARCREPORTS_EVIDENCE_NOT_FORWARD_CONFIRMED')) . ')</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_DKIM') . '</dt><dd>'
+            . Text::_('COM_DMARCREPORTS_EVIDENCE_PASS_ALIGNED') . ': ' . (int) ($evidence['dkim_pass_aligned'] ?? 0)
+            . '; ' . Text::_('COM_DMARCREPORTS_EVIDENCE_RAW_UNAVAILABLE') . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_SPF') . '</dt><dd>'
+            . Text::_('COM_DMARCREPORTS_EVIDENCE_PASS_ALIGNED') . ': ' . (int) ($evidence['spf_pass_aligned'] ?? 0)
+            . '; ' . Text::_('COM_DMARCREPORTS_EVIDENCE_RAW_UNAVAILABLE') . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_DISPOSITION') . '</dt><dd>' . $esc($dispositions) . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_MESSAGE_COUNT') . '</dt><dd>' . (int) ($evidence['message_count'] ?? 0) . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_WINDOW') . '</dt><dd>' . $esc($window) . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_DOMAIN_CONTEXT') . '</dt><dd>'
+            . $esc($policyContext) . '</dd>'
+            . '<dt>' . Text::_('COM_DMARCREPORTS_EVIDENCE_ASSESSMENT') . '</dt><dd>' . $esc($rationale) . '</dd>'
+            . '</dl>';
+    }
+
     public static function severityLabel(int $severity): string
     {
         return match ($severity) {
@@ -136,6 +197,75 @@ final class ActionPresenter
             1       => 'info',
             default => 'success',
         };
+    }
+
+    /**
+     * The address of the domain view row of the sending source an item is
+     * about, or '' when the item is not about one source. Lets the administrator
+     * jump from an Action Center item straight to the source's figures.
+     *
+     * @param   array<string, mixed>  $item
+     */
+    public static function sourceLink(array $item): string
+    {
+        $anchor   = self::sourceAnchor($item);
+        $domainId = (int) ($item['domain_id'] ?? 0);
+
+        if ($anchor === '' || $domainId <= 0) {
+            return '';
+        }
+
+        return Route::_('index.php?option=com_dmarcreports&view=detail&domain_id=' . $domainId, false) . '#' . $anchor;
+    }
+
+    /**
+     * The id of the domain view row of the sending source an item is about, or
+     * '' when the item is not about one source.
+     *
+     * @param   array<string, mixed>  $item
+     */
+    public static function sourceAnchor(array $item): string
+    {
+        $code   = (string) ($item['code'] ?? '');
+        $params = array_values((array) ($item['params'] ?? []));
+        $ip     = (string) ($params[0] ?? '');
+
+        if (!\in_array($code, ['spf_only_source', 'align_source'], true) || $ip === '') {
+            return '';
+        }
+
+        return SourceClassifier::anchor($ip);
+    }
+
+    /**
+     * The label of a source class badge in the domain view.
+     */
+    public static function sourceClassLabel(string $class): string
+    {
+        return match ($class) {
+            SourceClassifier::DKIM            => Text::_('COM_DMARCREPORTS_SOURCE_CLASS_DKIM'),
+            SourceClassifier::SPF_ONLY        => Text::_('COM_DMARCREPORTS_SOURCE_CLASS_SPF_ONLY'),
+            SourceClassifier::UNAUTHENTICATED => Text::_('COM_DMARCREPORTS_SOURCE_CLASS_UNAUTHENTICATED'),
+            SourceClassifier::REJECTED        => Text::_('COM_DMARCREPORTS_SOURCE_CLASS_REJECTED'),
+            default                           => '',
+        };
+    }
+
+    /**
+     * Replace the host name parameter (position 2) with a readable placeholder
+     * when the source has no forward-confirmed name.
+     *
+     * @param   array<int, mixed>  $params
+     *
+     * @return  array<int, mixed>
+     */
+    private static function withHost(array $params): array
+    {
+        if (trim((string) ($params[1] ?? '')) === '') {
+            $params[1] = Text::_('COM_DMARCREPORTS_SOURCE_HOST_UNKNOWN');
+        }
+
+        return $params;
     }
 
     /**

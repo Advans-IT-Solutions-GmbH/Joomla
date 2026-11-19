@@ -73,6 +73,7 @@ namespace {
 
     $root = \dirname(__DIR__, 3) . '/administrator/components/com_dmarcreports';
 
+    require_once $root . '/src/Helper/SourceClassifier.php';
     require_once $root . '/src/Helper/ActionPresenter.php';
 
     \Joomla\CMS\Factory::$canEditState = ($argv[1] ?? '1') === '1';
@@ -100,11 +101,13 @@ namespace {
     // A short and a very long text: before the fix the length of the text decided
     // whether a button stayed on the first line or wrapped to the next one.
     $view->actions = [
-        $item('new_source', 2, ['192.0.2.1', 2], '192.0.2.1'),
+        $item('spf_only_source', 3, ['192.0.2.1', '', 2, 0, 2], '192.0.2.1'),
         $item('at_target', 0, [str_repeat('example.org ', 40), 'none']),
     ];
     $view->suppressed = [
-        array_merge($item('align_source', 2, ['192.0.2.2', 1, 1.0], '192.0.2.2'), ['status' => 'done']),
+        array_merge($item('align_source', 1, ['192.0.2.2', '', 1, 1.0], '192.0.2.2'), ['status' => 'done']),
+        // A stored "new source" item the software closed itself (source confirmed through DKIM).
+        array_merge($item('new_source', 0, ['192.0.2.3'], '192.0.2.3'), ['status' => 'auto_done']),
     ];
     $view->totals    = ['domains' => 1, 'total' => 3, 'pass_rate' => 100, 'reject_under_p' => 0];
     $view->summaries = [];
