@@ -318,8 +318,8 @@ class AutoCleanupTaskTest
                 $this->test('update creates a deleted required task again, once and switched on', count($created) === 1 && (int) $created[0]['state'] === 1);
                 $this->test('the recreated task takes over the retention period and fiscal year end of the plugin',
                     (int) ($params['retention_years'] ?? 0) === 7 && ($params['fiscal_year_end'] ?? '') === '06-30', json_encode($params));
-                $this->test('the recreated task preserves the privacy plugin cleanup opt-outs',
-                    (int) ($params['anonymize_orders'] ?? -1) === 0 && (int) ($params['delete_addresses'] ?? -1) === 0,
+                $this->test('the recreated task retains its own cleanup defaults, independent of removal-request options',
+                    (int) ($params['anonymize_orders'] ?? -1) === 1 && (int) ($params['delete_addresses'] ?? -1) === 1,
                     json_encode($params));
                 $this->test('update reports the recreated task', str_contains($plain, 'The installation created it and switched it on')
                     && str_contains($plain, 'Retention period: 7 years'), mb_substr($plain, -800));

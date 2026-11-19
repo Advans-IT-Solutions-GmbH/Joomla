@@ -99,7 +99,7 @@ Not removed:
 
 After every installation and update, the shared installer (`shared/installer/ScheduledTasks.php`) checks the task:
 
-- **Missing:** it creates the task through Joomla's Scheduler, switched on, every day at 02:15 UTC. The task inherits the stored `anonymize_orders` and `delete_addresses` choices, retention period and fiscal year end from this plugin; absent cleanup choices fall back to the task form's Yes defaults (default retention 10 years, `12-31`). The message after the installation names the task, its schedule and retention settings.
+- **Missing:** it creates the task through Joomla's Scheduler, switched on, every day at 02:15 UTC, with the task form's defaults (`anonymize_orders` and `delete_addresses` Yes) and the retention period and fiscal year end stored in this plugin (default 10 years, `12-31`). These task options are separate from the plugin's same-named settings, which apply to removal requests. The message after the installation names the task, its schedule and these settings.
 - **Present and switched on:** nothing is changed and nothing is duplicated.
 - **Switched off or trashed:** left as it is, because someone switched it off on purpose. The message after the installation and the system check say that anonymisation does not run and give the menu path to switch it on.
 - **Scheduler not started:** if the task plugin is switched off, or Joomla's Scheduler has no web trigger (System - Schedule Runner off, or neither Lazy Scheduler nor Web Cron on) and no task of this plugin ran in the last two days, the message says so; a server cron job (`php cli/joomla.php scheduler:run`) is then the only way the task runs.
