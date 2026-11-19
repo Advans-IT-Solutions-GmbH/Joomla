@@ -78,7 +78,7 @@ class RetainReleasePackageTest(unittest.TestCase):
         self.assertRegex(uses, r"^      uses: actions/upload-artifact@[0-9a-f]{40}(?: # .*)?$")
         self.assertEqual(
             "      with:\n"
-            "        name: ${{ inputs.artifact-name }}\n"
+            "        name: ${{ inputs.artifact-name }}-${{ github.run_attempt }}\n"
             "        path: ${{ inputs.package }}\n"
             "        if-no-files-found: error\n"
             "        retention-days: 3\n",
