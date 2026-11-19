@@ -203,12 +203,23 @@ jobs:
               print(f"::error::Update feed is invalid XML: {error}")
               sys.exit(1)
 
-          digests = [(node.text or "").strip() for node in root.iter("sha256")]
-          if not digests or any(re.fullmatch(r"[0-9a-f]{64}", digest) is None for digest in digests):
-              print("::error::Update feed must contain valid SHA-256 digests.")
+          updates = root.findall("update")
+          if not updates:
+              print("::error::Update feed contains no update entries.")
               sys.exit(1)
+          digests = []
+          for index, update in enumerate(updates, start=1):
+              entry_digests = update.findall("sha256")
+              if len(entry_digests) != 1:
+                  print(f"::error::Update entry {index} must contain exactly one SHA-256 digest.")
+                  sys.exit(1)
+              digest = (entry_digests[0].text or "").strip()
+              if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+                  print(f"::error::Update entry {index} contains an invalid SHA-256 digest.")
+                  sys.exit(1)
+              digests.append(digest)
           if len(set(digests)) != 1:
-              print("::error::Update feed contains conflicting SHA-256 digests.")
+              print("::error::Update entries contain conflicting SHA-256 digests.")
               sys.exit(1)
 
           digest = hashlib.sha256()
