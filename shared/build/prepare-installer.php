@@ -31,6 +31,28 @@ $copyTree = static function (string $source, string $target) use (&$copyTree): v
     }
 };
 
+$recovery = $stage . '/recovery';
+if (is_file($stage . '/appointments.xml') && is_file($recovery . '/appointmentsrecovery.xml')) {
+    $appointments = simplexml_load_file($stage . '/appointments.xml');
+    $companion = simplexml_load_file($recovery . '/appointmentsrecovery.xml');
+    if (!$appointments instanceof SimpleXMLElement || !$companion instanceof SimpleXMLElement
+        || (string) $appointments->version === '') {
+        throw new RuntimeException('Cannot determine the Appointments Recovery version.');
+    }
+    $companion->addChild('version', (string) $appointments->version);
+    if (!$companion->asXML($recovery . '/appointmentsrecovery.xml')) {
+        throw new RuntimeException('Cannot stage the Appointments Recovery manifest.');
+    }
+    if (!mkdir($recovery . '/support', 0755, true)) {
+        throw new RuntimeException('Cannot stage Appointments Recovery.');
+    }
+    foreach (['AppointmentsConflict.php', 'FileGuard.php', 'Knowledge.php', 'State.php'] as $name) {
+        if (!copy($shared . '/' . $name, $recovery . '/support/' . $name)) {
+            throw new RuntimeException('Cannot stage Appointments Recovery support.');
+        }
+    }
+}
+
 $stageManifest = static function (string $path) use ($shared, $copyTree, &$stageManifest): void {
     $xml = simplexml_load_file($path);
 

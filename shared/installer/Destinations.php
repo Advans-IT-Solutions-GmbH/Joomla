@@ -233,7 +233,7 @@ final class Destinations
         return $path;
     }
 
-    private static function removedDeclarations(array &$files, \SimpleXMLElement $manifest, string $source, string $installedManifest, string $root): void
+    public static function removedDeclarations(array &$files, \SimpleXMLElement $manifest, string $source, string $installedManifest, string $root): void
     {
         if (!is_file($installedManifest)) {
             return;
@@ -258,16 +258,24 @@ final class Destinations
             : [[$old->files, $manifest->files, $root]];
 
         foreach ($pairs as [$oldNodes, $newNodes, $target]) {
-            $retained = [];
+            $retainedFiles = [];
+            $retainedFolders = [];
 
             foreach ($newNodes->children() ?? [] as $node) {
-                $retained[] = (string) $node;
+                if ($node->getName() === 'folder') {
+                    $retainedFolders[] = self::relative((string) $node);
+                } else {
+                    $retainedFiles[] = self::relative((string) $node);
+                }
             }
 
             foreach ($oldNodes->children() ?? [] as $node) {
                 $name = self::relative((string) $node);
-
-                if (in_array($name, $retained, true)) {
+                $retained = $node->getName() === 'folder'
+                    ? in_array($name, $retainedFolders, true)
+                        || count(array_filter($retainedFiles, static fn(string $file): bool => str_starts_with($file, $name . '/'))) > 0
+                    : in_array($name, $retainedFiles, true) || in_array(dirname($name), $retainedFolders, true);
+                if ($retained) {
                     continue;
                 }
 

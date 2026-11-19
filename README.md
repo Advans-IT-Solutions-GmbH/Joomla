@@ -116,7 +116,7 @@ technical question:
 | Destination | Its current bytes | Decision |
 |---|---|---|
 | Own territory: the extension's folders, its media folder, its manifest storage, its language files by name | written or shipped by this extension (untouched) | replaced |
-| Own territory | changed on this site | backed up, then replaced or removed; listed in the report |
+| Own territory | not known from the record or catalog | normally backed up, then replaced or removed; listed in the report. Appointments instead stops before copying, as described below |
 | Foreign territory (other extensions, site templates) | per operation, see below | backed up first in every case |
 
 "Untouched" means the bytes equal the file this installer wrote during the last successful
@@ -127,7 +127,14 @@ vX.Y.Z`; the publish workflow deletes older tags, the release commits remain) wi
 build scripts, and hashing the built files, so the manifests and language files the build stamps
 match what sites installed. The CI of every extension proves this against the latest published
 release asset (`.github/scripts/verify-known-hashes.py`). An installation made before this
-mechanism has no record; the catalog covers it.
+mechanism has no record; the catalog can recognise its files when their hashes are present.
+
+Appointments additionally stops on unknown component, bundled-plugin and bundled-module files,
+including when the record or catalog is missing or incomplete. It displays each path and both hashes and saves a
+verified file backup. Unknown provenance is not proof of an edit. The Appointments Recovery
+companion records explicit decisions for the exact hashes and can restore eligible backups.
+Retrying or approving the shared installer plan does not override this stop. See
+[Update conflicts and recovery](com_appointments/README.md#update-conflicts-and-recovery).
 
 The installer changes files of other extensions only in these operations:
 
@@ -168,7 +175,8 @@ are stored in **`administrator/advans-installer-state/EXTENSION/`**, outside Joo
 cache and extension directories. Backup containers are non-executable PHP envelopes with the
 original bytes as base64, their hash and destination binding; opening one over HTTP discloses
 nothing. **Retention:** the next successful installation of the same extension removes backups
-that are older than 180 days and were not used again; half a year leaves room to notice a lost
+that are older than 180 days and were not used again; Appointments Recovery also protects backups
+referenced by its pending review or latest recovery attempt. Half a year leaves room to notice a lost
 change long after the update without letting backups pile up. Do not run concurrent installs.
 
 **Checksum.** Every `updates/update.xml` carries the `<sha256>` of its release asset, so Joomla

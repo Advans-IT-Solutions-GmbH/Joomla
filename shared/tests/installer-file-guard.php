@@ -82,6 +82,42 @@ try {
     FileGuard::verifyBackup($conflicts[0]['backup'], $destination, $conflicts[0]['existing']);
     $passed++;
 
+    $export = static function (string $hash, string $output) use ($conflicts, $destination): int {
+        $process = proc_open(
+            [PHP_BINARY, __DIR__ . '/../installer/export-backup.php', '--export',
+                $conflicts[0]['backup'], $destination, $hash, $output],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+        if (!is_resource($process)) {
+            throw new RuntimeException('Cannot start backup export.');
+        }
+        stream_get_contents($pipes[1]);
+        stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        return proc_close($process);
+    };
+    $exported = $base . DIRECTORY_SEPARATOR . 'exported.php';
+    expect($export($conflicts[0]['existing'], $exported) === 0 && file_get_contents($exported) === $existingBytes,
+        'The verified backup must export to a new file.');
+    expect($export($conflicts[0]['existing'], $exported) !== 0 && file_get_contents($exported) === $existingBytes,
+        'Export must not overwrite an existing output.');
+    $wrongHashOutput = $base . DIRECTORY_SEPARATOR . 'wrong-hash.php';
+    expect($export(str_repeat('0', 64), $wrongHashOutput) !== 0 && !file_exists($wrongHashOutput),
+        'Export must reject a backup that does not match the reviewed hash.');
+    expect($export($conflicts[0]['existing'], $destination) !== 0 && file_get_contents($destination) === $existingBytes,
+        'Export must never overwrite the live destination.');
+    unlink($destination);
+    expect($export($conflicts[0]['existing'], $destination) !== 0 && !file_exists($destination),
+        'Export must not recreate a missing installed destination.');
+    $destinationAlias = dirname($destination) . DIRECTORY_SEPARATOR . '.' . DIRECTORY_SEPARATOR . basename($destination);
+    expect($export($conflicts[0]['existing'], $destinationAlias) !== 0 && !file_exists($destination),
+        'Export must reject a normalized alias of a missing installed destination.');
+    file_put_contents($destination, $existingBytes);
+    $passed++;
+
     expectRuntimeException(
         static fn() => FileGuard::verifyBackup(
             $conflicts[0]['backup'],

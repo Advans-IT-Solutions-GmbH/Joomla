@@ -104,6 +104,7 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
             $approved = $this->approveRepeatedInstallation($state, $approved);
             $knowledge = Knowledge::load($source . '/' . Knowledge::CATALOG, $state . '/' . Knowledge::RECORD);
             $comparison = FileGuard::compare($files);
+            $reviewed = $this->reviewedOwnedFiles();
             $plan = Planner::plan(
                 $comparison['differing'],
                 $operations,
@@ -111,7 +112,7 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
                 fn(string $destination, string $existing, bool $known): string => $this->foreignDecision($destination, $existing, $known),
                 $knowledge,
                 $approved,
-                self::readHandoff($stateRoot)
+                $reviewed + self::readHandoff($stateRoot)
             );
 
             if ($plan['halts'] !== []) {
@@ -167,6 +168,17 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
         }
 
         return true;
+    }
+
+    /**
+     * Own writes separately reviewed and backed up by this installer script. Planner still
+     * requires both hashes to match, and the ledger still uses the original package hashes.
+     *
+     * @return array<string,array{existing:string,incoming:string}>
+     */
+    protected function reviewedOwnedFiles(): array
+    {
+        return [];
     }
 
     /**

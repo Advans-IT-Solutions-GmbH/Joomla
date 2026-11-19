@@ -163,6 +163,19 @@ namespace {
 
                 $assert(isset($files[str_replace('\\', '/', $installed . '/advansinstaller/SystemCheck.php')]), 'Shared check not installed for ' . (string) $manifest->name);
 
+                if (strtolower((string) $manifest->name) === 'com_appointments') {
+                    $assert(is_file($stage . '/advansinstaller/AppointmentsConflict.php')
+                        && is_file($stage . '/advansinstaller/export-backup.php'),
+                        'Appointments package must contain the preflight guard and backup exporter.');
+                    $assert(isset($files[str_replace('\\', '/', $installed . '/advansinstaller/export-backup.php')]),
+                        'Appointments backup exporter must also be installed.');
+                    $companion = simplexml_load_file($stage . '/recovery/appointmentsrecovery.xml');
+                    $assert($companion instanceof \SimpleXMLElement && (string) $companion->version === (string) $manifest->version
+                        && is_file($stage . '/recovery/support/AppointmentsConflict.php')
+                        && is_file($stage . '/recovery/LICENSE.txt'),
+                        'The standalone recovery package needs the matching manifest, support and license.');
+                }
+
                 if (strtolower((string) $manifest->name) === 'plg_j2commerce_productcompare') {
                     $mirror = str_replace('\\', '/', JPATH_PLUGINS . '/j2store/productcompare');
                     $assert(isset($files[$mirror . '/advansinstaller/SystemCheck.php']), 'Joomla 5 mirror is missing from the guarded destinations.');

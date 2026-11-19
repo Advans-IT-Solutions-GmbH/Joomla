@@ -34,6 +34,9 @@ final class BundledModuleGuard
                     continue;
                 }
                 $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($moduleSource) + 1));
+                if (str_starts_with($relative, '.advans-operations/')) {
+                    continue;
+                }
                 $files[$moduleTarget . '/' . $relative] = $file->getPathname();
             }
             foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {

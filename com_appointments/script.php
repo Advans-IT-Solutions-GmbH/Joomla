@@ -12,11 +12,22 @@ defined('_JEXEC') or die;
 require_once is_file(__DIR__ . '/advansinstaller/load.php')
     ? __DIR__ . '/advansinstaller/load.php'
     : dirname(__DIR__) . '/shared/installer/load.php';
+if (!class_exists(\Advans\Installer\AppointmentsConflict\V1\Guard::class, false)) {
+    require_once is_file(__DIR__ . '/advansinstaller/AppointmentsConflict.php')
+        ? __DIR__ . '/advansinstaller/AppointmentsConflict.php'
+        : dirname(__DIR__) . '/shared/installer/AppointmentsConflict.php';
+}
 
 use Joomla\CMS\Factory;
+use Advans\Installer\AppointmentsConflict\V1\Guard as AppointmentsConflictGuard;
+use Advans\Installer\V2\BackupFailure;
+use Advans\Installer\V2\Destinations;
 use Advans\Installer\V2\InstallerScript;
+use Advans\Installer\V2\Knowledge;
+use Advans\Installer\V2\SystemCheck;
 use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\Table\Asset;
 use Joomla\CMS\User\CurrentUserInterface;
 use Joomla\CMS\User\UserFactoryInterface;
@@ -171,7 +182,53 @@ class Com_appointmentsInstallerScript extends InstallerScript
      *
      * @return  bool
      */
+    private $conflictLock = null;
+    private array $conflictReview = [];
+    private array $conflictFiles = [];
+    private array $bundledSnapshots = [];
+    private const RECOVERY_OPTION = 'com_appointmentsrecovery';
+
     public function preflight($type, $parent)
+    {
+        $accepted = false;
+        try {
+            $accepted = $this->preflightAppointments($type, $parent);
+
+            return $accepted;
+        } finally {
+            if (!$accepted) {
+                $this->releaseConflictLock();
+            }
+        }
+    }
+
+    public function postflight($type, $parent)
+    {
+        try {
+            $result = parent::postflight($type, $parent);
+            if ($result !== false && in_array($type, ['install', 'update'], true)) {
+                try {
+                    AppointmentsConflictGuard::pruneBackups($this->conflictState(), self::BACKUP_RETENTION_DAYS * 86400);
+                } catch (\RuntimeException | \JsonException $error) {
+                    Log::add('Cannot apply recovery backup retention: ' . $error->getMessage(), Log::WARNING, 'advans-installer');
+                }
+            }
+
+            return $result;
+        } finally {
+            $this->releaseConflictLock();
+        }
+    }
+
+    private function releaseConflictLock(): void
+    {
+        if (is_resource($this->conflictLock)) {
+            fclose($this->conflictLock);
+            $this->conflictLock = null;
+        }
+    }
+
+    private function preflightAppointments($type, $parent): bool
     {
         if ($type === 'uninstall') {
             return $this->prepareUninstall();
@@ -180,8 +237,30 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $language = Factory::getApplication()->getLanguage();
         $language->load('com_appointments', JPATH_ADMINISTRATOR);
         $language->load('com_appointments', __DIR__ . '/administrator', null, true);
+        SystemCheck::loadLanguage();
+
+        if (in_array($type, ['install', 'update'], true)) {
+            try {
+                $this->conflictLock = AppointmentsConflictGuard::lock($this->conflictState());
+                $this->conflictReview = [];
+            } catch (\RuntimeException $error) {
+                $this->reportConflictError($error);
+
+                return false;
+            }
+        }
+
+        if (in_array($type, ['install', 'update'], true) && !$this->checkUnknownFiles($type, $parent)) {
+            return false;
+        }
 
         if (!parent::preflight($type, $parent)) {
+            return false;
+        }
+
+        $firstReview = $this->conflictReview['id'] ?? null;
+        if (in_array($type, ['install', 'update'], true) && (!$this->checkUnknownFiles($type, $parent)
+            || $firstReview !== ($this->conflictReview['id'] ?? null))) {
             return false;
         }
 
@@ -251,7 +330,145 @@ class Com_appointmentsInstallerScript extends InstallerScript
         // A conversion that failed stays marked as pending and is repeated by the next installation.
         $this->hasLegacyFeedTokens = $type !== 'uninstall' && ($this->feedTokenColumnsAreLegacy() || $this->feedTokenConversionPending());
 
+        if (in_array($type, ['install', 'update'], true)) {
+            if (!$this->checkUnknownFiles($type, $parent)
+                || $firstReview !== ($this->conflictReview['id'] ?? null)) {
+                return false;
+            }
+            if ($firstReview !== null) {
+                try {
+                    AppointmentsConflictGuard::apply(
+                        $this->conflictReview, $this->conflictFiles, (string) $parent->getParent()->getPath('source')
+                    );
+                    AppointmentsConflictGuard::journal($this->conflictState(), $this->conflictReview);
+                } catch (\RuntimeException | \JsonException $error) {
+                    $this->reportConflictError($error);
+
+                    return false;
+                }
+            }
+            try {
+                foreach ($parent->getManifest()->plugins->plugin as $entry) {
+                    $folder = (string) $entry['folder'];
+                    $plugin = AppointmentsConflictGuard::bundledFiles($parent->getParent()->getPath('source') . '/' . $folder, $this->conflictFiles);
+                    $this->bundledSnapshots[$folder] = $this->snapshotBundled($plugin);
+                }
+                foreach (self::BUNDLED_MODULES as $element) {
+                    $folder = 'modules/' . $element;
+                    $files = AppointmentsConflictGuard::bundledFiles($parent->getParent()->getPath('source') . '/' . $folder, $this->conflictFiles);
+                    $this->bundledSnapshots[$folder] = $this->snapshotBundled($files);
+                }
+            } catch (\RuntimeException $error) {
+                $this->reportConflictError($error);
+
+                return false;
+            }
+        }
+
         return true;
+    }
+
+    private function conflictState(): string
+    {
+        return JPATH_ADMINISTRATOR . '/advans-installer-state/com_appointments';
+    }
+
+    private function reportConflictError(\Throwable $error): void
+    {
+        Log::add($error->getMessage(), Log::ERROR, 'advans-installer');
+        Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_ERROR'), 'error');
+    }
+
+    protected function reviewedOwnedFiles(): array
+    {
+        return array_column($this->conflictReview['rows'] ?? [], null, 'destination');
+    }
+
+    private function checkUnknownFiles(string $type, object $parent): bool
+    {
+        $source = (string) $parent->getParent()->getPath('source');
+        $manifest = $parent->getManifest();
+        $state = $this->conflictState();
+        $this->conflictReview = [];
+
+        try {
+            if (!method_exists(AppointmentsConflictGuard::class, 'assertFreshSource')) {
+                throw new \RuntimeException('An older Appointments recovery runtime is loaded. Retry Appointments separately.');
+            }
+            AppointmentsConflictGuard::assertFreshSource($source);
+            $manifestFile = (string) $parent->getParent()->getPath('manifest');
+            $files = Destinations::merge(
+                Destinations::files($manifest, $source, $manifestFile),
+                $this->guardedFiles($type, $parent)
+            );
+            $this->conflictFiles = $files;
+            $owned = Destinations::owned($manifest, $source);
+            foreach (self::BUNDLED_MODULES as $element) {
+                $owned = Destinations::mergeOwned($owned, [
+                    'prefixes' => [JPATH_ADMINISTRATOR . '/modules/' . $element],
+                    'files' => [],
+                    'languages' => [$element],
+                ]);
+            }
+            $conflicts = AppointmentsConflictGuard::inspect(
+                $files, $owned,
+                Knowledge::load($source . '/' . Knowledge::CATALOG, $state . '/' . Knowledge::RECORD),
+                $state
+            );
+            $review = $conflicts === [] ? [] : AppointmentsConflictGuard::review(
+                $state, (string) $manifest->version, $conflicts, $files, (string) hash_file('sha256', $manifestFile)
+            );
+            $complete = $review !== [] && method_exists(InstallerScript::class, 'reviewedOwnedFiles');
+            foreach ($review['rows'] ?? [] as $id => $row) {
+                $complete = $complete && AppointmentsConflictGuard::validChoice($row, $review['choices'][$id] ?? null);
+            }
+            if ($complete) {
+                $this->conflictReview = $review;
+
+                return true;
+            }
+        } catch (BackupFailure $failure) {
+            Log::add($failure->getMessage(), Log::ERROR, 'advans-installer');
+            Factory::getApplication()->enqueueMessage(
+                Text::sprintf(
+                    'ADVANS_GUARD_BACKUP_FAILED',
+                    htmlspecialchars(Knowledge::relative($failure->destination), ENT_QUOTES, 'UTF-8'),
+                    htmlspecialchars(Knowledge::relative($state . '/recovery/backups'), ENT_QUOTES, 'UTF-8')
+                ),
+                'error'
+            );
+
+            return false;
+        } catch (\RuntimeException | \JsonException $error) {
+            $this->reportConflictError($error);
+
+            return false;
+        }
+
+        if ($conflicts === []) {
+            return true;
+        }
+
+        $escape = static fn(string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+        $items = '';
+
+        foreach ($conflicts as $conflict) {
+            $items .= '<li><code>' . $escape(Knowledge::relative($conflict['destination'])) . '</code><br>'
+                . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_EXISTING') . ': <code>' . $escape($conflict['existing'])
+                . '</code><br>' . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_INCOMING') . ': <code>'
+                . $escape($conflict['incoming']) . '</code><br>'
+                . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_BACKUP') . ': <code>'
+                . $escape(Knowledge::relative($conflict['backup'])) . '</code></li>';
+        }
+
+        Factory::getApplication()->enqueueMessage(
+            '<p><strong>' . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_TITLE') . '</strong></p><p>'
+            . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_EXPLANATION') . '</p><p><a href="index.php?option='
+            . self::RECOVERY_OPTION . '">' . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_REVIEW') . '</a></p><ul>' . $items . '</ul>',
+            'error'
+        );
+
+        return false;
     }
 
     protected function guardedFiles(string $type, object $parent): array
@@ -267,17 +484,37 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $source = $parent->getParent()->getPath('source');
-        require_once $source . '/administrator/components/com_appointments/src/Helper/BundledModuleGuard.php';
-        $files = array_replace($files,
-            \Advans\Component\Appointments\Administrator\Helper\BundledModuleGuard::destinations(
-                $source,
-                JPATH_ADMINISTRATOR,
-                self::BUNDLED_MODULES
-            ));
+        $files = Destinations::merge($files, $this->bundledModuleFiles($source, self::BUNDLED_MODULES));
 
         if ($type === 'install') {
             foreach (glob($root . '/data/epochs.php*') ?: [] as $file) {
                 $files[$file] = $this->removalCandidate($parent, 'Remove obsolete calendar epoch anchor on fresh installation');
+            }
+        }
+
+        return $files;
+    }
+
+    private function bundledModuleFiles(string $source, array $elements): array
+    {
+        if (!is_callable([Destinations::class, 'removedDeclarations'])) {
+            throw new \RuntimeException('The loaded installer runtime cannot inspect obsolete module declarations. Retry Appointments separately.');
+        }
+        require_once $source . '/administrator/components/com_appointments/src/Helper/BundledModuleGuard.php';
+        $files = \Advans\Component\Appointments\Administrator\Helper\BundledModuleGuard::destinations(
+            $source, JPATH_ADMINISTRATOR, $elements
+        );
+        foreach ($elements as $element) {
+            $moduleSource = $source . '/modules/' . $element;
+            $manifest = simplexml_load_file($moduleSource . '/' . $element . '.xml');
+            if (!$manifest instanceof \SimpleXMLElement || (string) $manifest['type'] !== 'module'
+                || (string) $manifest['client'] !== 'administrator' || strtolower((string) $manifest->name) !== $element) {
+                throw new \RuntimeException('The bundled Appointments module manifest is invalid.');
+            }
+            $root = JPATH_ADMINISTRATOR . '/modules/' . $element;
+            // Only module adapters with oldFiles pass prior declarations to Joomla's deletion phase.
+            if (property_exists(\Joomla\CMS\Installer\Adapter\ModuleAdapter::class, 'oldFiles')) {
+                Destinations::removedDeclarations($files, $manifest, $moduleSource, $root . '/' . $element . '.xml', $root);
             }
         }
 
@@ -349,6 +586,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->ensureCloseTask();
         $this->removeLegacyManifest();
         $this->ensureTeamGroups();
+        AppointmentsConflictGuard::verifyInstalled($this->conflictReview);
 
         // An update only gets a short confirmation; the first installation shows
         // where to find the component and how to begin.
@@ -778,6 +1016,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
             $existed = (int) $db->setQuery($query)->loadResult() > 0;
             $installer = new Installer();
             $installer->setDatabase($db);
+            $this->verifyBundledBeforeInstall($source, $folder, $folder);
+
             if (!$installer->install($source . '/' . $folder)) {
                 throw new \RuntimeException('The bundled appointments plugin could not be installed.');
             }
@@ -787,6 +1027,44 @@ class Com_appointmentsInstallerScript extends InstallerScript
                     ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
                     ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
                     ->where($db->quoteName('element') . ' = ' . $db->quote($element)))->execute();
+            }
+        }
+    }
+
+    private function snapshotBundled(array $files): array
+    {
+        clearstatcache();
+        $comparison = \Advans\Installer\V2\FileGuard::compare($files);
+        foreach ($comparison['incoming'] as $path => $hash) {
+            $comparison['existing'][$path] = file_exists($path) ? ($comparison['differing'][$path]['existing'] ?? $hash) : null;
+        }
+        foreach (array_keys($comparison) as $key) {
+            ksort($comparison[$key]);
+        }
+
+        return $comparison;
+    }
+
+    private function verifyBundledBeforeInstall(string $source, string $folder, string $destination): void
+    {
+        if (str_starts_with($folder, 'modules/')) {
+            $files = $this->bundledModuleFiles($source, [basename($folder)]);
+        } else {
+            $manifestFile = $source . '/' . $folder . '/' . basename($folder) . '.xml';
+            $manifest = simplexml_load_file($manifestFile);
+            if (!$manifest instanceof \SimpleXMLElement || (string) $manifest['type'] !== 'plugin') {
+                throw new \RuntimeException('The bundled Appointments plugin manifest is invalid.');
+            }
+            $files = Destinations::files($manifest, $source . '/' . $folder, $manifestFile);
+        }
+        if (!isset($this->bundledSnapshots[$folder])
+            || $this->snapshotBundled($files) !== $this->bundledSnapshots[$folder]) {
+            throw new \RuntimeException('A bundled Appointments destination or candidate changed before its installation.');
+        }
+        foreach ($this->conflictReview['rows'] ?? [] as $row) {
+            if (str_starts_with(Knowledge::relative($row['destination']), $destination . '/')
+                && AppointmentsConflictGuard::liveHash($row) !== $row['existing']) {
+                throw new \RuntimeException('A bundled Appointments file no longer matches the reviewed bytes.');
             }
         }
     }
@@ -812,6 +1090,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
             $existed = $this->moduleExtensionId($db, $element) > 0;
             $installer = new Installer();
             $installer->setDatabase($db);
+            $this->verifyBundledBeforeInstall($source, 'modules/' . $element, 'administrator/modules/' . $element);
 
             if (!$installer->install($folder)) {
                 throw new \RuntimeException('The bundled appointments module could not be installed.');

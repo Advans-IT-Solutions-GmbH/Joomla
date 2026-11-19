@@ -15,8 +15,8 @@
  * SCENARIOS (comma-separated, in this order):
  *   clean            update without any change on the site: no pause, no report, no backup
  *   modified         an own file (MODIFY_FILE, default the installed script.php) was changed by
- *                    hand: the update succeeds, the backup decodes to exactly the changed bytes and
- *                    the report names the file
+ *                    hand: normally the update backs it up and replaces it; Appointments tests
+ *                    the administrator review, backup, keep/replace and recovery workflow
  *   backup-failure   the backup directory is not writable: the update stops before any file or the
  *                    version changes, with a plain explanation
  *   foreign-pause    a package variant replaces an unclassified file of another extension: the
@@ -105,7 +105,23 @@ function bu_backups(): array
 
     clearstatcache();
 
-    return glob($state . '/backups/*.php') ?: [];
+    return array_merge(glob($state . '/backups/*.php') ?: [], glob($state . '/recovery/backups/*.php') ?: []);
+}
+
+function bu_state(string $path): array
+{
+    return is_file($path) ? json_decode(substr((string) file_get_contents($path), strlen("<?php exit; ?>\n")), true, 512, JSON_THROW_ON_ERROR) : [];
+}
+
+function bu_review(BuBrowser $browser, string $action, array $review, string $file, array $fields, bool $token = true): string
+{
+    $page = 'index.php?option=com_appointmentsrecovery';
+    $post = ['action' => $action, 'plan' => $review['id'], 'file' => $file] + $fields;
+    if ($token) {
+        $post[BuBrowser::token($browser->request($page))] = '1';
+    }
+
+    return $browser->request($page, $post);
 }
 
 /** Original bytes and destination of a backup container. */
@@ -303,7 +319,8 @@ if (!bu_check('administrator login', $browser->login())) {
     exit(1);
 }
 
-$modifyFile = getenv('MODIFY_FILE') ? JOOMLA_ROOT . '/' . ltrim((string) getenv('MODIFY_FILE'), '/') : $installRoot . '/script.php';
+$modifyFile = getenv('MODIFY_FILE') ? JOOMLA_ROOT . '/' . ltrim((string) getenv('MODIFY_FILE'), '/')
+    : $installRoot . ($id === 'com_appointments' ? '/src/View/Help/HtmlView.php' : '/script.php');
 $relativeModify = substr($modifyFile, strlen(JOOMLA_ROOT) + 1);
 
 foreach ($scenarios as $scenario) {
@@ -336,9 +353,153 @@ foreach ($scenarios as $scenario) {
             break;
 
         case 'modified':
-            $changed = (string) file_get_contents($modifyFile) . "\n// Changed on this site " . bin2hex(random_bytes(4)) . "\n";
+            $original = (string) file_get_contents($modifyFile);
+            $changed = $original . "\n// Changed on this site " . bin2hex(random_bytes(4)) . "\n";
             file_put_contents($modifyFile, $changed);
+            $pluginFile = JOOMLA_ROOT . '/plugins/task/appointments/src/Extension/Appointments.php';
+            $pluginOriginal = $id === 'com_appointments' ? (string) file_get_contents($pluginFile) : '';
+            $moduleFile = JOOMLA_ROOT . '/administrator/modules/mod_appointments/tmpl/default.php';
+            $moduleOriginal = $id === 'com_appointments' ? (string) file_get_contents($moduleFile) : '';
+            if ($id === 'com_appointments') {
+                $pluginChanged = $pluginOriginal . "\n// Unknown plugin bytes " . bin2hex(random_bytes(4)) . "\n";
+                file_put_contents($pluginFile, $pluginChanged);
+                $moduleChanged = $moduleOriginal . "\n<?php // Unknown module bytes " . bin2hex(random_bytes(4)) . "\n";
+                file_put_contents($moduleFile, $moduleChanged);
+                $obsoleteModuleFile = dirname(dirname($moduleFile)) . '/src/recovery-retired/local.php';
+                mkdir(dirname($obsoleteModuleFile), 0777, true);
+                file_put_contents($obsoleteModuleFile, '<?php // Unknown obsolete module bytes');
+                chmod(dirname($obsoleteModuleFile), 0777);
+                chmod($obsoleteModuleFile, 0666);
+                $installedModuleManifest = dirname(dirname($moduleFile)) . '/mod_appointments.xml';
+                $oldModuleManifest = simplexml_load_file($installedModuleManifest);
+                $oldModuleManifest->files->addChild('folder', 'src/recovery-retired');
+                $oldModuleManifest->asXML($installedModuleManifest);
+                if (!defined('_JEXEC')) {
+                    define('_JEXEC', 1);
+                }
+                require_once JOOMLA_ROOT . '/libraries/vendor/autoload.php';
+                $moduleDeletesObsolete = property_exists(\Joomla\CMS\Installer\Adapter\ModuleAdapter::class, 'oldFiles');
+                unlink($state . '/installed.php');
+            }
             $result = bu_update($browser, $package, $version);
+
+            if ($id === 'com_appointments') {
+                $text = bu_text($result, ['danger', 'error']);
+                bu_check('missing-ledger update stops before copying', !$result['updated'], $text);
+                bu_check('the message names both component and plugin files',
+                    str_contains(strtolower($text), strtolower($relativeModify))
+                    && str_contains(strtolower($text), 'plugins/task/appointments/src/extension/appointments.php'), $text);
+                bu_check('unknown provenance is not described as an edit', str_contains($text, 'does not mean they were edited'), $text);
+                bu_check('both existing files remain untouched', file_get_contents($modifyFile) === $changed
+                    && file_get_contents($pluginFile) === $pluginChanged);
+                bu_check('the bundled module remains untouched', file_get_contents($moduleFile) === $moduleChanged);
+                bu_check('obsolete module bytes are not deleted without review', is_file($obsoleteModuleFile));
+                $backups = array_map('bu_backup', array_diff(bu_backups(), $backupsBefore));
+                bu_check('verified backups preserve both files', in_array($changed, array_column($backups, 'bytes'), true)
+                    && in_array($pluginChanged, array_column($backups, 'bytes'), true));
+                bu_check('verified backup preserves the module', in_array($moduleChanged, array_column($backups, 'bytes'), true));
+                $reviewFile = $state . '/recovery/review.php';
+                $review = bu_state($reviewFile);
+                $key = static fn(string $path): string => strtolower(str_replace('\\', '/', $path));
+                $fileFor = static function (array $review, string $path) use ($key): ?string {
+                    foreach ($review['rows'] ?? [] as $id => $row) {
+                        if ($key($row['destination']) === $key($path)) {
+                            return $id;
+                        }
+                    }
+
+                    return null;
+                };
+                $componentId = $fileFor($review, $modifyFile);
+                $pluginId = $fileFor($review, $pluginFile);
+                $moduleId = $fileFor($review, $moduleFile);
+                $obsoleteModuleId = $fileFor($review, $obsoleteModuleFile);
+                bu_check('module review matches the actual adapter deletion capability',
+                    $moduleDeletesObsolete
+                        ? $obsoleteModuleId !== null && $review['rows'][$obsoleteModuleId]['remove']
+                            && !$review['rows'][$obsoleteModuleId]['keep']
+                            && in_array('<?php // Unknown obsolete module bytes', array_column($backups, 'bytes'), true)
+                        : $obsoleteModuleId === null);
+                $page = $browser->request('index.php?option=com_appointmentsrecovery');
+                if (!bu_check('administrator sees component, plugin and module choices', $componentId !== null && $pluginId !== null && $moduleId !== null
+                    && str_contains($page, 'Keep local') && str_contains($page, 'Install release file'))) {
+                    break;
+                }
+                bu_review($browser, 'decide', $review, $componentId, ['choice' => 'replace'], false);
+                bu_check('request without CSRF token cannot save a decision', bu_state($reviewFile)['choices'] === []);
+                bu_review($browser, 'decide', $review, $componentId, ['choice' => 'replace']);
+                bu_check('administrator decision is saved', (bu_state($reviewFile)['choices'][$componentId] ?? '') === 'replace');
+                $retry = bu_update($browser, $package, $version);
+                bu_check('incomplete review does not install', !$retry['updated'] && file_get_contents($modifyFile) === $changed
+                    && file_get_contents($pluginFile) === $pluginChanged, bu_text($retry));
+                bu_review($browser, 'decide', $review, $pluginId, ['choice' => 'keep']);
+                $latePlugin = $pluginChanged . "\n// Written after review\n";
+                file_put_contents($pluginFile, $latePlugin);
+                $retry = bu_update($browser, $package, $version);
+                $newReview = bu_state($reviewFile);
+                bu_review($browser, 'decide', $review, $componentId, ['choice' => 'replace']);
+                bu_check('stale choices cannot authorize new bytes', !$retry['updated'] && ($newReview['id'] ?? '') !== $review['id']
+                    && (bu_state($reviewFile)['choices'] ?? null) === [] && file_get_contents($pluginFile) === $latePlugin);
+                foreach ($newReview['rows'] as $rowId => $row) {
+                    bu_review($browser, 'decide', $newReview, $rowId, [
+                        'choice' => in_array($key($row['destination']), [$key($pluginFile), $key($moduleFile)], true) ? 'keep' : 'replace',
+                    ]);
+                }
+                $retry = bu_update($browser, $package, $version);
+                clearstatcache();
+                $record = bu_state($state . '/installed.php');
+                $releaseHash = hash_file('sha256', $modifyFile);
+                $componentId = $fileFor($newReview, $modifyFile);
+                bu_check('Joomla copies release bytes and preserves the bundled plugin bytes', $retry['updated'] && $componentId !== null
+                    && $releaseHash === $newReview['rows'][$componentId]['incoming'] && file_get_contents($pluginFile) === $latePlugin, bu_text($retry));
+                bu_check('late module installation honors keep and excludes local bytes from the ledger',
+                    file_get_contents($moduleFile) === $moduleChanged
+                    && !isset($record['files']['administrator/modules/mod_appointments/tmpl/default.php']));
+                bu_check('Joomla handles the reviewed obsolete declaration according to its module adapter',
+                    file_exists($obsoleteModuleFile) !== $moduleDeletesObsolete);
+                $moduleExtension = $db->query('SELECT manifest_cache FROM ' . sh_table('extensions')
+                    . " WHERE type = 'module' AND element = 'mod_appointments' AND client_id = 1")->fetch_assoc();
+                $moduleManifest = json_decode((string) ($moduleExtension['manifest_cache'] ?? ''), true);
+                bu_check('Joomla retains the bundled administrator module registration and installed manifest',
+                    ($moduleManifest['type'] ?? '') === 'module'
+                    && is_file(JOOMLA_ROOT . '/administrator/modules/mod_appointments/mod_appointments.xml'));
+                bu_check('manifest and ledger record the installed release, not kept local bytes', ($record['version'] ?? '') === $version
+                    && ($record['files'][$relativeModify] ?? $record['files'][strtolower($relativeModify)] ?? null) === $releaseHash
+                    && !isset($record['files']['plugins/task/appointments/src/Extension/Appointments.php'])
+                    && !isset($record['files']['plugins/task/appointments/src/extension/appointments.php'])
+                    && (string) simplexml_load_file($installRoot . '/appointments.xml')->version === $version);
+                $reused = sys_get_temp_dir() . '/appointments-reused-' . bin2hex(random_bytes(8)) . '.zip';
+                copy($package, $reused);
+                $zip = new ZipArchive();
+                $zip->open($reused);
+                $zip->addFromString('plugins/task/appointments/src/Extension/Appointments.php', $latePlugin);
+                $zip->addFromString('.advans-recovery-staged.php', '<?php defined("_JEXEC") or die; return [];');
+                $zip->close();
+                $ledgerBefore = file_get_contents($state . '/installed.php');
+                try {
+                    $reusedResult = bu_update($browser, $reused, sh_bump_version($version));
+                    bu_check('reused Keep staging cannot promote local bytes into the release ledger',
+                        !$reusedResult['updated'] && file_get_contents($pluginFile) === $latePlugin
+                        && file_get_contents($state . '/installed.php') === $ledgerBefore
+                        && bu_installed_version() === $version, bu_text($reusedResult));
+                } finally {
+                    unlink($reused);
+                }
+                $releaseBytes = (string) file_get_contents($modifyFile);
+                $later = $releaseBytes . "\n// Written after the update\n";
+                file_put_contents($modifyFile, $later);
+                bu_review($browser, 'restore', $newReview, $componentId, ['expected' => $releaseHash]);
+                bu_check('restoration refuses changed destination bytes', file_get_contents($modifyFile) === $later);
+                file_put_contents($modifyFile, $releaseBytes);
+                bu_review($browser, 'restore', $newReview, $componentId, ['expected' => $releaseHash]);
+                bu_check('administrator can restore the verified backup', file_get_contents($modifyFile) === $changed);
+                // Reset test-only bytes for the next unrelated scenario.
+                file_put_contents($modifyFile, $releaseBytes);
+                file_put_contents($pluginFile, $pluginOriginal);
+                file_put_contents($moduleFile, $moduleOriginal);
+                break;
+            }
+
             bu_check('update succeeded without a pause', $result['updated'], bu_text($result));
             // Foreign territory (for example the Joomla 5 Product Compare mirror) is backed up on every
             // update as well; the changed own file must have exactly one backup of its own.
@@ -354,19 +515,24 @@ foreach ($scenarios as $scenario) {
             break;
 
         case 'backup-failure':
-            $changed = (string) file_get_contents($modifyFile) . "\n// Changed again " . bin2hex(random_bytes(4)) . "\n";
+            $original = (string) file_get_contents($modifyFile);
+            $changed = $original . "\n// Changed again " . bin2hex(random_bytes(4)) . "\n";
             file_put_contents($modifyFile, $changed);
             $before = bu_snapshot([$installRoot, JOOMLA_ROOT . '/components/' . $manifest['element'], JOOMLA_ROOT . '/media/' . $manifest['element']]);
             $previous = bu_installed_version();
-            exec('chown root:root ' . escapeshellarg($state . '/backups') . ' && chmod 0555 ' . escapeshellarg($state . '/backups'));
+            $backupDir = $state . ($id === 'com_appointments' ? '/recovery/backups' : '/backups');
+            exec('chown root:root ' . escapeshellarg($backupDir) . ' && chmod 0555 ' . escapeshellarg($backupDir));
             $result = bu_update($browser, $package, $version);
-            exec('chown www-data:www-data ' . escapeshellarg($state . '/backups') . ' && chmod 0700 ' . escapeshellarg($state . '/backups'));
+            exec('chown www-data:www-data ' . escapeshellarg($backupDir) . ' && chmod 0700 ' . escapeshellarg($backupDir));
             bu_check('the update was stopped', !$result['updated'] && bu_installed_version() === $previous);
             bu_check('the stop is explained in plain language', str_contains(bu_text($result, ['danger', 'error']), 'could not be written or checked')
                 && str_contains(bu_text($result, ['danger', 'error']), $relativeModify), bu_text($result));
             bu_check('no file was changed', bu_snapshot([$installRoot, JOOMLA_ROOT . '/components/' . $manifest['element'], JOOMLA_ROOT . '/media/' . $manifest['element']]) === $before);
             bu_check('the changed file is untouched', file_get_contents($modifyFile) === $changed);
             // The next round starts from a consistent site again.
+            if ($id === 'com_appointments') {
+                file_put_contents($modifyFile, $original);
+            }
             $retry = bu_update($browser, $package, $version = sh_bump_version($version));
             bu_check('after the directory is writable again the same update succeeds', $retry['updated'], bu_text($retry));
             break;

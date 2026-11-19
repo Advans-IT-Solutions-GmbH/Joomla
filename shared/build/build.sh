@@ -91,6 +91,11 @@ rsync -av --exclude="$BUILD_DIR" \
 SHARED_BUILD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 php "$SHARED_BUILD/prepare-installer.php" "$BUILD_DIR"
 
+if [[ -f "$BUILD_DIR/recovery/appointmentsrecovery.xml" ]]; then
+    bash "$SHARED_BUILD/deterministic-zip.sh" "$BUILD_DIR/recovery" "$BUILD_DIR/appointments-recovery.zip"
+    rm -r -- "$BUILD_DIR/recovery"
+fi
+
 # Hashes of the files of every earlier release, so that updates recognise untouched files.
 php "$SHARED_BUILD/known-hashes.php" . "$BUILD_DIR/advans-known-hashes.php" "$BUILD_DIR"
 
