@@ -236,6 +236,9 @@ class UninstallTest
         $deleteExtensionId = $this->extensionId();
         $this->setUninstallChoice('delete');
         $this->insertSchedulerTasks();
+        // A last visit the dashboard module stored, which the uninstallation removes with the module.
+        $this->db->query("INSERT IGNORE INTO {$this->dbPrefix}user_profiles (user_id,profile_key,profile_value,ordering)"
+            . " SELECT id,'mod_appointments.lastvisit','2026-01-01 00:00:00',0 FROM {$this->dbPrefix}users ORDER BY id LIMIT 1");
         $output = [];
         $exitCode = 0;
         exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $deleteExtensionId --no-interaction 2>&1", $output, $exitCode);
@@ -316,6 +319,26 @@ class UninstallTest
                         if (is_file("/var/www/html/administrator/language/{$tag}/plg_{$group}_{$element}.{$suffix}")) {
                             return false;
                         }
+                    }
+                }
+            }
+
+            return true;
+        });
+        $this->test('Bundled dashboard module, its instances, languages and stored visits removed', function () {
+            $count = fn (string $sql): int => (int) $this->db->query($sql)->fetch_row()[0];
+
+            if ($count("SELECT COUNT(*) FROM {$this->dbPrefix}extensions WHERE element='mod_appointments' AND type='module'") !== 0
+                || $count("SELECT COUNT(*) FROM {$this->dbPrefix}modules WHERE module='mod_appointments'") !== 0
+                || $count("SELECT COUNT(*) FROM {$this->dbPrefix}user_profiles WHERE profile_key='mod_appointments.lastvisit'") !== 0
+                || is_dir('/var/www/html/administrator/modules/mod_appointments')) {
+                return false;
+            }
+
+            foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+                foreach (['ini', 'sys.ini'] as $suffix) {
+                    if (is_file('/var/www/html/administrator/language/' . $tag . '/mod_appointments.' . $suffix)) {
+                        return false;
                     }
                 }
             }

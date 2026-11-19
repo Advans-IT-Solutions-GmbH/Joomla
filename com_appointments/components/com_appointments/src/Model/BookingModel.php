@@ -88,7 +88,8 @@ class BookingModel extends BaseDatabaseModel
 
         $db = $this->getDatabase();
         $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-        $query->select($db->quoteName(array_merge(['b.id', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state', 'b.invitee_timezone', 'b.conference_state', 'b.modified_utc'],
+        $query->select($db->quoteName(array_merge(['b.id', 'b.eventtype_id', 'b.start_utc', 'b.end_utc', 'b.state', 'b.sequence',
+            'b.invitee_timezone', 'b.conference_state', 'b.modified_utc'],
             \Advans\Component\Appointments\Administrator\Helper\BookingData::readColumns('b'))))
             ->select($db->quoteName('e.title'))->select($db->quoteName('e.location_text'))
             ->from($db->quoteName('#__appointments_bookings', 'b'))
@@ -98,6 +99,15 @@ class BookingModel extends BaseDatabaseModel
         $item = $db->setQuery($query)->loadObject();
 
         if (!$item) {
+            throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
+        }
+
+        $confirmedVersion = Factory::getApplication()->getUserState('com_appointments.confirmation.modified_utc', '');
+        $confirmedSequence = Factory::getApplication()->getUserState('com_appointments.confirmation.sequence', null);
+
+        if (!is_string($confirmedVersion) || $confirmedVersion === ''
+            || !hash_equals($confirmedVersion, (string) $item->modified_utc)
+            || !is_numeric($confirmedSequence) || (int) $confirmedSequence !== (int) $item->sequence) {
             throw new \RuntimeException(Text::_('JERROR_PAGE_NOT_FOUND'), 404);
         }
 

@@ -21,6 +21,7 @@ use Advans\Component\Appointments\Administrator\Helper\MailComposer;
 use Advans\Component\Appointments\Administrator\Helper\MailHtml;
 use Advans\Component\Appointments\Administrator\Helper\MailLanguage;
 use Advans\Component\Appointments\Administrator\Helper\MailPresentation;
+use Advans\Component\Appointments\Administrator\Helper\ManageLinks;
 use Advans\Component\Appointments\Administrator\Helper\ManageMenuItem;
 use Advans\Component\Appointments\Administrator\Helper\MenuViews;
 use Advans\Component\Appointments\Administrator\Helper\NotificationSwitch;
@@ -190,7 +191,9 @@ final class NotificationService
                     $presentation['{state_label}'] = $language->_($stateKey);
                     $template['subject'] = strtr($template['subject'], $presentation);
                     $template['body'] = strtr($template['body'], $presentation);
-                    $links = $canManage ? $this->links($booking, $tag) : ($isGuest ? $this->guestLinks($booking, $address, $tag) : []);
+                    // A cancelled appointment offers only the erase link (ManageLinks), also in the placeholders.
+                    $links = $canManage ? ManageLinks::forState($this->links($booking, $tag), (int) $booking['state'])
+                        : ($isGuest ? $this->guestLinks($booking, $address, $tag) : []);
                     $recipientBooking = $booking;
                     if ($isHost && !empty($booking['conference_url'])) {
                         $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
@@ -242,10 +245,10 @@ final class NotificationService
                         $message['body'] .= "\n\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_JOIN')) . "\n" . $recipientBooking['conference_url'];
                     }
 
-                    if ($canManage) {
-                        $message['body'] .= "\n\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_RESCHEDULE')) . "\n" . $links['reschedule_url']
-                            . "\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_CANCEL')) . "\n" . $links['cancel_url']
-                            . "\n" . sprintf($labelFormat, $language->_('COM_APPOINTMENTS_MAIL_DELETE')) . "\n" . $links['erase_url'];
+                    $footer = $canManage ? ManageLinks::footer($links, $translate, $labelFormat) : '';
+
+                    if ($footer !== '') {
+                        $message['body'] .= "\n\n" . $footer;
                     }
 
                     if ($isGuest) {
@@ -624,6 +627,7 @@ final class NotificationService
         $mailer->isHtml(true);
         $mailer->setBody($html);
         $mailer->AltBody = $text;
+        $mailer->addCustomHeader('Content-Class', 'urn:content-classes:calendarmessage');
         $mailer->Ical = $calendar;
     }
 

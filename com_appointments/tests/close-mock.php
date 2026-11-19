@@ -74,13 +74,13 @@ namespace {
             $this->pdo->exec('CREATE TABLE test_appointments_close_delivery (
                 booking_id INTEGER PRIMARY KEY, profile TEXT, uid TEXT, target_sequence INTEGER, state TEXT, operation TEXT,
                 reason TEXT, binding TEXT, organization_id TEXT, lead_id TEXT, contact_id TEXT, contact_created INTEGER, activity_id TEXT,
-                attempts INTEGER, next_attempt INTEGER, last_attempt INTEGER, mac TEXT)');
+                attempts INTEGER, next_attempt INTEGER, last_attempt INTEGER, mac TEXT, match_rule TEXT, match_candidates TEXT)');
             $this->pdo->exec('CREATE TABLE test_appointments_close_limits (profile TEXT PRIMARY KEY, paused_until INTEGER)');
             $this->pdo->exec('CREATE TABLE test_appointments_close_credentials (eventtype_id INTEGER PRIMARY KEY, secret TEXT,
                 modified_utc TEXT, modified_by INTEGER)');
             $this->pdo->exec('CREATE TABLE test_appointments_bookings (
                 id INTEGER PRIMARY KEY, uid TEXT, sequence INTEGER, eventtype_id INTEGER, anonymised_utc TEXT,
-                invitee_name TEXT, invitee_email TEXT, invitee_phone TEXT, start_utc TEXT, end_utc TEXT,
+                invitee_name TEXT, invitee_first_name TEXT, invitee_last_name TEXT, invitee_email TEXT, invitee_phone TEXT, start_utc TEXT, end_utc TEXT,
                 state INTEGER, custom_fields TEXT, guest_emails TEXT, conference_url TEXT)');
             $this->pdo->exec('CREATE TABLE test_appointments_eventtypes (id INTEGER PRIMARY KEY, title TEXT)');
             $this->pdo->exec("INSERT INTO test_appointments_eventtypes VALUES (1,'Synthetic first call'),(2,'Synthetic IT call'),"
@@ -158,6 +158,12 @@ namespace {
         public array $requests = [];
         public array $contacts = [];
         public array $objects = [];
+        /** The related object (or contact_name) of every contact search, in order. */
+        public array $searches = [];
+        /** The text condition mode of every contact search, in order. */
+        public array $searchModes = [];
+        /** [opaque request cursor, limit] of every search page read. */
+        public array $pages = [];
         public string $mode = 'ok';
         public ?string $orgId = null;
         public array $leadFields = ['cf_origin' => false, 'cf_funnel' => false, 'cf_systems' => true, 'cf_product' => false];
@@ -179,10 +185,48 @@ namespace {
                 return ['code' => 503];
             }
             if ($path === '/api/v1/data/search/') {
-                $email = $payload['query']['queries'][1]['related_query']['condition']['value'];
-                $found = array_values(array_filter($this->contacts, static fn ($contact) =>
-                    strcasecmp($contact['emails'][0]['email'], $email) === 0));
-                return ['code' => 200, 'data' => ['data' => $this->mode === 'ambiguous' ? [$found[0] ?? [], $found[0] ?? []] : $found, 'cursor' => null]];
+                // The three searches of Client::match(): e-mail and telephone of a related object, the contact name.
+                $condition = $payload['query']['queries'][1];
+                $this->searches[] = $condition['related_object_type'] ?? 'contact_name';
+                $mode = $condition['related_query']['condition']['mode'] ?? $condition['condition']['mode'] ?? '';
+                $this->searchModes[] = $mode;
+                $value = $condition['related_query']['condition']['value'] ?? $condition['condition']['value'];
+                $queryWords = $mode === 'full_words'
+                    ? array_values(array_filter(preg_split('/\s+/u', mb_strtolower(trim($value))) ?: []))
+                    : [];
+                $found = array_values(array_filter($this->contacts, static function (array $contact) use ($condition, $value): bool {
+                    return match ($condition['related_object_type'] ?? '') {
+                        'contact_email' => in_array(strtolower($value), array_map(static fn ($e) => strtolower($e['email']), $contact['emails'] ?? []), true),
+                        'contact_phone' => in_array($value, array_column($contact['phones'] ?? [], 'phone'), true),
+                        default => false,
+                    };
+                }));
+                if ($this->searches[array_key_last($this->searches)] === 'contact_name' && $mode === 'full_words') {
+                    $found = array_values(array_filter($this->contacts, static function (array $contact) use ($queryWords): bool {
+                        $nameWords = array_values(array_filter(preg_split('/\s+/u',
+                            mb_strtolower(trim((string) ($contact['name'] ?? '')))) ?: []));
+                        return array_diff($queryWords, $nameWords) === [];
+                    }));
+                }
+                if ($this->mode === 'ambiguous') {
+                    $found = [$found[0] ?? [], $found[0] ?? []];
+                }
+                // Pages as Close returns them: the cursor of the next page, null after the last one.
+                $limit = (int) $payload['_limit'];
+                $cursor = $payload['cursor'] ?? null;
+                $offset = 0;
+                if ($cursor !== null && preg_match('/^synthetic-cursor-(\d+)$/D', $cursor, $match) === 1) {
+                    $offset = (int) $match[1];
+                } elseif ($cursor !== null) {
+                    return ['code' => 400, 'body' => '{}'];
+                }
+                $this->pages[] = [$cursor, $limit];
+                return ['code' => 200, 'data' => ['data' => array_slice($found, $offset, $limit),
+                    'cursor' => count($found) > $offset + $limit ? 'synthetic-cursor-' . ($offset + $limit) : null]];
+            }
+            if ($method === 'GET' && preg_match('~^/api/v1/lead/(lead_\w+)/\?_fields=id,name$~', $path, $match)) {
+                return isset($this->objects[$match[1]]) ? ['code' => 200, 'data' => ['id' => $match[1], 'name' => $this->objects[$match[1]]['name'] ?? '']]
+                    : ['code' => 404, 'body' => '{}'];
             }
             if ($method === 'GET' && preg_match('~^/api/v1/custom_field/lead/(cf_\w+)/$~', $path, $match)) {
                 return isset($this->leadFields[$match[1]]) ? ['code' => 200, 'data' => ['id' => $match[1],
@@ -191,7 +235,7 @@ namespace {
             if ($method === 'GET' && $path === '/api/v1/custom_activity/actitype_synthetic/') {
                 return ['code' => 200, 'data' => ['id' => 'actitype_synthetic', 'fields' => array_map(static fn ($id) =>
                     ['id' => $id, 'type' => 'text'], ['cf_uid', 'cf_seq', 'cf_start', 'cf_end', 'cf_state', 'cf_source',
-                        'cf_event', 'cf_campaign', 'cf_new', 'cf_topic'])]];
+                        'cf_event', 'cf_campaign', 'cf_new', 'cf_topic', 'cf_match'])]];
             }
             if ($method === 'POST' && $path === '/api/v1/lead/') {
                 $lead = 'lead_' . $this->org . ++$this->next;
@@ -286,7 +330,8 @@ namespace {
     };
     $booking = static fn (int $id, int $event, string $email, array $answers): array => ['id' => $id,
         'uid' => str_pad(dechex($id), 64, '0', STR_PAD_LEFT), 'sequence' => 0, 'eventtype_id' => $event, 'anonymised_utc' => null,
-        'invitee_name' => 'Synthetic Invitee ' . $id, 'invitee_email' => $email, 'invitee_phone' => '+41000000' . $id,
+        'invitee_name' => 'Synthetic Invitee ' . $id, 'invitee_first_name' => 'Synthetic', 'invitee_last_name' => 'Invitee ' . $id,
+        'invitee_email' => $email, 'invitee_phone' => '+41000000' . $id,
         'start_utc' => '2027-01-10 10:00:00', 'end_utc' => '2027-01-10 10:30:00', 'state' => 1,
         'custom_fields' => json_encode($answers + ['99' => 'NEVER_EXPORT']), 'guest_emails' => 'NEVER_GUEST',
         'conference_url' => 'NEVER_CAPABILITY'];
@@ -403,8 +448,12 @@ namespace {
     $remote['main']->mode = 'ambiguous';
     $blocked = $enrol($booking(6, 1, 'new@example.test', $lifeSciences));
     $queue->run();
-    $check($state(6)['state'] === 'blocked' && $state(6)['reason'] === 'ambiguous_contact'
-        && $remote['main']->count('POST', '/api/v1/lead/') === 1, 'several e-mail matches block visibly without choosing a lead');
+    $ambiguousNote = $remote['main']->objects[$state(6)['activity_id']] ?? [];
+    $check($state(6)['state'] === 'done' && $state(6)['match_rule'] === 'ambiguous_email' && $state(6)['match_candidates'] === 'lead_main1'
+        && $remote['main']->count('POST', '/api/v1/lead/') === 2 && $state(6)['lead_id'] !== 'lead_main1'
+        && str_contains($ambiguousNote['note'] ?? '', 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH: COM_APPOINTMENTS_CLOSE_NOTE_MATCH_AMBIGUOUS_EMAIL')
+        && str_contains($ambiguousNote['note'] ?? '', 'COM_APPOINTMENTS_CLOSE_NOTE_DUPLICATES: lead_main1'),
+        'several e-mail matches never block: a new lead, and the note names the matching leads as possible duplicates');
     $remote['main']->mode = 'ok';
     $staffScope(500);
     PrivacyOutcome::record($db, 500, true);
@@ -413,7 +462,132 @@ namespace {
     $service = file_get_contents(dirname(__DIR__) . '/administrator/components/com_appointments/src/Service/PrivacyService.php');
     $check(!str_contains($outcome, 'Close') && !str_contains($service, 'Close'), 'privacy services carry no Close dependency');
     $mutate($blocked, ['sequence' => 1, 'anonymised_utc' => '2027-02-01 00:00:00'], true);
-    $check($state(6) === false, 'erasing a blocked transfer leaves no obligation behind');
+    $check($state(6) === false, 'erasing a transferred booking leaves no obligation behind');
+
+    // Owner requirement 18.11.2026: an existing lead is found by e-mail, else by telephone, else by
+    // first and last name together with the company; never by the name alone. One match: the note goes
+    // to it, which is never changed. Several: a new lead whose note names them as possible duplicates.
+    $main = $remote['main'];
+    $seed = static function (string $contact, string $lead, string $company, string $name, string $email, string $phone) use ($main): void {
+        $main->objects[$lead] = ['name' => $company];
+        $main->contacts[$contact] = ['id' => $contact, 'lead_id' => $lead, 'name' => $name,
+            'emails' => [['email' => $email]], 'phones' => $phone === '' ? [] : [['phone' => $phone, 'phone_formatted' => 'display ' . $phone]]];
+    };
+    $noteOf = static fn (int $id): string => (string) ($main->objects[$state($id)['activity_id']]['note'] ?? '');
+    $person = static fn (array $row, string $first, string $last): array => array_replace($row,
+        ['invitee_first_name' => $first, 'invitee_last_name' => $last, 'invitee_name' => $first . ' ' . $last]);
+    $check(Client::e164('0041 79 123 45 67') === '+41791234567' && Client::e164('+41 (79) 123-45-67') === '+41791234567'
+        && Client::e164('079 123 45 67') === '' && Client::e164('') === '', 'telephone numbers are compared in E.164 form only');
+    $check(str_contains((string) ($remote['qr']->objects['acti_qr1']['note'] ?? ''), 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH: COM_APPOINTMENTS_CLOSE_NOTE_MATCH_EMAIL')
+        && str_contains((string) ($remote['main']->objects['acti_main2']['note'] ?? ''), 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH: COM_APPOINTMENTS_CLOSE_NOTE_MATCH_NONE'),
+        'the note says whether the contact was found by its e-mail address or is new');
+
+    // Close's phone field is E.164; phone_formatted is display-only. The invitee input is normalized before search.
+    $seed('cont_phone', 'lead_phone', 'Phone Company AG', 'Someone Else', 'office@phone.example.test', '+4100000041');
+    $writesBefore = $main->count('PUT') + $main->count('POST', '/api/v1/lead/');
+    $main->searches = [];
+    $main->searchModes = [];
+    $phoneBooking = $booking(41, 1, 'private-address@example.test', $lifeSciences);
+    $phoneBooking['invitee_phone'] = '0041 000 000 41';
+    $enrol($phoneBooking);
+    $queue->run();
+    $check($state(41)['state'] === 'done' && $state(41)['lead_id'] === 'lead_phone' && $state(41)['contact_id'] === 'cont_phone'
+        && $state(41)['match_rule'] === 'phone' && $main->count('PUT') + $main->count('POST', '/api/v1/lead/') === $writesBefore
+        && $main->searches === ['contact_email', 'contact_phone'] && $main->searchModes === ['exact_value', 'exact_value']
+        && str_contains($noteOf(41), 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH: COM_APPOINTMENTS_CLOSE_NOTE_MATCH_PHONE')
+        && str_contains($noteOf(41), 'COM_APPOINTMENTS_CLOSE_NOTE_EMAIL: private-address@example.test')
+        && str_contains($noteOf(41), 'COM_APPOINTMENTS_CLOSE_NOTE_PHONE: 0041 000 000 41'),
+        'formatted invitee input searches the documented canonical Close phone field without changing the existing contact');
+    $check($main->contacts['cont_phone']['emails'] === [['email' => 'office@phone.example.test']]
+        && $main->contacts['cont_phone']['phones'] === [['phone' => '+4100000041', 'phone_formatted' => 'display +4100000041']]
+        && $main->objects['lead_phone'] === ['name' => 'Phone Company AG'],
+        'the lead and contact found by telephone are not changed');
+
+    // An e-mail match wins over a telephone match of another contact.
+    $seed('cont_mail42', 'lead_mail42', 'Mail AG', 'Mail Person', 'mail42@example.test', '');
+    $seed('cont_phone42', 'lead_phone42', 'Phone AG', 'Phone Person', 'other42@example.test', '+4100000042');
+    $enrol($booking(42, 1, 'mail42@example.test', $lifeSciences));
+    $queue->run();
+    $check($state(42)['lead_id'] === 'lead_mail42' && $state(42)['match_rule'] === 'email', 'the e-mail address is searched first');
+
+    // Several contacts with the number: never blocked, a new lead with both leads as possible duplicates.
+    $seed('cont_dup43a', 'lead_dup43a', 'Dup A', 'Dup One', 'one43@example.test', '+4100000043');
+    $seed('cont_dup43b', 'lead_dup43b', 'Dup B', 'Dup Two', 'two43@example.test', '+4100000043');
+    $leadsBefore = $main->count('POST', '/api/v1/lead/');
+    $main->searches = [];
+    $enrol($booking(43, 1, 'nobody43@example.test', $lifeSciences));
+    $queue->run();
+    $check($state(43)['state'] === 'done' && $main->count('POST', '/api/v1/lead/') === $leadsBefore + 1
+        && $state(43)['match_rule'] === 'ambiguous_phone' && $state(43)['match_candidates'] === 'lead_dup43a,lead_dup43b'
+        && $main->searches === ['contact_email', 'contact_phone']
+        && str_contains($noteOf(43), 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH_AMBIGUOUS_PHONE')
+        && str_contains($noteOf(43), 'COM_APPOINTMENTS_CLOSE_NOTE_DUPLICATES: lead_dup43a, lead_dup43b'),
+        'several telephone matches create a new lead and name the candidates; the name step is not tried');
+
+    // 3. First and last name with the company, ignoring case and spacing after a full-words candidate search.
+    $seed('cont_name44', 'lead_name44', 'Muster  Pharma AG', 'Erika Muster', 'erika@muster.example.test', '');
+    $seed('cont_name44_extra', 'lead_name44_extra', 'Muster Pharma AG', 'Erika Muster Jr', 'erika.jr@muster.example.test', '');
+    $row = $person($booking(44, 1, 'erika.private@example.test', ['11' => ' muster pharma ag'] + $lifeSciences), 'ERIKA', 'muster ');
+    $row['invitee_phone'] = '';
+    $main->searches = [];
+    $main->searchModes = [];
+    $enrol($row);
+    $queue->run();
+    $check($state(44)['lead_id'] === 'lead_name44' && $state(44)['contact_id'] === 'cont_name44' && $state(44)['match_rule'] === 'name_company'
+        && $main->searches === ['contact_email', 'contact_name'] && $main->searchModes === ['exact_value', 'full_words']
+        && str_contains($noteOf(44), 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH_NAME_COMPANY')
+        && $main->contacts['cont_name44']['emails'] === [['email' => 'erika@muster.example.test']],
+        'full-words search returns candidates, then local exact name and company comparison selects only the same person');
+
+    // The same name in another company is another person: a new lead, no duplicate.
+    $row = $person($booking(45, 1, 'erika.other@example.test', ['11' => 'Other Pharma AG'] + $lifeSciences), 'Erika', 'Muster');
+    $enrol($row);
+    $queue->run();
+    $check($state(45)['match_rule'] === 'none' && $state(45)['match_candidates'] === '' && $state(45)['lead_id'] !== 'lead_name44'
+        && str_contains($noteOf(45), 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH_NONE') && !str_contains($noteOf(45), 'DUPLICATES'),
+        'the name alone never matches: another company gets a new lead');
+
+    // Without a company answer the name step does not apply at all.
+    $main->searches = [];
+    $row = $person($booking(46, 2, 'erika.nocompany@example.test', []), 'Erika', 'Muster');
+    $enrol($row);
+    $queue->run();
+    $check($state(46)['match_rule'] === 'none' && !in_array('contact_name', $main->searches, true),
+        'without a company the name is not searched');
+
+    // Several contacts with the name in leads of the same company: a new lead with both as duplicates.
+    $seed('cont_name47a', 'lead_name47a', 'Twin GmbH', 'Max Twin', 'a47@example.test', '');
+    $seed('cont_name47b', 'lead_name47b', 'twin gmbh', 'Max Twin', 'b47@example.test', '');
+    $row = $person($booking(47, 1, 'max.private@example.test', ['11' => 'Twin GmbH'] + $lifeSciences), 'Max', 'Twin');
+    $enrol($row);
+    $queue->run();
+    $check($state(47)['state'] === 'done' && $state(47)['match_rule'] === 'ambiguous_name_company'
+        && $state(47)['match_candidates'] === 'lead_name47a,lead_name47b' && !in_array($state(47)['lead_id'], ['lead_name47a', 'lead_name47b'], true)
+        && str_contains($noteOf(47), 'COM_APPOINTMENTS_CLOSE_NOTE_DUPLICATES: lead_name47a, lead_name47b'),
+        'several name and company matches create a new lead and name the candidates');
+    // Review finding: more contacts with the name than one search page of the e-mail step, only the last
+    // one in the company. The company is checked on every contact with the name before anything is capped.
+    for ($i = 1; $i <= 11; $i++) {
+        $seed('cont_same48x' . $i, 'lead_same48x' . $i, $i === 11 ? 'Target AG' : 'Elsewhere ' . $i, 'Sam Same', 'same' . $i . '@example.test', '');
+    }
+    $leadsBefore = $main->count('POST', '/api/v1/lead/');
+    $enrol($person($booking(48, 1, 'sam.private@example.test', ['11' => 'Target AG'] + $lifeSciences), 'Sam', 'Same'));
+    $queue->run();
+    $check($state(48)['match_rule'] === 'name_company' && $state(48)['lead_id'] === 'lead_same48x11'
+        && $main->count('POST', '/api/v1/lead/') === $leadsBefore,
+        'the only contact of the company is found among more same-named contacts than one page of the other steps');
+    // Name results beyond one page are read page by page.
+    for ($i = 1; $i <= 105; $i++) {
+        $seed('cont_many49x' . $i, 'lead_many49x' . ($i % 40), $i === 105 ? 'Paged AG' : 'Other ' . ($i % 40), 'Pat Paged', 'pat' . $i . '@example.test', '');
+    }
+    $main->objects['lead_many49x25'] = ['name' => 'Paged AG'];
+    $main->pages = [];
+    $enrol($person($booking(49, 1, 'pat.private@example.test', ['11' => 'Paged AG'] + $lifeSciences), 'Pat', 'Paged'));
+    $queue->run();
+    $check(count(array_filter($main->pages, static fn (array $page): bool => is_string($page[0]) && !ctype_digit($page[0]))) >= 1
+        && $state(49)['match_rule'] === 'ambiguous_name_company' && str_contains($state(49)['match_candidates'], 'lead_many49x25'),
+        'the name step follows opaque Close search cursors and decides over all contacts with the name');
+    $check(!str_contains(json_encode($all()), 'NEVER_'), 'the matching sends no unlisted answer, guest or conference capability');
 
     // Rate limits are per profile.
     $remote['main']->mode = '429';
@@ -469,6 +643,29 @@ namespace {
     $queue->run();
     $db->afterCommit = null;
     $check($remote['main']->count('POST', '/api/v1/activity/note/') === $beforePosts && $state(13) === false, 'erasure between intent and send stops the request');
+
+    // A sequence change while the remote matching phase is checkpointed must not authenticate the old
+    // booking snapshot after the rows are released.
+    $racedMatch = $enrol($booking(51, 1, 'raced-match@example.test', $lifeSciences));
+    $remote['main']->contacts['cont_raced_match'] = [
+        'id' => 'cont_raced_match',
+        'lead_id' => 'lead_raced_match',
+        'emails' => [['email' => 'raced-match@example.test']],
+        'name' => 'Raced Match',
+    ];
+    $db->afterCommit = static function () use ($db, $state, $mutate, $racedMatch): void {
+        if (($state(51)['operation'] ?? '') === 'matching') {
+            $db->afterCommit = null;
+            $mutate($racedMatch, ['sequence' => 1]);
+        }
+    };
+    $queue->run();
+    $db->afterCommit = null;
+    $check(($state(51)['match_rule'] ?? '') === ''
+        && (int) $state(51)['target_sequence'] === 1
+        && $state(51)['operation'] === ''
+        && $state(51)['state'] === 'pending',
+        'matching rejects a stale booking snapshot after a sequence change and requeues the new version');
 
     // Configuration faults never break a booking and never reach the network.
     $params->values['close_profiles']['close_profiles1']['eventtypes'] = ['1', '3'];
@@ -547,7 +744,7 @@ namespace {
     $params->values['close_profiles']['close_profiles2'] = ['key' => 'activity', 'eventtypes' => ['5'],
         'origin' => 'https://activity.example.test', 'credential_env' => 'SYNTHETIC_ACTIVITY_KEY', 'delivery' => 'activity',
         'activity_type' => 'actitype_synthetic', 'campaign' => 'Activity campaign',
-        'activity_fields' => '{"uid":"cf_uid","sequence":"cf_seq","start":"cf_start","end":"cf_end","state":"cf_state","source":"cf_source","event_type":"cf_event","campaign":"cf_campaign","contact_created":"cf_new"}',
+        'activity_fields' => '{"uid":"cf_uid","sequence":"cf_seq","start":"cf_start","end":"cf_end","state":"cf_state","source":"cf_source","event_type":"cf_event","campaign":"cf_campaign","contact_created":"cf_new","matched_by":"cf_match"}',
         'activity_answers' => '{"13":"cf_topic"}'];
     $remote['activity'] = new FakeClose('activity');
     $activity = $enrol($booking(17, 5, 'activity@example.test', ['13' => 'Topic answer']));
@@ -555,7 +752,7 @@ namespace {
     $custom = $remote['activity']->objects['acti_activity2'];
     $check($custom['kind'] === '/api/v1/activity/custom/' && $custom['custom.cf_event'] === 'Synthetic activity call'
         && $custom['custom.cf_campaign'] === 'Activity campaign' && $custom['custom.cf_new'] === 'yes'
-        && $custom['custom.cf_topic'] === 'Topic answer' && $custom['custom.cf_state'] === 'confirmed',
+        && $custom['custom.cf_topic'] === 'Topic answer' && $custom['custom.cf_state'] === 'confirmed' && $custom['custom.cf_match'] === 'none',
         'custom activity mode writes booking, campaign and answer fields');
     $mutate($activity, ['sequence' => 1, 'state' => 2]);
     $queue->run();

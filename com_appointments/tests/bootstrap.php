@@ -25,6 +25,21 @@ spl_autoload_register(static function (string $class) use ($helperDir): void {
     }
 });
 
+// The bundled administrator dashboard module (modules/mod_appointments): its Joomla-free helpers.
+$moduleDir = dirname(__DIR__) . '/modules/mod_appointments/src';
+
+spl_autoload_register(static function (string $class) use ($moduleDir): void {
+    $prefix = 'Advans\\Module\\Appointments\\Administrator\\';
+
+    if (str_starts_with($class, $prefix)) {
+        $file = $moduleDir . '/' . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
+
+        if (is_file($file)) {
+            require_once $file;
+        }
+    }
+});
+
 require_once $helperDir . '/KeyProvider.php';
 require_once $helperDir . '/UtcTimestamp.php';
 require_once $helperDir . '/AvailabilityWindow.php';

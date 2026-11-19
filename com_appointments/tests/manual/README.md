@@ -378,7 +378,7 @@ Trigger every event below. Inspect content and **raw message source** for each r
 | MA-03 | POS/INT | Approval | Confirmation with same UID and increased sequence. |
 | MA-04 | POS/INT | Reschedule | New time, same UID, increased sequence; no second independent invitation. |
 | MA-05 | POS/INT | Cancellation | Same UID, increased sequence, `METHOD:CANCEL`, `STATUS:CANCELLED`. |
-| MA-06 | POS/INT | Reminder | Correct meeting/time zone; calendar attachments; no unintended booking change. |
+| MA-06 | POS/INT | Reminder | Correct meeting/time zone; calendar invitation; no unintended booking change. |
 | MA-07 | POS/INT | Successful conference retry | Updated connection, same UID, increased sequence. |
 | MA-08 | POS/INT | Erasure of a future booking | Only the intended host cancellation; no former contact data, answers or erasure reasons. |
 
@@ -386,7 +386,8 @@ For **every message actually sent**, check:
 
 - Expected recipients, no unrelated addresses.
 - Exactly one `text/calendar` part with the appropriate `method`, inside `multipart/alternative`,
-  and no `.ics` attachment. Outlook (also POP3/IMAP), Gmail and Apple Mail show it as an invitation.
+  the Outlook `Content-Class: urn:content-classes:calendarmessage` header, and no `.ics` attachment.
+  Outlook (also POP3/IMAP), Gmail and Apple Mail show it as an invitation.
 - The host's copy: the site sender as organiser, the host as attendee, accepting adds the entry
   without a reply, and the description lists every answer.
 - Correct start/end, duration, location, UID, sequence and status.
@@ -407,7 +408,7 @@ earlier contradictory recipient sentence has been corrected to match this rule.
 | MA-10 | POS | Create an event-specific template, then disable it. | Active specific template takes precedence; intended site-wide fallback afterwards. |
 | MA-11 | NEG | Disable matching language-specific templates. | Documented English fallback; no empty/unintelligible mail. |
 | MA-12 | POS | Use names, locations and answers containing umlauts, accents, emoji, commas, semicolons, backslashes and newlines. | Readable mail and valid calendar; no truncated UTF-8 characters. |
-| MA-13 | POS | Use a custom template without link/conference placeholders. | Mandatory information and authorised management links still present; attachments retained. |
+| MA-13 | POS | Use a custom template without link/conference placeholders. | Mandatory information, authorised management links and the calendar invitation still present. |
 | MA-14 | NEG | Submit a newline in input used in the subject. | No injected mail headers or additional recipients. |
 | MA-15 | FEH | Deliberately make SMTP unreachable before booking. | Booking remains saved; explicit error; no false promise of successful delivery. |
 
@@ -430,7 +431,7 @@ Document client differences. Distinguish client behaviour from defects in genera
 
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
-| LI-01 | POS | Open reschedule link in a private browser without login, choose a permitted slot and confirm. | No login required; exactly the same booking record at its new time. |
+| LI-01 | POS | Open reschedule link in a private browser without login; verify the current appointment, choose a permitted date and time in the booking calendar, and confirm. | No login required; current appointment is clear, the same calendar/time picker is used, and exactly the same booking record moves to its new time. |
 | LI-02 | POS | Compare database/backend and ICS after rescheduling. | Booking ID and UID unchanged; sequence increased; old slot free, new slot occupied. |
 | LI-03 | NEG | Reschedule onto a slot taken in the meantime. | Understandable refusal; original meeting retained. |
 | LI-04 | POS | Reschedule a pending meeting. | Still pending; not silently approved. |
@@ -442,6 +443,7 @@ Document client differences. Distinguish client behaviour from defects in genera
 | LI-10 | POS | Repeat a successfully confirmed action in the same browser. | Understandable completion state; no repeated mail, bookings or audit entries. |
 | LI-11 | NEG | Submit confirmation without a Joomla CSRF token or with a wrong token. | No change. |
 | LI-12 | POS | Reschedule and cancel with JavaScript disabled. | Fully usable; same rules as with JavaScript. |
+| LI-13 | POS | Reschedule during the repeated local hour at the autumn clock change. | The other UTC instant with the same displayed local time remains selectable. |
 
 ## 11. Privacy and erasure
 

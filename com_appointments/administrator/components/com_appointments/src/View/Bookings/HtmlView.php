@@ -12,6 +12,8 @@ use Joomla\CMS\Language\Text;
 use Joomla\CMS\MVC\View\HtmlView as BaseHtmlView;
 use Joomla\CMS\Toolbar\Toolbar;
 use Joomla\CMS\Toolbar\ToolbarHelper;
+use Joomla\CMS\Factory;
+use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
 
@@ -47,13 +49,35 @@ class HtmlView extends BaseHtmlView
 
         ToolbarHelper::title(Text::_('COM_APPOINTMENTS_BOOKINGS_TITLE'), 'calendar');
         $toolbar = Toolbar::getInstance('toolbar');
-        $toolbar->standardButton('approve')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_APPROVE'))->task('bookings.approve')->listCheck(true);
-        $toolbar->standardButton('cancel')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CANCEL'))->task('bookings.cancel')->listCheck(true);
-        $toolbar->standardButton('retry')->text(Text::_('COM_APPOINTMENTS_CONFERENCE_RETRY'))->task('bookings.retryConference')->listCheck(true);
-        $toolbar->standardButton('export')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CSV'))->task('bookings.exportCsv');
-        // The non-personal campaign aggregate, which outlives the anonymisation of the bookings.
-        $toolbar->standardButton('campaigns')->icon('icon-chart')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CAMPAIGNS_CSV'))->task('bookings.exportCampaigns');
-        ToolbarHelper::deleteList(Text::_('COM_APPOINTMENTS_BOOKINGS_ERASE_CONFIRM'), 'bookings.erase', 'COM_APPOINTMENTS_BOOKINGS_ERASE');
+        // A button whose task this user may not run on any booking of the list would only end in an
+        // error page (BookingsController): approve and cancel need «Edit State», erase «Delete», each
+        // on the event type of the selected booking. Only the bookings shown can be selected, so the
+        // event types of those decide, not the whole permission scope (a filter can narrow it).
+        // The list itself and retry need «Edit», which every listed event type grants (EventScope).
+        $events = array_values(array_unique(array_map(static fn (object $item): int => (int) $item->eventtype_id, (array) $this->items)));
+        $may = static fn (string $action): bool => \Advans\Component\Appointments\Administrator\Helper\EventScope::allowsAny($user, $action, $events);
+
+        if ($may('core.edit.state')) {
+            $toolbar->standardButton('approve')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_APPROVE'))->task('bookings.approve')->listCheck(true);
+            $toolbar->standardButton('cancel')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CANCEL'))->task('bookings.cancel')->listCheck(true);
+        }
+
+        if ($may('core.edit')) {
+            $toolbar->standardButton('retry')->text(Text::_('COM_APPOINTMENTS_CONFERENCE_RETRY'))->task('bookings.retryConference')->listCheck(true);
+            $toolbar->standardButton('export')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CSV'))->task('bookings.exportCsv');
+        }
+
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $campaignEvents = \Advans\Component\Appointments\Administrator\Helper\EventScope::events($db, $user);
+        $mayCampaigns = \Advans\Component\Appointments\Administrator\Helper\EventScope::canExportCampaigns($user, $campaignEvents);
+        if ($mayCampaigns) {
+            // The non-personal campaign aggregate outlives anonymisation and deleted event types,
+            // so its button must not depend on a nonempty or filtered booking result.
+            $toolbar->standardButton('campaigns')->icon('icon-chart')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CAMPAIGNS_CSV'))->task('bookings.exportCampaigns');
+        }
+        if ($may('core.delete')) {
+            ToolbarHelper::deleteList(Text::_('COM_APPOINTMENTS_BOOKINGS_ERASE_CONFIRM'), 'bookings.erase', 'COM_APPOINTMENTS_BOOKINGS_ERASE');
+        }
         if ($this->unverified > 0) {
             \Joomla\CMS\Factory::getApplication()->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_TEAM_E_BOOKINGS_UNVERIFIED_NOTICE', $this->unverified), 'warning');
 

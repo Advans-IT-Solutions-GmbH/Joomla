@@ -210,11 +210,19 @@ try {
             $document = new DOMDocument();
             @$document->loadHTML($help);
             $helpXpath = new DOMXPath($document);
-            $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 14
+            $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 16
                 && $helpXpath->query('//a[@id="toolbar-back"]')->length === 1,
                 'Central help has all generic topics and a real overview return, enabled=' . $enabled);
+            // Owner decision 18.11.2026: the existing permission model stays; the help explains it.
+            $check($helpXpath->query('//section[@id="help-permissions"]//h2[normalize-space()="Permissions"]')->length === 1
+                && $helpXpath->query('//table[@id="help-permissions-table"]/tbody/tr')->length === 8
+                && $helpXpath->query('//section[@id="help-permissions"]//ol/li')->length === 6
+                && str_contains($help, 'there is no separate reading permission in the administrator')
+                && str_contains($help, 'Administrator Login')
+                && $helpXpath->query('//section[@id="help-module"]//h2[normalize-space()="Dashboard module"]')->length === 1,
+                'Central help explains every permission, how another account gets access, and the dashboard module, enabled=' . $enabled);
             $topicLinks = $helpXpath->query('//div[@id="appointments-help"]/nav/a[starts-with(@href,"#help-")]');
-            $topicTargetsValid = $topicLinks->length === 14;
+            $topicTargetsValid = $topicLinks->length === 16;
             foreach ($topicLinks as $topicLink) {
                 $target = substr($topicLink->getAttribute('href'), 1);
                 $topicTargetsValid = $topicTargetsValid && preg_match('/^help-[a-z]+$/D', $target) === 1
@@ -222,7 +230,7 @@ try {
             }
             $check($topicTargetsValid
                 && $helpXpath->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
-                'All fourteen native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
+                'All sixteen native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
             $check($helpXpath->query('//section[@id="help-plugins"]//h2[normalize-space()="Bundled plugins"]')->length === 1
                 && $helpXpath->query('//section[@id="help-plugins"]//h3')->length === 6
                 && $helpXpath->query('//section[@id="help-plugins"]//h3[normalize-space()="System - Appointments origin of bookings"]')->length === 1
@@ -238,7 +246,7 @@ try {
                 @$popupDocument->loadHTML($popup);
                 $popupXpath = new DOMXPath($popupDocument);
                 $check($admin->status === 200 && $popupXpath->query('//div[@id="appointments-help"]/section[@id="help-plugins"]')->length === 1
-                    && $popupXpath->query('//div[@id="appointments-help"]/nav/a[starts-with(@href,"#help-")]')->length === 14
+                    && $popupXpath->query('//div[@id="appointments-help"]/nav/a[starts-with(@href,"#help-")]')->length === 16
                     && $popupXpath->query('//div[@id="appointments-help"]/nav/a[not(starts-with(@href,"#"))]')->length === 0,
                     'The Help popup keeps the topic navigation and hides the Overview and Options buttons');
             }
@@ -460,6 +468,28 @@ try {
     sort($restrictedIds);
     $check($restricted->status === 200 && $restrictedIds === $expectedIds,
         'Per-event editor sees only permitted booking contacts');
+    // Audit 18.11.2026, B3: buttons whose task this account may not run ended in an error page. The
+    // editor has «Edit» but neither «Edit State» nor «Delete»: no approve, cancel or erase button.
+    $toolbarIds = static function (string $html): array {
+        preg_match_all('/id="toolbar-([a-z]+)"/', $html, $matches);
+
+        return array_values(array_unique($matches[1]));
+    };
+    $restrictedButtons = $toolbarIds($html);
+    $adminButtons = $toolbarIds($listing($admin, $scopeFilters));
+    $check(!array_intersect(['approve', 'cancel', 'delete'], $restrictedButtons) && in_array('retry', $restrictedButtons, true)
+        && in_array('export', $restrictedButtons, true) && !array_diff(['approve', 'cancel', 'delete', 'retry', 'export'], $adminButtons),
+        'The bookings toolbar shows approve, cancel and erase only with the permission: ' . json_encode([$restrictedButtons, $adminButtons]));
+    // The dashboard module follows the bookings list: the editor sees the allowed event type's next
+    // appointments and nothing of the denied one; the Super User sees both.
+    $restrictedHome = $restricted->request('/administrator/index.php');
+    $adminHome = $admin->request('/administrator/index.php');
+    $check($restricted->status === 200 && str_contains($restrictedHome, 'mod-appointments-list')
+        && str_contains($restrictedHome, $tag . '-allowed') && !str_contains($restrictedHome, $tag . '-denied'),
+        'The dashboard module shows the editor only the appointments of the event types the editor may edit');
+    $check($admin->status === 200 && str_contains($adminHome, $tag . '-allowed') && str_contains($adminHome, $tag . '-denied')
+        && str_contains($adminHome, 'option=com_appointments&amp;view=bookings'),
+        'The dashboard module shows a Super User every next appointment with a link into the bookings list');
     $pagedIds = [];
     $pagesOk = true;
     foreach ([0, 1] as $start) {
@@ -542,6 +572,9 @@ try {
             && !str_contains($html, $tag . '-allowed-field') && !str_contains($html, $tag . '-allowed-template')
             && !str_contains($html, $tag . '-sitewide-template'), 'An empty event ACL scope returns no list rows: ' . $view);
     }
+    $restrictedHome = $restricted->request('/administrator/index.php');
+    $check($restricted->status === 200 && !str_contains($restrictedHome, 'mod-appointments') && !str_contains($restrictedHome, 'Next appointments'),
+        'Without the permission for the bookings list the dashboard module shows nothing, not even its title');
     $restricted->request('/administrator/index.php?option=com_appointments&view=booking&id=' . (int) $third['id']);
     $check($restricted->status === 403, 'Direct booking details require the event permission');
     $token = $restricted->token($listing($restricted));

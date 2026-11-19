@@ -8,9 +8,11 @@
 
 namespace Advans\Component\Appointments\Site\View\Manage;
 
+use Advans\Component\Appointments\Administrator\Helper\RescheduleSlots;
+use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
+use Advans\Component\Appointments\Administrator\Service\InvalidBookingLinkException;
 use Advans\Component\Appointments\Site\Helper\BackLink;
 use Advans\Component\Appointments\Site\Helper\NoPageCache;
-use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
 use Advans\Component\Appointments\Site\View\ResultNoticesTrait;
@@ -33,6 +35,9 @@ class HtmlView extends BaseHtmlView
     protected $completed;
     protected $slots = [];
     protected $month;
+    protected $days = [];
+    protected $day = '';
+    protected $currentDay = '';
     protected $zone;
     protected $reason;
     protected $errors = [];
@@ -44,6 +49,10 @@ class HtmlView extends BaseHtmlView
     protected array $receipt = [];
     /** Whether the link only reports that the appointment is cancelled (ManageModel::cancelled()), without a form. */
     protected bool $cancelled = false;
+    /** Whether the visitor has selected a day in the reschedule calendar. */
+    protected bool $dayChosen = false;
+    /** Whether the previous month lies in the past of the displayed time zone. */
+    protected bool $isFirstMonth = false;
     /** Booking page of the event type after a cancellation (BackLink::booking()), '' for none. */
     protected string $bookAgain = '';
 
@@ -56,11 +65,16 @@ class HtmlView extends BaseHtmlView
         // Nor Joomla's page cache: the page carries signed links and tokens of one browser session.
         NoPageCache::apply($app);
         $model = $this->getModel();
-        $this->action = $model->action();
-        $this->signature = $model->signature();
-        $this->completed = $model->completed();
-        // The item first: an invalid link ends here with the refusal (404), before anything else.
-        $this->item = $model->getItem();
+
+        try {
+            $this->action = $model->action();
+            $this->signature = $model->signature();
+            $this->completed = $model->completed();
+            // The item first: an invalid link ends here with the refusal, before anything else.
+            $this->item = $model->getItem();
+        } catch (InvalidBookingLinkException $e) {
+            return $this->displayInvalid();
+        }
         $this->cancelled = !$this->completed && $model->cancelled($this->item);
         // A page that reports a cancellation (its receipt, or a link of a cancelled appointment)
         // says so in its heading; every other page names the action of its link.
@@ -107,10 +121,61 @@ class HtmlView extends BaseHtmlView
                 throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_ZONE'), 400);
             }
             $this->zone = new \DateTimeZone($zone);
-            $this->month = $app->getInput()->getString('month', UtcTimestamp::parse($this->item->start_utc)->setTimezone($this->zone)->format('Y-m'));
-            $this->slots = $model->getSlots($this->item, $this->month, $zone, new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+            $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+            $start = UtcTimestamp::parse((string) $this->item->start_utc);
+
+            if ($start === null) {
+                throw new \RuntimeException(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_DATE'), 500);
+            }
+
+            $currentMonth = $now->setTimezone($this->zone)->format('Y-m');
+            $this->month = $app->getInput()->getString('month', '');
+
+            if ($this->month === '') {
+                $this->month = max($currentMonth, $start->setTimezone($this->zone)->format('Y-m'));
+            }
+
+            if (!UtcTimestamp::isDate($this->month . '-01')) {
+                throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_DATE'), 400);
+            }
+
+            $this->isFirstMonth = $this->month <= $currentMonth;
+            $firstDay = new \DateTimeImmutable($this->month . '-01', new \DateTimeZone('UTC'));
+
+            for ($offset = 0; $offset < (int) $firstDay->format('t'); $offset++) {
+                $this->days[] = $firstDay->modify('+' . $offset . ' days')->format('Y-m-d');
+            }
+
+            $this->currentDay = $start->setTimezone($this->zone)->format('Y-m-d');
+            $this->day = $app->getInput()->getString('day', '');
+            $this->dayChosen = $this->day !== '';
+
+            if ($this->dayChosen && (!UtcTimestamp::isDate($this->day) || substr($this->day, 0, 7) !== $this->month)) {
+                throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_DATE'), 400);
+            }
+
+            $this->slots = RescheduleSlots::byLocalDay($model->getSlots($this->item, $this->month, $zone, $now), $start, $this->zone);
         }
 
         return parent::display($tpl);
+    }
+
+    /**
+     * The page of a signed link that opens nothing: an earlier link of an appointment that was
+     * rescheduled or cancelled since, a used erase link, a tampered link or an unknown appointment.
+     * One page for all of them, still with status 404 and the same text, so it does not tell which
+     * applies (the privacy boundary of the signed pages). It explains that only the links of the
+     * newest mail apply and offers a new booking (BackLink::again(), from the address alone).
+     */
+    private function displayInvalid()
+    {
+        $app = Factory::getApplication();
+        $app->setHeader('status', '404', true);
+        $this->applyPageTitle('manage', Text::_('COM_APPOINTMENTS_MANAGE_INVALID_TITLE'));
+        $this->useAppointmentsAssets(false);
+        $this->bookAgain = BackLink::again();
+        $this->setLayout('invalid');
+
+        return parent::display();
     }
 }

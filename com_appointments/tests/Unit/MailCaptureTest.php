@@ -24,7 +24,8 @@ final class MailCaptureTest extends TestCase
     public function testInvitationIsTheOneCalendarAlternative(): void
     {
         $calendar = "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nUID:fixture\r\nEND:VCALENDAR\r\n";
-        $alternative = "Content-Type: multipart/alternative;\r\n boundary=\"b1\"\r\n\r\n"
+        $alternative = "Content-Class: urn:content-classes:calendarmessage\r\n"
+            . "Content-Type: multipart/alternative;\r\n boundary=\"b1\"\r\n\r\n"
             . "--b1\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\nText\r\n"
             . "--b1\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n<p>Text</p>\r\n"
             . "--b1\r\nContent-Type: text/calendar; method=REQUEST; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n"

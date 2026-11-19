@@ -635,6 +635,11 @@
     opacity: var(--appointments-unavailable-opacity);
 }
 
+.com-appointments-day-current:not(.com-appointments-day-selected) {
+    text-decoration: underline dotted;
+    text-underline-offset: 0.18em;
+}
+
 .com-appointments-empty {
     margin: 0;
     color: var(--appointments-muted);

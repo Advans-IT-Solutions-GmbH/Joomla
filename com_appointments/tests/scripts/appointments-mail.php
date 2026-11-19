@@ -91,6 +91,7 @@ final class AppointmentsMail
         $headers = preg_replace('/\r?\n[ \t]+/', ' ', $mime);
 
         return preg_match('/^Content-Type:\s*multipart\/alternative;/mi', $headers) === 1
+            && preg_match('/^Content-Class:\s*urn:content-classes:calendarmessage\r?$/mi', $headers) === 1
             && preg_match_all('/^Content-Type:\s*text\/calendar\b/mi', $headers) === 1
             && preg_match('/^Content-Type:\s*text\/calendar;\s*method=' . preg_quote($method, '/') . ';/mi', $headers) === 1
             && preg_match('/^Content-Type:\s*text\/plain\b/mi', $headers) === 1
