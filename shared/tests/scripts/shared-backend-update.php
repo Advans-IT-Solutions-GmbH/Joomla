@@ -368,10 +368,16 @@ foreach ($scenarios as $scenario) {
                 $obsoleteModuleFile = dirname(dirname($moduleFile)) . '/src/recovery-retired/local.php';
                 mkdir(dirname($obsoleteModuleFile), 0777, true);
                 file_put_contents($obsoleteModuleFile, '<?php // Unknown obsolete module bytes');
+                chmod(dirname($obsoleteModuleFile), 0777);
+                chmod($obsoleteModuleFile, 0666);
                 $installedModuleManifest = dirname(dirname($moduleFile)) . '/mod_appointments.xml';
                 $oldModuleManifest = simplexml_load_file($installedModuleManifest);
                 $oldModuleManifest->files->addChild('folder', 'src/recovery-retired');
                 $oldModuleManifest->asXML($installedModuleManifest);
+                if (!defined('_JEXEC')) {
+                    define('_JEXEC', 1);
+                }
+                require_once JOOMLA_ROOT . '/libraries/vendor/autoload.php';
                 $moduleDeletesObsolete = property_exists(\Joomla\CMS\Installer\Adapter\ModuleAdapter::class, 'oldFiles');
                 unlink($state . '/installed.php');
             }
