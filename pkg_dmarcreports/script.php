@@ -109,8 +109,10 @@ class Pkg_DmarcreportsInstallerScript extends InstallerScript
      * the pending update rows of those streams. The package's own update site
      * is linked to the package, not to a child, so it is never touched.
      *
-     * A failure here must not fail the installation; the stale link only
-     * affects update notifications and is retried on the next package update.
+     * A failure here must not fail the installation. The package installation
+     * or update queues a localized warning because a child may retain its
+     * standalone update channel and drift from the package; the next package
+     * update retries it.
      */
     private function removeChildUpdateSites(): void
     {
@@ -181,8 +183,11 @@ class Pkg_DmarcreportsInstallerScript extends InstallerScript
                     )->execute();
                 }
             }
-        } catch (\Throwable $e) {
-            // Not fatal: see the method description.
+        } catch (\Throwable) {
+            Factory::getApplication()->enqueueMessage(
+                Text::_('PKG_DMARCREPORTS_UPDATE_CHANNEL_WARNING'),
+                'warning'
+            );
         }
     }
 

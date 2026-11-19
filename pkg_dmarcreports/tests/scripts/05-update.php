@@ -7,7 +7,8 @@
  * domains or the encrypted IMAP source credentials, and it must not create
  * duplicate extension registrations. Before the update each bundled extension
  * is installed standalone with its own update server; the package update must
- * leave only the package's update site.
+ * remove child links, preserve shared and package-owned update sites, and warn
+ * visibly if a database failure prevents the channel switch.
  */
 
 require_once __DIR__ . '/shared-database-check-lib.php';
@@ -88,6 +89,86 @@ class UpdateTest
             });
         }
 
+        $taskChild          = self::CHILDREN['task plugin'];
+        $taskExtensionId    = $this->extensionId($taskChild['where']);
+        $taskSiteId         = $this->siteId($taskChild['url']);
+        $foreignExtensionId = $this->extensionId("type = 'component' AND element = 'com_config'");
+        $sharedLinkAdded    = false;
+
+        $this->test('Standalone task-plugin update site is shared with another extension', function () use (
+            $taskSiteId,
+            $foreignExtensionId,
+            &$sharedLinkAdded
+        ) {
+            if ($taskSiteId < 1 || $foreignExtensionId < 1) {
+                return false;
+            }
+
+            $sharedLinkAdded = $this->db->query(
+                "INSERT IGNORE INTO {$this->dbPrefix}update_sites_extensions (update_site_id, extension_id)"
+                . " VALUES ($taskSiteId, $foreignExtensionId)"
+            ) === true;
+
+            return $sharedLinkAdded && $this->siteLinkCount($taskSiteId, $foreignExtensionId) === 1;
+        });
+
+        // Make the first channel-switch attempt fail on the child-link delete.
+        // The installer must keep going, disclose the incomplete switch, and
+        // leave the links available for a later successful retry.
+        $triggerName = 'pkg_dmarcreports_injected_update_failure';
+        $triggerSql  = "CREATE TRIGGER `$triggerName` BEFORE DELETE ON `{$this->dbPrefix}update_sites_extensions`"
+            . " FOR EACH ROW BEGIN IF OLD.extension_id = $taskExtensionId"
+            . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected update-site cleanup failure';"
+            . ' END IF; END';
+        $triggerCreated = false;
+        $this->test('Database failure injection is ready', function () use (
+            $triggerName,
+            $triggerSql,
+            $taskExtensionId,
+            &$triggerCreated
+        ) {
+            $this->db->query("DROP TRIGGER IF EXISTS `$triggerName`");
+
+            if ($taskExtensionId < 1) {
+                return false;
+            }
+
+            $triggerCreated = $this->db->query($triggerSql) === true;
+
+            return $triggerCreated;
+        });
+
+        if ($triggerCreated) {
+            $restoreLanguage = sh_use_cli_language('/var/www/html', 'en-GB');
+
+            $exitCode = 1;
+            $text     = '';
+
+            try {
+                [$exitCode, $text] = sh_cli_install_checked('/var/www/html', $zip);
+            } finally {
+                $restoreLanguage();
+
+                $triggerDropped = false;
+                $this->test('Database failure injection is removed', function () use ($triggerName, &$triggerDropped) {
+                    $triggerDropped = $this->db->query("DROP TRIGGER IF EXISTS `$triggerName`") === true;
+
+                    return $triggerDropped;
+                });
+            }
+
+            $this->test('Failed channel switch remains nonfatal and shows a truthful warning', function () use ($exitCode, $text) {
+                return $exitCode === 0
+                    && str_contains($text, 'Joomla could not complete the switch to the package update channel');
+            });
+            $this->test('Database error details are not exposed in the installer output', function () use ($text) {
+                return !str_contains($text, 'injected update-site cleanup failure');
+            });
+            $this->test('Failed cleanup leaves the standalone child link for retry', function () use ($taskChild) {
+                return $this->linkCount($taskChild['where']) > 0;
+            });
+        }
+
         // A site installed before the manifest rename still has com_dmarcreports.xml,
         // and the maintenance:database --fix workaround emptied the registered version.
         $admin = '/var/www/html/administrator/components/com_dmarcreports';
@@ -141,13 +222,27 @@ class UpdateTest
             });
         }
 
-        // The package is the only update channel: every standalone link and the
-        // update sites left orphaned by removing them are gone, and the package
-        // keeps exactly its own update site.
+        // A successful retry removes child links and unshared orphaned sites,
+        // preserves the site still linked to another extension, and leaves the
+        // package's own update site intact.
         foreach (self::CHILDREN as $label => $child) {
             $this->test("No update-site link left on the $label", function () use ($child) {
                 return $this->linkCount($child['where']) === 0;
             });
+
+            if ($label === 'task plugin') {
+                $this->test('Shared task-plugin update site remains linked to the other extension', function () use (
+                    $child,
+                    $foreignExtensionId
+                ) {
+                    return $foreignExtensionId > 0
+                        && $this->siteCount($child['url']) === 1
+                        && $this->siteLinkCount($this->siteId($child['url']), $foreignExtensionId) === 1;
+                });
+
+                continue;
+            }
+
             $this->test("Standalone $label update site removed", function () use ($child) {
                 return $this->siteCount($child['url']) === 0;
             });
@@ -266,6 +361,47 @@ class UpdateTest
         $url = $this->db->real_escape_string($url);
         $result = $this->db->query(
             "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}update_sites WHERE TRIM(location) = '$url'"
+        );
+        $row = $result ? $result->fetch_assoc() : null;
+
+        return $row ? (int) $row['cnt'] : -1;
+    }
+
+    /**
+     * Find an extension using a fixed test-suite filter.
+     */
+    private function extensionId(string $where): int
+    {
+        $result = $this->db->query(
+            "SELECT extension_id FROM {$this->dbPrefix}extensions WHERE $where LIMIT 1"
+        );
+        $row = $result ? $result->fetch_assoc() : null;
+
+        return $row ? (int) $row['extension_id'] : 0;
+    }
+
+    /**
+     * Find an update site by its exact location.
+     */
+    private function siteId(string $url): int
+    {
+        $url = $this->db->real_escape_string($url);
+        $result = $this->db->query(
+            "SELECT update_site_id FROM {$this->dbPrefix}update_sites WHERE TRIM(location) = '$url' LIMIT 1"
+        );
+        $row = $result ? $result->fetch_assoc() : null;
+
+        return $row ? (int) $row['update_site_id'] : 0;
+    }
+
+    /**
+     * Number of links from one update site to one extension.
+     */
+    private function siteLinkCount(int $siteId, int $extensionId): int
+    {
+        $result = $this->db->query(
+            "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}update_sites_extensions"
+            . " WHERE update_site_id = $siteId AND extension_id = $extensionId"
         );
         $row = $result ? $result->fetch_assoc() : null;
 
