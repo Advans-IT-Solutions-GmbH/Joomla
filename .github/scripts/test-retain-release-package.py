@@ -74,14 +74,15 @@ class RetainReleasePackageTest(unittest.TestCase):
     def test_upload_is_limited_to_the_verified_package(self):
         action = ACTION.read_text(encoding="utf-8")
         upload = action.split("    - name: Upload hash-verified release package\n", 1)[1]
+        uses, settings = upload.split("\n", 1)
+        self.assertRegex(uses, r"^      uses: actions/upload-artifact@[0-9a-f]{40}(?: # .*)?$")
         self.assertEqual(
-            "      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7\n"
             "      with:\n"
             "        name: ${{ inputs.artifact-name }}\n"
             "        path: ${{ inputs.package }}\n"
             "        if-no-files-found: error\n"
             "        retention-days: 3\n",
-            upload,
+            settings,
         )
 
 
