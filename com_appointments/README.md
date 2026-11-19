@@ -179,6 +179,50 @@ installation/database; no Joomla files or server ports need remapping.
   even though Joomla itself supports it.
 - Administrator access for configuration
 
+## Update conflicts and recovery
+
+When an existing Appointments component, bundled-plugin or bundled-module file differs from the package and its
+origin cannot be established from the installed-file record or the release hash catalog, the
+installer stops before copying files. It lists the paths and hashes and creates verified file
+backups. Unknown origin does not imply a local edit. Repeating the installation or approving a
+shared installer plan does not override this protection.
+
+1. As a Super User, install `appointments-recovery.zip` (inside the Appointments release ZIP) using
+   Joomla's extension installer. This companion can be installed before updating Appointments and
+   does not change the existing component, bundled plugins or booking data.
+2. Before updating or restoring, take a complete site backup and stop other writers (deployments,
+   background jobs and other installers). After the guarded update stops, open **Components →
+   Appointments Recovery**. Review the existing and incoming SHA-256 values and save a choice for
+   each file. Installer metadata, shared sources, removals and other files that cannot safely
+   use substitute copy inputs do not offer **Keep local**. Accept the release operation only
+   after reviewing the backup and impact; otherwise the update stays paused.
+3. Retry the same update. A changed candidate or destination invalidates the plan. Kept files
+   still belong to the Joomla manifest but are not recorded as release bytes; a future update
+   may ask about them again. Keeping old code can be incompatible with the new release.
+4. The companion shows verified backups from the last reviewed installation attempt. For eligible
+   files it can restore a missing file or replace the exact incoming bytes displayed on the form.
+   It refuses other current bytes and never rolls back the database or extension metadata.
+   Restore requires a private temporary directory outside the web root on the same filesystem.
+
+The recovery lock serializes this feature's own requests, not independent filesystem writers.
+Joomla's copy phase and in-place recovery do not provide an atomic compare-and-swap against
+external writers. Use an exclusive maintenance window. Installer-controlled files that are not
+eligible for direct recovery can still be exported. A file recovery is not a full site rollback.
+
+To inspect or recover the bytes of a verified file backup without changing the installed file, a
+server administrator can extract the same Appointments package outside the web root and run its
+`advansinstaller/export-backup.php` from the command line:
+
+```text
+php advansinstaller/export-backup.php --export ABSOLUTE_BACKUP_PATH ABSOLUTE_DESTINATION_PATH EXISTING_SHA256 NEW_OUTPUT_PATH
+```
+
+Use the backup path and existing hash displayed by the installer, and the absolute site path of
+the listed destination. The output must be a new path in a private directory outside the web root.
+The command verifies the backup's destination and hash and verifies the exported bytes; it never
+overwrites the output or the installed file. It exports one file, not a complete site backup, and
+does not approve or resume the update.
+
 ## Joomla 6 Compatibility
 
 The component resolves its database through `DatabaseInterface`. Queries use `createQuery()` when

@@ -130,6 +130,7 @@ namespace {
     define('JPATH_PLUGINS', str_replace('/', DIRECTORY_SEPARATOR, JPATH_ROOT . '/plugins'));
     $support = dirname(__DIR__) . '/installer';
     require_once $support . '/load.php';
+    require_once $support . '/AppointmentsConflict.php';
 
     $app = new class {
         public string $tag = 'en-GB';
@@ -328,6 +329,244 @@ namespace {
         };
         $backups = static fn(): array => glob($state . '/backups/*.php') ?: [];
         $messageText = static fn(): string => html_entity_decode(implode("\n", array_column($app->messages, 0)), ENT_QUOTES, 'UTF-8');
+
+        // Appointments stops before the shared retry/approval path for unknown owned files.
+        $appointmentSource = $work . '/appointments-source';
+        $appointmentState = JPATH_ADMINISTRATOR . '/advans-installer-state/com_appointments';
+        $componentFile = JPATH_ADMINISTRATOR . '/components/com_appointments/example.php';
+        $pluginFile = JPATH_PLUGINS . '/task/appointments/example.php';
+        mkdir($appointmentSource . '/plugins/task/appointments', 0700, true);
+        mkdir($appointmentSource . '/administrator/components/com_appointments/src/Helper', 0700, true);
+        copy(dirname(__DIR__, 2) . '/com_appointments/administrator/components/com_appointments/src/Helper/BundledModuleGuard.php',
+            $appointmentSource . '/administrator/components/com_appointments/src/Helper/BundledModuleGuard.php');
+        mkdir($appointmentSource . '/modules/mod_appointments/src', 0700, true);
+        file_put_contents($appointmentSource . '/modules/mod_appointments/mod_appointments.xml',
+            '<extension type="module" client="administrator"><name>MOD_APPOINTMENTS</name>'
+            . '<files><filename module="mod_appointments">mod_appointments.php</filename><folder>src</folder></files></extension>');
+        file_put_contents($appointmentSource . '/modules/mod_appointments/mod_appointments.php', '<?php');
+        mkdir(dirname($componentFile), 0700, true);
+        mkdir(dirname($pluginFile), 0700, true);
+        file_put_contents($appointmentSource . '/plugins/task/appointments/appointments.xml',
+            '<extension type="plugin" group="task"><name>PLG_TASK_APPOINTMENTS</name></extension>');
+        $appointmentManifest = simplexml_load_string('<extension type="component"><name>COM_APPOINTMENTS</name></extension>');
+        $appointmentOwned = \Advans\Installer\V2\Destinations::owned($appointmentManifest, $appointmentSource);
+        $appointmentOwned = \Advans\Installer\V2\Destinations::mergeOwned($appointmentOwned, [
+            'prefixes' => [JPATH_ADMINISTRATOR . '/modules/mod_appointments'],
+            'files' => [],
+            'languages' => ['mod_appointments'],
+        ]);
+        $appointmentFiles = [];
+        foreach ([$componentFile, $pluginFile] as $i => $path) {
+            $candidate = $appointmentSource . '/candidate-' . $i;
+            file_put_contents($candidate, 'release ' . $i);
+            file_put_contents($path, 'unidentified ' . $i);
+            $appointmentFiles[$path] = $candidate;
+        }
+        $appointmentKnowledge = \Advans\Installer\V2\Knowledge::load(
+            $appointmentSource . '/missing-catalog.php', $appointmentState . '/installed.php'
+        );
+        $conflicts = \Advans\Installer\AppointmentsConflict\V1\Guard::inspect(
+            $appointmentFiles, $appointmentOwned, $appointmentKnowledge, $appointmentState
+        );
+        $assert(count($conflicts) === 2, 'Unknown component and bundled plugin files must both stop the update.');
+        foreach ($conflicts as $conflict) {
+            $assert(
+                \Advans\Installer\V2\FileGuard::restoreBytes($conflict['backup'], $conflict['destination'], $conflict['existing'])
+                    === file_get_contents($conflict['destination']),
+                'The Appointments conflict backup must contain the verified existing bytes.'
+            );
+        }
+        // An existing shared approval cannot bypass this separate guard, and a new incoming hash
+        // must be shown on a retry rather than reusing an earlier comparison.
+        \Advans\Installer\V2\State::write(dirname($appointmentState) . '/approved.php', [
+            \Advans\Installer\V2\FileGuard::normalize($componentFile) => [
+                'existing' => hash_file('sha256', $componentFile),
+                'incoming' => hash_file('sha256', $appointmentFiles[$componentFile]),
+            ],
+            \Advans\Installer\V2\FileGuard::normalize($pluginFile) => [
+                'existing' => hash_file('sha256', $pluginFile),
+                'incoming' => hash_file('sha256', $appointmentFiles[$pluginFile]),
+            ],
+        ]);
+        file_put_contents($appointmentFiles[$componentFile], 'different release');
+        $retry = \Advans\Installer\AppointmentsConflict\V1\Guard::inspect(
+            $appointmentFiles, $appointmentOwned, $appointmentKnowledge, $appointmentState
+        );
+        $assert(count($retry) === 2 && $retry[0]['incoming'] === hash('sha256', 'different release'),
+            'Retry must not accept an approval for another incoming hash.');
+        $assert(file_get_contents($componentFile) === 'unidentified 0' && file_get_contents($pluginFile) === 'unidentified 1',
+            'The conflict guard must not replace either destination.');
+        // The normal successful-install ledger records only release bytes actually present.
+        copy($appointmentFiles[$componentFile], $componentFile);
+        $incoming = \Advans\Installer\V2\FileGuard::compare($appointmentFiles)['incoming'];
+        \Advans\Installer\V2\Knowledge::record($appointmentState . '/installed.php', 'fixture', $incoming);
+        $record = \Advans\Installer\V2\State::read($appointmentState . '/installed.php');
+        $assert(isset($record['files']['administrator/components/com_appointments/example.php'])
+            && !isset($record['files']['plugins/task/appointments/example.php']),
+            'The ledger must record installed release bytes, not preserved unknown bytes.');
+        $appointmentKnowledge = \Advans\Installer\V2\Knowledge::load(
+            $appointmentSource . '/missing-catalog.php', $appointmentState . '/installed.php'
+        );
+        file_put_contents($appointmentFiles[$componentFile], 'later release');
+        $retry = \Advans\Installer\AppointmentsConflict\V1\Guard::inspect(
+            $appointmentFiles, $appointmentOwned, $appointmentKnowledge, $appointmentState
+        );
+        $assert(count($retry) === 1 && $retry[0]['existing'] === hash('sha256', 'unidentified 1'),
+            'Recorded release bytes must not be treated as unknown on the next update.');
+
+        $recovery = \Advans\Installer\AppointmentsConflict\V1\Guard::class;
+        $reviewState = $appointmentState . '/review-tests';
+        $reviewFiles = [];
+        foreach ([
+            JPATH_ADMINISTRATOR . '/components/com_appointments/src/recovery.php',
+            JPATH_PLUGINS . '/task/appointments/src/recovery.php',
+            JPATH_ADMINISTRATOR . '/modules/mod_appointments/src/recovery.php',
+            JPATH_ADMINISTRATOR . '/components/com_appointments/recovery.xml',
+        ] as $i => $path) {
+            if (!is_dir(dirname($path))) {
+                mkdir(dirname($path), 0700, true);
+            }
+            $candidate = $appointmentSource . '/review-' . $i . '.php';
+            file_put_contents($path, 'unknown recovery ' . $i);
+            file_put_contents($candidate, 'release recovery ' . $i);
+            $reviewFiles[\Advans\Installer\V2\FileGuard::normalize($path)] = $candidate;
+        }
+        $rows = $recovery::inspect($reviewFiles, $appointmentOwned, $appointmentKnowledge, $reviewState);
+        $review = $recovery::review($reviewState, 'recovery-test', $rows, $reviewFiles);
+        $refused = static function (callable $action) use ($assert): void {
+            try {
+                $action();
+            } catch (\RuntimeException) {
+                return;
+            }
+            $assert(false, 'An unsupported or manipulated recovery request must be refused.');
+        };
+        $eligible = array_filter($review['rows'], static fn(array $row): bool => $row['keep']);
+        $metadata = array_diff_key($review['rows'], $eligible);
+        $assert(count($eligible) === 3 && count($metadata) === 1,
+            'Component, plugin and module code can be kept, but installer metadata cannot.');
+        $file = array_key_first($eligible);
+        $refused(static fn() => $recovery::decide($reviewState, str_repeat('0', 64), $file, 'replace'));
+        $refused(static fn() => $recovery::decide($reviewState, $review['id'], '../configuration.php', 'replace'));
+        $refused(static fn() => $recovery::decide($reviewState, $review['id'], $file, 'approve'));
+        $refused(static fn() => $recovery::decide($reviewState, $review['id'], array_key_first($metadata), 'keep'));
+        $refused(static fn() => $recovery::apply($review, $reviewFiles));
+        $assert($recovery::current($reviewState)['choices'] === [],
+            'Refused requests must not save any choice.');
+        foreach ($review['rows'] as $rowId => $row) {
+            $recovery::decide($reviewState, $review['id'], $rowId, $rowId === $file ? 'keep' : 'replace');
+        }
+        $approved = $recovery::current($reviewState);
+        $recovery::apply($approved, $reviewFiles);
+        foreach ($approved['rows'] as $rowId => $row) {
+            $expected = $rowId === $file ? $row['existing'] : $row['incoming'];
+            $assert(hash_file('sha256', $reviewFiles[$row['destination']]) === $expected,
+                'Only the kept file may substitute its package copy input.');
+            copy($reviewFiles[$row['destination']], $row['destination']);
+        }
+        $recovery::journal($reviewState, $approved);
+        $recovery::verifyInstalled($approved);
+        $restoreId = array_key_first(array_diff_key($eligible, [$file => true]));
+        $restoreRow = $approved['rows'][$restoreId];
+        $refused(static fn() => $recovery::restore($reviewState, $approved['id'], $restoreId, str_repeat('f', 64)));
+        file_put_contents($restoreRow['destination'], 'later unrelated bytes');
+        $refused(static fn() => $recovery::restore($reviewState, $approved['id'], $restoreId, $restoreRow['incoming']));
+        $assert(file_get_contents($restoreRow['destination']) === 'later unrelated bytes',
+            'A stale restoration must leave unrelated bytes untouched.');
+        copy($reviewFiles[$restoreRow['destination']], $restoreRow['destination']);
+        $recovery::restore($reviewState, $approved['id'], $restoreId, $restoreRow['incoming']);
+        $assert(hash_file('sha256', $restoreRow['destination']) === $restoreRow['existing'],
+            'Explicit recovery must restore the verified original bytes.');
+        $refused(static fn() => $recovery::restore($reviewState, $approved['id'], $restoreId, $restoreRow['incoming']));
+        unlink($restoreRow['destination']);
+        $recovery::restore($reviewState, $approved['id'], $restoreId, '');
+        $assert(hash_file('sha256', $restoreRow['destination']) === $restoreRow['existing'],
+            'Explicit recovery may recreate a missing eligible file.');
+
+        // Exercise the real component entry point: it must stop before the shared installer can
+        // consume an approval, including when a bundled plugin is the only remaining conflict.
+        mkdir($appointmentSource . '/administrator/language/en-GB', 0700, true);
+        foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+            $languageDirectory = $appointmentSource . '/administrator/language/' . $tag;
+            if (!is_dir($languageDirectory)) {
+                mkdir($languageDirectory, 0700, true);
+            }
+            file_put_contents($languageDirectory . '/com_appointments.ini', 'TEST="test"');
+        }
+        mkdir(JPATH_ADMINISTRATOR . '/language/en-GB', 0700, true);
+        copy(dirname(__DIR__, 2) . '/com_appointments/administrator/language/en-GB/com_appointments.ini',
+            JPATH_ADMINISTRATOR . '/language/en-GB/com_appointments.ini');
+        copy($appointmentFiles[$componentFile], $appointmentSource . '/administrator/example.php');
+        copy($appointmentFiles[$pluginFile], $appointmentSource . '/plugins/task/appointments/example.php');
+        file_put_contents($appointmentSource . '/plugins/task/appointments/appointments.xml',
+            '<extension type="plugin" group="task"><name>PLG_TASK_APPOINTMENTS</name><files><filename plugin="appointments">example.php</filename></files></extension>');
+        $appointmentXml = '<extension type="component"><name>COM_APPOINTMENTS</name><files/>'
+            . '<administration><files folder="administrator"><filename>example.php</filename></files></administration></extension>';
+        file_put_contents($appointmentSource . '/appointments.xml', $appointmentXml);
+        $appointmentParent = new class($appointmentSource, simplexml_load_string($appointmentXml)) {
+            public function __construct(private string $source, private \SimpleXMLElement $manifest) {}
+            public function getParent(): self { return $this; }
+            public function getManifest(): \SimpleXMLElement { return $this->manifest; }
+            public function getPath(string $key): string { return $key === 'manifest' ? $this->source . '/appointments.xml' : $this->source; }
+        };
+        require_once dirname(__DIR__, 2) . '/com_appointments/script.php';
+        $moduleInstaller = new \Com_appointmentsInstallerScript();
+        $moduleSource = $appointmentSource . '/modules/mod_appointments/src/late.php';
+        $moduleDestination = JPATH_ADMINISTRATOR . '/modules/mod_appointments/src/late.php';
+        file_put_contents($moduleSource, 'module release');
+        file_put_contents($moduleDestination, 'module local');
+        $moduleFiles = [$moduleDestination => $moduleSource];
+        $snapshotMethod = new \ReflectionMethod($moduleInstaller, 'snapshotBundled');
+        (new \ReflectionProperty($moduleInstaller, 'conflictFiles'))->setValue($moduleInstaller, $moduleFiles);
+        (new \ReflectionProperty($moduleInstaller, 'bundledSnapshots'))->setValue($moduleInstaller, [
+            'modules/mod_appointments' => $snapshotMethod->invoke($moduleInstaller, $moduleFiles),
+        ]);
+        $verifyMethod = new \ReflectionMethod($moduleInstaller, 'verifyBundledBeforeInstall');
+        $verifyModule = static fn() => $verifyMethod->invoke($moduleInstaller, $appointmentSource,
+            'modules/mod_appointments', 'administrator/modules/mod_appointments');
+        $verifyModule();
+        file_put_contents($moduleDestination, 'late unreviewed module');
+        $refused($verifyModule);
+        file_put_contents($moduleDestination, 'module local');
+        file_put_contents($moduleSource, 'late candidate');
+        $refused($verifyModule);
+        $assert(file_get_contents($moduleDestination) === 'module local',
+            'Late module validation must not overwrite an installed file.');
+        unlink($moduleDestination);
+
+        $appointmentInstaller = new \Com_appointmentsInstallerScript();
+        $app->messages = [];
+        $assert($appointmentInstaller->preflight('update', $appointmentParent) === false,
+            'The Appointments installer must stop before Joomla copies files.');
+        $assert(str_contains($messageText(), 'plugins/task/appointments/example.php')
+            && str_contains($messageText(), hash('sha256', 'unidentified 1')),
+            'The Appointments installer must display the unknown bundled plugin and its hash.');
+        $assert($appointmentInstaller->preflight('update', $appointmentParent) === false,
+            'Repeating an Appointments update must not approve unknown files.');
+
+        copy($appointmentFiles[$pluginFile], $pluginFile);
+        \Advans\Installer\V2\State::write($appointmentState . '/installed.php', [
+            'version' => 'fixture',
+            'files' => [
+                'administrator/components/com_appointments/example.php' => hash_file('sha256', $componentFile),
+                'plugins/task/appointments/example.php' => hash_file('sha256', $pluginFile),
+            ],
+        ]);
+        $changingInstaller = new class($componentFile) extends \Com_appointmentsInstallerScript {
+            private int $comparisons = 0;
+            public function __construct(private string $file) {}
+            protected function guardedFiles(string $type, object $parent): array
+            {
+                if (++$this->comparisons === 2) {
+                    file_put_contents($this->file, 'changed during shared preflight');
+                }
+                return parent::guardedFiles($type, $parent);
+            }
+        };
+        $assert($changingInstaller->preflight('update', $appointmentParent) === false,
+            'A file becoming unknown during shared preflight must stop the installation.');
+        $assert(file_get_contents($componentFile) === 'changed during shared preflight',
+            'The second comparison must not replace the changed file.');
 
         // 1. Own files: the update decides by itself. The changed file is backed up, the untouched one is not.
         $app->messages = [];

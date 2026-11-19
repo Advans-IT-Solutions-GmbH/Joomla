@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="component" method="upgrade">
+    <name>COM_APPOINTMENTSRECOVERY</name>
+    <element>com_appointmentsrecovery</element>
+    <author>Advans IT Solutions GmbH</author>
+    <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
+    <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
+    <description>COM_APPOINTMENTSRECOVERY_HELP</description>
+    <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+    <php_minimum>8.1</php_minimum>
+    <namespace path="src">Advans\Component\AppointmentsRecovery</namespace>
+    <administration>
+        <menu link="option=com_appointmentsrecovery">COM_APPOINTMENTSRECOVERY</menu>
+        <files>
+            <folder>services</folder>
+            <folder>src</folder>
+            <folder>support</folder>
+            <folder>tmpl</folder>
+            <filename>LICENSE.txt</filename>
+        </files>
+        <languages folder="language">
+            <language tag="en-GB">en-GB/com_appointmentsrecovery.ini</language>
+            <language tag="en-GB">en-GB/com_appointmentsrecovery.sys.ini</language>
+            <language tag="de-DE">de-DE/com_appointmentsrecovery.ini</language>
+            <language tag="de-DE">de-DE/com_appointmentsrecovery.sys.ini</language>
+            <language tag="fr-FR">fr-FR/com_appointmentsrecovery.ini</language>
+            <language tag="fr-FR">fr-FR/com_appointmentsrecovery.sys.ini</language>
+        </languages>
+    </administration>
+</extension>
