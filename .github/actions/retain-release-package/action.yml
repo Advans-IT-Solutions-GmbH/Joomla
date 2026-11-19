@@ -1,0 +1,67 @@
+name: Retain release package
+description: Verify the prepared extension ZIP against its update feed and retain the original ZIP.
+inputs:
+  package:
+    description: Path to the prepared extension ZIP
+    required: true
+  feed:
+    description: Path to the generated update feed
+    required: true
+  artifact-name:
+    description: Name of the Actions artifact
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Verify release package hash
+      shell: bash
+      env:
+        PACKAGE: ${{ inputs.package }}
+        FEED: ${{ inputs.feed }}
+      run: |
+        python3 - <<'PY'
+        import hashlib
+        import os
+        import re
+        import sys
+        import xml.etree.ElementTree as ET
+        from pathlib import Path
+
+        def fail(message):
+            sys.exit(f"::error::{message}")
+
+        package = Path(os.environ["PACKAGE"])
+        feed = Path(os.environ["FEED"])
+        if not package.is_file():
+            fail("Release package not found.")
+        if not feed.is_file():
+            fail("Update feed not found.")
+
+        try:
+            updates = ET.parse(feed).getroot().findall("update")
+        except ET.ParseError:
+            fail("Update feed is invalid XML.")
+        if not updates:
+            fail("Update feed contains no update entries.")
+
+        with package.open("rb") as stream:
+            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+
+        for index, update in enumerate(updates, start=1):
+            entries = update.findall("sha256")
+            if len(entries) != 1:
+                fail(f"Update entry {index} must contain exactly one SHA-256 digest.")
+            expected = (entries[0].text or "").strip()
+            if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
+                fail(f"Update entry {index} contains an invalid SHA-256 digest.")
+            if expected != actual:
+                fail(f"Release package SHA-256 does not match update entry {index}.")
+        PY
+
+    - name: Upload hash-verified release package
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: ${{ inputs.artifact-name }}-${{ github.run_attempt }}
+        path: ${{ inputs.package }}
+        if-no-files-found: error
+        retention-days: 3

@@ -154,6 +154,14 @@ jobs:
           EOF
 
 
+      - name: Retain hash-verified release package
+        if: steps.version.outputs.bump != 'none'
+        uses: ./.github/actions/retain-release-package
+        with:
+          package: plg_ajax_joomlaajaxforms/${{ steps.package.outputs.file }}
+          feed: plg_ajax_joomlaajaxforms/updates/update.xml
+          artifact-name: joomla-ajax-forms-release-package
+
       - name: Create release PR
         if: steps.version.outputs.bump != 'none'
         env:

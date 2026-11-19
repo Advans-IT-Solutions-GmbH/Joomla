@@ -147,6 +147,14 @@ jobs:
           EOF
           php shared/tests/requirements-check.php plg_system_privacyrequests
 
+      - name: Retain hash-verified release package
+        if: steps.version.outputs.bump != 'none'
+        uses: ./.github/actions/retain-release-package
+        with:
+          package: plg_system_privacyrequests/${{ steps.package.outputs.file }}
+          feed: plg_system_privacyrequests/updates/update.xml
+          artifact-name: system-privacyrequests-release-package
+
       - name: Create release PR
         if: steps.version.outputs.bump != 'none'
         env:
