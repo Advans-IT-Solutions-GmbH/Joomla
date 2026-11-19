@@ -65,7 +65,7 @@ def main():
     repo = os.environ["GITHUB_REPOSITORY"]
     data = catalog(args.package)
     print(f"Catalog of {data['extension']}: {len(data['hashes'])} distinct files; complete={data['complete']}")
-    for note in data.get("unreproducible", []) + data.get("failed", []):
+    for note in data.get("historical", []) + data.get("unreproducible", []) + data.get("failed", []):
         print(f"  note: {note}")
     if not data["complete"]:
         raise ValueError("The catalog is incomplete: a release could not be rebuilt or the history is missing")

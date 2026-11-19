@@ -108,7 +108,11 @@ See the root `README.md`, section "Installation safety and repeatable system che
 how updates decide by themselves (own vs foreign territory, record and catalog of released files,
 backups, the pause with Approve for Super Users) and the administrator menu paths. An extension
 with a foreign file operation declares it in `guardedFiles()` and decides it in
-`foreignDecision()`; the README lists every such operation. The runtime lives in the namespace
+`foreignDecision()`; the README lists every such operation. Scheduled tasks an extension needs are
+listed in `shared/installer/tasks.php` (required, optional or required only while an option is on)
+and named per extension under `tasks` in `catalog.php`; after every installation and update
+`ScheduledTasks` creates a missing required task switched on, never changes an existing one and
+reports one that is switched off (root README, «Scheduled tasks decide by themselves too»). The runtime lives in the namespace
 `Advans\Installer\V2`: one request can load the runtimes of several extensions (a bulk update), and
 the loader reuses an already loaded class of the same namespace, so an incompatible change of the
 runtime moves it to a new version namespace (and every `script.php` with it).

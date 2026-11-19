@@ -243,7 +243,7 @@ activation and effective content access.
 |---|---|---|
 | [`privacy/appointments`](plugins/privacy/appointments/README.md) | Native privacy export/removal and calendar privacy integration | Enabled |
 | [`content/appointmentsprivacy`](plugins/content/appointmentsprivacy/README.md) | Independent veto of native removal completion while Appointments reports incomplete | Enabled |
-| [`task/appointments`](plugins/task/appointments/README.md) | Booking reminders/retention and calendar-maintenance routines | Enabled; check task states and trigger separately |
+| [`task/appointments`](plugins/task/appointments/README.md) | Booking reminders/retention and calendar-maintenance routines | Enabled; the installer creates the required tasks (see [Scheduled tasks](#scheduled-tasks)) |
 | [`system/appointmentsdav`](plugins/system/appointmentsdav/README.md) | Local CalDAV endpoint and pre-authentication sign-in guard | Disabled until deliberate setup |
 | [`system/appointmentsattribution`](plugins/system/appointmentsattribution/README.md) | Records the origin of a visit in the session for the [origin of bookings](#origin-of-bookings-campaign-attribution) | Enabled, also when an update introduces it |
 | [`user/appointments`](plugins/user/appointments/README.md) | Password/key sessions, lockout and account/device cleanup | Disabled until deliberate setup |
@@ -639,8 +639,11 @@ each run (at most 200, also while internet calendars are off) and forgets one on
 both steps succeed and its generation is unchanged; its log shows `guest_copies_repaired` and `guest_copies_pending`.
 A reference whose booking was deleted meanwhile, or whose internet calendars were switched
 off, resolves once the copy can be removed; deleting all Appointments data on uninstall drops it.
-Nothing activates that task: without a configured task the reference and the stale copy
-remain until the operator resolves the failure and runs it. A formal Core request does
+The installer creates this task unconditionally, also while the internet calendars are switched off
+(see [Scheduled tasks](#scheduled-tasks)). If it is missing, repeat the installation or update rather
+than creating a manual duplicate: an existing task is never duplicated and only an absent task is
+created switched on. While it is switched off or trashed, leave that operator choice intact and
+switch the existing task on instead. A formal Core request does
 not process these references, and the removed address no longer finds the booking.
 
 Before Core pseudonymises an account, **CanRemove** captures its minimal staff scope
@@ -698,36 +701,51 @@ reference merely because the source booking has been anonymised or deleted.
 
 ### Scheduler, reminders and retention
 
-The component installs and enables **Task - Appointments**. Updates preserve an existing task's
+The component installs and enables **Task - Appointments**. Updates preserve the plugin's
 enabled/disabled state; uninstalling the component removes the plugin and its Scheduler tasks.
-On installation and updates, Joomla's Scheduler ensures these tasks exist in **System → Scheduled Tasks**:
-**Appointments: reminders**, running every five minutes, and **Appointments: retention**,
-running daily, each with a batch size of 100. A first installation creates both tasks enabled.
-An update creates a missing task **disabled** and says so, because retention would otherwise start
-anonymising existing bookings and reminders start writing to invitees without your decision: enable
-the task yourself. A task is created only when no task of its routine exists in any state: a task
-you disabled or trashed is never enabled or created again, and its schedule and options are never
-overwritten. A task deleted permanently is created again by the next update, so disable a task
-instead of deleting it. If a task cannot be created,
-the installation shows a warning and you create it by hand. Configure Joomla's Scheduler execution mechanism or
-invoke its CLI from the server's cron; a quiet website must not rely solely on visitor-triggered
-execution for timely reminders.
 
-The bundled task plugin advertises these routine IDs. An advertised routine is not automatically
-a running scheduled task.
+#### Scheduled tasks
 
-| Routine ID | Purpose | Installer-created task |
-|---|---|---|
-| `plg_task_appointments.reminders` | Due booking reminders | Five-minute rule; enabled only on a fresh component installation |
-| `plg_task_appointments.retention` | Ended-booking, booking-audit and expired rate-limit retention | Daily rule; enabled only on a fresh component installation |
-| `plg_task_appointments.teamcleanup` | Blocked-device cleanup and sign-in-counter expiry | Create/configure deliberately |
-| `plg_task_appointments.teamlog` | Internet-calendar audit retention | Create/configure deliberately |
-| `plg_task_appointments.teaminvitations` | Expired internet-calendar invitations | Create/configure deliberately |
-| `plg_task_appointments.teamretention` | Per-calendar retention plus booking-calendar upkeep | Create/configure deliberately |
-| `plg_task_appointments.close` | Queued Close delivery | Five-minute rule, **created disabled**, including on fresh install |
+The bundled task plugin advertises these routine IDs. After **every installation and update**, the
+shared installer (`shared/installer/ScheduledTasks.php`, routine list in `shared/installer/tasks.php`)
+checks them in **System → Scheduled Tasks** and decides by itself:
 
-Updates create missing seeded tasks disabled and preserve any existing task of the routine,
-including disabled/trashed tasks. Configure a real Scheduler trigger separately.
+| Routine ID | Purpose | Need | What the installer does |
+|---|---|---|---|
+| `plg_task_appointments.retention` | Ended-booking, booking-audit and expired rate-limit retention | **Required** (data protection) | Created switched on when missing: every 24 hours, batch size 100 |
+| `plg_task_appointments.reminders` | Due booking reminders | **Required** while **Reminder offsets (minutes)** is not empty (default `1440,60`), otherwise not needed | Created switched on when missing: every five minutes, batch size 100 |
+| `plg_task_appointments.teamretention` | Per-calendar retention plus booking-calendar upkeep | **Required** (also when internet calendars are off) | Created switched on when missing: every 24 hours |
+| `plg_task_appointments.teamcleanup` | Blocked-device cleanup and sign-in-counter expiry | **Required** while the internet calendars are switched on | Created switched on when missing: every 24 hours |
+| `plg_task_appointments.teamlog` | Internet-calendar audit retention | **Required** while the internet calendars are switched on | Created switched on when missing: every 24 hours |
+| `plg_task_appointments.teaminvitations` | Expired internet-calendar invitations | **Required** while the internet calendars are switched on | Created switched on when missing: every 24 hours |
+| `plg_task_appointments.close` | Queued Close delivery | **Optional** | Created **switched off** (five-minute rule) by the component's own installer, including on a fresh installation; switch it on once the transfer to Close is set up |
+
+- A **missing required** task is created through the Scheduler's own task model, switched on, with
+  the defaults of the plugin's task form, and the message after the installation names it, its
+  schedule and why it matters. This applies to a first installation, an update and a reinstallation
+  over kept tables alike: retention and reminders follow the retention period and reminder offsets
+  configured in the options, which are the operator's decision.
+- A task that **exists in any state** is never changed or duplicated. A required task that is
+  **switched off or trashed** stays so, because someone switched it off on purpose; the message after
+  the installation and the system check say what then does not happen and give the menu path to
+  switch it on. A task deleted permanently is created again by the next installation or update, so
+  switch a task off instead of deleting it.
+- **Not needed** routines (no reminder offsets or feature-only internet-calendar routines when the
+  internet calendars are switched off) are neither created
+  nor mentioned. If you switch the internet calendars on later, the **System check** tab of the
+  options lists their tasks as missing until the next installation or update creates them (or you
+  create them yourself).
+  `teamretention` is never in this not-needed set: it remains required for booking-calendar upkeep
+  and failed guest-erasure copy repair even while internet calendars are off. Do not create a second
+  worker manually; install/update and the shared installer preserve the existing routine row.
+- If a task cannot be created, the installation shows a warning and you create it by hand.
+
+The **System check** tab of the component options and of the task plugin lists every required task
+with its state and last run, and whether Joomla's Scheduler is started: proven by a run of one of
+these tasks within two days, otherwise judged by the configuration (System - Schedule Runner, Lazy
+Scheduler or Web Cron). Configure Joomla's Scheduler execution mechanism or invoke its CLI from the
+server's cron; a quiet website must not rely solely on visitor-triggered execution for timely
+reminders.
 Reminder/booking-retention `batch_size` defaults to 100 and accepts 1–1000; calendar and Close
 routines use their own service bounds, not that batch form. While internet calendars are disabled,
 `teamcleanup`, `teamlog` and `teaminvitations` do nothing, but `teamretention` still removes

@@ -47,6 +47,7 @@ class AutoCleanupTaskTest
         $this->testClassExists();
         $this->testDiRegistration();
         $this->testBundledInstaller();
+        $this->testInstallerManagesTask();
         $this->testSchedulerEventAdvertisement();
         $this->testRetentionLogic();
         $this->testLifetimeLicenseExemption();
@@ -199,6 +200,138 @@ class AutoCleanupTaskTest
             ->from($this->db->quoteName('#__scheduler_tasks'))
             ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plg_privacy_j2commerce.autocleanup'));
         $this->test('no scheduled task uses the legacy routine ID', (int) $this->db->setQuery($query)->loadResult() === 0);
+    }
+
+    /**
+     * The shared installer checks the required anonymisation task after every installation and
+     * update (shared/installer/ScheduledTasks.php): a missing task is created switched on and
+     * reported, an existing one is never changed or duplicated, and one switched off or trashed
+     * on purpose stays so and is reported. The container installed the candidate through the web
+     * installer; the updates below go through the Joomla CLI.
+     */
+    private function testInstallerManagesTask(): void
+    {
+        echo "\n--- Installer creates and checks the required anonymisation task ---\n";
+
+        require_once __DIR__ . '/shared-test-helpers.php';
+
+        $type = 'plg_task_j2commerceprivacy.autocleanup';
+        $rows = fn (): array => $this->db->setQuery(
+            $this->db->getQuery(true)
+                ->select('*')
+                ->from($this->db->quoteName('#__scheduler_tasks'))
+                ->where($this->db->quoteName('type') . ' = ' . $this->db->quote($type))
+                ->order($this->db->quoteName('id'))
+        )->loadAssocList() ?: [];
+        $setState = fn (int $id, int $state) => $this->db->setQuery(
+            'UPDATE ' . $this->db->quoteName('#__scheduler_tasks') . ' SET ' . $this->db->quoteName('state') . ' = ' . $state
+            . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $id
+        )->execute();
+        $update = function (string $label): string {
+            [$code, $output] = sh_cli_install_checked(JPATH_BASE, '/tmp/extension.zip');
+            $this->test("$label: update through the Joomla CLI exits with 0", $code === 0, mb_substr($output, -600));
+
+            return sh_plain_text(sh_strip_ansi($output));
+        };
+
+        // 1. Fresh installation (web installer of the container): created, switched on, reported.
+        $found  = $rows();
+        $task   = $found[0] ?? [];
+        $rules  = json_decode((string) ($task['execution_rules'] ?? ''), true) ?: [];
+        $params = json_decode((string) ($task['params'] ?? ''), true) ?: [];
+        $this->test('fresh installation created exactly one anonymisation task', count($found) === 1, count($found) . ' task(s)');
+        $this->test('the created task is switched on', (int) ($task['state'] ?? 0) === 1);
+        $this->test(
+            'the created task runs every day at 02:15 UTC',
+            ($rules['rule-type'] ?? '') === 'interval-days' && (int) ($rules['interval-days'] ?? 0) === 1
+                && ($rules['exec-time'] ?? '') === '02:15' && str_ends_with((string) ($task['next_execution'] ?? ''), '02:15:00'),
+            json_encode($rules) . ' next=' . ($task['next_execution'] ?? 'n/a')
+        );
+        $this->test(
+            'the created task uses the plugin defaults: 10 years, fiscal year end 12-31, orders anonymised, addresses deleted',
+            (int) ($params['retention_years'] ?? 0) === 10 && ($params['fiscal_year_end'] ?? '') === '12-31'
+                && (int) ($params['anonymize_orders'] ?? -1) === 1 && (int) ($params['delete_addresses'] ?? -1) === 1,
+            json_encode($params)
+        );
+
+        $messages = json_decode((string) @file_get_contents('/tmp/test-state/install-messages.json'), true) ?: [];
+        $reported = array_filter($messages, static fn (array $message): bool => str_contains($message['text'] ?? '', 'The installation created it and switched it on')
+            && str_contains($message['text'] ?? '', 'every day at 02:15 UTC') && ($message['type'] ?? '') !== 'warning');
+
+        if (is_file('/tmp/test-state/install-messages.json')) {
+            $this->test('the post-install message reports the created task, its schedule and settings', $reported !== []
+                && str_contains((string) reset($reported)['text'], 'Retention period: 10 years'), json_encode($messages, JSON_UNESCAPED_UNICODE));
+        }
+
+        if ($task === []) {
+            return;
+        }
+
+        $id = (int) $task['id'];
+
+        try {
+            // 2. Update with the task switched on: the row stays byte for byte, no second task.
+            $before = $rows();
+            $plain  = $update('task switched on');
+            $this->test('update keeps the switched-on task unchanged and adds no second task', $rows() === $before);
+            $this->test('update says nothing about a task that is in order', !str_contains($plain, 'required scheduled task'), mb_substr($plain, -800));
+
+            // 3. Switched off or trashed on purpose: stays so, reported with the way to switch it on.
+            foreach ([0 => 'switched off', -2 => 'trashed'] as $state => $label) {
+                $setState($id, $state);
+                $before = $rows();
+                $plain  = $update("task $label");
+                $this->test("update leaves the $label task $label, unchanged and alone", $rows() === $before);
+                $this->test(
+                    "update reports the $label task with the menu path to switch it on",
+                    str_contains($plain, 'is switched off or in the trash') && str_contains($plain, 'System → Manage → Scheduled Tasks'),
+                    mb_substr($plain, -800)
+                );
+            }
+
+            // 4. Deleted: the next update creates it again, with the retention settings of the plugin.
+            $plugin = $this->db->setQuery(
+                $this->db->getQuery(true)
+                    ->select([$this->db->quoteName('extension_id'), $this->db->quoteName('params')])
+                    ->from($this->db->quoteName('#__extensions'))
+                    ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
+                    ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('privacy'))
+                    ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('j2commerce'))
+            )->loadAssoc();
+            $changed = array_replace(json_decode((string) $plugin['params'], true) ?: [], [
+                'retention_years'   => '7',
+                'fiscal_year_end'   => '06-30',
+                'anonymize_orders'  => '0',
+                'delete_addresses'  => '0',
+            ]);
+            $storeParams = fn (string $json) => $this->db->setQuery(
+                'UPDATE ' . $this->db->quoteName('#__extensions') . ' SET ' . $this->db->quoteName('params') . ' = ' . $this->db->quote($json)
+                . ' WHERE ' . $this->db->quoteName('extension_id') . ' = ' . (int) $plugin['extension_id']
+            )->execute();
+            $storeParams(json_encode($changed));
+
+            try {
+                $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__scheduler_tasks') . ' WHERE ' . $this->db->quoteName('id') . ' = ' . $id)->execute();
+                $plain   = $update('task deleted');
+                $created = $rows();
+                $params  = json_decode((string) ($created[0]['params'] ?? ''), true) ?: [];
+                $this->test('update creates a deleted required task again, once and switched on', count($created) === 1 && (int) $created[0]['state'] === 1);
+                $this->test('the recreated task takes over the retention period and fiscal year end of the plugin',
+                    (int) ($params['retention_years'] ?? 0) === 7 && ($params['fiscal_year_end'] ?? '') === '06-30', json_encode($params));
+                $this->test('the recreated task retains its own cleanup defaults, independent of removal-request options',
+                    (int) ($params['anonymize_orders'] ?? -1) === 1 && (int) ($params['delete_addresses'] ?? -1) === 1,
+                    json_encode($params));
+                $this->test('update reports the recreated task', str_contains($plain, 'The installation created it and switched it on')
+                    && str_contains($plain, 'Retention period: 7 years'), mb_substr($plain, -800));
+                $id = (int) ($created[0]['id'] ?? 0);
+            } finally {
+                $storeParams((string) $plugin['params']);
+            }
+        } finally {
+            if ($id > 0) {
+                $setState($id, 1);
+            }
+        }
     }
 
     /**

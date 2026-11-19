@@ -176,6 +176,36 @@ verifies the download. Package builds are reproducible (`shared/build/determinis
 modes and timestamps, sorted entries, `updates/` left out of the package): the release workflow
 writes the hash of its build into update.xml in the release PR, and the publish workflow rebuilds
 the merged release commit and refuses to upload bytes with another hash.
+**Scheduled tasks decide by themselves too.** After every installation and update the installer
+checks the Joomla Scheduler tasks the extension needs (`shared/installer/tasks.php`, named per
+extension under `tasks` in `catalog.php`, logic in `ScheduledTasks.php`):
+
+| Task (routine ID) | Extension | Need |
+|---|---|---|
+| `plg_task_j2commerceprivacy.autocleanup` | J2Commerce Privacy | **Required** (legally required anonymisation), daily at 02:15 UTC |
+| `plg_task_appointments.retention` | Appointments | **Required** (booking retention), every 24 hours |
+| `plg_task_appointments.reminders` | Appointments | **Required** while reminder offsets are set, otherwise not needed; every five minutes |
+| `plg_task_appointments.teamcleanup`, `.teamlog`, `.teaminvitations` | Appointments | **Required** while the internet calendars are switched on, otherwise not needed; every 24 hours |
+| `plg_task_appointments.teamretention` | Appointments | **Required** (calendar-copy repair and booking upkeep), every 24 hours |
+| `plg_task_appointments.close` | Appointments | **Optional**: created switched off by the component, switched on once the transfer to Close is set up |
+| `plg_task_dmarcreports.ingest` | DMARC Reports Task Plugin and Package | **Required** for automatic ingestion (does nothing without a report source); every hour |
+
+- A **missing required** task is created through the Scheduler's own task model, switched on, with
+  the defaults of the task plugin's form (J2Commerce Privacy: with the retention period and fiscal
+  year end stored in the privacy plugin), and the message after the installation names it, its
+  schedule and why it matters.
+- The Appointments `teamretention` routine is always required, including when internet calendars
+  are switched off. It repairs booking-calendar copy operations and must not be duplicated manually.
+- An **existing** task is never changed or duplicated. A required task that is **switched off or
+  trashed** stays so (someone decided it); the message after the installation and the system check
+  say what then does not happen and give the menu path to switch it on.
+- **Optional** and **not needed** tasks are left to the extension (not needed ones are not mentioned).
+- **Can the Scheduler run?** A run of one of the extension's tasks within two days proves it.
+  Otherwise the installer reports when System - Schedule Runner is off or neither Lazy Scheduler nor
+  Web Cron is on: then only a server cron job (`php cli/joomla.php scheduler:run`) can start tasks.
+- The **System check** tab lists every required task with its state and last run (missing or
+  switched off: blocker) and the Scheduler trigger. Extensions without tasks show no task rows and
+  their installation says nothing about tasks.
 
 ## Testing
 

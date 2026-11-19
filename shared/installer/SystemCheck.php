@@ -139,9 +139,46 @@ final class SystemCheck
             $add($enabled, Text::_('ADVANS_CHECK_PLUGIN'), Text::_($enabled ? 'ADVANS_CHECK_ENABLED' : 'ADVANS_CHECK_DISABLED'), Text::_('ADVANS_CHECK_PLUGINS'), true);
         }
 
-        if ($definition['scheduler'] ?? false) {
-            // A configured trigger cannot prove that a host cron actually runs.
-            $results['warnings'][] = [Text::_('ADVANS_CHECK_SCHEDULER'), Text::_('ADVANS_CHECK_TRIGGER_UNVERIFIED'), Text::_('ADVANS_CHECK_SCHEDULER_PATH')];
+        $tasks = ScheduledTasks::inspect($id);
+        $required = false;
+
+        foreach ($tasks as $task) {
+            if ($task['need'] === ScheduledTasks::NOT_NEEDED) {
+                continue;
+            }
+
+            $label = Text::sprintf('ADVANS_CHECK_TASK', $task['title']);
+
+            if ($task['need'] === ScheduledTasks::OPTIONAL) {
+                $state = ['ADVANS_CHECK_TASK_OPTIONAL_MISSING', 'ADVANS_CHECK_TASK_OPTIONAL_ON', 'ADVANS_CHECK_TASK_OPTIONAL_OFF'];
+                $results['passed'][] = [$label, Text::_($state[array_search($task['status'], [ScheduledTasks::MISSING, ScheduledTasks::ENABLED, ScheduledTasks::SWITCHED_OFF], true)]), Text::_($task['spec']['purpose'])];
+                continue;
+            }
+
+            $required = true;
+            $row = $task['task'];
+
+            if ($task['plugin'] === null || (int) $task['plugin']->enabled !== 1) {
+                $results['blockers'][] = [$label, Text::_('ADVANS_CHECK_TASK_PLUGIN_OFF'), Text::_('ADVANS_CHECK_TASK_PLUGIN_PATH')];
+            } elseif ($task['status'] === ScheduledTasks::MISSING) {
+                $results['blockers'][] = [$label, Text::_('ADVANS_CHECK_TASK_MISSING'), Text::sprintf('ADVANS_CHECK_TASK_MISSING_PATH', $task['title'])];
+            } elseif ($task['status'] === ScheduledTasks::SWITCHED_OFF) {
+                $results['blockers'][] = [$label, Text::_('ADVANS_CHECK_TASK_OFF'), Text::sprintf('ADVANS_CHECK_TASK_OFF_PATH', $task['title'])];
+            } elseif ((int) ($row['times_executed'] ?? 0) === 0) {
+                $results['passed'][] = [$label, Text::_('ADVANS_CHECK_TASK_NOT_RUN'), Text::_('ADVANS_CHECK_TASK_NOT_RUN_PATH')];
+            } elseif ((int) ($row['last_exit_code'] ?? 0) !== 0) {
+                $results['warnings'][] = [$label, Text::sprintf('ADVANS_CHECK_TASK_FAILED', (string) $row['last_execution']), Text::_('ADVANS_CHECK_TASK_FAILED_PATH')];
+            } else {
+                $results['passed'][] = [$label, Text::sprintf('ADVANS_CHECK_TASK_RAN', (string) $row['last_execution']), ''];
+            }
+        }
+
+        if ($required || ($definition['scheduler'] ?? false)) {
+            // A configured web trigger cannot prove that it fires, and a host cron is invisible:
+            // only a recent run of one of these tasks proves that the Scheduler is started.
+            $trigger = ScheduledTasks::trigger($tasks);
+            $group = $trigger['proven'] ? 'passed' : 'warnings';
+            $results[$group][] = [Text::_('ADVANS_CHECK_SCHEDULER'), $trigger['text'], $trigger['proven'] ? '' : Text::_('ADVANS_CHECK_SCHEDULER_PATH')];
         }
 
         if ($definition['mail'] ?? false) {

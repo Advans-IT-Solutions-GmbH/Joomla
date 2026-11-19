@@ -236,6 +236,10 @@ switch ($op) {
                     throw new RuntimeException('Cannot publish the isolated legacy bundle state.');
                 }
             }
+            // The installation creates the required anonymisation task switched on; this
+            // isolated bundle keeps its jobs off, as an operator would before a coexistence test.
+            $db->setQuery("UPDATE #__scheduler_tasks SET state=0 WHERE state=1"
+                . " AND type IN ('plg_task_j2commerceprivacy.autocleanup','plg_privacy_j2commerce.autocleanup')")->execute();
         }
         $out['extensions'] = $db->setQuery("SELECT extension_id,folder,element,enabled,params FROM #__extensions"
             . " WHERE type='plugin' AND ((folder='privacy' AND element='j2commerce')"
@@ -408,7 +412,7 @@ switch ($op) {
         }
         break;
     case 'appointments-prepare':
-        foreach (['reminders', 'retention'] as $routine) {
+        foreach (['reminders', 'retention', 'teamretention'] as $routine) {
             $type = 'plg_task_appointments.' . $routine;
             if ((int) $db->setQuery('SELECT COUNT(*) FROM #__scheduler_tasks WHERE type=' . $db->quote($type))->loadResult()) {
                 continue;

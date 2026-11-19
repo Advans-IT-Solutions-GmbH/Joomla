@@ -161,7 +161,7 @@ if ($name === '' || preg_match('/^[a-z][a-z0-9-]*$/', $prefix) !== 1) {
     exit(1);
 }
 
-$catalog = ['extension' => $name, 'complete' => false, 'unreproducible' => [], 'failed' => [], 'hashes' => []];
+$catalog = ['extension' => $name, 'complete' => false, 'historical' => [], 'unreproducible' => [], 'failed' => [], 'hashes' => []];
 $hashes = [];
 
 // The files of the build in progress.
@@ -179,6 +179,12 @@ $finish = static function (array $catalog, array $hashes) use ($write): void {
 if (getenv('ADVANS_KNOWN_HASHES') === 'skip') {
     $catalog['unreproducible'][] = 'earlier releases skipped (ADVANS_KNOWN_HASHES=skip)';
     $finish($catalog, $hashes);
+
+    if ($strict) {
+        fwrite(STDERR, "Known-hashes catalog for $name is incomplete: earlier releases were skipped.\n");
+        exit(1);
+    }
+
     echo "Known-hashes catalog for $name: earlier releases skipped\n";
     exit(0);
 }
@@ -240,6 +246,7 @@ $work = sys_get_temp_dir() . '/advans-known-hashes-' . bin2hex(random_bytes(8));
 mkdir($work, 0700, true);
 $environment = getenv();
 $environment['ADVANS_KNOWN_HASHES'] = 'skip';
+unset($environment['ADVANS_KNOWN_HASHES_STRICT']);
 
 try {
     foreach ($releases as $sha => $releaseVersion) {
@@ -261,14 +268,14 @@ try {
 
         if ($directory === null) {
             // A release made before the extension had any build configuration was packaged by
-            // hand and cannot be rebuilt; it is listed, not hidden. A build configuration in the
-            // extension's folder under another name is a release this script fails to rebuild.
+            // hand. It is outside the reproducible build catalog; do not contact GitHub or rely
+            // on a release asset that publishing may already have deleted.
             [$ownCode] = $run(['git', '-C', $root, 'cat-file', '-e', $sha . ':' . ($ownPath === '' ? '' : $ownPath . '/') . 'build.env']);
 
             if ($ownCode === 0) {
                 $catalog['failed'][] = "$releaseVersion: the build configuration names another extension";
             } else {
-                $catalog['unreproducible'][] = "$releaseVersion: released before the extension had a build configuration";
+                $catalog['historical'][] = "$releaseVersion: released before the extension had a build configuration";
             }
 
             continue;
@@ -306,7 +313,7 @@ try {
     $removeTree($work);
 }
 
-$catalog['complete'] = $catalog['failed'] === [];
+$catalog['complete'] = $catalog['failed'] === [] && $catalog['unreproducible'] === [];
 $finish($catalog, $hashes);
 echo 'Known-hashes catalog for ' . $name . ': releases ' . (implode(', ', $versions) ?: 'none')
     . ' and the build in progress, ' . count($hashes) . " distinct files\n";

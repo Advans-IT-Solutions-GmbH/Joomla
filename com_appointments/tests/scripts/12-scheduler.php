@@ -43,9 +43,9 @@ try {
     $plugin = $db->query("SELECT enabled FROM {$prefix}extensions WHERE type='plugin' AND folder='task' AND element='appointments'")->fetch_assoc();
     $check($plugin && (int) $plugin['enabled'] === 1, 'Bundled Scheduler plugin is installed and enabled');
     $check(is_file('/var/www/html/plugins/task/appointments/LICENSE.txt'), 'Bundled Scheduler license is installed');
-    // The installation creates both routine tasks; the created ones really run.
+    // The installation creates the required routine tasks; the created ones really run.
     $setParams([]);
-    foreach (['reminders', 'retention'] as $routine) {
+    foreach (['reminders', 'retention', 'teamretention'] as $routine) {
         $installed = $db->query("SELECT id,times_executed FROM {$prefix}scheduler_tasks WHERE type='plg_task_appointments.{$routine}' AND state=1 ORDER BY id LIMIT 1")->fetch_assoc();
         $check($installed !== null, 'Installation created the enabled ' . $routine . ' task');
         if ($installed) {

@@ -19,6 +19,9 @@ cat >ext/build.sh <<'EOF'
 #!/bin/bash
 set -e
 cd "$(dirname "$0")"
+if [ "${ADVANS_KNOWN_HASHES_STRICT:-}" = "1" ] && [ "${ADVANS_KNOWN_HASHES:-}" = "skip" ]; then
+    exit 1
+fi
 source build.env
 rm -rf stage && mkdir -p stage
 cp payload.txt stage/ && printf 'stamped %s' "$VERSION" >stage/manifest.xml
@@ -59,6 +62,11 @@ fi
 catalog "$FIXTURE/prepared.php" | grep -q '"complete":true'
 head -n 1 "$FIXTURE/prepared.php" | grep -qx '<?php exit; ?>'
 echo 'PASS: every release commit is rebuilt and its built files (stamped ones included) are hashed'
+if ! ADVANS_KNOWN_HASHES_STRICT=1 php "$GENERATOR" ext "$FIXTURE/strict-historical.php" "$FIXTURE/stage" >/dev/null 2>&1; then
+    echo 'FAIL: strict CI inherited strict mode into historical rebuild environments'
+    exit 1
+fi
+echo 'PASS: strict CI rebuilds historical releases without strict mode leaking into child builds'
 
 # Publication: the release commit exists now and is HEAD.
 git add -A && git commit -q -m 'release: fixture v1.2.0 (#3)'
@@ -91,6 +99,11 @@ ADVANS_KNOWN_HASHES=skip php "$GENERATOR" ext "$FIXTURE/skipped.php" "$FIXTURE/s
 catalog "$FIXTURE/skipped.php" | grep -q '"complete":false'
 catalog "$FIXTURE/skipped.php" | grep -q "$(sha 'stamped 1.2.0')"
 echo 'PASS: a skipped catalog is marked incomplete and still lists the build in progress'
+if ADVANS_KNOWN_HASHES=skip ADVANS_KNOWN_HASHES_STRICT=1 php "$GENERATOR" ext "$FIXTURE/strict-skipped.php" "$FIXTURE/stage" >/dev/null 2>&1; then
+    echo 'FAIL: a strict build accepted skipped earlier releases'
+    exit 1
+fi
+echo 'PASS: skipped earlier releases fail a strict build'
 
 git clone -q --depth 1 "file://$REPO" "$FIXTURE/shallow"
 php "$GENERATOR" "$FIXTURE/shallow/ext" "$FIXTURE/shallow.php" "$FIXTURE/stage" >/dev/null

@@ -323,17 +323,18 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $message .= '</table>';
             $message .= '</div>';
 
-            // Step 4
-            $message .= '<div style="' . $sInfo . '">';
-            $message .= '<div style="' . $sStep . '">' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP_LABEL', ++$step) . '</div>';
+            // Step 4 — the required anonymisation task; the shared installer creates or reports it
+            // right after this guide (ScheduledTasks::ensure()).
+            $message .= '<div style="' . $sWarn . '">';
+            $message .= '<div style="' . $sStep . '">' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP_REQUIRED_LABEL', ++$step) . '</div>';
             $message .= '<h3 style="margin-top:0">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP4_TITLE') . '</h3>';
             $message .= '<p>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP4_NAV') . '</p>';
-            $message .= '<ol style="line-height:1.8">';
+            $message .= '<ul style="line-height:1.8">';
             $message .= '<li>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TASK_TYPE') . '</li>';
             $message .= '<li>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TASK_PARAMS') . '</li>';
             $message .= '<li>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TASK_SCHEDULE') . '</li>';
             $message .= '<li>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TASK_ENABLE') . '</li>';
-            $message .= '</ol>';
+            $message .= '</ul>';
             $message .= '<p>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_TASK_DESC') . '</p>';
             $message .= '</div>';
 
@@ -1760,13 +1761,24 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
         if (in_array($db->getPrefix() . 'scheduler_tasks', $tables, true)) {
             $query = $this->dbQuery($db)
-                ->delete($db->quoteName('#__scheduler_tasks'))
+                ->select($db->quoteName('id'))
+                ->from($db->quoteName('#__scheduler_tasks'))
                 ->where($db->quoteName('type') . ' = :taskType')
                 ->bind(':taskType', $taskType);
-            $db->setQuery($query);
-            $db->execute();
+            $taskIds = array_map('intval', (array) $db->setQuery($query)->loadColumn());
+            $taskTable = $app->bootComponent('com_scheduler')->getMVCFactory()
+                ->createTable('Task', 'Administrator', ['dbo' => $db]);
+            $removedTasks = 0;
 
-            $removedTasks = (int) $db->getAffectedRows();
+            if ($taskIds !== [] && !$taskTable) {
+                throw new \RuntimeException('The Scheduler task table is unavailable for asset cleanup.');
+            }
+
+            foreach ($taskIds as $taskId) {
+                if ($taskTable->delete($taskId)) {
+                    $removedTasks++;
+                }
+            }
 
             if ($removedTasks > 0) {
                 $app->enqueueMessage(
