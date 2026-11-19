@@ -170,7 +170,9 @@ updates:
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories:
+      - "/"
+      - "/.github/actions/retain-release-package"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
