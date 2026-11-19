@@ -162,6 +162,14 @@ jobs:
           EOF
 
 
+      - name: Retain hash-verified release package
+        if: steps.version.outputs.bump != 'none'
+        uses: ./.github/actions/retain-release-package
+        with:
+          package: j2commerce/plg_privacy_j2commerce/${{ steps.package.outputs.file }}
+          feed: j2commerce/plg_privacy_j2commerce/updates/update.xml
+          artifact-name: privacy-release-package
+
       - name: Create release PR
         if: steps.version.outputs.bump != 'none'
         env:
