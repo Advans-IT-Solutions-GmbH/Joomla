@@ -180,8 +180,27 @@ try {
 
     $fresh = $fixture->link($moved, 'reschedule');
     $form = $client->request($fresh);
-    $token = $client->token($form);
-    $check(str_contains($form, $day . ' 12:00:00'), 'Reschedule form offers the slot before the competing booking');
+    $calendarDocument = new DOMDocument();
+    @$calendarDocument->loadHTML($form);
+    $calendarXpath = new DOMXPath($calendarDocument);
+    $slotLink = '';
+    foreach ($calendarXpath->query('//a[contains(concat(" ", normalize-space(@class), " "), " com-appointments-day-available ")]') as $dayLink) {
+        if (!$dayLink instanceof DOMElement) {
+            continue;
+        }
+
+        $href = html_entity_decode($dayLink->getAttribute('href'), ENT_QUOTES | ENT_HTML5);
+        parse_str((string) parse_url($href, PHP_URL_QUERY), $dayQuery);
+
+        if (($dayQuery['day'] ?? '') === $day) {
+            $slotLink = $href;
+            break;
+        }
+    }
+    $slotForm = $slotLink !== '' ? $client->request($slotLink) : '';
+    $token = $client->token($slotForm);
+    $check($client->status === 200 && str_contains($slotForm, 'value="' . $day . ' 12:00:00"'),
+        'Reschedule calendar offers the slot before the competing booking after choosing its day');
     $check(preg_match('#<title>\s*Reschedule your appointment\s*</title>#', $form) === 1,
         'The manage page sets its own title without a menu item of its own');
     // Release test 22.10.: the manage pages show the appointment in the invitee's zone and
@@ -195,13 +214,22 @@ try {
         && !str_contains($form, $moved['start_utc'] . ' UTC'),
         'Manage page shows the appointment date and times in the invitee time zone, not in UTC');
     $slotOption = (new DateTimeImmutable($day . ' 12:00:00', new DateTimeZone('UTC')))->setTimezone($zurich);
-    $check(str_contains($form, '>' . $slotOption->format('l, j F Y') . ', ' . $slotOption->format('H:i') . '<'),
+    $slotDocument = new DOMDocument();
+    @$slotDocument->loadHTML($slotForm);
+    $slotXpath = new DOMXPath($slotDocument);
+    $legend = $slotXpath->query('//legend[contains(concat(" ", normalize-space(@class), " "), " com-appointments-slots-legend ")]')->item(0);
+    $slotInput = $slotXpath->query('//input[@type="radio"][@name="start"][@value="' . $day . ' 12:00:00"]')->item(0);
+    $slotLabel = $slotInput instanceof DOMElement
+        ? $slotXpath->query('//label[@for="' . $slotInput->getAttribute('id') . '"]')->item(0)
+        : null;
+    $check($legend instanceof DOMElement && str_contains($legend->textContent, $slotOption->format('l, j F Y'))
+        && $slotLabel instanceof DOMElement && str_contains($slotLabel->textContent, $slotOption->format('H:i')),
         'Reschedule options name the weekday, date and time in the selected zone');
     // Night test 23.10.: rescheduling without the confirmation checkbox shows the message
     // at the checkbox, also after the visitor reloads the page, and changes nothing.
     parse_str(parse_url($fresh, PHP_URL_QUERY), $rescheduleQuery);
     $refused = $client->request('/index.php?option=com_appointments&task=booking.manage', array_replace($rescheduleQuery, [
-        $token => 1, 'start' => $day . ' 12:00:00', 'month' => substr($day, 0, 7), 'timezone' => 'Europe/Zurich',
+        $token => 1, 'start' => $day . ' 12:00:00', 'month' => substr($day, 0, 7), 'day' => $day, 'timezone' => 'Europe/Zurich',
     ]));
     $confirmError = static function (string $html): bool {
         $document = new DOMDocument();
@@ -220,11 +248,11 @@ try {
         && !str_contains($refused, 'com_appointments.focusSystemMessage')
         && preg_match('#/media/com_appointments/js/booking(\.min)?\.js#', $refused) !== 1,
         'A refused reschedule has no result fragment or region and the invalid checkbox keeps the focus');
-    $reloadedReschedule = $client->request($fresh . '&month=' . substr($day, 0, 7) . '&timezone=Europe%2FZurich');
+    $reloadedReschedule = $client->request($fresh . '&month=' . substr($day, 0, 7) . '&day=' . $day . '&timezone=Europe%2FZurich');
     $check($confirmError($reloadedReschedule), 'The confirmation message is still at the checkbox after a reload');
     foreach (['', substr($day, 0, 7)] as $invalidZoneMonth) {
         $refused = $client->request('/index.php?option=com_appointments&task=booking.manage', array_replace($rescheduleQuery, [
-            $token => 1, 'confirm' => 1, 'start' => $day . ' 12:00:00',
+            $token => 1, 'confirm' => 1, 'start' => $day . ' 12:00:00', 'day' => $day,
             'month' => $invalidZoneMonth, 'timezone' => 'not-a-zone',
         ]));
         $document = new DOMDocument();
