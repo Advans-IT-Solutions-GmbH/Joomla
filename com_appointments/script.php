@@ -205,7 +205,16 @@ class Com_appointmentsInstallerScript extends InstallerScript
     public function postflight($type, $parent)
     {
         try {
-            return parent::postflight($type, $parent);
+            $result = parent::postflight($type, $parent);
+            if ($result !== false && in_array($type, ['install', 'update'], true)) {
+                try {
+                    AppointmentsConflictGuard::pruneBackups($this->conflictState(), self::BACKUP_RETENTION_DAYS * 86400);
+                } catch (\RuntimeException | \JsonException $error) {
+                    Log::add('Cannot apply recovery backup retention: ' . $error->getMessage(), Log::WARNING, 'advans-installer');
+                }
+            }
+
+            return $result;
         } finally {
             $this->releaseConflictLock();
         }

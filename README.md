@@ -175,7 +175,8 @@ are stored in **`administrator/advans-installer-state/EXTENSION/`**, outside Joo
 cache and extension directories. Backup containers are non-executable PHP envelopes with the
 original bytes as base64, their hash and destination binding; opening one over HTTP discloses
 nothing. **Retention:** the next successful installation of the same extension removes backups
-that are older than 180 days and were not used again; half a year leaves room to notice a lost
+that are older than 180 days and were not used again; Appointments Recovery also protects backups
+referenced by its pending review or latest recovery attempt. Half a year leaves room to notice a lost
 change long after the update without letting backups pile up. Do not run concurrent installs.
 
 **Checksum.** Every `updates/update.xml` carries the `<sha256>` of its release asset, so Joomla

@@ -8,6 +8,7 @@
     <description>COM_APPOINTMENTSRECOVERY_HELP</description>
     <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
     <php_minimum>8.1</php_minimum>
+    <scriptfile>script.php</scriptfile>
     <namespace path="src">Advans\Component\AppointmentsRecovery</namespace>
     <administration>
         <menu link="option=com_appointmentsrecovery">COM_APPOINTMENTSRECOVERY</menu>
@@ -17,6 +18,7 @@
             <folder>support</folder>
             <folder>tmpl</folder>
             <filename>LICENSE.txt</filename>
+            <filename>script.php</filename>
         </files>
         <languages folder="language">
             <language tag="en-GB">en-GB/com_appointmentsrecovery.ini</language>

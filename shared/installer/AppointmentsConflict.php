@@ -231,6 +231,24 @@ final class Guard
         return file_exists($file) || is_link($file) ? State::read($file) : [];
     }
 
+    public static function pruneBackups(string $state, int $maximumAgeSeconds, ?int $now = null): int
+    {
+        $keep = [];
+        foreach ([self::current($state), self::attempt($state)] as $record) {
+            if ($record !== [] && !is_array($record['rows'] ?? null)) {
+                throw new \RuntimeException('Cannot inspect the referenced recovery review.');
+            }
+            foreach ($record['rows'] ?? [] as $row) {
+                if (!is_array($row) || !is_string($row['backup'] ?? null)) {
+                    throw new \RuntimeException('Cannot inspect the referenced recovery backups.');
+                }
+                $keep[] = $row['backup'];
+            }
+        }
+
+        return FileGuard::prune($state . '/recovery/backups', $maximumAgeSeconds, $keep, $now);
+    }
+
     public static function restore(string $state, string $plan, string $id, string $expected): void
     {
         $attempt = self::attempt($state);
@@ -245,22 +263,28 @@ final class Guard
         $temporaryDirectory = realpath(sys_get_temp_dir());
         $siteRoot = realpath(JPATH_ROOT);
         $directory = realpath(dirname($destination));
+        $temporaryDirectory = $temporaryDirectory === false ? false : FileGuard::normalize($temporaryDirectory);
+        $siteRoot = $siteRoot === false ? false : FileGuard::normalize($siteRoot);
         if ($temporaryDirectory === false || $siteRoot === false || $directory === false
             || $temporaryDirectory === $siteRoot || str_starts_with($temporaryDirectory, $siteRoot . DIRECTORY_SEPARATOR)
             || stat($temporaryDirectory)['dev'] !== stat($directory)['dev']) {
             throw new \RuntimeException('Recovery requires a private temporary directory on the same filesystem.');
         }
-        $temporary = $temporaryDirectory . DIRECTORY_SEPARATOR . 'appointments-' . bin2hex(random_bytes(16));
-        $mask = umask(0077);
-        try {
-            $handle = fopen($temporary, 'xb');
-        } finally {
-            umask($mask);
+        $privateDirectory = $temporaryDirectory . DIRECTORY_SEPARATOR . 'appointments-' . bin2hex(random_bytes(16));
+        if (!mkdir($privateDirectory, 0700)) {
+            throw new \RuntimeException('Cannot create private restoration staging.');
         }
-        if ($handle === false) {
-            throw new \RuntimeException('Cannot stage the restoration.');
-        }
+        $temporary = $privateDirectory . DIRECTORY_SEPARATOR . 'restore';
         try {
+            $mask = umask(0077);
+            try {
+                $handle = fopen($temporary, 'xb');
+            } finally {
+                umask($mask);
+            }
+            if ($handle === false) {
+                throw new \RuntimeException('Cannot stage the restoration.');
+            }
             try {
                 if (fwrite($handle, $bytes) !== strlen($bytes) || !fflush($handle)) {
                     throw new \RuntimeException('Cannot write the complete restoration.');
@@ -284,6 +308,7 @@ final class Guard
             if (is_file($temporary)) {
                 unlink($temporary);
             }
+            rmdir($privateDirectory);
         }
     }
 }

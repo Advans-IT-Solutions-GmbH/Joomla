@@ -27,10 +27,28 @@ namespace Advans\Installer {
 namespace Joomla\CMS\Installer {
     class InstallerScript
     {
+        public static bool $acceptPreflight = true;
+        public static int $preflightCalls = 0;
+
         public function preflight($type, $parent)
         {
-            return true;
+            self::$preflightCalls++;
+            return self::$acceptPreflight;
         }
+    }
+}
+
+namespace Advans\Installer\AppointmentsConflict\V1 {
+    function chmod(string $file, int $mode): bool
+    {
+        $directory = dirname($file);
+        if (\Advans\Installer\V2\FileGuard::normalize(dirname($directory))
+                !== \Advans\Installer\V2\FileGuard::normalize(realpath(sys_get_temp_dir())) || is_link($directory)
+            || (DIRECTORY_SEPARATOR === '/' && (fileperms($directory) & 0077) !== 0)) {
+            throw new \RuntimeException('Restored plaintext must remain in private staging before publication.');
+        }
+
+        return \chmod($file, $mode);
     }
 }
 
@@ -477,6 +495,7 @@ namespace {
         }
         $recovery::journal($reviewState, $approved);
         $recovery::verifyInstalled($approved);
+        $stagingBefore = glob(realpath(sys_get_temp_dir()) . '/appointments-*') ?: [];
         $restoreId = array_key_first(array_diff_key($eligible, [$file => true]));
         $restoreRow = $approved['rows'][$restoreId];
         $refused(static fn() => $recovery::restore($reviewState, $approved['id'], $restoreId, str_repeat('f', 64)));
@@ -493,6 +512,35 @@ namespace {
         $recovery::restore($reviewState, $approved['id'], $restoreId, '');
         $assert(hash_file('sha256', $restoreRow['destination']) === $restoreRow['existing'],
             'Explicit recovery may recreate a missing eligible file.');
+        $assert((glob(realpath(sys_get_temp_dir()) . '/appointments-*') ?: []) === $stagingBefore,
+            'Recovery must remove its private staging directory after publication.');
+        $backupRoot = $reviewState . '/recovery/backups';
+        $orphan = $backupRoot . '/' . hash('sha256', 'orphan backup') . '.php';
+        $pending = $backupRoot . '/' . hash('sha256', 'pending backup') . '.php';
+        $recent = $backupRoot . '/' . hash('sha256', 'recent backup') . '.php';
+        foreach ([$orphan, $pending, $recent] as $path) {
+            copy($restoreRow['backup'], $path);
+        }
+        $oldTime = time() - 181 * 86400;
+        foreach (array_merge(array_column($approved['rows'], 'backup'), [$orphan, $pending]) as $path) {
+            touch($path, $oldTime);
+        }
+        $pendingRow = $restoreRow;
+        $pendingRow['backup'] = $pending;
+        \Advans\Installer\V2\State::write($reviewState . '/recovery/review.php', [
+            'rows' => ['pending' => $pendingRow],
+        ]);
+        $assert($recovery::pruneBackups($reviewState, 180 * 86400) === 1 && !file_exists($orphan)
+            && is_file($pending) && is_file($recent) && is_file($restoreRow['backup']),
+            'Retention must remove expired orphan backups, preserving pending, latest-attempt and recent backups.');
+        require_once dirname(__DIR__, 2) . '/com_appointments/recovery/script.php';
+        $companionInstaller = new \Com_appointmentsrecoveryInstallerScript();
+        $parentChecks = \Joomla\CMS\Installer\InstallerScript::$preflightCalls;
+        \Joomla\CMS\Installer\InstallerScript::$acceptPreflight = false;
+        $assert($companionInstaller->preflight('install', new \stdClass()) === false
+            && \Joomla\CMS\Installer\InstallerScript::$preflightCalls === $parentChecks + 1,
+            'The independently installed companion must honor a failed Joomla compatibility preflight.');
+        \Joomla\CMS\Installer\InstallerScript::$acceptPreflight = true;
 
         // Exercise the real component entry point: it must stop before the shared installer can
         // consume an approval, including when a bundled plugin is the only remaining conflict.

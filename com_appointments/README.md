@@ -202,7 +202,8 @@ shared installer plan does not override this protection.
 4. The companion shows verified backups from the last reviewed installation attempt. For eligible
    files it can restore a missing file or replace the exact incoming bytes displayed on the form.
    It refuses other current bytes and never rolls back the database or extension metadata.
-   Restore requires a private temporary directory outside the web root on the same filesystem.
+   Restore stages bytes in a private per-operation directory outside the web root on the same
+   filesystem. On Windows, restrict the parent temporary directory's ACLs to the service account.
 
 The recovery lock serializes this feature's own requests, not independent filesystem writers.
 Joomla's copy phase and in-place recovery do not provide an atomic compare-and-swap against
@@ -211,6 +212,8 @@ eligible for direct recovery can still be exported. A file recovery is not a ful
 Obsolete bundled-module declarations are reviewed only when the installed Joomla module adapter
 actually deletes them. Joomla 5.4 retains these files; the tested Joomla 6.2 adapter removes them
 after an explicit release-operation decision. Removed paths never offer **Keep local**.
+After a successful installation, recovery backups older than 180 days are pruned unless the
+pending review or latest recovery attempt still references them.
 
 To inspect or recover the bytes of a verified file backup without changing the installed file, a
 server administrator can extract the same Appointments package outside the web root and run its
