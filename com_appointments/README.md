@@ -208,6 +208,9 @@ The recovery lock serializes this feature's own requests, not independent filesy
 Joomla's copy phase and in-place recovery do not provide an atomic compare-and-swap against
 external writers. Use an exclusive maintenance window. Installer-controlled files that are not
 eligible for direct recovery can still be exported. A file recovery is not a full site rollback.
+Obsolete bundled-module declarations are reviewed only when the installed Joomla module adapter
+actually deletes them. Joomla 5.4 retains these files; the tested Joomla 6.2 adapter removes them
+after an explicit release-operation decision. Removed paths never offer **Keep local**.
 
 To inspect or recover the bytes of a verified file backup without changing the installed file, a
 server administrator can extract the same Appointments package outside the web root and run its

@@ -34,6 +34,13 @@ namespace Joomla\CMS\Installer {
     }
 }
 
+namespace Joomla\CMS\Installer\Adapter {
+    class ModuleAdapter
+    {
+        protected $oldFiles;
+    }
+}
+
 namespace Joomla\CMS {
     final class Version
     {
@@ -446,6 +453,10 @@ namespace {
         $assert(count($eligible) === 3 && count($metadata) === 1,
             'Component, plugin and module code can be kept, but installer metadata cannot.');
         $file = array_key_first($eligible);
+        $removalDestination = $review['rows'][$file]['destination'];
+        $removalSource = \Advans\Installer\V2\Destinations::operation($appointmentSource, 'Remove obsolete code');
+        $assert(!$recovery::canKeep($removalDestination, $removalSource, [$removalDestination => $removalSource]),
+            'A removal marker must never be offered as a Keep local copy input, even under src.');
         $refused(static fn() => $recovery::decide($reviewState, str_repeat('0', 64), $file, 'replace'));
         $refused(static fn() => $recovery::decide($reviewState, $review['id'], '../configuration.php', 'replace'));
         $refused(static fn() => $recovery::decide($reviewState, $review['id'], $file, 'approve'));
@@ -515,7 +526,27 @@ namespace {
         $moduleDestination = JPATH_ADMINISTRATOR . '/modules/mod_appointments/src/late.php';
         file_put_contents($moduleSource, 'module release');
         file_put_contents($moduleDestination, 'module local');
-        $moduleFiles = [$moduleDestination => $moduleSource];
+        $moduleRoot = JPATH_ADMINISTRATOR . '/modules/mod_appointments';
+        mkdir($moduleRoot . '/src/obsolete', 0700, true);
+        file_put_contents($moduleRoot . '/src/obsolete/local.php', 'unknown obsolete module');
+        file_put_contents($moduleRoot . '/src/retained.php', 'unknown retained module');
+        file_put_contents($moduleRoot . '/mod_appointments.xml',
+            '<extension type="module" client="administrator"><name>MOD_APPOINTMENTS</name><files>'
+            . '<folder>src/obsolete</folder><filename>src/retained.php</filename></files></extension>');
+        $moduleMethod = new \ReflectionMethod($moduleInstaller, 'bundledModuleFiles');
+        $moduleFiles = $moduleMethod->invoke($moduleInstaller, $appointmentSource, ['mod_appointments']);
+        $obsolete = str_replace('\\', '/', $moduleRoot . '/src/obsolete/local.php');
+        $assert(isset($moduleFiles[$obsolete]) && str_contains($moduleFiles[$obsolete], '/.advans-operations/')
+            && !isset($moduleFiles[str_replace('\\', '/', $moduleRoot . '/src/retained.php')]),
+            'Module plans must guard obsolete declarations, but not a file retained by Joomla under a declared folder.');
+        $obsoleteRows = $recovery::inspect([$obsolete => $moduleFiles[$obsolete]], $appointmentOwned, $appointmentKnowledge, $reviewState);
+        $obsoleteReview = $recovery::review($reviewState, 'obsolete-module', $obsoleteRows, $moduleFiles);
+        $obsoleteId = array_key_first($obsoleteReview['rows']);
+        $assert(!$obsoleteReview['rows'][$obsoleteId]['keep'] && $obsoleteReview['rows'][$obsoleteId]['remove'],
+            'Obsolete module code must have a verified backup and a removal-only review row.');
+        $refused(static fn() => $recovery::decide($reviewState, $obsoleteReview['id'], $obsoleteId, 'keep'));
+        $assert($recovery::backupBytes($obsoleteReview['rows'][$obsoleteId]) === 'unknown obsolete module',
+            'The obsolete module backup must preserve the unknown bytes.');
         $snapshotMethod = new \ReflectionMethod($moduleInstaller, 'snapshotBundled');
         (new \ReflectionProperty($moduleInstaller, 'conflictFiles'))->setValue($moduleInstaller, $moduleFiles);
         (new \ReflectionProperty($moduleInstaller, 'bundledSnapshots'))->setValue($moduleInstaller, [
@@ -532,7 +563,44 @@ namespace {
         $refused($verifyModule);
         $assert(file_get_contents($moduleDestination) === 'module local',
             'Late module validation must not overwrite an installed file.');
+        file_put_contents($moduleSource, 'module release');
+        file_put_contents($appointmentSource . '/modules/mod_appointments/src/added.php', 'late new module candidate');
+        file_put_contents($moduleRoot . '/src/added.php', 'unknown late module destination');
+        $refused($verifyModule);
+        $assert(file_get_contents($moduleRoot . '/src/added.php') === 'unknown late module destination',
+            'A new recursive module input must not overwrite an unreviewed destination.');
+        unlink($appointmentSource . '/modules/mod_appointments/src/added.php');
+        unlink($moduleRoot . '/src/added.php');
+        file_put_contents($moduleRoot . '/src/obsolete/added.php', 'late obsolete file');
+        $refused($verifyModule);
+        unlink($moduleRoot . '/src/obsolete/added.php');
+        $verifyModule();
+        $pluginSource = $appointmentSource . '/plugins/task/appointments';
+        mkdir($pluginSource . '/src', 0700, true);
+        file_put_contents($pluginSource . '/appointments.xml',
+            '<extension type="plugin" group="task"><name>PLG_TASK_APPOINTMENTS</name>'
+            . '<files><filename plugin="appointments">example.php</filename><folder>src</folder></files></extension>');
+        $pluginFiles = \Advans\Installer\V2\Destinations::files(
+            simplexml_load_file($pluginSource . '/appointments.xml'), $pluginSource, $pluginSource . '/appointments.xml'
+        );
+        (new \ReflectionProperty($moduleInstaller, 'bundledSnapshots'))->setValue($moduleInstaller, [
+            'plugins/task/appointments' => $snapshotMethod->invoke($moduleInstaller, $pluginFiles),
+        ]);
+        $verifyPlugin = static fn() => $verifyMethod->invoke($moduleInstaller, $appointmentSource,
+            'plugins/task/appointments', 'plugins/task/appointments');
+        $verifyPlugin();
+        file_put_contents($pluginSource . '/src/added.php', 'late new plugin candidate');
+        file_put_contents(JPATH_PLUGINS . '/task/appointments/src/added.php', 'unknown late plugin destination');
+        $refused($verifyPlugin);
+        $assert(file_get_contents(JPATH_PLUGINS . '/task/appointments/src/added.php') === 'unknown late plugin destination',
+            'A new recursive plugin input must not overwrite an unreviewed destination.');
+        unlink($pluginSource . '/src/added.php');
+        unlink(JPATH_PLUGINS . '/task/appointments/src/added.php');
         unlink($moduleDestination);
+        unlink($obsolete);
+        unlink($moduleRoot . '/src/retained.php');
+        unlink($moduleRoot . '/mod_appointments.xml');
+        rmdir($moduleRoot . '/src/obsolete');
 
         $appointmentInstaller = new \Com_appointmentsInstallerScript();
         $app->messages = [];

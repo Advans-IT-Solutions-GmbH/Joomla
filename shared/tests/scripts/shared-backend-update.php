@@ -365,6 +365,14 @@ foreach ($scenarios as $scenario) {
                 file_put_contents($pluginFile, $pluginChanged);
                 $moduleChanged = $moduleOriginal . "\n<?php // Unknown module bytes " . bin2hex(random_bytes(4)) . "\n";
                 file_put_contents($moduleFile, $moduleChanged);
+                $obsoleteModuleFile = dirname(dirname($moduleFile)) . '/src/recovery-retired/local.php';
+                mkdir(dirname($obsoleteModuleFile), 0777, true);
+                file_put_contents($obsoleteModuleFile, '<?php // Unknown obsolete module bytes');
+                $installedModuleManifest = dirname(dirname($moduleFile)) . '/mod_appointments.xml';
+                $oldModuleManifest = simplexml_load_file($installedModuleManifest);
+                $oldModuleManifest->files->addChild('folder', 'src/recovery-retired');
+                $oldModuleManifest->asXML($installedModuleManifest);
+                $moduleDeletesObsolete = property_exists(\Joomla\CMS\Installer\Adapter\ModuleAdapter::class, 'oldFiles');
                 unlink($state . '/installed.php');
             }
             $result = bu_update($browser, $package, $version);
@@ -379,6 +387,7 @@ foreach ($scenarios as $scenario) {
                 bu_check('both existing files remain untouched', file_get_contents($modifyFile) === $changed
                     && file_get_contents($pluginFile) === $pluginChanged);
                 bu_check('the bundled module remains untouched', file_get_contents($moduleFile) === $moduleChanged);
+                bu_check('obsolete module bytes are not deleted without review', is_file($obsoleteModuleFile));
                 $backups = array_map('bu_backup', array_diff(bu_backups(), $backupsBefore));
                 bu_check('verified backups preserve both files', in_array($changed, array_column($backups, 'bytes'), true)
                     && in_array($pluginChanged, array_column($backups, 'bytes'), true));
@@ -398,6 +407,13 @@ foreach ($scenarios as $scenario) {
                 $componentId = $fileFor($review, $modifyFile);
                 $pluginId = $fileFor($review, $pluginFile);
                 $moduleId = $fileFor($review, $moduleFile);
+                $obsoleteModuleId = $fileFor($review, $obsoleteModuleFile);
+                bu_check('module review matches the actual adapter deletion capability',
+                    $moduleDeletesObsolete
+                        ? $obsoleteModuleId !== null && $review['rows'][$obsoleteModuleId]['remove']
+                            && !$review['rows'][$obsoleteModuleId]['keep']
+                            && in_array('<?php // Unknown obsolete module bytes', array_column($backups, 'bytes'), true)
+                        : $obsoleteModuleId === null);
                 $page = $browser->request('index.php?option=com_appointmentsrecovery');
                 if (!bu_check('administrator sees component, plugin and module choices', $componentId !== null && $pluginId !== null && $moduleId !== null
                     && str_contains($page, 'Keep local') && str_contains($page, 'Install release file'))) {
@@ -433,6 +449,8 @@ foreach ($scenarios as $scenario) {
                 bu_check('late module installation honors keep and excludes local bytes from the ledger',
                     file_get_contents($moduleFile) === $moduleChanged
                     && !isset($record['files']['administrator/modules/mod_appointments/tmpl/default.php']));
+                bu_check('Joomla handles the reviewed obsolete declaration according to its module adapter',
+                    file_exists($obsoleteModuleFile) !== $moduleDeletesObsolete);
                 $moduleExtension = $db->query('SELECT manifest_cache FROM ' . sh_table('extensions')
                     . " WHERE type = 'module' AND element = 'mod_appointments' AND client_id = 1")->fetch_assoc();
                 $moduleManifest = json_decode((string) ($moduleExtension['manifest_cache'] ?? ''), true);

@@ -980,6 +980,17 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.zip' --dir /tmp/published
           cp /tmp/published/*.zip "$TESTS/extension.zip"
           echo "Installed first: $TAG"
+      - name: Mount private restoration staging on the web volume filesystem
+        run: |
+          cat > com_appointments/tests/docker-compose.recovery.yml <<'YAML'
+          services:
+            joomla:
+              volumes:
+                - appointments_recovery_tmp:/var/appointments-recovery-tmp
+          volumes:
+            appointments_recovery_tmp:
+          YAML
+          echo "COMPOSE_FILE=$COMPOSE_FILE:docker-compose.recovery.yml" >> "$GITHUB_ENV"
       - name: Start Joomla with the published release
         run: |
           cd com_appointments/tests
@@ -994,6 +1005,22 @@ jobs:
             sleep 20
           done
           timeout 600 bash -c 'until docker exec "$C" test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
+          docker exec "$C" sh -ec '
+            chown www-data:www-data /var/appointments-recovery-tmp
+            chmod 0700 /var/appointments-recovery-tmp
+            printf "sys_temp_dir=/var/appointments-recovery-tmp\n" > /usr/local/etc/php/conf.d/zz-appointments-recovery.ini
+            apache2ctl -k graceful
+          '
+          docker exec "$C" php -r '
+            $tmp = realpath(sys_get_temp_dir());
+            $root = realpath("/var/www/html");
+            if ($tmp === false || $root === false || $tmp === $root
+              || str_starts_with($tmp, $root . DIRECTORY_SEPARATOR)
+              || stat($tmp)["dev"] !== stat($root)["dev"]) {
+              fwrite(STDERR, "Restoration staging must be private and on the web volume filesystem.\n");
+              exit(1);
+            }
+          '
       - name: Update with Check for Updates and Update in the backend
         env:
           SCENARIOS: clean,modified,backup-failure

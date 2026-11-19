@@ -389,11 +389,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
             $this->conflictFiles = $files;
             $owned = Destinations::owned($manifest, $source);
             foreach (self::BUNDLED_MODULES as $element) {
-                $module = simplexml_load_file($source . '/modules/' . $element . '/' . $element . '.xml');
-                if (!$module instanceof \SimpleXMLElement || (string) $module['type'] !== 'module'
-                    || (string) $module['client'] !== 'administrator' || strtolower((string) $module->name) !== $element) {
-                    throw new \RuntimeException('The bundled Appointments module manifest is invalid.');
-                }
                 $owned = Destinations::mergeOwned($owned, [
                     'prefixes' => [JPATH_ADMINISTRATOR . '/modules/' . $element],
                     'files' => [],
@@ -474,17 +469,37 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         $source = $parent->getParent()->getPath('source');
-        require_once $source . '/administrator/components/com_appointments/src/Helper/BundledModuleGuard.php';
-        $files = array_replace($files,
-            \Advans\Component\Appointments\Administrator\Helper\BundledModuleGuard::destinations(
-                $source,
-                JPATH_ADMINISTRATOR,
-                self::BUNDLED_MODULES
-            ));
+        $files = Destinations::merge($files, $this->bundledModuleFiles($source, self::BUNDLED_MODULES));
 
         if ($type === 'install') {
             foreach (glob($root . '/data/epochs.php*') ?: [] as $file) {
                 $files[$file] = $this->removalCandidate($parent, 'Remove obsolete calendar epoch anchor on fresh installation');
+            }
+        }
+
+        return $files;
+    }
+
+    private function bundledModuleFiles(string $source, array $elements): array
+    {
+        if (!is_callable([Destinations::class, 'removedDeclarations'])) {
+            throw new \RuntimeException('The loaded installer runtime cannot inspect obsolete module declarations. Retry Appointments separately.');
+        }
+        require_once $source . '/administrator/components/com_appointments/src/Helper/BundledModuleGuard.php';
+        $files = \Advans\Component\Appointments\Administrator\Helper\BundledModuleGuard::destinations(
+            $source, JPATH_ADMINISTRATOR, $elements
+        );
+        foreach ($elements as $element) {
+            $moduleSource = $source . '/modules/' . $element;
+            $manifest = simplexml_load_file($moduleSource . '/' . $element . '.xml');
+            if (!$manifest instanceof \SimpleXMLElement || (string) $manifest['type'] !== 'module'
+                || (string) $manifest['client'] !== 'administrator' || strtolower((string) $manifest->name) !== $element) {
+                throw new \RuntimeException('The bundled Appointments module manifest is invalid.');
+            }
+            $root = JPATH_ADMINISTRATOR . '/modules/' . $element;
+            // Only module adapters with oldFiles pass prior declarations to Joomla's deletion phase.
+            if (property_exists(\Joomla\CMS\Installer\Adapter\ModuleAdapter::class, 'oldFiles')) {
+                Destinations::removedDeclarations($files, $manifest, $moduleSource, $root . '/' . $element . '.xml', $root);
             }
         }
 
@@ -1008,15 +1023,27 @@ class Com_appointmentsInstallerScript extends InstallerScript
         foreach ($comparison['incoming'] as $path => $hash) {
             $comparison['existing'][$path] = file_exists($path) ? ($comparison['differing'][$path]['existing'] ?? $hash) : null;
         }
+        foreach (array_keys($comparison) as $key) {
+            ksort($comparison[$key]);
+        }
 
         return $comparison;
     }
 
     private function verifyBundledBeforeInstall(string $source, string $folder, string $destination): void
     {
+        if (str_starts_with($folder, 'modules/')) {
+            $files = $this->bundledModuleFiles($source, [basename($folder)]);
+        } else {
+            $manifestFile = $source . '/' . $folder . '/' . basename($folder) . '.xml';
+            $manifest = simplexml_load_file($manifestFile);
+            if (!$manifest instanceof \SimpleXMLElement || (string) $manifest['type'] !== 'plugin') {
+                throw new \RuntimeException('The bundled Appointments plugin manifest is invalid.');
+            }
+            $files = Destinations::files($manifest, $source . '/' . $folder, $manifestFile);
+        }
         if (!isset($this->bundledSnapshots[$folder])
-            || $this->snapshotBundled(AppointmentsConflictGuard::bundledFiles($source . '/' . $folder, $this->conflictFiles))
-                !== $this->bundledSnapshots[$folder]) {
+            || $this->snapshotBundled($files) !== $this->bundledSnapshots[$folder]) {
             throw new \RuntimeException('A bundled Appointments destination or candidate changed before its installation.');
         }
         foreach ($this->conflictReview['rows'] ?? [] as $row) {

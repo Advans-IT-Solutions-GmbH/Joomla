@@ -56,7 +56,8 @@ final class Guard
     {
         $relative = Knowledge::relative($destination);
         $leaf = basename(str_replace('\\', '/', $candidate));
-        if (!preg_match('#^(?:(?:administrator/)?components/com_appointments|administrator/modules/mod_appointments|media/com_appointments|plugins/[^/]+/[^/]+)/(?:src|tmpl|forms|css|js)/#D', $relative)
+        if (str_contains(str_replace('\\', '/', $candidate), '/.advans-operations/')
+            || !preg_match('#^(?:(?:administrator/)?components/com_appointments|administrator/modules/mod_appointments|media/com_appointments|plugins/[^/]+/[^/]+)/(?:src|tmpl|forms|css|js)/#D', $relative)
             || preg_match('/\.(?:php|xml|css|js)$/iD', $leaf) !== 1) {
             return false;
         }
