@@ -443,6 +443,7 @@ Document client differences. Distinguish client behaviour from defects in genera
 | LI-10 | POS | Repeat a successfully confirmed action in the same browser. | Understandable completion state; no repeated mail, bookings or audit entries. |
 | LI-11 | NEG | Submit confirmation without a Joomla CSRF token or with a wrong token. | No change. |
 | LI-12 | POS | Reschedule and cancel with JavaScript disabled. | Fully usable; same rules as with JavaScript. |
+| LI-13 | POS | Reschedule during the repeated local hour at the autumn clock change. | The other UTC instant with the same displayed local time remains selectable. |
 
 ## 11. Privacy and erasure
 

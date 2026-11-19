@@ -8,10 +8,11 @@
 
 namespace Advans\Component\Appointments\Site\View\Manage;
 
+use Advans\Component\Appointments\Administrator\Helper\RescheduleSlots;
+use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Service\InvalidBookingLinkException;
 use Advans\Component\Appointments\Site\Helper\BackLink;
 use Advans\Component\Appointments\Site\Helper\NoPageCache;
-use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Site\View\AssetsTrait;
 use Advans\Component\Appointments\Site\View\PageTitleTrait;
 use Advans\Component\Appointments\Site\View\ResultNoticesTrait;
@@ -153,15 +154,7 @@ class HtmlView extends BaseHtmlView
                 throw new \InvalidArgumentException(Text::_('COM_APPOINTMENTS_BOOKING_ERROR_DATE'), 400);
             }
 
-            foreach ($model->getSlots($this->item, $this->month, $zone, $now) as $slot) {
-                $local = $slot->setTimezone($this->zone);
-
-                if ($local->format('Y-m-d H:i:s') === $start->setTimezone($this->zone)->format('Y-m-d H:i:s')) {
-                    continue;
-                }
-
-                $this->slots[$local->format('Y-m-d')][] = $slot;
-            }
+            $this->slots = RescheduleSlots::byLocalDay($model->getSlots($this->item, $this->month, $zone, $now), $start, $this->zone);
         }
 
         return parent::display($tpl);
