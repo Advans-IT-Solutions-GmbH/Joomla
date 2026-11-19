@@ -38,7 +38,7 @@ The plugin decides at runtime which shop is active; tables alone do not decide, 
 2. otherwise `com_j2store` enabled and `#__j2store_products` present → J2Store / J2Commerce 4
 3. otherwise (no active shop component) → J2Commerce 6 if `#__j2commerce_products` exists, else J2Store
 
-The plugin manifest uses `group="j2commerce"`. On Joomla 6 the plugin is loaded from `plugins/j2commerce/productcompare/`. On Joomla 5 the installer script creates a mirror in `plugins/j2store/productcompare/` and registers the plugin with `folder=j2store` so that J2Store 4 can dispatch events to it.
+The plugin manifest uses `group="j2commerce"`. On Joomla 6 the plugin is loaded from `plugins/j2commerce/productcompare/`. On Joomla 5 the installer creates a mirror in `plugins/j2store/productcompare/` and registers the plugin with `folder=j2store` so that J2Store 4 can dispatch events to it. If another extension owns that directory, the installer leaves it and its registration untouched, warns the administrator, and keeps Product Compare registered under `j2commerce`. Product Compare does not run in J2Store in that case.
 
 **J2Commerce 4.x (Joomla 5)**:
 - The plugin subscribes to the events J2Store 4.1.4 fires in its product layouts (`app_bootstrap3`/`app_bootstrap4`/`app_bootstrap5`): `onJ2StoreAfterAddToCartButton` adds the button in product lists after the add-to-cart button and to up-sell and cross-sell products on the product page (`cart.php`); the call in the detail layout `view_cart` is skipped. `onJ2StoreAfterProductDisplay` adds the button at the end of the product page.
@@ -75,7 +75,7 @@ The manifest registers this repository's `updates/update.xml` as update server (
 
 ## Uninstall
 
-Uninstall via **System → Manage → Extensions**. The plugin creates no database tables. On Joomla 5 the uninstall script removes both `plugins/j2commerce/productcompare/` and the `plugins/j2store/productcompare/` mirror; on Joomla 6 Joomla removes `plugins/j2commerce/productcompare/`. Media and language files are removed by Joomla. Template overrides in your template folder are not removed.
+Uninstall via **System → Manage → Extensions**. The plugin creates no database tables. Joomla removes the registered Product Compare folder. On Joomla 5 the installer also cleans up any remaining Product Compare copy under `plugins/j2commerce/productcompare/`. A `plugins/j2store/productcompare/` directory owned by another extension is not removed. Joomla removes Product Compare's media and language files; template overrides are not removed.
 
 ## Configuration
 
