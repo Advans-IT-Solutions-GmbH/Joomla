@@ -4,9 +4,9 @@
         <element>j2commerce</element>
         <type>plugin</type>
         <folder>osmap</folder>
-        <version>1.5.0</version>
+        <version>1.5.1</version>
         <change>
-            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/osmap-j2commerce-v1.5.0</item>
+            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/osmap-j2commerce-v1.5.1</item>
         </change>
     </changelog>
 </changelogs>
