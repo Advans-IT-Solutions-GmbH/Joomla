@@ -15,6 +15,11 @@ actual tested commit, package and environment in every execution report.
 replace human acceptance. Installation, database inspection, IMAP ingestion and controlled fault
 injection require a technically experienced tester.
 
+**PR 396 execution status:** BLOCKED, not passed. No reachable test Joomla installation or
+credentials were available to the agent; Docker/WSL were unavailable. Edge/Chromium and Firefox
+could therefore not be exercised against a real installation at 375 px and 1600 px. No Live or
+production deployment was attempted and no pass or screenshots are claimed.
+
 The plan contains **194 identified test cases**, plus the end-to-end acceptance scenario in
 section 17. Use the [blank report template](report-template.md) for each execution.
 
@@ -348,11 +353,11 @@ unattended. It must not re-implement IMAP or parsing.
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
 | ME-01 | POS | Open the dashboard with several domains ingested. | Each domain row shows volume, the combined DMARC aligned-pass rate (`pass_rate`, a percentage) and the would-be-rejected message count (`reject_under_p`, an integer count, not a percentage nor a separate SPF/DKIM rate). |
-| ME-02 | POS | Open a domain's detail view. | Top sending IPs, a pass/fail breakdown and a timeline are shown. |
+| ME-02 | POS | Open a domain's detail view. | The sending sources (address with forward-confirmed server name or «no confirmed name», volume, DKIM aligned, SPF only, failed, assessment badge, latest report) and a timeline are shown, at 1600 and 375 px (table scrolls inside its card). |
 | ME-03 | GRZ | Seed one historical failure, then a clean current window. | The rollout decision reads the current window (`window_total`, `pass_rate_window`, `window_reject_under_p`); the historical failure does not block the next step forever. |
 | ME-04 | POS | Seed a would-be-rejected share at and above 2%. | The share is shown and raised to severity 3 at ≥2%. |
-| ME-05 | POS | Seed a heavy failing sender ranked below the top-20 by total volume. | `unalignedSources()` still surfaces it for an alignment recommendation. |
-| ME-06 | POS | Seed an IP first seen only in a second, contemporaneous report from another reporter in the current window. | `newSources()` flags it across the whole window, not just the single newest report id. |
+| ME-05 | POS | Seed a small SPF-only sender and a small delivered failing sender ranked below the top-20 by total volume. | `flaggedSources()` still surfaces both, and the domain view lists them below the top 20 so the Action Center link reaches their rows. |
+| ME-06 | POS | Seed an IP whose SPF-only mail is only in a second, contemporaneous report from another reporter in the current window. | `flaggedSources()` flags it across the whole window, not just the single newest report id. |
 | ME-07 | GRZ | Seed a window-to-window drop in the aligned-pass rate of more than five percentage points (latest reporting window versus the one immediately before it). | `pass_rate_drop` is reported; a drop of exactly five points or less correctly produces no finding (`$current < $previous - 5`). |
 | ME-08 | POS | Compare `latestPolicy()` (single domain) and `latestPolicyAll()` (bulk dashboard) for a subdomain already covered by `sp=reject`. | Both resolve the effective policy; the subdomain is not told to start its rollout from `none`. |
 | ME-09 | GRZ | Open a domain with no reports. | `no_data`; the metrics degrade to zeroes with no error. |
@@ -372,8 +377,8 @@ unattended. It must not re-implement IMAP or parsing.
 | AC-04 | POS | Seed `p=quarantine` below and then at or above the reject threshold. | `stay_at_quarantine`, then `move_to_reject`. |
 | AC-05 | POS | Seed the configured target reached, a `p=reject` with `pct<100` and a `p=quarantine` with `pct<100`. | `at_target`/`enforced`; `partial_enforcement`; `partial_quarantine` — a partial policy is never reported as the reached target or treated as safe to advance. |
 | AC-06 | POS | Seed a would-be-rejected share at ≥2%. | `would_be_rejected` at severity 3. |
-| AC-07 | POS | Seed an unaligned sender at a small and a large share. | `align_source` with severity scaled by share. |
-| AC-08 | POS | Seed a sending IP not seen before. | `new_source` — review it. |
+| AC-07 | POS | Seed a failing sender whose mail was delivered (disposition none), then the same sender with every failing message rejected or quarantined. | First `align_source` at severity 1 with server name and share; then no item (statistics only, badge «rejected»). |
+| AC-08 | POS | Seed a DKIM-aligned source, an SPF-only source and one source with both. Snooze a stored `new_source` item of the DKIM source first. | DKIM source: no item, badge «confirmed automatically (DKIM)», the stored item turns `auto_done` (`modified_by` 0) and is listed as handled without «Reopen»; SPF-only and mixed source: `spf_only_source` at severity 3 with server name and counts; «Show this source» jumps to the highlighted row. With DNS diagnostics off or the resolver unreachable, the badges are unchanged and the name reads «no confirmed name». |
 | AC-09 | POS | Inspect ordering and badges across mixed findings. | Sorted by severity descending then `action_key`; the presenter maps 3→danger, 2→warning, 1→info, else success. |
 | AC-10 | POS | Mark an item done and snooze another, then re-ingest. | The status and `snooze_until` survive the next ingestion. (`first_seen`/`last_seen` are written only by `ActionsController` on a status override or change, not by ingestion or dashboard generation.) |
 | AC-11 | NEG | Mark an item done or snooze it without a CSRF token or without rights, including by direct POST. | No change. |
@@ -386,7 +391,7 @@ unattended. It must not re-implement IMAP or parsing.
 | SY-01 | POS | Open the System Check. | It reports the runtime capabilities (`EnvironmentCheck`, including the socket-function check) and the MTA-STS/TLS-RPT diagnostics; it does not claim to show plugin or task status, the last run, or mailbox reachability. Inspect task and source status in their own screens. |
 | SY-02 | POS | In an isolated runtime, disable the `stream_socket_client` function so `EnvironmentCheck::sockets()` reports a warning. | The capability warning is surfaced; manual upload still works. Removing ext-imap or blocking outbound access alone does not change this check. |
 | SY-03 | POS | Leave DNS diagnostics off (default) and open a domain detail view. | No DNS lookup is performed. |
-| SY-04 | POS | Enable DNS diagnostics and open a domain detail view. | Published SPF/DMARC records are checked; only the domain name is disclosed to the resolver, never report contents. |
+| SY-04 | POS | Enable DNS diagnostics and open a domain detail view. | Published SPF/DMARC records are checked; monitored domain names and sending-source IP addresses are disclosed to the resolver, never report contents. |
 | SY-05 | NEG | Point a domain at a missing SPF/DMARC record. | A `dns_*` finding suggests the record to publish. |
 | SY-06 | NEG | Force a DNS lookup error (null) versus a genuinely absent record (`[]`). | A null result emits `dns_lookup_error` and suppresses the publish suggestion; a transient outage is not reported as a missing record. |
 | SY-07 | NEG | Exercise separately: a duplicate DMARC record, a duplicate SPF record, a malformed `p`/`pct`, and a lookalike version token (`v=DMARC10`, `v=spf10`). | The duplicates are reported as `dns_dmarc_duplicate`/`dns_spf_duplicate`; the malformed policy tags as `dns_dmarc_invalid`; the lookalike version is treated as missing via the word-boundary match. |
@@ -459,9 +464,9 @@ These cases do not replace a separate, complete security audit.
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
 | PR-01 | INT | Block outbound Internet for the isolated environment except the configured mailbox; run ingestion and open the dashboard. | Ingestion and the dashboard work; no report data is sent anywhere. |
-| PR-02 | INT | Inspect network activity through a full workflow. | The only outbound connections are the configured IMAP mailbox, the optional DNS lookups (domain name only), Joomla's own update check (version metadata only) and, when MTA-STS diagnostics are enabled, the HTTPS MTA-STS policy fetch to the policy host (`MtaStsDiagnostics::inspectHostedPolicy()` via `HttpPolicyFetcher`). No report contents or mailbox credentials are ever sent, and there is no third-party analysis service. |
+| PR-02 | INT | Inspect network activity through a full workflow. | The only outbound connections are the configured IMAP mailbox, the optional DNS lookups (monitored domain names and sending-source IP addresses), Joomla's own update check (version metadata only) and, when MTA-STS diagnostics are enabled, the HTTPS MTA-STS policy fetch to the policy host (`MtaStsDiagnostics::inspectHostedPolicy()` via `HttpPolicyFetcher`). No report contents or mailbox credentials are ever sent, and there is no third-party analysis service. |
 | PR-03 | POS | After ingestion, inspect where report data lives. | Parsed report data is stored only in the local `#__dmarc_*`/`#__dmarc_tlsrpt_*` tables and is never transmitted. |
-| PR-04 | POS | Confirm DNS diagnostics default state and its disclosure. | Off by default; when enabled, only the domain name is disclosed to the resolver, never report contents. |
+| PR-04 | POS | Confirm DNS diagnostics default state and its disclosure. | Off by default; when enabled, monitored domain names and sending-source IP addresses are disclosed to the resolver, never report contents. |
 | PR-05 | POS | Inspect the stored mailbox password everywhere it could appear. | Encrypted at rest in `password_enc`; never logged and never in `last_message`. |
 | PR-06 | POS | Delete a domain, then uninstall the package. | Deleting a domain removes its data per the documented behaviour; uninstall drops every `#__dmarc_*`/`#__dmarc_tlsrpt_*` table and all collected data. |
 | PR-07 | INT | Export a domain's records as CSV and inspect the file. | Only the authorised domain's records appear; no credentials, secrets or tokens are present. |
@@ -554,7 +559,7 @@ Configure this scenario **only through Joomla administration**, without file or 
 | 6 | Drill into the domain detail. | Top IPs, pass/fail breakdown, timeline and the MTA-STS records card render. |
 | 7 | Upload a TLS-RPT JSON report. | It is stored separately; the TLS reporting card appears. |
 | 8 | Request `/.well-known/mta-sts.txt` on the `mta-sts.` host through the documented rule. | The generated policy is served; changing the mode changes it. |
-| 9 | Enable DNS diagnostics, then open the domain detail page and the System Check. | The domain detail page shows the SPF/DMARC findings (`DetailModel::getDnsDiagnostics()`); the System Check shows the runtime capabilities and the MTA-STS/TLS-RPT diagnostics (which may make the optional HTTPS policy request). Only the domain name is disclosed to the resolver. |
+| 9 | Enable DNS diagnostics, then open the domain detail page and the System Check. | The domain detail page shows the SPF/DMARC findings (`DetailModel::getDnsDiagnostics()`); the System Check shows the runtime capabilities and the MTA-STS/TLS-RPT diagnostics (which may make the optional HTTPS policy request). Monitored domain names and sending-source IP addresses are disclosed to the resolver. |
 | 10 | Export the records as CSV, then uninstall the package on a disposable copy. | The export contains only authorised records; uninstall drops every table and all data. |
 
 Then repeat the core ingest-and-read flow in a second language.

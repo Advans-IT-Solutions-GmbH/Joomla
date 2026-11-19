@@ -12,9 +12,12 @@ namespace Advans\Component\DmarcReports\Administrator\Model;
 use Advans\Component\DmarcReports\Administrator\Helper\ActionCenter;
 use Advans\Component\DmarcReports\Administrator\Helper\ActionStatus;
 use Advans\Component\DmarcReports\Administrator\Helper\DnsDiagnostics;
+use Advans\Component\DmarcReports\Administrator\Helper\JoomlaHostNameStore;
 use Advans\Component\DmarcReports\Administrator\Helper\Metrics;
 use Advans\Component\DmarcReports\Administrator\Helper\MtaStsDiagnostics;
 use Advans\Component\DmarcReports\Administrator\Helper\MtaStsPolicy;
+use Advans\Component\DmarcReports\Administrator\Helper\SourceHostNames;
+use Advans\Component\DmarcReports\Administrator\Helper\SystemReverseDnsResolver;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\MVC\Model\BaseDatabaseModel;
@@ -23,8 +26,9 @@ use Joomla\Database\DatabaseInterface;
 defined('_JEXEC') or die;
 
 /**
- * Supplies the per-domain drill-down: metrics, top sources, timeline, live DNS
- * diagnostics and the domain's prioritised action items. It degrades
+ * Supplies the per-domain drill-down: metrics, the sending sources with their
+ * classification and host names, timeline, live DNS diagnostics and the
+ * domain's prioritised action items. It degrades
  * gracefully when no domain is selected.
  *
  * @since  1.0.0
@@ -71,6 +75,53 @@ class DetailModel extends BaseDatabaseModel
         if (($metrics['domain'] ?? '') === '') {
             return null;
         }
+
+        return $this->withHostNames($metrics);
+    }
+
+    /**
+     * Add the forward-confirmed host name of every listed and every flagged
+     * source (key `host`). Names are looked up only with the "dns_diagnostics"
+     * option on, because each lookup sends the sender address to the configured
+     * resolver; otherwise only names already cached are shown. Flagged sources
+     * are resolved first, and the lookups are cached and checked with a
+     * best-effort shared deadline ({@see SourceHostNames}). PHP's DNS resolver
+     * has no separate per-call timeout, so the classification never depends on
+     * DNS and no hard in-flight timeout is guaranteed.
+     *
+     * @param   array<string, mixed>  $metrics
+     *
+     * @return  array<string, mixed>
+     */
+    private function withHostNames(array $metrics): array
+    {
+        $lookups   = (int) ComponentHelper::getParams('com_dmarcreports')->get('dns_diagnostics', 0) === 1;
+        $hostNames = new SourceHostNames($lookups ? new SystemReverseDnsResolver() : null, new JoomlaHostNameStore());
+
+        $flagged = (array) ($metrics['flagged_sources'] ?? []);
+        $listed  = (array) ($metrics['top_sources'] ?? []);
+        $names   = $hostNames->names(
+            array_merge(
+                array_map(static fn ($s): string => (string) ($s['ip'] ?? ''), $flagged),
+                array_map(static fn ($s): string => (string) ($s['source_ip'] ?? ''), $listed)
+            )
+        );
+
+        foreach ($flagged as &$source) {
+            $source['host'] = $names[(string) ($source['ip'] ?? '')] ?? '';
+        }
+
+        unset($source);
+
+        foreach ($listed as &$row) {
+            $row['host'] = $names[(string) ($row['source_ip'] ?? '')] ?? '';
+        }
+
+        unset($row);
+
+        $metrics['flagged_sources']   = $flagged;
+        $metrics['top_sources']       = $listed;
+        $metrics['host_name_lookups'] = $lookups;
 
         return $metrics;
     }
@@ -166,10 +217,22 @@ class DetailModel extends BaseDatabaseModel
             (array) ($mtasts['findings'] ?? [])
         );
 
-        $items = ActionCenter::generate($metrics, $config, $findings);
+        $items  = ActionCenter::generate($metrics, $config, $findings);
+        $status = new ActionStatus($this->getDatabase());
+
+        // Close stored "new source" items whose source is now confirmed through
+        // DKIM, as the dashboard does; a failure must not break the view.
+        try {
+            $classifier = new Metrics($this->getDatabase());
+            $status->resolveConfirmedNewSources(
+                static fn (int $domainId, array $ips): array => $classifier->classifySources($domainId, $ips)
+            );
+        } catch (\Throwable $e) {
+            // Resolved on a later page view.
+        }
 
         // Respect the status the operator has already set for these items on the
         // dashboard (done, ignored or snoozed) so the drill-down stays in sync.
-        return (new ActionStatus($this->getDatabase()))->partition($items)['active'];
+        return $status->partition($items)['active'];
     }
 }

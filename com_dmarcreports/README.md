@@ -16,9 +16,9 @@ Mailbox providers send DMARC aggregate reports (RFC 7489) as compressed XML atta
 
 Report parsing and storage run on your own server — there is no external analysis service, Python, Elasticsearch or cloud dependency. Reports can be fetched on demand from configured mailboxes over outbound IMAP, uploaded by hand, or imported automatically by the optional [Scheduler task plugin](../plg_task_dmarcreports). Automatic ingestion requires a configured task and a working Joomla Scheduler trigger (site traffic for the lazy scheduler, or system/web cron for regular unattended operation); installing the plugin does not start a daemon. Report contents are not sent to an external analysis service. Exports and uploads remain administrator-controlled.
 
-**Network and privacy:** IMAP connects to the mailbox hosts and ports you configure. Live diagnostics are **off by default** (`dns_diagnostics`): enabling them permits DNS queries for SPF/DMARC and, for separately enabled MTA-STS/TLS-RPT features, their TXT records and the receiving domain's actual MX targets. DNS discloses queried names to the configured resolver and upstream DNS servers. MTA-STS validation also makes an outbound **HTTPS** request to `https://mta-sts.<domain>/.well-known/mta-sts.txt` when the published TXT id matches; that host sees the requested path and server connection metadata, not report contents. These live checks run in the domain detail and System Check, not the main dashboard or dashboard module. Separately, Joomla's extension updater checks GitHub for version metadata and downloads update packages when requested; it does not upload reports.
+**Network and privacy:** IMAP connects to the mailbox hosts and ports you configure. Live diagnostics are **off by default** (`dns_diagnostics`): enabling them permits DNS queries for SPF/DMARC, reverse and forward lookups of the sending IP addresses shown in the domain detail (to show their server names) and, for separately enabled MTA-STS/TLS-RPT features, their TXT records and the receiving domain's actual MX targets. DNS discloses queried names to the configured resolver and upstream DNS servers. MTA-STS validation also makes an outbound **HTTPS** request to `https://mta-sts.<domain>/.well-known/mta-sts.txt` when the published TXT id matches; that host sees the requested path and server connection metadata, not report contents. These live checks run in the domain detail and System Check, not the main dashboard or dashboard module. Separately, Joomla's extension updater checks GitHub for version metadata and downloads update packages when requested; it does not upload reports.
 
-Beyond showing the numbers, the component includes an **Action Center** that reads the parsed data and produces prioritised, plain-language recommendations: when it is safe to move a domain from `p=none` to `quarantine` to `reject`, which unaligned senders need SPF or DKIM before you tighten policy, and which new or failing sources need attention first. A non-expert administrator can see exactly where action is required.
+Beyond showing the numbers, the component includes an **Action Center** that reads the parsed data and produces prioritised, plain-language recommendations: when it is safe to move a domain from `p=none` to `quarantine` to `reject`, which sending sources need DKIM before you tighten policy, and which sources need attention first. It judges every sending source by itself from the DKIM and SPF results, so the administrator never has to check a source by hand. A non-expert administrator can see exactly where action is required.
 
 ## Features
 
@@ -30,7 +30,7 @@ Beyond showing the numbers, the component includes an **Action Center** that rea
 - Native RFC 7489 aggregate-report XML parser (no external tools)
 - Idempotent storage: reports are de-duplicated by policy domain, reporter org, report id and report-window start date, so a reporter that reuses a report id for a later window — or for a different policy domain — still stores each report separately
 - Dashboard with per-domain volume, SPF/DKIM pass rates and would-be-rejected share
-- Per-domain drill-down: top sending IPs, pass/fail breakdown and a timeline
+- Per-domain drill-down: sending sources with their forward-confirmed server name, DKIM-aligned, SPF-only and failing counts, automatic assessment and latest report, plus a timeline
 - **Action Center**: prioritised, data-driven next steps along the `none → quarantine → reject` rollout
 - Live diagnostics (optional, off by default): SPF/DMARC records, MTA-STS/TLS-RPT publication and policy drift, and actual receiving-MX coverage before MTA-STS enforce advice
 - CSV export of the per-domain record data
@@ -141,7 +141,7 @@ Navigate to **Components → DMARC Reports** (`administrator/index.php?option=co
    The import summary names the stored records (rows) and the messages they describe apart: a report with three rows can stand for six messages.
 4. **Read the Dashboard** — per-domain volume, SPF/DKIM pass rates and would-be-rejected share
 5. **Act on the Action Center** — follow the prioritised recommendations before tightening policy
-6. **Drill down** per domain for top sending IPs, pass/fail detail and the timeline
+6. **Drill down** per domain for the sending sources, their assessment and the timeline
 7. **Export** the per-domain records as CSV when you need the raw data
 
 ### Action Center
@@ -149,12 +149,33 @@ Navigate to **Components → DMARC Reports** (`administrator/index.php?option=co
 The Action Center converts the parsed reports into concrete, prioritised tasks, for example:
 
 - A domain is still at `p=none` while the aligned-pass rate is already above the quarantine threshold → it is safe to move to `p=quarantine`
-- An unaligned sender sends a meaningful share of mail → add it to SPF or set up DKIM before tightening policy
-- A new sending source appeared and some of its mail failed DMARC → review it before it affects a stricter policy. A new source whose mail all passes (for example a mailbox provider forwarding with the DKIM signature intact) is already authenticated and is not listed
+- A source sent mail that passed DMARC only through SPF, without the domain's DKIM signature → act now: switch on DKIM for it if it is your service, otherwise tighten SPF or contact the provider (see below)
+- A source sent failing mail that was still delivered (for example under `p=none`) → informational: switch on DKIM if it is your service, otherwise the stricter policy stops it
 - An SPF or DMARC DNS record is missing → the suggested record to publish is shown
 - A DNS lookup failed → the records could not be checked, so none is suggested and a transient outage is not mistaken for a missing record
 
-Each item explains what to change, why, and when it is safe, ordered so the most important action comes first. The **Help & tips** page explains every entry type and what to do about it.
+Each item explains what to change, why, and when it is safe, ordered so the most important action comes first. Every item about one source links to that source's row in the domain detail. The **Help & tips** page explains every entry type and what to do about it.
+
+### How sending sources are judged
+
+The component decides by itself how far each sending IP address can be trusted, from the DKIM and SPF results the receivers report (their `policy_evaluated` results already apply alignment under the domain's `adkim`/`aspf` modes). The administrator does not have to check SPF or DKIM.
+
+| Mail of the source in the current reporting window | Assessment | Action Center |
+|---|---|---|
+| Carries an aligned DKIM signature (d = the domain or an aligned subdomain) | **confirmed automatically (DKIM)** | No item |
+| Passed DMARC only through SPF alignment (DKIM missing, failing or unaligned) | **SPF only (check)** | Act now (`spf_only_source`) |
+| Failed DMARC and the receivers rejected or quarantined it | **rejected** | No item, statistics only: the policy works |
+| Failed DMARC and was still delivered (`p=none`, `pct` below 100 or a receiver exception) | **not authenticated, delivered** | Informational item (`align_source`) |
+
+A source with mixed records takes the most urgent assessment, in this order: SPF only, not authenticated and delivered, DKIM, rejected. A single SPF-only message outweighs any number of DKIM-signed ones, because on a shared gateway the signed mail can be yours and the SPF-only mail someone else's. DKIM-signed mail plus failing mail the receivers rejected stays confirmed.
+
+**Why SPF alone is not trusted:** many hosting providers ask their customers to include the provider's shared mail gateways in their SPF record (`include:`). Those gateways send for every customer of the provider, so another customer can pass SPF, and therefore DMARC, with your domain in the From address. Only an aligned DKIM signature, made with the domain's own private key, proves that the domain owner sent the mail. A source that passes only through SPF is therefore always shown, with its server name and counts, and the text says exactly what to do: switch on DKIM signing if it is your own service, otherwise remove the SPF entry that allows the server (after making sure your own mail is DKIM-signed) or ask the provider to stop other customers from sending with your domain.
+
+The assessment uses the current reporting window (the seven days up to the newest report) when the source sent mail in it, otherwise all its mail, so a source that has since been fixed is judged on its current mail. With live diagnostics on, the domain detail also shows each address's reverse-DNS name, but only when it resolves back to the same address (forward-confirmed), for information. The names never influence the assessment. Lookups are cached (a confirmed name for seven days, no name for one day), limited per page view (at most 10 new lookups), and checked against a shared elapsed-time deadline. The system resolver applies a one-second alarm to each DNS call where POSIX `pcntl` controls are available; platforms without that alarm cannot guarantee a hard per-call timeout. Lookups never run during ingestion or on the dashboard, which shows cached names only. Without DNS the assessment works the same.
+
+Dashboard, module and domain detail metrics include all flagged sources in each domain's current reporting window. Source-targeted links still point to the exact source row. Incomplete shared-deadline DNS outcomes are not cached, so later page views can retry them.
+
+Up to version 1.3 every new sending address with failing mail produced a «New sending source seen» item that asked the administrator to check it. That item is no longer generated. A stored «new source» item that the administrator had postponed or reopened is closed automatically as soon as its source sends DKIM-aligned mail. It is recorded with the status `auto_done` and `modified_by = 0` and listed among the handled items as «Confirmed automatically (DKIM)». Items the administrator ignored stay as they are.
 
 ### Policy rollout guidance
 
@@ -224,7 +245,7 @@ Order as in `tests/test.env`:
 3. **Parser** - RFC 7489 aggregate-report XML is parsed into the expected records
 4. **Storage** - Reports and records are stored idempotently (dedupe by policy domain, reporter org, report id and report-window start date)
 5. **Action Center** - Recommendations are derived correctly from the parsed data
-6. **Metrics** - The `Metrics` aggregator is driven against a seeded database and returns the expected lifetime totals, rolling-window pass rates, new sources and timeline
+6. **Metrics** - The `Metrics` aggregator is driven against a seeded database and returns the expected lifetime totals, rolling-window pass rates, per-source DKIM/SPF-only/failing figures and assessments, the flagged sources (identical in the detail and dashboard paths) and the timeline. It also closes a stored «new source» item of a DKIM-confirmed source automatically
 7. **Export** - The CSV export's keyset pagination is driven against a seeded record set and returns every record exactly once, in order, without duplicating or skipping rows as it pages; the snapshot id ceiling excludes rows ingested mid-export; and the export controller keeps its CSRF-token and `core.manage` guards
 8. **Configuration forms** (`config-forms:08-config-forms.php`) - Exercises configuration fields and their validation
 9. **Ingestion limits** (`ingest-limits:09-ingest-limits.php`) - Drives the installed `Ingestor` and `ImapClient` against the database with crafted messages: under and over each per-message limit, many report parts, an archive over the document limit, a gzip and a zip bomb, and a run limit whose postponed message the next run imports. Asserts that held messages store nothing and that the log holds no content or addresses
@@ -293,9 +314,9 @@ Test results are saved in `tests/test-results/`.
 **Problem:** Menu item missing or permission denied  
 **Solution:** Verify administrator permissions under **System → Global Configuration → Permissions** and that the `com_dmarcreports` ACL allows your group.
 
-### A sending source is flagged as unaligned
-**Problem:** A legitimate sender appears in the Action Center as failing alignment  
-**Solution:** This is the point of the tool. Add the sender to the domain's SPF record or configure DKIM signing for it, then re-ingest. Only tighten the DMARC policy once the Action Center no longer flags it.
+### A sending source is flagged
+**Problem:** A legitimate sender of yours appears in the Action Center as «SPF only» or as unauthenticated
+**Solution:** This is the point of the tool. Configure DKIM signing for your domain in that service. The item disappears with the next reports. Adding the sender to SPF alone does not clear an «SPF only» item, because SPF does not prove who sent the mail (see «How sending sources are judged»). Only tighten the DMARC policy once the Action Center no longer flags it.
 
 ## Multi-Language Support
 
