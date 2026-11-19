@@ -298,7 +298,12 @@ class AutoCleanupTaskTest
                     ->where($this->db->quoteName('folder') . ' = ' . $this->db->quote('privacy'))
                     ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('j2commerce'))
             )->loadAssoc();
-            $changed = array_replace(json_decode((string) $plugin['params'], true) ?: [], ['retention_years' => '7', 'fiscal_year_end' => '06-30']);
+            $changed = array_replace(json_decode((string) $plugin['params'], true) ?: [], [
+                'retention_years'   => '7',
+                'fiscal_year_end'   => '06-30',
+                'anonymize_orders'  => '0',
+                'delete_addresses'  => '0',
+            ]);
             $storeParams = fn (string $json) => $this->db->setQuery(
                 'UPDATE ' . $this->db->quoteName('#__extensions') . ' SET ' . $this->db->quoteName('params') . ' = ' . $this->db->quote($json)
                 . ' WHERE ' . $this->db->quoteName('extension_id') . ' = ' . (int) $plugin['extension_id']
@@ -313,6 +318,9 @@ class AutoCleanupTaskTest
                 $this->test('update creates a deleted required task again, once and switched on', count($created) === 1 && (int) $created[0]['state'] === 1);
                 $this->test('the recreated task takes over the retention period and fiscal year end of the plugin',
                     (int) ($params['retention_years'] ?? 0) === 7 && ($params['fiscal_year_end'] ?? '') === '06-30', json_encode($params));
+                $this->test('the recreated task preserves the privacy plugin cleanup opt-outs',
+                    (int) ($params['anonymize_orders'] ?? -1) === 0 && (int) ($params['delete_addresses'] ?? -1) === 0,
+                    json_encode($params));
                 $this->test('update reports the recreated task', str_contains($plain, 'The installation created it and switched it on')
                     && str_contains($plain, 'Retention period: 7 years'), mb_substr($plain, -800));
                 $id = (int) ($created[0]['id'] ?? 0);
