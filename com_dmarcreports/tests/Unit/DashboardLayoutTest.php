@@ -138,6 +138,34 @@ class DashboardLayoutTest extends TestCase
         );
     }
 
+    public function testSourceItemLinksToItsRowInTheDomainView(): void
+    {
+        $xp    = $this->render(false);
+        $items = $this->actionItems($xp);
+
+        $links = $xp->query('.//a[' . self::classIs('com-dmarcreports-source-link') . ']', $items[0]);
+        $this->assertSame(1, $links->length, 'A source item offers a link to its source');
+        $this->assertSame(
+            'index.php?option=com_dmarcreports&view=detail&domain_id=1#source-192-0-2-1',
+            $links->item(0)->getAttribute('href')
+        );
+
+        // An item that is not about one source has no such link.
+        $this->assertSame(0, $xp->query('.//a[' . self::classIs('com-dmarcreports-source-link') . ']', $items[1])->length);
+    }
+
+    public function testAutomaticallyResolvedItemIsListedWithoutReopen(): void
+    {
+        $xp      = $this->render(true);
+        $handled = $xp->query('//ul[' . self::classIs('list-group') . ']/li');
+
+        $this->assertSame(2, $handled->length);
+        $auto = $handled->item(1);
+        $this->assertStringContainsString('COM_DMARCREPORTS_ACTION_STATUS_AUTO_DONE', $auto->textContent);
+        $this->assertStringContainsString('COM_DMARCREPORTS_ACTION_NEW_SOURCE_TEXT 192.0.2.3', $auto->textContent);
+        $this->assertSame(0, $xp->query('.//form', $auto)->length, 'The software decided; there is nothing to reopen');
+    }
+
     public function testViewOnlyUsersSeeNoControls(): void
     {
         $xp = $this->render(false);

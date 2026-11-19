@@ -8,11 +8,19 @@
  */
 
 use Advans\Component\DmarcReports\Administrator\Helper\ActionPresenter;
+use Advans\Component\DmarcReports\Administrator\Helper\SourceClassifier;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Session\Session;
 
 defined('_JEXEC') or die;
+
+// An Action Center item links to its source's row (#source-...). Keep the row
+// clear of the sticky backend header when the browser scrolls to it, and mark it.
+$this->getDocument()->getWebAssetManager()->addInlineStyle(
+    '.com-dmarcreports-sources tr[id]{scroll-margin-top:8rem}'
+    . '.com-dmarcreports-sources tr:target>td{background-color:var(--bs-warning-bg-subtle,#fff3cd)}'
+);
 ?>
 <div class="com-dmarcreports-detail">
     <form action="<?php echo Route::_('index.php?option=com_dmarcreports&view=detail'); ?>" method="get" class="mb-4">
@@ -83,6 +91,10 @@ defined('_JEXEC') or die;
                                 </span>
                                 <strong><?php echo htmlspecialchars(ActionPresenter::title($item)); ?></strong>
                                 <div><?php echo htmlspecialchars(ActionPresenter::text($item)); ?></div>
+                                <?php $sourceAnchor = ActionPresenter::sourceAnchor($item); ?>
+                                <?php if ($sourceAnchor !== '') : ?>
+                                    <a class="com-dmarcreports-source-link" href="#<?php echo htmlspecialchars($sourceAnchor); ?>"><?php echo Text::_('COM_DMARCREPORTS_ACTION_SHOW_SOURCE'); ?></a>
+                                <?php endif; ?>
                             </li>
                         <?php endforeach; ?>
                     </ul>
@@ -212,32 +224,78 @@ defined('_JEXEC') or die;
                 <?php if (empty($m['top_sources'])) : ?>
                     <div class="alert alert-info mb-0"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_NO_SOURCES'); ?></div>
                 <?php else : ?>
-                    <table class="table table-sm table-striped">
+                    <p class="text-muted"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_SOURCES_INTRO'); ?></p>
+                    <p class="text-muted small"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_SOURCES_PERIOD'); ?></p>
+                    <?php if (empty($m['host_name_lookups'])) : ?>
+                        <p class="text-muted"><?php echo Text::_('COM_DMARCREPORTS_DETAIL_SOURCES_NAMES_DISABLED'); ?></p>
+                    <?php endif; ?>
+                    <div class="table-responsive">
+                    <table class="table table-sm table-striped com-dmarcreports-sources">
                         <thead><tr>
                             <th><?php echo Text::_('COM_DMARCREPORTS_COL_SOURCE_IP'); ?></th>
                             <th class="text-end"><?php echo Text::_('COM_DMARCREPORTS_COL_VOLUME'); ?></th>
-                            <th class="text-end"><?php echo Text::_('COM_DMARCREPORTS_COL_PASS'); ?></th>
+                            <th class="text-end"><?php echo Text::_('COM_DMARCREPORTS_COL_DKIM_ALIGNED'); ?></th>
+                            <th class="text-end"><?php echo Text::_('COM_DMARCREPORTS_COL_SPF_ONLY'); ?></th>
                             <th class="text-end"><?php echo Text::_('COM_DMARCREPORTS_COL_FAIL'); ?></th>
-                            <th class="text-center"><?php echo Text::_('COM_DMARCREPORTS_COL_ALIGNED'); ?></th>
+                            <th><?php echo Text::_('COM_DMARCREPORTS_COL_SOURCE_CLASS'); ?></th>
+                            <th><?php echo Text::_('COM_DMARCREPORTS_COL_LAST_REPORT'); ?></th>
                         </tr></thead>
                         <tbody>
                             <?php foreach ($m['top_sources'] as $src) : ?>
-                                <tr>
-                                    <td><code><?php echo htmlspecialchars((string) $src['source_ip']); ?></code></td>
+                                <?php $class = (string) ($src['class'] ?? ''); ?>
+                                <tr id="<?php echo htmlspecialchars(SourceClassifier::anchor((string) $src['source_ip'])); ?>">
+                                    <td>
+                                        <code><?php echo htmlspecialchars((string) $src['source_ip']); ?></code>
+                                        <div class="small text-muted">
+                                            <?php echo ($src['host'] ?? '') !== ''
+                                                ? htmlspecialchars((string) $src['host'])
+                                                : Text::_('COM_DMARCREPORTS_SOURCE_HOST_UNKNOWN'); ?>
+                                        </div>
+                                        <?php
+                                        $evidence = [
+                                            'source_ip' => (string) $src['source_ip'],
+                                            'ptr_host' => (string) ($src['host'] ?? ''),
+                                            'reverse_dns_confidence' => ($src['host'] ?? '') !== '' ? 'forward_confirmed' : 'not_forward_confirmed',
+                                            'dkim_pass_aligned' => (int) ($src['dkim_pass_aligned'] ?? $src['dkim'] ?? 0),
+                                            'spf_pass_aligned' => (int) ($src['spf_pass_aligned'] ?? 0),
+                                            'raw_auth_results_available' => false,
+                                            'disposition_none' => (int) ($src['disposition_none'] ?? 0),
+                                            'disposition_quarantine' => (int) ($src['disposition_quarantine'] ?? 0),
+                                            'disposition_reject' => (int) ($src['disposition_reject'] ?? 0),
+                                            'message_count' => (int) ($src['evidence_total'] ?? $src['total'] ?? 0),
+                                            'window_start' => (int) ($src['evidence_window_start'] ?? 0),
+                                            'window_end' => (int) ($src['evidence_window_end'] ?? 0),
+                                            'window_fallback' => (bool) ($src['evidence_window_fallback'] ?? false),
+                                            'domain' => (string) ($m['domain'] ?? ''),
+                                            'header_from' => (string) ($src['header_from'] ?? ''),
+                                            'policy_context_mixed' => (bool) ($src['policy_context_mixed'] ?? false),
+                                            'policy_domain' => (string) ($src['policy_domain'] ?? ''),
+                                            'adkim' => (string) ($src['policy_adkim'] ?? ''),
+                                            'aspf' => (string) ($src['policy_aspf'] ?? ''),
+                                            'assessment' => $class === SourceClassifier::DKIM
+                                                ? 'legitimate_dkim'
+                                                : ($class === SourceClassifier::SPF_ONLY
+                                                    ? 'spf_only_unresolved'
+                                                    : ($class === SourceClassifier::UNAUTHENTICATED ? 'unresolved' : 'rejected')),
+                                        ];
+                                        echo ActionPresenter::sourceEvidence(['evidence' => $evidence]);
+                                        ?>
+                                    </td>
                                     <td class="text-end"><?php echo (int) $src['total']; ?></td>
-                                    <td class="text-end text-success"><?php echo (int) $src['pass']; ?></td>
-                                    <td class="text-end text-danger"><?php echo (int) $src['fail']; ?></td>
-                                    <td class="text-center">
-                                        <?php if ((int) $src['aligned'] === 1) : ?>
-                                            <span class="badge bg-success"><?php echo Text::_('COM_DMARCREPORTS_YES'); ?></span>
-                                        <?php else : ?>
-                                            <span class="badge bg-danger"><?php echo Text::_('COM_DMARCREPORTS_NO'); ?></span>
+                                    <td class="text-end text-success"><?php echo (int) $src['dkim']; ?></td>
+                                    <td class="text-end<?php echo (int) $src['spf_only'] > 0 ? ' text-danger fw-bold' : ''; ?>"><?php echo (int) $src['spf_only']; ?></td>
+                                    <td class="text-end"><?php echo (int) $src['fail']; ?></td>
+                                    <td>
+                                        <?php if ($class !== '') : ?>
+                                            <span class="badge bg-<?php echo SourceClassifier::badgeClass($class); ?>"><?php echo htmlspecialchars(ActionPresenter::sourceClassLabel($class)); ?></span>
                                         <?php endif; ?>
                                     </td>
+                                    <td><?php echo (int) $src['last_seen'] > 0 ? gmdate('Y-m-d', (int) $src['last_seen']) : ''; ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
+                    </div>
                 <?php endif; ?>
             </div>
         </div>

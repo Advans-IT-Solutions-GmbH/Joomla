@@ -117,6 +117,7 @@ install never drops collected DMARC data):
 | `DomainBinding` | Forced-source rule: store a report under the bound domain only for that domain or a subdomain of it (no PSL, so never a parent) |
 | `CryptoHelper` | Encrypt/decrypt the mailbox password with the Joomla secret |
 | `ActionCenter` / `ActionStatus` / `ActionPresenter` | Derive, persist and render recommendations |
+| `SourceClassifier` / `SourceHostNames` / `SystemReverseDnsResolver` / `JoomlaHostNameStore` | Judge each sending source from DKIM/SPF alignment (DKIM confirms, SPF alone never does); cached, time-limited forward-confirmed PTR names for information |
 | `Metrics` | Per-domain volume / pass-rate / would-be-rejected calculations; `tlsRptSummary()` |
 | `DnsDiagnostics` / `SystemDnsResolver` / `DnsResolverInterface` | SPF/DMARC/MTA-STS record checks |
 | `SourcePoller` (`src/Service/`) | Polls every active source over IMAP under the shared locks; reused by the on-demand controller and the task plugin |
