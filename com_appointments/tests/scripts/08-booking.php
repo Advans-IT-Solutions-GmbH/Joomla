@@ -173,6 +173,11 @@ try {
     $stranger = new AppointmentsHttp('http://localhost', 'booking-stranger');
     $stranger->request($calendarHref !== '' ? $calendarHref : '/index.php?option=com_appointments&task=booking.ics&id=1');
     $check($stranger->status === 404, 'The .ics download is not available to another browser session');
+    $bookingId = (int) ($booking['id'] ?? 0);
+    $db->query("UPDATE {$prefix}appointments_bookings SET sequence=sequence+1 WHERE id={$bookingId}");
+    $request[0]->request('/index.php?option=com_appointments&view=booking');
+    $check($request[0]->status === 404, 'The original confirmation session cannot issue fresh links after a sequence change within the same second');
+    $db->query("UPDATE {$prefix}appointments_bookings SET sequence=" . (int) $booking['sequence'] . " WHERE id={$bookingId}");
     // Release test 16.11.: the confirmation page shows its event type (a template override frames the
     // card with it). getItem() drops the personal fields it read to open the row, not the event type.
     $itemScript = sys_get_temp_dir() . '/confirmation-item-' . bin2hex(random_bytes(4)) . '.php';
@@ -182,6 +187,8 @@ try {
         $session->set("registry", new \Joomla\Registry\Registry());
         $application->setSession($session);
         $application->setUserState("com_appointments.confirmation.id", ' . (int) ($booking['id'] ?? 0) . ');
+        $application->setUserState("com_appointments.confirmation.modified_utc", ' . var_export((string) ($booking['modified_utc'] ?? ''), true) . ');
+        $application->setUserState("com_appointments.confirmation.sequence", ' . (int) ($booking['sequence'] ?? 0) . ');
         $item = (new \Advans\Component\Appointments\Site\Model\BookingModel(["ignore_request" => true]))->getItem();
         echo "\n@@ITEM@@" . json_encode(["eventtype_id" => (int) ($item->eventtype_id ?? 0),
             "personal" => array_values(array_intersect(array_keys(get_object_vars($item)), ["invitee_name", "invitee_email", "invitee_phone", "guest_emails", "custom_fields"]))]);');
@@ -193,7 +200,6 @@ try {
     $confirmationItem = $itemAt === false ? [] : (array) json_decode(substr($itemText, $itemAt + 8), true);
     $check(($confirmationItem['eventtype_id'] ?? 0) === $eventIds[0] && ($confirmationItem['personal'] ?? null) === [],
         'The confirmation keeps the event type of the booking and none of its personal fields: ' . ($itemAt === false ? substr($itemText, 0, 300) : json_encode($confirmationItem)));
-    $bookingId = (int) ($booking['id'] ?? 0);
     $page = $admin->request('/administrator/index.php?option=com_appointments&view=bookings');
     $check($admin->status === 200 && str_contains($page, 'invitee@example.test'), 'Booking visible in administrator list');
     $admin->request('/administrator/index.php?option=com_appointments', ['task' => 'bookings.approve', 'cid' => [$bookingId], $admin->token($page) => 1]);

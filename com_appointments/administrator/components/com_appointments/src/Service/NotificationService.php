@@ -627,6 +627,7 @@ final class NotificationService
         $mailer->isHtml(true);
         $mailer->setBody($html);
         $mailer->AltBody = $text;
+        $mailer->addCustomHeader('Content-Class', 'urn:content-classes:calendarmessage');
         $mailer->Ical = $calendar;
     }
 

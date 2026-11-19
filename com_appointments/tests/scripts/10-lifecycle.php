@@ -18,11 +18,23 @@ try {
     $reschedule = $fixture->link($booking, 'reschedule');
     $cancel = $fixture->link($booking, 'cancel');
     $html = $client->request($reschedule);
-    $check($client->status === 200 && str_contains($html, 'name="start"'), 'Signed reschedule page works without login or JavaScript');
+    $check($client->status === 200 && str_contains($html, 'com-appointments-calendar-grid')
+        && str_contains($html, 'com-appointments-day-available') && str_contains($html, 'Current appointment')
+        && !str_contains($html, 'type="month"') && !str_contains($html, 'id="new-start"'),
+        'Signed reschedule page uses the booking calendar without a raw month field or slot dropdown');
+    $calendarDocument = new DOMDocument();
+    @$calendarDocument->loadHTML($html);
+    $calendarXpath = new DOMXPath($calendarDocument);
+    $dayLink = $calendarXpath->query('//a[contains(concat(" ", normalize-space(@class), " "), " com-appointments-day-available ")]')->item(0);
+    $dayPage = $dayLink instanceof DOMElement ? $client->request(html_entity_decode($dayLink->getAttribute('href'), ENT_QUOTES | ENT_HTML5)) : '';
+    $dayDocument = new DOMDocument();
+    @$dayDocument->loadHTML($dayPage);
+    $check($client->status === 200 && (new DOMXPath($dayDocument))->query('//input[@type="radio"][@name="start"]')->length > 0,
+        'Choosing an available calendar day displays selectable reschedule times');
     $document = new DOMDocument();
     @$document->loadHTML($html);
     $cancelExit = (new DOMXPath($document))->query(
-        '//div[contains(concat(" ", normalize-space(@class), " "), " com-appointments-manage ")]//a'
+        '//a[contains(concat(" ", normalize-space(@class), " "), " com-appointments-return ")]'
     )->item(0);
     $check($cancelExit instanceof DOMElement && trim($cancelExit->textContent) === 'Cancel',
         'A signed management form has a non-mutating Cancel exit to the public overview');

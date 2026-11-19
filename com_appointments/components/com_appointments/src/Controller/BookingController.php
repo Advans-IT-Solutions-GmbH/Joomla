@@ -137,6 +137,8 @@ class BookingController extends BaseController
         $this->app->setUserState('com_appointments.booking.' . $eventId, null);
         $this->app->setUserState('com_appointments.booking_errors.' . $eventId, null);
         $this->app->setUserState('com_appointments.confirmation.id', (int) $booking['id']);
+        $this->app->setUserState('com_appointments.confirmation.modified_utc', (string) $booking['modified_utc']);
+        $this->app->setUserState('com_appointments.confirmation.sequence', (int) $booking['sequence']);
         // The confirmation lands at its card, so modules a template places above the component
         // do not push the outcome out of the first screen; the booking script focuses its status.
         $this->setRedirect(Route::_('index.php?option=com_appointments&view=booking' . $this->frame($eventId), false) . '#appointment-confirmation');
@@ -213,12 +215,16 @@ class BookingController extends BaseController
         // getItem() verified the signature (or found this session's receipt), so an unsigned
         // request learns nothing about a booking.
         $url .= $this->frame($booking !== null ? (int) $booking->eventtype_id : 0);
-        $month = $this->input->getString('month', '');
-        $zone = $this->input->getString('timezone', '');
+        $month = $this->input->post->getString('month', $this->input->getString('month', ''));
+        $zone = $this->input->post->getString('timezone', $this->input->getString('timezone', ''));
+        $day = $this->input->post->getString('day', $this->input->getString('day', ''));
         if ($month !== '') {
             $url .= '&month=' . urlencode($month);
             if (in_array($zone, \DateTimeZone::listIdentifiers(), true)) {
                 $url .= '&timezone=' . urlencode($zone);
+            }
+            if (UtcTimestamp::isDate($day) && substr($day, 0, 7) === $month) {
+                $url .= '&day=' . urlencode($day);
             }
         }
         $this->setRedirect(Route::_($url, false));
