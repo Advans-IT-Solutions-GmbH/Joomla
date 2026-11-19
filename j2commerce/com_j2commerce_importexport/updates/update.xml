@@ -5,13 +5,13 @@
         <description>Import and export J2Commerce products</description>
         <element>com_j2commerce_importexport</element>
         <type>component</type>
-        <version>1.2.0</version>
+        <version>1.2.1</version>
         <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/j2commerce/com_j2commerce_importexport</infourl>
-        <changelogurl>https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/com_j2commerce_importexport/updates/changelog.xml</changelogurl>
+        <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/importexport-v1.2.1/changelog.xml</changelogurl>
         <downloads>
-            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/importexport-v1.2.0/com_j2commerce_importexport_1.2.0.zip</downloadurl>
+            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/importexport-v1.2.1/com_j2commerce_importexport_1.2.1.zip</downloadurl>
         </downloads>
-        <sha256>1b093c37df1e71ea19833a7b68bc7e72290a0c9a67823ee44e621bc8039a2d5a</sha256>
+        <sha256>c3a6286704ea4825413ebbe1736455a844a64d9b22317be24f88b8d3529c23b3</sha256>
         <tags>
             <tag>stable</tag>
         </tags>
