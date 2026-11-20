@@ -783,6 +783,13 @@ class ResetRequestTest
                         str_contains($text, '&lt;i&gt;Eve&lt;/i&gt;') && !str_contains($text, '<i>Eve</i> &amp;'));
                     $this->test("$style: recipient unchanged", stripos($raw, (string) $user->email) !== false);
                 }
+
+                $url  = "https://example.test/member's/index.php?option=com_ajax&action=reset&token=a1b2";
+                $html = \Advans\Plugin\Ajax\JoomlaAjaxForms\Mail\MailHtml::textToHtml("Open $url.\n\nSay 'https://example.test/x' now");
+                $this->test('link keeps an apostrophe inside the URL',
+                    preg_match('#<a href="([^"]+)">#', $html, $m) === 1 && html_entity_decode($m[1], ENT_QUOTES, 'UTF-8') === $url);
+                $this->test('trailing sentence dot and quote stay outside the link',
+                    str_contains($html, '</a>.') && str_contains($html, 'href="https://example.test/x"'));
             } finally {
                 @unlink($frameDir . '/frame.php');
                 @rmdir($frameDir);

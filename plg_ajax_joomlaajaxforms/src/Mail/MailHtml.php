@@ -141,7 +141,7 @@ final class MailHtml
         foreach ($blocks as $block) {
             // Find the URLs in the original text, then escape each piece: escaping first would let
             // the match run into an entity.
-            $pieces = preg_split('#(\bhttps?://[^\s<>"\']+)#u', $block, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [$block];
+            $pieces = preg_split('#(\bhttps?://[^\s<>"]+)#u', $block, -1, PREG_SPLIT_DELIM_CAPTURE) ?: [$block];
             $linked = '';
 
             foreach ($pieces as $i => $piece) {
@@ -152,7 +152,7 @@ final class MailHtml
 
                 $tail = '';
 
-                while ($piece !== '' && strpbrk(substr($piece, -1), '.,;:!?)]}') !== false) {
+                while ($piece !== '' && strpbrk(substr($piece, -1), '.,;:!?)]}\'') !== false) {
                     $tail  = substr($piece, -1) . $tail;
                     $piece = substr($piece, 0, -1);
                 }
