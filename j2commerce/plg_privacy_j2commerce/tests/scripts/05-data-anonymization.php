@@ -984,6 +984,7 @@ class DataAnonymizationTest
 
         Factory::getLanguage()->load('plg_privacy_j2commerce', JPATH_BASE . '/plugins/privacy/j2commerce');
         $plugin->stubApp = new FeedbackTestApp();
+        $plugin->setApplication(privacy_mail_site_application());
         $retained        = [['order_number' => 'FB-1', 'order_date' => '01.02.2024', 'retention_end' => '31.12.2034', 'lifetime' => true]];
         $email           = 'customer@example.invalid';
 
