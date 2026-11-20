@@ -108,6 +108,17 @@ try {
     $audit = $db->query("SELECT * FROM {$prefix}appointments_audit WHERE booking_id={$id}")->fetch_assoc();
     $check($audit && $audit['path'] === 'admin' && (int) $audit['actor_user_id'] === $fixture->host, 'Administrator erasure records only the acting operator identity');
 
+    // Administrator deletion removes the row, records the operator and still sends the cancellation mail.
+    $created = $fixture->booking($event, $day . ' 14:00:00');
+    $deleteId = (int) $created['booking']['id'];
+    $erasedIds[] = $deleteId;
+    $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
+    $admin->request('/administrator/index.php?option=com_appointments&task=bookings.delete', ['cid' => [$deleteId], $token => 1]);
+    $check($fixture->row($deleteId) === null, 'Administrator deletion removes the appointment row');
+    $deleteAudit = $db->query("SELECT * FROM {$prefix}appointments_audit WHERE booking_id={$deleteId}")->fetch_assoc();
+    $check($deleteAudit && $deleteAudit['path'] === 'admin' && (int) $deleteAudit['actor_user_id'] === $fixture->host,
+        'Administrator deletion records only the acting operator identity');
+
     // Guest self-removal: the signed link of one guest removes only that guest's address.
     $created = $fixture->booking($event, $day . ' 13:00:00', ['guests' => 'keep@example.test, Leave@example.test']);
     $guestBooking = $created['booking'];

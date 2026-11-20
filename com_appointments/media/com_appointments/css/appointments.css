@@ -221,6 +221,7 @@
 /* Buttons: touch targets in the accent colour. */
 .com-appointments .btn,
 .com-appointments-calendar-nav a {
+    white-space: nowrap;
     display: inline-flex;
     gap: 0.5rem;
     align-items: center;

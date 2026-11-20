@@ -1041,7 +1041,7 @@ Cancel so their checkout is released. Authorisation and deliberate privacy-prese
 responses take precedence over navigation; public links never grant access to another person's
 booking. Component options retain Joomla's native Close action.
 
-The button **Back to appointments** (on a form **Cancel**) leads to the list of all event types,
+The button **Back** (on a form **Cancel**) leads to the list of all event types,
 through its *Event types* menu item; without such a menu item it leads to the home page. On
 a *Book an appointment* menu item, which publishes one event type, it is hidden by default, so the
 list does not show that item's visitors the other event types. The menu item's **Navigation** tab
@@ -1947,7 +1947,7 @@ copies, because the booking script and the server rely on them.
 | Part | Structure and classes |
 |---|---|
 | Page | `.com-appointments` plus the view (`-eventtypes`, `-eventtype`, `-confirmation`, `-manage`), inside it `.com-appointments-container` (centred column, `max-width: var(--appointments-max-width)`, on the other views `--appointments-narrow-width`); on the booking page `[data-appointments-view]` with `data-step="time"` or `"details"`, the part the script replaces |
-| Way back | `a.btn.com-appointments-return`, the button **Back to appointments** (on a form **Cancel**) at the top of the booking page and below the confirmation, manage and guest pages; left out on a *Book an appointment* menu item unless its **Navigation** options show it |
+| Way back | `a.btn.com-appointments-return`, the button **Back** (on a form **Cancel**) at the top of the booking page and below the confirmation, manage and guest pages; left out on a *Book an appointment* menu item unless its **Navigation** options show it |
 | Card | `#appointment-booking.com-appointments-layout` with `.com-appointments-layout-time` or `-details`, `.com-appointments-layout-day` while the times of a day are shown and `.com-appointments-info-logo` or `-person`; inside it `header.com-appointments-info.com-appointments-header` and `.com-appointments-main` |
 | Information column | On step 2 first `a.btn.btn-outline-secondary.com-appointments-back[data-appointments-step]`; the logo `.com-appointments-info-media.com-appointments-info-logo > img.com-appointments-logo`, or the person `.com-appointments-info-media.com-appointments-host` with `img.com-appointments-host-photo` and `p.com-appointments-host-text` (`.com-appointments-host-name`, `.com-appointments-host-role`); then `h1.com-appointments-heading`, `ul.com-appointments-meta` (`li.com-appointments-duration`, `li.com-appointments-location-type`, on step 2 `li.com-appointments-selected` with `.com-appointments-selected-date` and `.com-appointments-selected-time`, and `li.com-appointments-selected-zone`, each with an inline `svg.com-appointments-icon`), `.com-appointments-description` and `p.com-appointments-location` |
 | Step title | `h2#appointment-step-title.com-appointments-step-title` (`tabindex="-1"`, receives the focus after a step change) with a visually hidden "Step 1 of 3:" |
@@ -2168,7 +2168,7 @@ deliberately excludes that domain. The system check reports the oldest retained 
 ### Booking administration and system checks
 
 The booking list and CSV use the same per-event edit permission. The toolbar of the list shows
-**Approve** and **Cancel appointment** only with «Edit State», **Erase personal data** only with
+**Approve** and **Cancel appointment** only with «Edit State», **Delete appointment** and **Erase personal data** only with
 «Delete» on at least one listed event type, so no button ends in a refusal. Whoever may see the
 bookings of an event type («Edit») may also change them; there is no separate reading permission in
 the administrator. The help page, section «Permissions», explains every permission and how to give
@@ -2586,3 +2586,9 @@ Copyright (C) 2026 Advans IT Solutions GmbH
 GNU General Public License version 3 or later; see [LICENSE.txt](LICENSE.txt).
 
 SPDX-License-Identifier: `GPL-3.0-or-later`
+
+### Rescheduling page and administrator deletion
+
+The reschedule page of an e-mail link reuses the layout, calendar, time list and time-zone field of the booking page; it adds only the event type title and the invitee e-mail address, and shows the current appointment. Choosing a time leads to a confirmation step with the checkbox.
+
+**Delete appointment** in the booking list (permission «Delete» on the event type) removes the appointment row and writes an audit entry with the operator only. For an upcoming appointment that is not yet cancelled, the invitee and the host receive the usual cancellation e-mail with the calendar cancellation and without management links; guests of the deleted appointment are not mailed.

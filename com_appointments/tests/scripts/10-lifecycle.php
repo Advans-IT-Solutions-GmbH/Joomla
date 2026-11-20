@@ -198,9 +198,13 @@ try {
         }
     }
     $slotForm = $slotLink !== '' ? $client->request($slotLink) : '';
-    $token = $client->token($slotForm);
     $check($client->status === 200 && str_contains($slotForm, 'value="' . $day . ' 12:00:00"'),
         'Reschedule calendar offers the slot before the competing booking after choosing its day');
+    $confirmPage = $slotLink !== '' ? $client->request($slotLink . '&start=' . urlencode($day . ' 12:00:00')) : '';
+    $token = $client->token($confirmPage);
+    $check($client->status === 200 && str_contains($confirmPage, 'id="manage-confirm"') && $token !== ''
+        && str_contains($confirmPage, 'name="start" value="' . $day . ' 12:00:00"'),
+        'Choosing a time leads to the confirmation step of the reschedule form');
     $check(preg_match('#<title>\s*Reschedule your appointment\s*</title>#', $form) === 1,
         'The manage page sets its own title without a menu item of its own');
     // Release test 22.10.: the manage pages show the appointment in the invitee's zone and
@@ -225,6 +229,9 @@ try {
     $check($legend instanceof DOMElement && str_contains($legend->textContent, $slotOption->format('l, j F Y'))
         && $slotLabel instanceof DOMElement && str_contains($slotLabel->textContent, $slotOption->format('H:i')),
         'Reschedule options name the weekday, date and time in the selected zone');
+    $check(str_contains($form, 'data-appointments-booking') && str_contains($form, 'id="appointment-time-form"')
+        && str_contains($form, 'com-appointments-invitee-email') && str_contains($form, htmlspecialchars((string) $fixture->row((int) $booking['id'])['invitee_email'], ENT_QUOTES)),
+        'The reschedule form uses the booking layout and adds the event type title and the invitee e-mail');
     // Night test 23.10.: rescheduling without the confirmation checkbox shows the message
     // at the checkbox, also after the visitor reloads the page, and changes nothing.
     parse_str(parse_url($fresh, PHP_URL_QUERY), $rescheduleQuery);
