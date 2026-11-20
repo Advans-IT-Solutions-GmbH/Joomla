@@ -39,6 +39,22 @@ class SourceIdentityTest extends TestCase
         );
     }
 
+    public function testSnapshotConflictIsRecognised(): void
+    {
+        $this->assertTrue(SourceIdentity::isSnapshotConflict(new \RuntimeException('x', 1020)));
+        $this->assertTrue(SourceIdentity::isSnapshotConflict(new \RuntimeException('x', 1213)));
+        $this->assertTrue(SourceIdentity::isSnapshotConflict(new \RuntimeException('Record has changed since last read in table')));
+        $this->assertTrue(
+            SourceIdentity::isSnapshotConflict(new \RuntimeException('wrapper', 0, new \RuntimeException('x', 1020)))
+        );
+    }
+
+    public function testOtherDatabaseErrorsAreNotSnapshotConflicts(): void
+    {
+        $this->assertFalse(SourceIdentity::isSnapshotConflict(new \RuntimeException('Unknown column', 1054)));
+        $this->assertFalse(SourceIdentity::isSnapshotConflict(new \RuntimeException('boom')));
+    }
+
     public function testUnchangedWhenIdentityFieldsAreEqual(): void
     {
         $this->assertFalse(SourceIdentity::changed($this->source(), $this->source()));

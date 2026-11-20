@@ -112,4 +112,25 @@ abstract class SourceIdentity
         return !self::credentialTargetChanged($a, $b)
             && (string) ($a['password_enc'] ?? '') === (string) ($b['password_enc'] ?? '');
     }
+
+    /**
+     * Whether a database error is a serialization/snapshot conflict: MariaDB
+     * 1020 (record changed since last read, raised with
+     * innodb_snapshot_isolation=ON), deadlock 1213 or SQLSTATE 40001. The
+     * previous exceptions are inspected too, as drivers wrap the original one.
+     */
+    public static function isSnapshotConflict(\Throwable $e): bool
+    {
+        for ($cause = $e; $cause !== null; $cause = $cause->getPrevious()) {
+            if (\in_array($cause->getCode(), [1020, 1213, '40001'], true)) {
+                return true;
+            }
+
+            if (stripos($cause->getMessage(), 'Record has changed since last read') !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
