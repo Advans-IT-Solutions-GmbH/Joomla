@@ -713,6 +713,89 @@ class ResetRequestTest
     }
 
     /**
+     * The plain-text fallback (no Joomla mail template) follows the site's mail style, checked on
+     * the message handed to the transport: plain text stays plain text, html and both carry an HTML
+     * part in the layout (template override included) with the text as alternative part, and the
+     * account data is escaped in the HTML part.
+     */
+    private function testFallbackMailFollowsTheMailStyle(): void
+    {
+        echo "\n--- Fallback mail follows the site's mail style ---\n";
+
+        $reason = ajaxforms_mailcatch_install();
+
+        try {
+            $this->test('Mail capture in place (fallback style)', $reason === null, (string) $reason);
+
+            if ($reason !== null) {
+                return;
+            }
+
+            $base   = ajaxforms_plugin_instance();
+            $plugin = new class(['id' => 0, 'type' => 'ajax', 'name' => 'joomlaajaxforms', 'params' => '{}'])
+                extends \Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms {
+                public ?array $style = null;
+
+                protected function getMailTemplate(string $templateId, string $languageTag): ?object
+                {
+                    return null;
+                }
+
+                protected function mailStyleConfig(): ?array
+                {
+                    return $this->style;
+                }
+            };
+            $plugin->setApplication($base->getApplication());
+            $plugin->setDatabase($base->getDatabase());
+
+            $user = ajaxforms_create_test_user('fallbackstyle', 'en-GB');
+            $db   = Factory::getContainer()->get(DatabaseInterface::class);
+            $db->setQuery('UPDATE ' . $db->quoteName('#__users') . ' SET name = ' . $db->quote('<i>Eve</i> & "Co"')
+                . ' WHERE id = ' . (int) $user->id)->execute();
+            $user->name = '<i>Eve</i> & "Co"';
+
+            $frameDir = JPATH_SITE . '/templates/zz-mailtest/html/layouts/joomla/mail';
+            @mkdir($frameDir, 0777, true);
+            file_put_contents($frameDir . '/frame.php', "<?php defined('_JEXEC') or die; echo '<div class=\"frame\">' . \$displayData['mail'] . '</div>';");
+
+            $send = new ReflectionMethod($plugin, 'sendResetEmail');
+            $send->setAccessible(true);
+
+            try {
+                $plugin->style = ['mail_style' => 'plaintext', 'mail_htmllayout' => 'zz-mailtest:frame'];
+                ajaxforms_mailcatch_clear();
+                $send->invoke($plugin, $user, str_repeat('a1b2c3d4', 4));
+                $raw = ajaxforms_mailcatch_messages()[0] ?? '';
+                $this->test('plaintext: fallback stays a text mail',
+                    $raw !== '' && !preg_match('#^Content-Type:\s*multipart/alternative#mi', $raw) && stripos($raw, 'text/html') === false);
+
+                foreach (['html', 'both'] as $style) {
+                    $plugin->style = ['mail_style' => $style, 'disable_htmllayout' => '1', 'mail_htmllayout' => 'zz-mailtest:frame'];
+                    ajaxforms_mailcatch_clear();
+                    $send->invoke($plugin, $user, str_repeat('a1b2c3d4', 4));
+                    $raw  = ajaxforms_mailcatch_messages()[0] ?? '';
+                    $text = ajaxforms_mail_text($raw);
+                    $this->test("$style: fallback has HTML and text parts",
+                        (bool) preg_match('#^Content-Type:\s*multipart/alternative#mi', $raw) && stripos($text, 'text/plain') !== false);
+                    $this->test("$style: HTML part sits in the template override", str_contains($text, '<div class="frame">'));
+                    $this->test("$style: account name is escaped in the HTML part",
+                        str_contains($text, '&lt;i&gt;Eve&lt;/i&gt;') && !str_contains($text, '<i>Eve</i> &amp;'));
+                    $this->test("$style: recipient unchanged", stripos($raw, (string) $user->email) !== false);
+                }
+            } finally {
+                @unlink($frameDir . '/frame.php');
+                @rmdir($frameDir);
+                @rmdir(dirname($frameDir));
+                @rmdir(dirname($frameDir, 2));
+                @rmdir(dirname($frameDir, 3));
+            }
+        } finally {
+            ajaxforms_mailcatch_remove();
+        }
+    }
+
+    /**
      * The plain-text fallback must render in the recipient's language, and it
      * must not change the language of the running request. Text::sprintf() would
      * do both wrong: it renders in the request language and, when a second mail
@@ -1057,6 +1140,7 @@ class ResetRequestTest
         $this->testLegacyLocalizedRendering();
         $this->testLegacyAttachmentNamesThroughSend();
         $this->testFallbackMailLanguageIsIsolated();
+        $this->testFallbackMailFollowsTheMailStyle();
         $this->testEverySenderFallbackStaysIsolated();
         $this->testAnswerDoesNotRevealAccounts();
         $this->testResetLimitOfTheUsersOptions();

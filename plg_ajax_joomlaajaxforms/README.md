@@ -478,8 +478,12 @@ strings or incomplete site strings. Exact-locale translations and language
 overrides take precedence; implicit English fallbacks do not count as translations
 of missing French or German keys. The plugin's older plain-text messages remain
 the last fallback when a core mail-template row is missing or sending the
-template fails; that deliberately unstyled fallback is still translated in all
-three shipped languages. No separate plugin HTML template is maintained: the
+template fails. That fallback is still translated in all three shipped languages
+and follows the site's Mail Templates settings: with "Mail style" set to HTML or
+both, it is sent in the enabled HTML layout (including template overrides) with
+the original text as the alternative part, and user data is escaped; with plain
+text it stays a text mail. Recipient, subject and send-failure logging are
+unchanged. No separate plugin HTML template is maintained: the
 core HTML body and layout render the translated core text.
 
 Mail language follows the recipient's account language when it is one of the
