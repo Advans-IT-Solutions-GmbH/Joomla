@@ -248,7 +248,20 @@ class SourceTable extends Table
             . ' WHERE ' . $db->quoteName('id') . ' = ' . $id
             . ' FOR UPDATE';
 
-        $row = $db->setQuery($sql)->loadAssoc();
+        try {
+            $row = $db->setQuery($sql)->loadAssoc();
+        } catch (\Throwable $e) {
+            // With snapshot isolation (MariaDB innodb_snapshot_isolation=ON) a
+            // locking read of a row that a concurrent save committed after this
+            // transaction's read view fails instead of returning the newer
+            // version. That is the same conflict as a changed credential: refuse
+            // the save, so the operator is asked for the password again.
+            if (SourceIdentity::isSnapshotConflict($e)) {
+                return false;
+            }
+
+            throw $e;
+        }
 
         return \is_array($row) && SourceIdentity::sameCredential($snapshot, $row);
     }
