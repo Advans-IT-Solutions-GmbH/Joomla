@@ -143,6 +143,39 @@ class RecordingMailerFactory
     }
 }
 
+/** A real site application for the HTML layout renderer (FileLayout needs Factory::$application). */
+function privacy_mail_site_application(): \Joomla\CMS\Application\SiteApplication
+{
+    $container = Factory::getContainer();
+    $input     = null;
+
+    foreach (['Joomla\\CMS\\Input\\Input', 'Joomla\\Input\\Input'] as $inputClass) {
+        try {
+            if ($container->has($inputClass)) {
+                $input = $container->get($inputClass);
+                break;
+            }
+        } catch (\Throwable $e) {
+            // try the next candidate
+        }
+    }
+
+    $app = new \Joomla\CMS\Application\SiteApplication($input, $container->get('config'), null, $container);
+    $app->setDispatcher($container->get(\Joomla\Event\DispatcherInterface::class));
+
+    $template           = new \stdClass();
+    $template->id       = 0;
+    $template->template = 'cassiopeia';
+    $template->parent   = '';
+    $template->params   = new \Joomla\Registry\Registry();
+
+    $property = new \ReflectionProperty($app, 'template');
+    $property->setAccessible(true);
+    $property->setValue($app, $template);
+
+    return $app;
+}
+
 class MailTestApp
 {
     public $container;
@@ -1170,6 +1203,10 @@ class DataAnonymizationTest
         }
 
         // Mail style of the site (com_mails): the same text as plain text, HTML or both, in the site's layout.
+        $siteApp                  = privacy_mail_site_application();
+        $previousFactoryApp       = Factory::$application;
+        Factory::$application     = $siteApp;
+        $plugin->setApplication($siteApp);
         $plugin->mailConfig = ['mail_style' => 'plaintext'];
         $plain = $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
         $textBody = $factory->last->body;
@@ -1222,6 +1259,7 @@ class DataAnonymizationTest
             $factory->result = true;
         } finally {
             $plugin->mailConfig = null;
+            Factory::$application = $previousFactoryApp;
             @unlink($frameDir . '/frame.php');
             @rmdir($frameDir);
             @rmdir(dirname($frameDir));

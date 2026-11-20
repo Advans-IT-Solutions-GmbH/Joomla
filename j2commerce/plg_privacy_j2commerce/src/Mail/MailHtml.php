@@ -113,7 +113,17 @@ final class MailHtml
         // The layout is rendered around a marker and only then gets the body, so a layout can
         // neither alter nor re-escape it.
         $marker   = '<!--privacy-mail-body-' . bin2hex(random_bytes(6)) . '-->';
-        $rendered = $file->render(['mail' => $marker, 'extra' => $extra]);
+        $level    = ob_get_level();
+        $rendered = null;
+
+        try {
+            $rendered = $file->render(['mail' => $marker, 'extra' => $extra]);
+        } finally {
+            // A layout that throws after output leaves its buffer open; never let that reach the response.
+            while (ob_get_level() > $level) {
+                ob_end_clean();
+            }
+        }
 
         if (!\is_string($rendered) || trim($rendered) === '' || substr_count($rendered, $marker) !== 1) {
             return $html;
