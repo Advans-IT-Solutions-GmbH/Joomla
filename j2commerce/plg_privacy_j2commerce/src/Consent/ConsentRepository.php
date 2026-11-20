@@ -56,7 +56,7 @@ final class ConsentRepository
     public const EVIDENCE_REMOVED_MARKER = '<!-- j2commerce-evidence-removed -->';
 
     /**
-     * Subject of consent records written by an earlier advans template override (checkout confirm
+     * Subject of consent records written by an earlier template override (checkout confirm
      * step and MyProfile tab). Their body holds the e-mail address, IP address and user agent but
      * no order reference; anonymizeLegacyConsents() anonymizes them.
      */
@@ -72,7 +72,7 @@ final class ConsentRepository
     public const LEGACY_MARKER = '<!-- j2commerce-legacy-consent -->';
 
     /**
-     * Marker of every newsletter consent record written by the advans site template and its
+     * Marker of newsletter consent records written by a site template and its
      * J2Commerce checkout layout (language-independent; their subject is translated text). Two
      * kinds carry it: a consent given at checkout (newsletterOrderMarker(), no e-mail address in
      * the body, user_id of the order) and a consent given in the newsletter form of the website
