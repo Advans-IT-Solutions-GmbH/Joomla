@@ -76,6 +76,8 @@ class HtmlView extends BaseHtmlView
             $toolbar->standardButton('campaigns')->icon('icon-chart')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_CAMPAIGNS_CSV'))->task('bookings.exportCampaigns');
         }
         if ($may('core.delete')) {
+            $toolbar->standardButton('deletebooking')->icon('icon-trash')->text(Text::_('COM_APPOINTMENTS_BOOKINGS_DELETE'))->task('bookings.delete')
+                ->message(Text::_('COM_APPOINTMENTS_BOOKINGS_DELETE_CONFIRM'))->listCheck(true);
             ToolbarHelper::deleteList(Text::_('COM_APPOINTMENTS_BOOKINGS_ERASE_CONFIRM'), 'bookings.erase', 'COM_APPOINTMENTS_BOOKINGS_ERASE');
         }
         if ($this->unverified > 0) {

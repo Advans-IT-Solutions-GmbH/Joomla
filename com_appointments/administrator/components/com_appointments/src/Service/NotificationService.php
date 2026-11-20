@@ -92,7 +92,12 @@ final class NotificationService
         return $this->data ??= BookingData::fromApplication();
     }
 
-    public function send(array $booking, string $purpose, \DateTimeImmutable $now, bool $hostOnly = false): void
+    /**
+     * @param   bool  $withLinks  false for a booking that is deleted: its signed links would lead nowhere, so the
+     *                            invitee's mail carries none and the guests, who could only remove their address
+     *                            from a booking that is gone, get no mail.
+     */
+    public function send(array $booking, string $purpose, \DateTimeImmutable $now, bool $hostOnly = false, bool $withLinks = true): void
     {
         if (!in_array($purpose, DefaultTemplates::SENT, true)) {
             throw new \InvalidArgumentException('Unsupported notification purpose.');
@@ -192,8 +197,8 @@ final class NotificationService
                     $template['subject'] = strtr($template['subject'], $presentation);
                     $template['body'] = strtr($template['body'], $presentation);
                     // A cancelled appointment offers only the erase link (ManageLinks), also in the placeholders.
-                    $links = $canManage ? ManageLinks::forState($this->links($booking, $tag), (int) $booking['state'])
-                        : ($isGuest ? $this->guestLinks($booking, $address, $tag) : []);
+                    $links = !$withLinks ? [] : ($canManage ? ManageLinks::forState($this->links($booking, $tag), (int) $booking['state'])
+                        : ($isGuest ? $this->guestLinks($booking, $address, $tag) : []));
                     $recipientBooking = $booking;
                     if ($isHost && !empty($booking['conference_url'])) {
                         $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];

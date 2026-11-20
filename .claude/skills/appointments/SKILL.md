@@ -136,3 +136,5 @@ and 1920 pixels; record actual PASS/FAIL cases and screenshots rather than assum
 This extension carries the swiss made software label. Logo, link and origin claims follow the
 section "swiss made software label" in the skill `joomla-extensions` and `/AGENTS.md`, section
 "Label swiss made software". The rules on external services (house rule) are in the same sections.
+
+Reschedule page: `tmpl/manage/default_reschedule.php` reuses the booking page partials (`tmpl/eventtype/default_picker`/`default_zone`) through `Manage\HtmlView` and `Manage\RawView`; keep the two in step. Admin `bookings.delete` hard-deletes with an audit row and sends the `cancellation` mail (invitee + host, no links) for upcoming, not yet cancelled bookings.
