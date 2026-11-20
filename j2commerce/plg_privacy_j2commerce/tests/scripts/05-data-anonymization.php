@@ -33,6 +33,7 @@ if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class))
         public ?RecordingMailerFactory $mailerFactory = null;
         public string $mailState = 'sent';
         public bool $realMail = false;
+        public ?array $mailConfig = null;
         public bool $failMailLanguage = false;
 
         protected function pluginLanguage(string $tag): \Joomla\CMS\Language\Language
@@ -65,6 +66,11 @@ if (class_exists(\Advans\Plugin\Privacy\J2Commerce\Extension\J2Commerce::class))
             return $this->mailState;
         }
 
+        protected function mailStyleConfig(): ?array
+        {
+            return $this->mailConfig;
+        }
+
         protected function createMailer()
         {
             if ($this->mailerFactory !== null) {
@@ -87,7 +93,14 @@ class RecordingMailer
     public array $to = [];
     public string $subject = '';
     public string $body = '';
+    public string $AltBody = '';
+    public bool $html = false;
     public bool $result = true;
+
+    public function isHtml($html = true)
+    {
+        $this->html = (bool) $html;
+    }
 
     public function addRecipient($recipient)
     {
@@ -1154,6 +1167,68 @@ class DataAnonymizationTest
             $plugin->params->set('admin_email', $previousAdminEmail);
             $plugin->params->set('admin_notifications', $previousAdminEnabled);
             $this->db->setQuery('DELETE FROM ' . $this->db->quoteName('#__users') . ' WHERE id = ' . (int) $adminProfile->id)->execute();
+        }
+
+        // Mail style of the site (com_mails): the same text as plain text, HTML or both, in the site's layout.
+        $plugin->mailConfig = ['mail_style' => 'plaintext'];
+        $plain = $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
+        $textBody = $factory->last->body;
+        $this->test('mail style: no HTML for plaintext',
+            $plain === 'sent' && $factory->last->html === false && $factory->last->AltBody === '');
+
+        $frameDir = JPATH_SITE . '/templates/zz-mailtest/html/layouts/joomla/mail';
+        @mkdir($frameDir, 0777, true);
+        file_put_contents($frameDir . '/frame.php', "<?php defined('_JEXEC') or die; echo '<div class=\"frame\">' . \$displayData['mail'] . '</div>';");
+
+        try {
+            foreach (['html', 'both'] as $style) {
+                $plugin->mailConfig = ['mail_style' => $style, 'disable_htmllayout' => '1', 'mail_htmllayout' => 'zz-mailtest:frame'];
+                $state = $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
+                $mailer = $factory->last;
+                $this->test("mail style $style: HTML in the template override, text as AltBody, recipient and subject unchanged",
+                    $state === 'sent' && $mailer->html === true && str_starts_with($mailer->body, '<div class="frame">')
+                    && $mailer->AltBody === $textBody && $mailer->to === [$email] && str_contains($mailer->subject, 'Test Shop'),
+                    mb_substr($mailer->body, 0, 200));
+            }
+
+            $plugin->mailConfig = ['mail_style' => 'html', 'disable_htmllayout' => '1', 'mail_htmllayout' => '../../etc/passwd'];
+            $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
+            $this->test('mail style: an invalid layout name still sends HTML, never reads another path',
+                $factory->last->html === true && !str_contains($factory->last->body, 'root:'));
+
+            $plugin->mailConfig = ['mail_style' => 'both', 'disable_htmllayout' => '0'];
+            $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
+            $this->test('mail style: layout switched off sends the text as paragraphs',
+                $factory->last->html === true && str_starts_with($factory->last->body, '<p>') && !str_contains($factory->last->body, 'frame'));
+
+            $plugin->mailConfig = ['mail_style' => 'plaintext', 'mail_htmllayout' => 'zz-mailtest:frame'];
+            $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
+            $this->test('mail style plaintext: text mail, same body as before',
+                $factory->last->html === false && $factory->last->body === $textBody);
+
+            $plugin->mailConfig = ['mail_style' => 'both', 'disable_htmllayout' => '1', 'mail_htmllayout' => 'zz-mailtest:frame'];
+            $evil = new \Joomla\CMS\User\User();
+            $evil->username = '<script>alert(1)</script>&"x"';
+            $plugin->params->set('admin_email', 'privacy-admin-frame@example.test');
+            $plugin->params->set('admin_notifications', 1);
+            $plugin->call('sendAdminNotification', 'data_deletion', $evil);
+            $this->test('mail style: admin notice escapes user data in HTML, keeps it raw in the text',
+                $factory->last->html === true && !str_contains($factory->last->body, '<script>')
+                && str_contains($factory->last->body, '&lt;script&gt;') && str_contains($factory->last->AltBody, '<script>alert(1)</script>'));
+
+            $factory->result = false;
+            $this->test('mail style html: send() returning false is still reported as failed',
+                $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE') === 'failed');
+            $factory->result = true;
+        } finally {
+            $plugin->mailConfig = null;
+            @unlink($frameDir . '/frame.php');
+            @rmdir($frameDir);
+            @rmdir(dirname($frameDir));
+            @rmdir(dirname($frameDir, 2));
+            @rmdir(dirname($frameDir, 3));
+            $plugin->params->set('admin_email', '');
+            $plugin->params->set('admin_notifications', 0);
         }
 
         $factory->result = false;

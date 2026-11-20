@@ -25,6 +25,7 @@ The CI uses the official Joomla Docker images (newest Joomla 5.4.x and 6.x) plus
 - **Automated Data Cleanup** — Scheduled anonymization after configurable retention period
 - **MyProfile Privacy Tab** — User-facing privacy management in J2Commerce profile
 - **Admin Notifications** — Email alerts on privacy-related user actions
+- **Mail frame** — The customer and administrator notices follow the mail style of Joomla's mail templates (System, Mail Templates): with «HTML» or «Both» they are sent as HTML in the site's mail layout (including a template override of that layout) with the original text as alternative part; with «Plain text» they stay plain text. Customer data is escaped in the HTML part. Recipient, language, subject and the sent/failed result do not change. If the layout fails, the text mail is sent.
 - **Activity Logging** — Audit trail for all privacy operations
 - **Legal Compliance** — Swiss OR Art. 958f / MWSTG Art. 70 compliant retention
 
