@@ -104,10 +104,11 @@ class UpdateTest
                 return false;
             }
 
-            $sharedLinkAdded = $this->db->query(
+            $linkInserted = $this->db->query(
                 "INSERT IGNORE INTO {$this->dbPrefix}update_sites_extensions (update_site_id, extension_id)"
                 . " VALUES ($taskSiteId, $foreignExtensionId)"
             ) === true;
+            $sharedLinkAdded = $linkInserted && $this->db->affected_rows === 1;
 
             return $sharedLinkAdded && $this->siteLinkCount($taskSiteId, $foreignExtensionId) === 1;
         });
@@ -157,9 +158,10 @@ class UpdateTest
                 });
             }
 
-            $this->test('Failed channel switch remains nonfatal and shows a truthful warning', function () use ($exitCode, $text) {
+            $plainText = sh_plain_text(sh_strip_ansi($text));
+            $this->test('Failed channel switch remains nonfatal and shows a truthful warning', function () use ($exitCode, $plainText) {
                 return $exitCode === 0
-                    && str_contains($text, 'Joomla could not complete the switch to the package update channel');
+                    && str_contains($plainText, 'Joomla could not complete the switch to the package update channel');
             });
             $this->test('Database error details are not exposed in the installer output', function () use ($text) {
                 return !str_contains($text, 'injected update-site cleanup failure');
@@ -238,6 +240,50 @@ class UpdateTest
                     return $foreignExtensionId > 0
                         && $this->siteCount($child['url']) === 1
                         && $this->siteLinkCount($this->siteId($child['url']), $foreignExtensionId) === 1;
+                });
+
+                $this->test('Synthetic shared-site fixture is removed', function () use (
+                    $taskSiteId,
+                    $foreignExtensionId,
+                    &$sharedLinkAdded
+                ) {
+                    if (!$sharedLinkAdded || $taskSiteId < 1 || $foreignExtensionId < 1) {
+                        return false;
+                    }
+
+                    if ($this->db->query(
+                        "DELETE FROM {$this->dbPrefix}update_sites_extensions"
+                        . " WHERE update_site_id = $taskSiteId AND extension_id = $foreignExtensionId"
+                    ) !== true) {
+                        return false;
+                    }
+
+                    $result = $this->db->query(
+                        "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}update_sites_extensions"
+                        . " WHERE update_site_id = $taskSiteId"
+                    );
+                    $row = $result ? $result->fetch_assoc() : null;
+
+                    if (!$row) {
+                        return false;
+                    }
+
+                    if ((int) $row['cnt'] === 0) {
+                        $updatesRemoved = $this->db->query(
+                            "DELETE FROM {$this->dbPrefix}updates WHERE update_site_id = $taskSiteId"
+                        ) === true;
+                        $siteRemoved = $this->db->query(
+                            "DELETE FROM {$this->dbPrefix}update_sites WHERE update_site_id = $taskSiteId"
+                        ) === true;
+
+                        if (!$updatesRemoved || !$siteRemoved) {
+                            return false;
+                        }
+                    }
+
+                    $sharedLinkAdded = false;
+
+                    return true;
                 });
 
                 continue;
