@@ -113,24 +113,28 @@ class UpdateTest
             return $sharedLinkAdded && $this->siteLinkCount($taskSiteId, $foreignExtensionId) === 1;
         });
 
-        // Make the first channel-switch attempt fail on the child-link delete.
+        // Make the first channel-switch attempt fail after removing child links.
         // The installer must keep going, disclose the incomplete switch, and
-        // leave the links available for a later successful retry.
+        // roll back so a later package update can retry the cleanup.
+        $failureChild       = self::CHILDREN['component'];
+        $failureExtensionId = $this->extensionId($failureChild['where']);
+        $failureSiteId      = $this->siteId($failureChild['url']);
         $triggerName = 'pkg_dmarcreports_injected_update_failure';
-        $triggerSql  = "CREATE TRIGGER `$triggerName` BEFORE DELETE ON `{$this->dbPrefix}update_sites_extensions`"
-            . " FOR EACH ROW BEGIN IF OLD.extension_id = $taskExtensionId"
+        $triggerSql  = "CREATE TRIGGER `$triggerName` BEFORE DELETE ON `{$this->dbPrefix}update_sites`"
+            . " FOR EACH ROW BEGIN IF OLD.update_site_id = $failureSiteId"
             . " THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected update-site cleanup failure';"
             . ' END IF; END';
         $triggerCreated = false;
         $this->test('Database failure injection is ready', function () use (
             $triggerName,
             $triggerSql,
-            $taskExtensionId,
+            $failureExtensionId,
+            $failureSiteId,
             &$triggerCreated
         ) {
             $this->db->query("DROP TRIGGER IF EXISTS `$triggerName`");
 
-            if ($taskExtensionId < 1) {
+            if ($failureExtensionId < 1 || $failureSiteId < 1) {
                 return false;
             }
 
@@ -166,8 +170,10 @@ class UpdateTest
             $this->test('Database error details are not exposed in the installer output', function () use ($text) {
                 return !str_contains($text, 'injected update-site cleanup failure');
             });
-            $this->test('Failed cleanup leaves the standalone child link for retry', function () use ($taskChild) {
-                return $this->linkCount($taskChild['where']) > 0;
+            $this->test('Failed cleanup restores the child link and site for retry', function () use ($failureChild, $failureSiteId) {
+                return $this->linkCount($failureChild['where']) > 0
+                    && $this->siteCount($failureChild['url']) === 1
+                    && $this->siteId($failureChild['url']) === $failureSiteId;
             });
         }
 

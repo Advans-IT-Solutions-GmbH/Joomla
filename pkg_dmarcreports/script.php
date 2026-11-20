@@ -112,10 +112,14 @@ class Pkg_DmarcreportsInstallerScript extends InstallerScript
      * A failure here must not fail the installation. The package installation
      * or update queues a localized warning because a child may retain its
      * standalone update channel and drift from the package; the next package
-     * update retries it.
+     * update retries it. The link and orphan cleanup runs in one transaction
+     * so a failed site deletion leaves the child links available for that retry.
      */
     private function removeChildUpdateSites(): void
     {
+        $db                 = null;
+        $transactionStarted = false;
+
         try {
             $db  = Factory::getContainer()->get(DatabaseInterface::class);
             $ids = [];
@@ -143,6 +147,9 @@ class Pkg_DmarcreportsInstallerScript extends InstallerScript
             if ($ids === []) {
                 return;
             }
+
+            $db->transactionStart();
+            $transactionStarted = true;
 
             $query = $this->newQuery($db)
                 ->select('DISTINCT ' . $db->quoteName('update_site_id'))
@@ -183,9 +190,26 @@ class Pkg_DmarcreportsInstallerScript extends InstallerScript
                     )->execute();
                 }
             }
+
+            $db->transactionCommit();
+            $transactionStarted = false;
         } catch (\Throwable) {
+            $rollbackFailed = false;
+
+            if ($transactionStarted && $db instanceof DatabaseInterface) {
+                try {
+                    $db->transactionRollback();
+                } catch (\Throwable) {
+                    $rollbackFailed = true;
+                }
+            }
+
             Factory::getApplication()->enqueueMessage(
-                Text::_('PKG_DMARCREPORTS_UPDATE_CHANNEL_WARNING'),
+                Text::_(
+                    $rollbackFailed
+                        ? 'PKG_DMARCREPORTS_UPDATE_CHANNEL_ROLLBACK_WARNING'
+                        : 'PKG_DMARCREPORTS_UPDATE_CHANNEL_WARNING'
+                ),
                 'warning'
             );
         }
