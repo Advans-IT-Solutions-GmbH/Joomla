@@ -357,6 +357,35 @@ try {
         throw new RuntimeException('Cannot restore the test mail transport.');
     }
 
+    // A layout override that prints and then throws must not lose the mail, leak its output or close
+    // the buffers of the caller.
+    $layoutDir = '/var/www/html/templates/zz-mailtest/html/layouts/joomla/mail';
+    @mkdir($layoutDir, 0777, true);
+    file_put_contents($layoutDir . '/boom.php', "<?php defined('_JEXEC') or die; echo 'LEAKED-LAYOUT-OUTPUT'; ob_start(); echo 'MORE'; throw new RuntimeException('layout failed');");
+    $layoutScript = sys_get_temp_dir() . '/mail-layout-' . bin2hex(random_bytes(4)) . '.php';
+    file_put_contents($layoutScript, '<?php
+        require "/var/www/html/tests/scripts/appointments-joomla.php";
+        ob_start();
+        echo "OUTER";
+        $level = ob_get_level();
+        $html = \Advans\Component\Appointments\Administrator\Helper\MailHtml::render("Hi <b>Eve</b>", "en-GB", "Site", ["mail_style" => "both", "disable_htmllayout" => "1", "mail_htmllayout" => "zz-mailtest:boom"]);
+        $outer = ob_get_level() === $level ? ob_get_clean() : "level-changed";
+        echo "\n@@LAYOUT@@" . json_encode(["html" => $html, "outer" => $outer]);');
+    $layoutOutput = [];
+    exec('cd /var/www/html && php ' . escapeshellarg($layoutScript) . ' 2>&1', $layoutOutput);
+    unlink($layoutScript);
+    @unlink($layoutDir . '/boom.php');
+    @rmdir($layoutDir);
+    @rmdir(dirname($layoutDir));
+    @rmdir(dirname($layoutDir, 2));
+    @rmdir(dirname($layoutDir, 3));
+    $layoutText = implode("\n", $layoutOutput);
+    $layoutResult = json_decode(substr($layoutText, (int) strrpos($layoutText, '@@LAYOUT@@') + 10), true) ?: [];
+    $check(isset($layoutResult['html']) && str_contains($layoutResult['html'], '&lt;b&gt;Eve&lt;/b&gt;')
+        && !str_contains($layoutResult['html'], 'LEAKED-LAYOUT-OUTPUT') && !str_contains($layoutResult['html'], 'MORE'),
+        'A throwing layout gives the escaped paragraphs, not its partial output');
+    $check(($layoutResult['outer'] ?? '') === 'OUTER', 'A throwing layout leaves the buffer of the caller untouched');
+
     // Fail closed on the public site URL: mails take their links only from the configured address,
     // never from the Host header of the request, and without one no mail is sent and no booking taken.
     $componentParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];

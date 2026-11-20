@@ -56,6 +56,18 @@ final class MailHtmlTest extends TestCase
         $this->assertNull(MailHtml::render("Hello", 'de-DE', 'Site', []));
     }
 
+    public function testHtmlStyleWithoutLayoutStillYieldsEscapedHtml(): void
+    {
+        foreach (['html', 'both'] as $style) {
+            $html = MailHtml::render("Hi <b>Eve</b> & Co\n\nSecond", 'en-GB', 'Site', [
+                'mail_style'         => $style,
+                'disable_htmllayout' => '0',
+            ]);
+
+            $this->assertSame("<p>Hi &lt;b&gt;Eve&lt;/b&gt; &amp; Co</p>\n<p>Second</p>", trim(preg_replace('/\R/', "\n", (string) $html)));
+        }
+    }
+
     public function testTextBecomesEscapedParagraphsWithClickableLinks(): void
     {
         $html = MailHtml::textToHtml("Guten Tag <Erika>,\n\nIhr Termin ist bestätigt.\nVon: 15.10.2026 10:00\n\nTermin absagen: https://example.test/index.php?option=com_appointments&view=manage&id=1");

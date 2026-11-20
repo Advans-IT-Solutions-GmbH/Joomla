@@ -113,7 +113,19 @@ final class MailHtml
             // CLI-derived address, while the body carries the exact links of the mail (conference,
             // management) that must reach the recipient unchanged. Joomla's URI state stays untouched.
             $marker   = '<!--appointments-mail-body-' . bin2hex(random_bytes(6)) . '-->';
-            $rendered = $file->render(['mail' => $marker, 'extra' => $extra]);
+            $level    = ob_get_level();
+            $rendered = null;
+
+            try {
+                $rendered = $file->render(['mail' => $marker, 'extra' => $extra]);
+            } catch (\Throwable $e) {
+                // A failing layout must not lose the mail: the escaped paragraphs below are sent instead.
+            } finally {
+                // A layout that throws after output leaves its buffer open; never let that reach the response.
+                while (ob_get_level() > $level && @ob_end_clean()) {
+                    // stop at a buffer that cannot be removed
+                }
+            }
 
             if (\is_string($rendered) && trim($rendered) !== '' && substr_count($rendered, $marker) === 1) {
                 return self::assemble($rendered, $marker, $html, $base, self::requestRoot());

@@ -430,6 +430,8 @@ bookings after the update, until the setting is made (see section "Scheduler, re
   On a site with plain-text mails the HTML alternative is the same text as escaped paragraphs without
   a layout, because PHPMailer writes the invitation only into a message with an HTML alternative. For
   the same reason these mails do not embed the logo of the mail layout as an inline part.
+  If the layout is switched off or cannot be rendered, the HTML part is still the text as escaped
+  paragraphs (never bare text) and the plain-text alternative is kept.
 
 - **Signed appointment management and erasure.** Only the primary invitee receives the no-login
   reschedule, cancellation and erasure capabilities, including in reminders. The host receives
