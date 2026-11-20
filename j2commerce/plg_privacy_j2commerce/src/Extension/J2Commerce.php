@@ -12,6 +12,7 @@ namespace Advans\Plugin\Privacy\J2Commerce\Extension;
 defined('_JEXEC') or die;
 
 use Advans\Plugin\Privacy\J2Commerce\Consent\ConsentRepository;
+use Advans\Plugin\Privacy\J2Commerce\Mail\MailHtml;
 use Advans\Plugin\Privacy\J2Commerce\Newsletter\AcymailingPlaceholders;
 use Advans\Plugin\Privacy\J2Commerce\Retention\LifetimeLicenses;
 use Advans\Plugin\Privacy\J2Commerce\Retention\RetentionPeriod;
@@ -2315,10 +2316,13 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $mailer = $this->createMailer();
             $mailer->addRecipient($customerEmail);
             $mailer->setSubject(sprintf($language->_('PLG_PRIVACY_J2COMMERCE_REMOVAL_CUSTOMER_SUBJECT'), (string) $app->get('sitename')));
-            $mailer->setBody(
+            $this->setMailBody(
+                $mailer,
                 $language->_($this->customerNoticeBodyKey()) . "\n\n"
                 . $this->formatRetainedOrders($retained, $lifetime, $language)
-                . sprintf($language->_('PLG_PRIVACY_J2COMMERCE_RETENTION_CONTACT'), (string) ($this->params->get('support_email') ?: $app->get('mailfrom')))
+                . sprintf($language->_('PLG_PRIVACY_J2COMMERCE_RETENTION_CONTACT'), (string) ($this->params->get('support_email') ?: $app->get('mailfrom'))),
+                $languageTag,
+                (string) $app->get('sitename')
             );
 
             return $mailer->send() === false ? 'failed' : 'sent';
@@ -2842,7 +2846,7 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             $mailer = $this->createMailer();
             $mailer->addRecipient($adminEmail);
             $mailer->setSubject($subject);
-            $mailer->setBody($body);
+            $this->setMailBody($mailer, $body, $this->adminNotificationLanguage(), (string) $this->getApplication()->get('sitename'));
             if ($mailer->send() === false) {
                 Log::add('Privacy admin notification was not delivered.', Log::WARNING, 'plg_privacy_j2commerce');
             }
@@ -2850,6 +2854,29 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
             // Log error but don't fail the operation
             Log::add('Privacy admin notification failed: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
         }
+    }
+
+    /**
+     * Body of a notice in the site's mail style: the text as composed, or HTML in the layout of
+     * com_mails with that text as alternative part.
+     */
+    protected function setMailBody($mailer, string $plain, string $languageTag, string $siteName): void
+    {
+        try {
+            MailHtml::apply($mailer, $plain, $languageTag, $siteName, $this->mailStyleConfig());
+        } catch (\Throwable $e) {
+            // A broken layout must not cost the recipient the notice: send the text as composed.
+            Log::add('Privacy notice mail layout failed, sending plain text: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            $mailer->isHtml(false);
+            $mailer->setBody($plain);
+            $mailer->AltBody = '';
+        }
+    }
+
+    /** com_mails options, null reads them from the component. */
+    protected function mailStyleConfig(): ?array
+    {
+        return null;
     }
 
     protected function createMailer()
