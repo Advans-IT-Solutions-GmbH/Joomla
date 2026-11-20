@@ -4,9 +4,9 @@
         <element>dmarcreports</element>
         <type>plugin</type>
         <folder>task</folder>
-        <version>1.3.0</version>
+        <version>1.4.0</version>
         <change>
-            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/task-dmarcreports-v1.3.0</item>
+            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/task-dmarcreports-v1.4.0</item>
         </change>
     </changelog>
 </changelogs>
