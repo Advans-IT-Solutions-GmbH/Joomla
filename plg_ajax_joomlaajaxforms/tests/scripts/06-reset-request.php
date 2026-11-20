@@ -791,6 +791,7 @@ class ResetRequestTest
                 @rmdir(dirname($frameDir, 3));
             }
         } finally {
+            ajaxforms_delete_test_user('fallbackstyle');
             ajaxforms_mailcatch_remove();
         }
     }

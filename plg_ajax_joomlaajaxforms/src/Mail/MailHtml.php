@@ -120,8 +120,8 @@ final class MailHtml
             $rendered = $file->render(['mail' => $marker, 'extra' => $extra]);
         } finally {
             // A layout that throws after output leaves its buffer open; never let that reach the response.
-            while (ob_get_level() > $level) {
-                ob_end_clean();
+            while (ob_get_level() > $level && @ob_end_clean()) {
+                // stop at a buffer that cannot be removed
             }
         }
 
