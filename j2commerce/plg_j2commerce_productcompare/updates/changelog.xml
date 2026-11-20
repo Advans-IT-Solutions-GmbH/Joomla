@@ -4,9 +4,9 @@
         <element>productcompare</element>
         <type>plugin</type>
         <folder>j2commerce</folder>
-        <version>1.3.0</version>
+        <version>1.3.1</version>
         <change>
-            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/productcompare-v1.3.0</item>
+            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/productcompare-v1.3.1</item>
         </change>
     </changelog>
 </changelogs>
