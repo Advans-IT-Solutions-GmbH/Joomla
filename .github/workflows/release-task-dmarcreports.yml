@@ -153,6 +153,14 @@ jobs:
           </updates>
           EOF
 
+      - name: Retain hash-verified release package
+        if: steps.version.outputs.bump != 'none'
+        uses: ./.github/actions/retain-release-package
+        with:
+          package: plg_task_dmarcreports/${{ steps.package.outputs.file }}
+          feed: plg_task_dmarcreports/updates/update.xml
+          artifact-name: task-dmarcreports-release-package
+
       - name: Create release PR
         if: steps.version.outputs.bump != 'none'
         env:

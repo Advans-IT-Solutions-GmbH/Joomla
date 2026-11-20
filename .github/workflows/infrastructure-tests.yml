@@ -7,6 +7,7 @@ on:
     branches: [main]
     paths:
       - '.github/scripts/**'
+      - '.github/actions/retain-release-package/**'
       - '.github/workflows/**'
       - 'shared/build/**'
       - 'shared/installer/**'
@@ -18,6 +19,7 @@ on:
     branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
       - '.github/scripts/**'
+      - '.github/actions/retain-release-package/**'
       - '.github/workflows/**'
       - 'shared/build/**'
       - 'shared/installer/**'
@@ -47,6 +49,8 @@ jobs:
         run: python3 .github/scripts/test-release-source.py
       - name: Test that release preparation creates verified version commits through the API
         run: python3 .github/scripts/test-create-verified-commit.py
+      - name: Test release package retention verification
+        run: python3 .github/scripts/test-retain-release-package.py
       - name: Test required workflow gate with fixture API responses
         run: bash .github/scripts/test-collect-results.sh
       - name: Test mandatory package verification and reproducible archives
