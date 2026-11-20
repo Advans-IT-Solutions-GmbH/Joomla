@@ -122,7 +122,7 @@ abstract class SourceIdentity
     public static function isSnapshotConflict(\Throwable $e): bool
     {
         for ($cause = $e; $cause !== null; $cause = $cause->getPrevious()) {
-            if (\in_array($cause->getCode(), [1020, 1213, '40001'], true)) {
+            if (\in_array((string) $cause->getCode(), ['1020', '1213', '40001'], true)) {
                 return true;
             }
 

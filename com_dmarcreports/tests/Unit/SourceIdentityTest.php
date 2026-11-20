@@ -43,6 +43,10 @@ class SourceIdentityTest extends TestCase
     {
         $this->assertTrue(SourceIdentity::isSnapshotConflict(new \RuntimeException('x', 1020)));
         $this->assertTrue(SourceIdentity::isSnapshotConflict(new \RuntimeException('x', 1213)));
+        $this->assertTrue(SourceIdentity::isSnapshotConflict(new \RuntimeException('x', 40001)));
+        $this->assertTrue(
+            SourceIdentity::isSnapshotConflict(new \RuntimeException('wrapper', 0, new \RuntimeException('x', 40001)))
+        );
         $this->assertTrue(SourceIdentity::isSnapshotConflict(new \RuntimeException('Record has changed since last read in table')));
         $this->assertTrue(
             SourceIdentity::isSnapshotConflict(new \RuntimeException('wrapper', 0, new \RuntimeException('x', 1020)))
