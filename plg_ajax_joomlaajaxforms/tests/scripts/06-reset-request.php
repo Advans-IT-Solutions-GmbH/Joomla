@@ -731,7 +731,6 @@ class ResetRequestTest
                 return;
             }
 
-            $base   = ajaxforms_plugin_instance();
             $plugin = new class(['id' => 0, 'type' => 'ajax', 'name' => 'joomlaajaxforms', 'params' => '{}'])
                 extends \Advans\Plugin\Ajax\JoomlaAjaxForms\Extension\JoomlaAjaxForms {
                 public ?array $style = null;
@@ -746,8 +745,8 @@ class ResetRequestTest
                     return $this->style;
                 }
             };
-            $plugin->setApplication($base->getApplication());
-            $plugin->setDatabase($base->getDatabase());
+            $plugin->setApplication(ajaxforms_bootstrap_site_application());
+            $plugin->setDatabase(Factory::getContainer()->get(DatabaseInterface::class));
 
             $user = ajaxforms_create_test_user('fallbackstyle', 'en-GB');
             $db   = Factory::getContainer()->get(DatabaseInterface::class);
