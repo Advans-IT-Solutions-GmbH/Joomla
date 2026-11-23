@@ -226,7 +226,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             // Inline styles — Joomla 5 <joomla-alert> strips <style> tags
             $sBox = 'padding:16px 20px;margin:16px 0;border-radius:4px;border-left:4px solid';
             $sInfo = $sBox . ';background:#eff6ff;border-color:#2563eb';
-            $sAdvans = $sBox . ';background:#f5f3ff;border-color:#7c3aed';
+            $sLicense = $sBox . ';background:#f5f3ff;border-color:#7c3aed';
             $sWarn = $sBox . ';background:#fef3c7;border-color:#d97706';
             $sStep = 'color:#374151;font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px';
             $sTbl = 'width:100%;border-collapse:collapse;margin:12px 0';
@@ -269,8 +269,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $message .= '</table>';
             $message .= '</div>';
 
-            // Step 3 — Advans IT Solutions GmbH Licensing Configuration
-            $message .= '<div style="' . $sAdvans . '">';
+            // Step 3 — lifetime licence configuration
+            $message .= '<div style="' . $sLicense . '">';
             $message .= '<div style="' . $sStep . '">' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP_OPTIONAL_LABEL', ++$step) . '</div>';
             $message .= '<h3 style="margin-top:0">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP3_TITLE') . '</h3>';
             $message .= '<p>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP3_DESC') . '</p>';
