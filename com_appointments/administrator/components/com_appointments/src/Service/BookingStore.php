@@ -305,8 +305,10 @@ final class BookingStore
                 $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
                 $db->setQuery($query->delete($db->quoteName('#__appointments_bookings'))
                     ->where($db->quoteName('id') . ' = ' . $bookingId))->execute();
-                $db->insertObject('#__appointments_audit', (object) ['booking_id' => $bookingId, 'action' => 'delete',
-                    'path' => $path, 'actor_user_id' => $actor, 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')]);
+                // insertObject() takes the object by reference: it needs a variable, not an expression.
+                $audit = (object) ['booking_id' => $bookingId, 'action' => 'delete',
+                    'path' => $path, 'actor_user_id' => $actor, 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')];
+                $db->insertObject('#__appointments_audit', $audit);
                 $db->transactionCommit();
 
                 return ['changed' => true, 'notification' => null, 'booking' => $booking];

@@ -131,7 +131,15 @@ try {
     $deleteResponse = $admin->request('/administrator/index.php?option=com_appointments&task=bookings.delete', ['cid' => [$anonId], $token => 1]);
     $check($fixture->row($anonId) === null, 'Administrator deletion also removes an already anonymised appointment');
     if ($fixture->row($anonId) !== null) {
-        echo '    HTTP ' . $admin->status . ': ' . substr(trim(preg_replace('/\s+/', ' ', strip_tags($deleteResponse))), 0, 400) . "\n";
+        // The text of the error page without its stylesheet, scripts and head.
+        $errorPage = new DOMDocument();
+        @$errorPage->loadHTML($deleteResponse);
+        foreach (['style', 'script', 'head'] as $tagName) {
+            while (($node = $errorPage->getElementsByTagName($tagName)->item(0)) !== null) {
+                $node->parentNode->removeChild($node);
+            }
+        }
+        echo '    HTTP ' . $admin->status . ': ' . substr(trim(preg_replace('/\s+/', ' ', $errorPage->textContent)), 0, 900) . "\n";
     }
     // A batch with an ID that no longer exists deletes the others and is not refused as a whole.
     $created = $fixture->booking($event, $day . ' 16:00:00');

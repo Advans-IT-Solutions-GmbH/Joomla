@@ -479,17 +479,21 @@ foreach ($scenarios as $scenario) {
             $original = (string) file_get_contents($factory);
             $old = str_replace($fixed, $buggy, $original);
             bu_check('OSMap Factory.php carries the bug for this test', str_contains($old, $buggy) && !str_contains($old, $fixed));
-            file_put_contents($factory, $old);
+            // A file edited on this site is not a known stock file: the update pauses and changes nothing.
+            $edited = $old . "\n// edited on this site\n";
+            file_put_contents($factory, $edited);
             $result = bu_update_after_recommendation($browser, $package, $version);
             $paused = bu_text($result, ['danger', 'error']);
-            bu_check('the foreign OSMap file pauses the update without being changed', !$result['updated']
-                && file_get_contents($factory) === $old && str_contains($paused, 'administrator/components/com_osmap/library/Alledia/OSMap/Factory.php'), $paused);
+            bu_check('an edited OSMap file pauses the update without being changed', !$result['updated']
+                && file_get_contents($factory) === $edited && str_contains($paused, 'administrator/components/com_osmap/library/Alledia/OSMap/Factory.php'), $paused);
             bu_check('the OSMap conflict creates no server copy', bu_backups() === $backupsBefore);
-            file_put_contents($factory, str_replace($buggy, $fixed, $old));
+            // The known stock file is adjusted by the installer itself, with no step for the operator.
+            file_put_contents($factory, $old);
             $retry = bu_update($browser, $package, $version);
-            bu_check('after the operator applies the compatibility change the update completes', $retry['updated'], bu_text($retry));
-            bu_check('OSMap remains fixed and no server copy was created',
-                str_contains((string) file_get_contents($factory), $fixed) && bu_backups() === $backupsBefore);
+            bu_check('the known stock OSMap file is patched automatically and the update completes', $retry['updated'], bu_text($retry));
+            bu_check('OSMap is fixed by the installer and no server copy was created',
+                str_contains((string) file_get_contents($factory), $fixed) && !str_contains((string) file_get_contents($factory), $buggy)
+                && bu_backups() === $backupsBefore);
             break;
 
         case 'privacy-override':

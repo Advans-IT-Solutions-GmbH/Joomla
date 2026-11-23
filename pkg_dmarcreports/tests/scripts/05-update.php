@@ -334,6 +334,24 @@ class UpdateTest
             }
         );
 
+        // Judged before the fixture below is removed: the site of the task plugin is shared with another
+        // extension, so the package's cleanup must keep the site and the other extension's link.
+        $this->test('Shared task-plugin update site remains linked to the other extension', function () use (
+            $taskChild,
+            $foreignExtensionId
+        ) {
+            $ok = $foreignExtensionId > 0
+                && $this->siteCount($taskChild['url']) === 1
+                && $this->siteLinkCount($this->siteId($taskChild['url']), $foreignExtensionId) === 1;
+
+            if (!$ok) {
+                echo '    shared site: ' . $this->siteCount($taskChild['url']) . ' site(s) with the location, '
+                    . $this->siteLinkCount($this->siteId($taskChild['url']), $foreignExtensionId) . " link(s) to extension $foreignExtensionId\n";
+            }
+
+            return $ok;
+        });
+
         $this->test('Synthetic shared update-site fixture removed', function () use (
             $taskSiteId,
             $foreignExtensionId,
@@ -406,21 +424,6 @@ class UpdateTest
             });
 
             if ($label === 'task plugin') {
-                $this->test('Shared task-plugin update site remains linked to the other extension', function () use (
-                    $child,
-                    $foreignExtensionId
-                ) {
-                    $ok = $foreignExtensionId > 0
-                        && $this->siteCount($child['url']) === 1
-                        && $this->siteLinkCount($this->siteId($child['url']), $foreignExtensionId) === 1;
-
-                    if (!$ok) {
-                        echo '    shared site: ' . $this->siteCount($child['url']) . ' site(s) with the location, '
-                            . $this->siteLinkCount($this->siteId($child['url']), $foreignExtensionId) . " link(s) to extension $foreignExtensionId\n";
-                    }
-
-                    return $ok;
-                });
 
                 $this->test('Synthetic shared-site fixture is removed', function () use (
                     $taskSiteId,
