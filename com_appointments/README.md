@@ -344,6 +344,18 @@ currently available.
 (or Joomla's `live_site`). An installation without one sends no more e-mails and takes no more
 bookings after the update, until the setting is made (see section "Scheduler, reminders and retention").
 
+**How an update proceeds.** The installer decides by itself and asks for no approval. Before
+Joomla copies anything it compares every existing file with the installed-file record and the
+released hashes: unchanged files and known release files are replaced, and a modified or
+unknown-origin file that the update would replace or remove stops the update before any file is
+copied (see [Update conflicts and recovery](#update-conflicts-and-recovery)). The installer keeps
+no file backups. Before every update take a current, complete backup of the website (files and
+database) that can be restored independently; the first update attempt of each extension stops
+once with this recommendation, and the same update is then repeated. An update keeps the
+enabled/disabled state of the bundled plugins and the settings of the dashboard module. After
+every installation and update it also checks the scheduled tasks the component needs and creates
+a missing required task switched on, without ever changing an existing one (see
+[Scheduled tasks](#scheduled-tasks)).
 ## Features
 
 ### What is implemented so far
@@ -469,6 +481,65 @@ bookings after the update, until the setting is made (see section "Scheduler, re
 
 Open **Components → Appointments → Options → Permissions** to configure the component's Joomla
 ACL. Event types, custom fields, schedules and blocked periods are configured from the dashboard.
+
+### Options reference
+
+**Components → Appointments → Options** has the tabs General, Close booking transfer, Video
+conferencing, Internet calendars, Help, Permissions and Before uninstalling, and a read-only
+**System check** tab (installation checks, required scheduled tasks, Scheduler trigger). The same
+list, in the same words, is on the component's help page, section «All options». Event types,
+schedules and fields have their own settings in their edit screens, each with a field help.
+
+**General**
+
+| Option | What it does | Default |
+|---|---|---|
+| Privacy notice on the booking form | Notice only (no checkbox), confirm acknowledgement (checkbox, nothing stored) or ask for consent (checkbox, stores time and wording version with the booking) | Notice only |
+| Booking data information | Text that explains which personal data is collected and why; stands with the privacy notice and does not replace it | Empty |
+| Privacy notice menu item, Section anchor of the menu item, Privacy notice URL | Where the privacy notice links to. The menu item takes precedence over the URL; the anchor (without `#`) is used only with a menu item; the URL may be relative | None, empty, empty |
+| Preselected calling code | Calling code preselected in telephone fields, digits only | Empty (the visitor chooses) |
+| Calling code choice | The visitor chooses the calling code, or only numbers with the preselected code are accepted (only with a valid code above) | The visitor chooses |
+| Maximum number of additional guests | Additional e-mail addresses a booking person may enter, 0 to 50; 0 removes the guest field | 10 |
+| On erasure | Keep an anonymised slot, or delete the booking entirely; both remove linked calendar copies | Keep an anonymised slot |
+| Origin of bookings | Stores with each booking how the visitor reached the site (see [Origin of bookings](#origin-of-bookings-campaign-attribution)); switch on only after the privacy notice names it | Off |
+| Reminder offsets (minutes) | Comma-separated minutes before a confirmed appointment, each 1 to 525600; empty switches reminders off; needs the task *Appointments: reminders* | `1440,60` |
+| Public site URL | Canonical site root used for every link in e-mails; required, without it (and without `live_site`) no e-mail is sent and no booking is taken | Empty |
+| Organiser of the host's calendar entries | Address named as organiser in the invitation to the host; must not belong to any host | Empty (Joomla's From email) |
+| Booking retention (days) | Whole days 0 to 65535 after the end of an appointment before the retention task erases the booking; an event type can override it; 0 means at the next run, not unlimited | 365 |
+| Erasure-audit retention (years) | Whole years 1 to 100 before the retention task deletes erasure records | 3 |
+| Legal reason to block formal removal | Plain text; a non-empty reason blocks matching Joomla privacy removal requests and does not change self-service erasure or retention | Empty |
+
+**Close booking transfer** (details: [Optional direct Close transfer](#optional-direct-close-transfer))
+
+| Option | What it does | Default |
+|---|---|---|
+| Enabled | Switches the transfer on; needs a profile and the enabled scheduled task | Off |
+| Close profiles (up to 20) | Per profile: Profile key, Event types (each event type belongs to at most one profile), Approved HTTPS API origin (no path), Server environment variable containing the API key (optional, only its name is stored), Expected organisation ID (optional) | No profile |
+| Per profile: booking record | Booking record in Close (note on the lead, or custom activity with its type ID, JSON field mapping and JSON answers mapping), Answers in the booking note (local form field IDs) | Note |
+| Per profile: campaign and lead | Campaign, Source (empty means Joomla appointments), Lead name from field, Contact title from field, Lead fields from answers (JSON), Fixed lead fields (JSON); the lead fields are set on new leads only | Empty |
+
+**Video conferencing** (details: [Video conferencing](#video-conferencing))
+
+| Option | What it does | Default |
+|---|---|---|
+| Conference provider | None, Jitsi, a room URL template or one permanent meeting URL; an event type can override it | None |
+| Jitsi | Base URL, Room name pattern (`{prefix}`, `{alias}` and the mandatory `{random}`), Room prefix, Random room characters (16 to 64), Jitsi authentication (none or JWT) with signing secret, application ID, audience, issuer, subject, Moderator access before start (0 to 1440 minutes) and Token grace period after end (0 to 1440 minutes) | Pattern `{prefix}-{alias}-{random}`, prefix `appointment`, 24 characters, no authentication, audience `jitsi`, 30 and 60 minutes |
+| Room URL template, Permanent meeting URL | Absolute HTTPS address containing `{room}` (no remote request), or one room reused for every meeting (closely timed appointments can collide) | Empty |
+| Allow installed outbound adapters | Lets a separately installed third-party adapter contact its server; it may send a room seed, title, duration and UTC times, never invitee details | Off |
+
+**Internet calendars** (details: [Internet calendars](#internet-calendars))
+
+| Option | What it does | Default |
+|---|---|---|
+| Internet calendars | Switches the CalDAV calendars on; needs the plugins *System - Appointments CalDAV* and *User - Appointments internet calendars* | Off |
+| Team groups, Group of external users | User groups of the team, and the group in which invited external users are created | Set by the installation when *Create user groups* is on, otherwise empty |
+| Create user groups | On installation and update creates the team and external user groups and the access level «Internet calendars» if missing and adds both groups to the enforced multi-factor authentication | Yes |
+| Access level of «My calendars» | Access level of the menu item; the page and its device actions refuse accounts outside it | Set by the installation when *Create user groups* is on, otherwise empty |
+| Days per clean-up phase | A blocked device set to *Clean up* has its calendars emptied, then no longer delivered; each phase ends when the device has synchronised, at the latest after 1 to 90 days | 14 |
+| Subscription feeds with token | The previous secret-address feeds, removed in version 2.0.0 | Off |
+
+**Before uninstalling**: *Appointments data* chooses whether all data is kept or deleted when the
+component is uninstalled (see [Uninstall](#uninstall)). Default: no choice yet, which keeps the data.
 
 ### Links and web-server rules
 
@@ -2548,6 +2619,26 @@ schedules before retrying the update. The installer refuses the upgrade rather t
 silently remapping data; the registered SQL migration then enforces the same reference as a fresh
 installation.
 
+**An update stops before copying files:** an existing file differs from the package and its origin
+is unknown. See [Update conflicts and recovery](#update-conflicts-and-recovery): review the listed
+paths and hashes, resolve the conflict, then repeat the same update. Make a complete site backup
+first.
+
+**No e-mail is sent and no booking is taken:** **Public site URL** (or Joomla's live_site) is
+empty. Set it, see [Scheduler, reminders and retention](#scheduler-reminders-and-retention).
+
+**No reminders, or personal data stays stored beyond the retention period:** the scheduled tasks
+*Appointments: reminders* and *Appointments: retention* are missing, switched off or never
+triggered. Check **System → Scheduled Tasks**, the **System check** tab of the options and the
+Scheduler trigger (see [Scheduled tasks](#scheduled-tasks)).
+
+**Nothing reaches Close:** the transfer is switched off, the profile is incomplete, or the task
+*Appointments: deliver approved bookings to Close* is switched off (it is created switched off).
+The administrator overview shows the delivery status.
+
+**Internet calendars do not answer:** the plugins *System - Appointments CalDAV* and *User -
+Appointments internet calendars* are installed disabled and must be enabled deliberately; see
+[Internet calendars](#internet-calendars).
 **A blocked time is rejected:** verify the start precedes the end and neither bound falls in a
 skipped or repeated local hour during a clock change.
 

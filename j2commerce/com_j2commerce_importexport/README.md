@@ -86,6 +86,8 @@ The `t('suffix')` helper returns the correct table name and `col('j2store_col')`
 
 The manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`), and the install script makes sure the update site is present after every install or update. New versions appear under **System → Update → Extensions**. You can also install a newer ZIP over the existing installation.
 
+Before updating, take a current, complete site backup that can be restored independently; the installer cannot verify this. The first update attempt displays this recommendation and stops before changing files; start the update again afterwards. The installer decides by itself and keeps no file copies. If it reports a modified or unknown file that the update would replace, it stops before copying anything and lists the path and the SHA-256 hashes: review the file, resolve it manually or defer the update, then retry. There is no approval command or bypass. Options and permissions are kept. The component needs no Scheduler task and creates no database tables.
+
 ## Uninstall
 
 Uninstall via **System → Manage → Extensions**. The component has no uninstall routine of its own and creates no database tables; Joomla removes the component files and its language files. Imported articles, categories and J2Commerce product data remain in the database.
@@ -105,7 +107,7 @@ The **Permissions** tab of the same screen sets who may use the component (see b
 
 ### Help
 
-The component has a help page in the administrator (en-GB, de-DE, fr-FR). The **Help** button in the toolbar of the dashboard opens it in Joomla's help popup; the address is `administrator/index.php?option=com_j2commerce_importexport&view=help`. It explains export and import, the import options and file format, how existing products are matched and updated, categories and aliases, errors and the undo of failed rows, the Options, typical problems and data protection. Every user who can open the component (`core.manage`) can read it; no further permission is needed.
+The component has a help page in the administrator (en-GB, de-DE, fr-FR). The **Help** button in the toolbar of the dashboard opens it in Joomla's help popup; the address is `administrator/index.php?option=com_j2commerce_importexport&view=help`. It explains export and import, the import options and file format, how existing products are matched and updated, categories and aliases, errors and the undo of failed rows, the Options, typical problems and data protection. It also covers installation, update and uninstall. Every user who can open the component (`core.manage`) can read it; no further permission is needed.
 
 ### Permissions and Data Handling
 

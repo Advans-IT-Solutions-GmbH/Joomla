@@ -87,6 +87,15 @@
                             <li>PLG_OSMAP_J2COMMERCE_HELP_SETUP_STEP6</li>
                         </ol>
                     </section>
+                    <section title="PLG_OSMAP_J2COMMERCE_HELP_INSTALL_TITLE">
+                        <ul>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_INSTALL_LI1</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_INSTALL_LI2</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_INSTALL_LI3</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_INSTALL_LI4</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_INSTALL_LI5</li>
+                        </ul>
+                    </section>
                     <section title="PLG_OSMAP_J2COMMERCE_HELP_CONTENT_TITLE">
                         <p>PLG_OSMAP_J2COMMERCE_HELP_CONTENT_P1</p>
                         <ul>
@@ -106,6 +115,13 @@
                             <li>PLG_OSMAP_J2COMMERCE_HELP_SETTINGS_LI2</li>
                         </ul>
                         <note>PLG_OSMAP_J2COMMERCE_HELP_SETTINGS_NOTE</note>
+                    </section>
+                    <section title="PLG_OSMAP_J2COMMERCE_HELP_PERMS_TITLE">
+                        <ul>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_PERMS_LI1</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_PERMS_LI2</li>
+                            <li>PLG_OSMAP_J2COMMERCE_HELP_PERMS_LI3</li>
+                        </ul>
                     </section>
                     <section title="PLG_OSMAP_J2COMMERCE_HELP_PROBLEMS_TITLE">
                         <ul>

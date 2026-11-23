@@ -40,13 +40,25 @@ Standalone installs register their own update server; package installs use the p
 Updates become downloadable when releases are published. Release retention is latest-only per
 extension/tag family, not the monorepo's global latest release.
 
+**What the installer does.** It checks the platform (Joomla 5.4+, PHP 8.1+) and decides by itself, without questions. Before Joomla copies files it compares every file it would replace, remove or adjust with the installed-file record and the released hashes. A modified or unknown file stops the update before anything is copied; the notice lists the path, the current and incoming SHA-256 hashes and the reason. Resolve the conflict manually or defer the update, then retry. The installer keeps no copy of file contents and has no approval or bypass step. Before the first update attempt it stops once and recommends a current, complete full-site backup (files and database); it cannot verify that one exists, and the retry only acknowledges the note. After a fresh installation it enables the plugin; after an update it leaves the enabled or disabled state alone and points out a disabled plugin. The plugin needs no scheduled task and creates none.
+
 ## Configuration
 
 Help: the Help button of the plugin edit screen and the note at the top of its options open the **Help & tips** page of the DMARC Reports component (`index.php?option=com_dmarcreports&view=help`), which explains the terms, the Action Center entries and the typical tasks.
 
-Configure everything in the DMARC Reports component options (Options → MTA-STS): enable MTA-STS,
+The plugin has no options of its own besides the note that links to the help page (and, in installed builds, a read-only **System check** tab). It has no `access.xml` either. Configure everything in the DMARC Reports component options (Options → MTA-STS): enable MTA-STS,
 choose the mode, list the MX hosts, set `max_age` and the TLS-RPT reporting address. Then publish
 the DNS records and the `mta-sts` subdomain shown in the component's Action Center.
+
+| Option (component, MTA-STS tab) | Default | Purpose |
+|---------------------------------|---------|---------|
+| Enable MTA-STS policy hosting (`mtasts_enable`) | `Off` | The plugin serves nothing while it is off |
+| Policy mode (`mtasts_mode`) | `testing` | `none`, `testing` or `enforce` |
+| MX hosts (`mtasts_mx`) | Empty | One pattern per line, shared by all monitored domains; without a valid list no policy is served |
+| Max age (`mtasts_max_age`) | `604800` | Seconds senders may cache the policy (86400 to 31557600) |
+| Enable TLS-RPT reporting (`tlsrpt_enable`), TLS-RPT reporting address (`tlsrpt_rua`) | `Off`, empty | Only used by the component to generate and check the `_smtp._tls` record, not by the policy endpoint |
+
+Whoever may change these options (component `core.admin` or `core.options`) controls the public policy, together with the publication of the monitored domain (`core.edit.state`) and the plugin state (Joomla's plugin permissions). To let another account do so, grant that account's group the permissions under the component's **Options → Permissions**.
 
 The MX list is shared by all monitored domains. A union of their receiving MX hosts is valid,
 but every domain's actual DNS MX targets must be covered before `enforce`. Enable the component's

@@ -152,6 +152,15 @@ The manifest declares the update server
 New versions appear under **System → Update → Extensions**. Alternatively,
 install the newer ZIP over the existing installation.
 
+Before updating, take a current, complete site backup that can be restored
+independently; the installer cannot verify this. The first update attempt displays this
+recommendation and stops before changing files; start the update again afterwards. The
+installer decides by itself and keeps no file copies. If it reports a modified or unknown file
+that the update would replace or adjust (including an unrecognised OSMap compatibility
+target), it stops before copying anything and lists the path and the SHA-256 hashes: review
+the file, resolve it manually or defer the update, then retry. There is no approval
+command or bypass. Settings and the enabled state are kept. The plugin needs no Scheduler task.
+
 ## Uninstall
 
 Uninstall the plugin via **System → Manage → Extensions**. The plugin has no
@@ -173,7 +182,7 @@ the plugin defaults.
 ### Help tab
 
 The plugin's edit screen (**System → Manage → Plugins → OSMap - J2Commerce**) has a **Help** tab, the
-first tab after Joomla's own **Plugin** tab. It explains, in de-DE, en-GB and fr-FR, what the plugin does and which products it lists, prerequisites and setup (OSMap, shop, menu item, sitemap, SEF URLs), which menu item views add which products, both settings with their defaults, and typical problems with what to do.
+first tab after Joomla's own **Plugin** tab. It explains, in de-DE, en-GB and fr-FR, what the plugin does and which products it lists, prerequisites and setup (OSMap, shop, menu item, sitemap, SEF URLs), installation, update and uninstall, which menu item views add which products, both settings with their defaults, permissions and data handling, and typical problems with what to do.
 A note at the top of the **Plugin** tab points to it.
 
 The page is described in the manifest (fieldset `help`, field type `helppage`) and rendered by
@@ -187,7 +196,7 @@ structure).
 
 The plugin emits catalogue URLs for guest-visible products, not customer/order records. Article access and publication windows and shop visibility are checked even when an administrator requests the sitemap. Restrict plugin/OSMap configuration to trusted administrators; public sitemap access remains governed by OSMap.
 
-The plugin creates no own data tables, sends no notification mail and installs no Scheduler routine. Catalogue URLs are read locally during sitemap generation; this is not an external indexing submission service. Joomla's update checks are separate. Uninstall does not remove shop data or reverse installer changes described above.
+The plugin ships no `access.xml` and no permissions of its own: only accounts that may edit plugins can change its two settings (give another account access under **System → Manage → Plugins**), and OSMap decides who may view or edit sitemaps. The plugin creates no own data tables, sends no notification mail and installs no Scheduler routine. Catalogue URLs are read locally during sitemap generation; this is not an external indexing submission service. Joomla's update checks are separate. Uninstall does not remove shop data or reverse installer changes described above.
 
 ### How It Works
 

@@ -156,7 +156,7 @@ class HelpPageTest extends TestCase
     {
         $html = $this->renderFixture('page', $locale, '1');
 
-        foreach (['basics', 'how', 'actions', 'tasks', 'settings'] as $section) {
+        foreach (['basics', 'how', 'actions', 'tasks', 'settings', 'install', 'trouble'] as $section) {
             $this->assertStringContainsString('id="help-' . $section . '"', $html);
         }
 
@@ -259,6 +259,39 @@ class HelpPageTest extends TestCase
             $this->assertSame(HelpTopics::POPUP_URL, $strings[$urlKey] ?? null, "{$urlKey} in {$locale}");
             $this->assertArrayHasKey($noteKey, $strings, "{$noteKey} missing in {$locale}");
             $this->assertStringContainsString("href='index.php?option=com_dmarcreports&amp;view=help'", $strings[$noteKey]);
+        }
+    }
+
+    /**
+     * Every option of config.xml and every Joomla permission of access.xml is
+     * explained on the help page.
+     */
+    public function testEveryOptionAndPermissionIsExplained(): void
+    {
+        $template = (string) file_get_contents(self::COMPONENT . '/tmpl/help/default.php');
+        $config   = simplexml_load_file(self::COMPONENT . '/config.xml');
+        $this->assertNotFalse($config);
+
+        foreach ($config->xpath('/config/fieldset[@name="basic" or @name="mtasts"]/field') as $field) {
+            if ((string) $field['type'] === 'note') {
+                continue;
+            }
+
+            $this->assertStringContainsString("'" . (string) $field['label'] . "'", $template, 'Option ' . (string) $field['name'] . ' is not on the help page');
+        }
+
+        $access = simplexml_load_file(self::COMPONENT . '/access.xml');
+        $this->assertNotFalse($access);
+
+        foreach ($access->xpath('/access/section/action') as $action) {
+            $name = (string) $action['name'];
+
+            // core.admin is covered together with core.options.
+            if ($name === 'core.admin') {
+                continue;
+            }
+
+            $this->assertStringContainsString("'" . $name . "'", $template, "Permission {$name} is not on the help page");
         }
     }
 

@@ -63,6 +63,8 @@ From a repository checkout with Bash, rsync and zip available, run `cd com_dmarc
 3. Upload and install
 4. Access via **Components → DMARC Reports**
 
+**What the installer does.** It decides by itself and asks no questions. Before Joomla copies files it checks the platform (Joomla 5.4+, PHP 8.1+, the PHP extensions `simplexml`, `libxml`, `mbstring` and `openssl`; a fresh installation also needs a MySQL or MariaDB database, otherwise it is refused) and compares every file it would replace, remove or adjust with the installed-file record and the released hashes. A modified or unknown file stops the update before anything is copied; the notice lists the path, the current and incoming SHA-256 hashes and the reason. Resolve the conflict manually or defer the update, then retry. The installer keeps no copy of file contents and has no approval or bypass step. Before the first update attempt of an extension it stops once and recommends a current, complete full-site backup (files and database) that can be restored independently; it cannot verify that one exists, and the retry only acknowledges the note. After installation and update it keeps the update site registered, removes the obsolete manifest file `com_dmarcreports.xml` of older versions and shows a short confirmation. Archive support (`zlib`, `ZipArchive`) is optional and reported by the System check. The component itself creates no scheduled task; the [task plugin](../plg_task_dmarcreports/README.md#scheduled-tasks) creates and checks the ingestion task.
+
 ## Updating
 
 The standalone manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`), and the install script makes sure the update site is present after every install or update. Published versions will appear under **System → Update → Extensions** once releases exist; source availability does not imply a downloadable release. You can also install a newer built ZIP over the existing installation. Package installations use the package's update channel instead. Releases retain only the newest release in each extension's tag family, not one global latest release for this monorepo.
@@ -77,7 +79,7 @@ Open **Components → DMARC Reports**, then **Options** (top right) to set the d
 
 | Option | Default | Purpose |
 |--------|---------|---------|
-| Default policy target | `reject` | The policy the rollout guidance works towards |
+| Default policy target (`default_policy_target`) | `reject` | Target policy preselected for every new domain, created by hand or automatically. Each domain keeps its own target policy (**Domains**), which the rollout guidance works towards |
 | Quarantine pass threshold | `95` | Aligned-pass rate (%) at which moving to `p=quarantine` is suggested |
 | Reject pass threshold | `99` | Aligned-pass rate (%) at which moving to `p=reject` is suggested |
 | IMAP timeout | `20` | Seconds to wait for the mailbox connection |
@@ -100,13 +102,43 @@ Open **Components → DMARC Reports**, then **Options** (top right) to set the d
 
 Per-domain report sources (mailbox host, port, encryption, username, password and folder) are managed inside the component UI under **Sources**, not in the global options. The mailbox password is encrypted at rest using Joomla's secret and is never written to a log. Leaving the password blank keeps the stored one only for the same server and account; if a concurrent save changed the target or the password, the save is refused and the localized "enter the password again" message is shown. This includes the serialization conflict that MariaDB reports with `innodb_snapshot_isolation=ON` (error 1020), so the result is the same with that setting on or off.
 
+The options have the tabs **General**, **MTA-STS** and **Permissions**; installed builds add a read-only **System check** tab with the installation's platform check. The Options button needs `core.admin` or `core.options`. The note at the top of the options links to the **Help & tips** page, which explains the same options with their defaults.
+
+**Domain fields** (**Domains**): *Domain* (required, at most 190 characters, each domain once), *Title* (optional label), *Target policy* (default `reject`, the preselection comes from `default_policy_target`; the Action Center never recommends a step beyond it), *Notes* (optional, internal) and *Status*. Only published domains are monitored, polled by the scheduled task and served an MTA-STS policy.
+
+**Report source fields** (**Report sources**):
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| Name | - | Required label |
+| Domain | Automatic | Domain the imported reports are assigned to. *Automatic* matches by the reported policy domain, but the scheduled task polls only sources bound to a published domain |
+| Delete after import | `No` | Deletes messages whose report was newly imported; duplicates and invalid messages are kept. Without the IMAP extension UIDPLUS the messages are only flagged as deleted |
+| Host, Port, Connection security | - / `993` / `SSL/TLS` | The IMAP server; the security is `SSL/TLS` or `STARTTLS`. Only IMAP is supported |
+| Username, Password | - | Mailbox login; the password is stored encrypted |
+| Folder | `INBOX` | The mailbox folder to read |
+| Status | Published | The scheduled task polls only published sources |
+
 ### Permissions and data handling
 
-Configure permissions in the component's **Options → Permissions**. `core.manage` permits access to the administrator views and record export; `dmarc.ingest` permits manual mailbox ingestion and upload. Domain/source creation, editing, state changes and deletion use the corresponding `core.create`, `core.edit`, `core.edit.state` and `core.delete` permissions. Changing Action Center statuses requires `core.edit.state`. Automatic domain creation during a manual import additionally requires `core.create`; scheduler auto-creation uses the separate component/task gates above, not an interactive user's ingestion permission.
+Configure permissions in the component's **Options → Permissions** (or inherit them from Global Configuration). `access.xml` defines these Joomla permissions:
 
-Reports contain sending addresses, domains, counts and authentication results; sources include mailbox credentials. Access to these records and downloaded exports must be restricted. There is no automatic age-based report-retention task: define an operator retention/backup policy and delete data deliberately. Deleting a domain removes its related reports and actions; deleting a source removes its configuration and clears its reports' source association, rather than deleting those reports.
+| Permission | Allows |
+|------------|--------|
+| `core.manage` | Opens the component: dashboard, domain detail, domains, sources, System check, Help & tips and the CSV export. Without it no view opens. The control panel module follows it, too |
+| `dmarc.ingest` (*Import DMARC reports*) | *Run import* for a source and the upload of a report file. Letting an import create an unknown domain additionally needs `core.create` |
+| `core.create` | Add domains and sources |
+| `core.edit` | Edit existing domains and sources |
+| `core.edit.state` | Publish and unpublish domains and sources, and set Action Center statuses (done, ignored, snoozed, reopened) |
+| `core.delete` | Delete domains and sources; deleting a domain deletes its reports |
+| `core.options`, `core.admin` | Open the component options; changing the permissions themselves belongs to `core.admin` |
 
-The component itself installs no ingestion Scheduler routine. Configure the [companion task plugin](../plg_task_dmarcreports/README.md) and a Scheduler trigger for unattended ingestion.
+To give another account access, add it to a user group, open **Options → Permissions**, select that group, set `core.manage` to *Allowed*, add what the account needs (for example `dmarc.ingest` for importing and `core.edit.state` for the Action Center) and save. Scheduler auto-creation uses the separate component/task gates above, not an interactive user's ingestion permission, so restrict who may change the options and the Scheduled Tasks.
+
+Reports contain the sending IP addresses, domains, counts and authentication results and, as stated in the report, the name and contact address of the reporting organisation; sources include mailbox credentials. Access to these records and downloaded exports must be restricted. There is no automatic age-based report-retention task: define an operator retention/backup policy and delete data deliberately. Deleting a domain removes its DMARC and TLS-RPT reports, records and actions; deleting a source removes its configuration and clears its reports' source association, rather than deleting those reports. With *Delete after import* the mailbox copy of newly imported reports is deleted. The component sends no e-mail. The Joomla log file `com_dmarcreports.php` holds source and message numbers, limits and counts only.
+
+### Scheduled tasks
+
+The component itself needs and installs no Scheduler routine. The automatic import is the task **DMARC Reports - Automatic ingestion** of the [companion task plugin](../plg_task_dmarcreports/README.md#scheduled-tasks). That task is required for unattended ingestion; after every installation and update of the plugin or the package the shared installer checks it, creates it (switched on, every hour) when it is missing and never changes or duplicates an existing one. It needs a working Joomla Scheduler trigger (the lazy scheduler on site traffic, or a real cron job, which is recommended for unattended operation).
 
 ### Input and execution limits
 
@@ -317,6 +349,22 @@ Test results are saved in `tests/test-results/`.
 ### A sending source is flagged
 **Problem:** A legitimate sender of yours appears in the Action Center as «SPF only» or as unauthenticated
 **Solution:** This is the point of the tool. Configure DKIM signing for your domain in that service. The item disappears with the next reports. Adding the sender to SPF alone does not clear an «SPF only» item, because SPF does not prove who sent the mail (see «How sending sources are judged»). Only tighten the DMARC policy once the Action Center no longer flags it.
+
+### A message stays unread and is flagged in the mailbox
+**Problem:** A report mail is not imported and carries the `\Flagged` mark  
+**Solution:** It exceeded a per-message limit and was held for review; nothing of it is stored. See «Mailbox ingestion limits» above for how to re-import it. The run message and the log file `com_dmarcreports.php` name the message.
+
+### Automatic import does not run
+**Problem:** New reports arrive in the mailbox but not in the component  
+**Solution:** Check that the plugin *Task - DMARC Reports Ingestion* and the task *DMARC Reports - Automatic ingestion* are switched on (**System → Manage → Scheduled Tasks**), that the source is published and bound to a published domain, and that a Scheduler trigger runs. See the [task plugin README](../plg_task_dmarcreports/README.md#troubleshooting).
+
+### The MTA-STS policy address answers 404
+**Problem:** `https://mta-sts.<domain>/.well-known/mta-sts.txt` is not served  
+**Solution:** MTA-STS must be enabled in the options with a valid MX list, the domain must be published, the system plugin enabled, the host must reach this site with a valid certificate and the web server must pass that exact path to Joomla. See [the system plugin README](../plg_system_dmarcmtasts/README.md#why-does-well-knownmta-ststxt-answer-404).
+
+### Installation or update stops
+**Problem:** The installer reports a modified or unknown file  
+**Solution:** Review the listed paths and hashes, resolve the conflict manually or defer the update, then retry. The installer keeps no copies and has no approval or bypass. Take a full-site backup first, as the installer recommends.
 
 ## Multi-Language Support
 

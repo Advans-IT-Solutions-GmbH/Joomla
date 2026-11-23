@@ -31,7 +31,7 @@ Report parsing and storage run on your own server; report contents are not uploa
 - Installs the component, the dashboard module, the ingestion task plugin and the MTA-STS system plugin in a single step
 - Each bundled extension keeps its own installer script, tables and settings — package updates preserve collected report data and IMAP passwords
 - Sub-extensions remain individually buildable and releasable; the package bundles the built archives
-- Administrator-facing; the component also ships a site entry point for the MTA-STS/TLS-RPT well-known delivery, served by the system plugin
+- Administrator-facing; the only public part is the MTA-STS policy at `/.well-known/mta-sts.txt`, served by the system plugin (the component ships no site part)
 - Own tag prefix (`pkgdmarcreports-v*`) and update server, independent of the sub-extension versions
 
 ## Requirements
@@ -54,7 +54,10 @@ Every bundled extension selects the correct database and HTTP APIs at runtime an
 1. Use the generated `pkg_dmarcreports_<version>.zip`
 2. **System → Install → Extensions**
 3. Upload and install — Joomla installs the component, the module and both plugins in one step
-4. Enable the plugins under **System → Manage → Plugins** (`Task - DMARC Reports` and `System - DMARC Reports MTA-STS`) and publish the module on the `cpanel` position if you want the dashboard tile
+4. Both plugins (`Task - DMARC Reports Ingestion` and `System - DMARC MTA-STS Policy`) are enabled by a fresh installation; check them under **System → Manage → Plugins**. The module is not published by the installation: publish it on the `cpanel` position under **System → Manage → Administrator Modules** if you want the dashboard tile
+5. The installation creates the required scheduled task **DMARC Reports - Automatic ingestion** (every hour, switched on) when it is missing, and reports it. It needs a working Scheduler trigger
+
+**What the installer does.** It checks the platform (Joomla 5.4+, PHP 8.1+) and decides by itself, without questions. Before Joomla copies files it compares every file it would replace, remove or adjust with the installed-file record and the released hashes. A modified or unknown file stops the update before anything is copied; the notice lists the path, the current and incoming SHA-256 hashes and the reason. Resolve the conflict manually or defer the update, then retry. The installer keeps no copy of file contents and has no approval or bypass step. Before the first update attempt it stops once and recommends a current, complete full-site backup (files and database) that can be restored independently; it cannot verify that one exists, and the retry only acknowledges the note. The package and each bundled extension run this check separately, so the note can appear more than once during one package update. Each child also checks its own prerequisites (the component needs the PHP extensions `simplexml`, `libxml`, `mbstring` and `openssl` and a MySQL or MariaDB database). The package script also installs the license file and moves the children onto the package update channel.
 
 ## Updating
 

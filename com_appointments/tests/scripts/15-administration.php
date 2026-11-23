@@ -210,7 +210,7 @@ try {
             $document = new DOMDocument();
             @$document->loadHTML($help);
             $helpXpath = new DOMXPath($document);
-            $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 16
+            $check($admin->status === 200 && $helpXpath->query('//div[@id="appointments-help"]//section')->length === 18
                 && $helpXpath->query('//a[@id="toolbar-back"]')->length === 1,
                 'Central help has all generic topics and a real overview return, enabled=' . $enabled);
             // Owner decision 18.11.2026: the existing permission model stays; the help explains it.
@@ -222,7 +222,7 @@ try {
                 && $helpXpath->query('//section[@id="help-module"]//h2[normalize-space()="Dashboard module"]')->length === 1,
                 'Central help explains every permission, how another account gets access, and the dashboard module, enabled=' . $enabled);
             $topicLinks = $helpXpath->query('//div[@id="appointments-help"]/nav/a[starts-with(@href,"#help-")]');
-            $topicTargetsValid = $topicLinks->length === 16;
+            $topicTargetsValid = $topicLinks->length === 18;
             foreach ($topicLinks as $topicLink) {
                 $target = substr($topicLink->getAttribute('href'), 1);
                 $topicTargetsValid = $topicTargetsValid && preg_match('/^help-[a-z]+$/D', $target) === 1
@@ -230,7 +230,7 @@ try {
             }
             $check($topicTargetsValid
                 && $helpXpath->query('//link[contains(@href,"/com_appointments/css/admin.css")]')->length === 1,
-                'All sixteen native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
+                'All eighteen native Help fragments target sections with the installed scroll-clearance stylesheet, enabled=' . $enabled);
             $check($helpXpath->query('//section[@id="help-plugins"]//h2[normalize-space()="Bundled plugins"]')->length === 1
                 && $helpXpath->query('//section[@id="help-plugins"]//h3')->length === 6
                 && $helpXpath->query('//section[@id="help-plugins"]//h3[normalize-space()="System - Appointments origin of bookings"]')->length === 1
@@ -246,7 +246,7 @@ try {
                 @$popupDocument->loadHTML($popup);
                 $popupXpath = new DOMXPath($popupDocument);
                 $check($admin->status === 200 && $popupXpath->query('//div[@id="appointments-help"]/section[@id="help-plugins"]')->length === 1
-                    && $popupXpath->query('//div[@id="appointments-help"]/nav/a[starts-with(@href,"#help-")]')->length === 16
+                    && $popupXpath->query('//div[@id="appointments-help"]/nav/a[starts-with(@href,"#help-")]')->length === 18
                     && $popupXpath->query('//div[@id="appointments-help"]/nav/a[not(starts-with(@href,"#"))]')->length === 0,
                     'The Help popup keeps the topic navigation and hides the Overview and Options buttons');
             }

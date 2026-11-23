@@ -110,6 +110,15 @@
                         </ol>
                         <note>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETUP_NOTE</note>
                     </section>
+                    <section title="PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_INSTALL_TITLE">
+                        <ul>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_INSTALL_LI1</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_INSTALL_LI2</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_INSTALL_LI3</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_INSTALL_LI4</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_INSTALL_LI5</li>
+                        </ul>
+                    </section>
                     <section title="PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETTINGS_TITLE">
                         <p>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETTINGS_P1</p>
                         <ul>
@@ -118,6 +127,14 @@
                             <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETTINGS_LI3</li>
                             <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETTINGS_LI4</li>
                             <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_SETTINGS_LI5</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PERMS_TITLE">
+                        <ul>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PERMS_LI1</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PERMS_LI2</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PERMS_LI3</li>
+                            <li>PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PERMS_LI4</li>
                         </ul>
                     </section>
                     <section title="PLG_J2COMMERCE_PRODUCTCOMPARE_HELP_PROBLEMS_TITLE">
