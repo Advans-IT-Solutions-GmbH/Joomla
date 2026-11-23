@@ -195,6 +195,8 @@ class MetricsTest
 
         $this->cleanup();
 
+        $this->test('The suite leaves no rows behind', fn (): bool => $this->leftovers() === 0);
+
         echo "\n=== Metrics Test Summary ===\n";
         echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
 
@@ -1080,10 +1082,13 @@ class MetricsTest
                 }
 
                 return !in_array($ips[262], $got, true) && !in_array($ips[263], $got, true);
-            });        } finally {
+            });
+        } finally {
+            $this->deleteStrayActions($domainId, $other);
             $this->deleteDomain($domainId);
         }
     }
+
     private function insertAction(int $domainId, string $key, string $status): void
     {
         $row = (object) [
@@ -1116,6 +1121,41 @@ class MetricsTest
         }
     }
 
+    /**
+     * Remove the actions stored under another domain's id whose key names the
+     * given domain (deleteDomain() only removes rows of the domain itself).
+     */
+    private function deleteStrayActions(int $domainId, int $otherDomainId): void
+    {
+        $this->db->setQuery(
+            $this->query()->delete($this->db->quoteName('#__dmarc_actions'))
+                ->where($this->db->quoteName('domain_id') . ' = ' . $otherDomainId)
+                ->where($this->db->quoteName('action_key') . ' LIKE ' . $this->db->quote('%:' . $domainId . ':%'))
+        )->execute();
+    }
+
+    /**
+     * Rows of this suite that are still in the database. Every fixture uses the
+     * suite's own domain suffix or documentation address prefixes, so a leftover
+     * shows up here and fails the run.
+     */
+    private function leftovers(): int
+    {
+        $count = function (string $table, string $column, string $like): int {
+            return (int) $this->db->setQuery(
+                $this->query()->select('COUNT(*)')->from($this->db->quoteName($table))
+                    ->where($this->db->quoteName($column) . ' LIKE ' . $this->db->quote($like))
+            )->loadResult();
+        };
+
+        return $count('#__dmarc_domains', 'domain', '%' . self::DOMAIN)
+            + $count('#__dmarc_reports', 'policy_domain', '%' . self::DOMAIN)
+            + $count('#__dmarc_tlsrpt_reports', 'policy_domain', '%' . self::DOMAIN)
+            + $count('#__dmarc_records', 'source_ip', '2001:db8:6::%')
+            + $count('#__dmarc_records', 'source_ip', '2001:db8:7::%')
+            + $count('#__dmarc_actions', 'action_key', '%:2001:db8:6::%')
+            + $count('#__dmarc_actions', 'action_key', '%:2001:db8:7::%');
+    }
     private function cleanup(): void
     {
         $id = $this->domainId;
@@ -1132,7 +1172,7 @@ class MetricsTest
             return;
         }
 
-        foreach (['#__dmarc_records', '#__dmarc_reports', '#__dmarc_domains'] as $table) {
+        foreach (['#__dmarc_actions', '#__dmarc_records', '#__dmarc_reports', '#__dmarc_domains'] as $table) {
             $column = $table === '#__dmarc_domains' ? 'id' : 'domain_id';
             $query  = $this->query()
                 ->delete($this->db->quoteName($table))
