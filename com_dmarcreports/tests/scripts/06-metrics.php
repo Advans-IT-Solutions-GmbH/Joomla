@@ -1003,7 +1003,7 @@ class MetricsTest
             };
 
             // Expected result: the first $limit open sources in rank order plus
-            // every handled source up to $max, compared as ordered by rank.
+            // every handled source up to $max, open ones first, both in rank order.
             $expect = function (array $handled) use ($ips, $limit, $max): array {
                 $open = [];
                 $done = [];
@@ -1018,10 +1018,8 @@ class MetricsTest
                     }
                 }
 
-                $all = $open + $done;
-                ksort($all);
-
-                return array_values($all);
+                // Contract: open sources first, then handled ones, each in detail rank order.
+                return array_merge(array_values($open), array_values($done));
             };
 
             foreach ([199, 200, 201, 230] as $count) {
@@ -1034,9 +1032,7 @@ class MetricsTest
                 }
 
                 [$got, $total] = $returned();
-                sort($got, SORT_STRING);
                 $want = $expect($handled);
-                sort($want, SORT_STRING);
 
                 $this->test("{$count} handled sources: open ones still selected, handled capped at {$max}", function () use ($got, $want, $total, $ips, $count, $max) {
                     return $got === $want
@@ -1046,6 +1042,44 @@ class MetricsTest
                 });
             }
 
+            // Handled sources interleaved with open ones, around the 200 boundary:
+            // the result is the top 50 open sources in detail order, then the
+            // handled ones in detail order, never a mix of the two rankings.
+            $patterns = [
+                'every third source'             => static fn (int $i): bool => $i <= 260 && $i % 3 === 0,
+                'exactly 200 handled'            => static fn (int $i): bool => $i <= 250 && $i % 5 !== 0,
+                '201 handled (one over the cap)' => static fn (int $i): bool => $i <= 251 && $i % 5 !== 0,
+            ];
+
+            foreach ($patterns as $label => $isHandled) {
+                $reset();
+                $handled = [];
+
+                foreach (array_keys($ips) as $i) {
+                    if ($i <= 260 && $isHandled($i)) {
+                        $put($i, 'spf_only_source', 'done');
+                        $handled[$i] = true;
+                    }
+                }
+
+                [$got] = $returned();
+                $want  = $expect($handled);
+
+                $this->test("Mixed open and handled sources ({$label}): open first, both in detail order", function () use ($got, $want, $handled, $ips, $max, $limit) {
+                    $firstHandled = null;
+
+                    foreach ($got as $position => $ip) {
+                        if (isset($handled[array_search($ip, $ips, true)])) {
+                            $firstHandled = $position;
+                            break;
+                        }
+                    }
+
+                    return $got === $want
+                        && ($firstHandled === null || $firstHandled === $limit)
+                        && count(array_filter($got, static fn (string $ip): bool => isset($handled[array_search($ip, $ips, true)]))) === min(count($handled), $max);
+                });
+            }
             // Exact action key per class, domain match and snooze expiry.
             $reset();
             $future = gmdate('Y-m-d H:i:s', time() + 3600);
@@ -1067,8 +1101,6 @@ class MetricsTest
             $handled = [3 => true, 8 => true, 9 => true, 261 => true];
             [$got, $total] = $returned();
             $want = $expect($handled);
-            sort($got, SORT_STRING);
-            sort($want, SORT_STRING);
 
             $this->test('Handled lookup uses the exact key, the domain and the snooze rule', function () use ($got, $want, $total, $ips) {
                 return $got === $want && $total === count($ips);

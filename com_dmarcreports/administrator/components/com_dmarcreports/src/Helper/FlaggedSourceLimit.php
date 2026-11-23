@@ -59,6 +59,12 @@ final class FlaggedSourceLimit
      *                              are capped separately at {@see self::MAX}, so they never
      *                              take the slots of open ones and stay listed for reopening.
      *
+     * Contract: per domain the rows come open sources first, each group in the exact
+     * order of $orderBy (the order the domain view ranks them), then the handled
+     * sources. The open group is therefore the top $limit open sources of the detail
+     * ranking; the handled group is the top {@see self::MAX} handled ones. Without a
+     * handled condition there is one group.
+     *
      * @return  string  The SQL text.
      */
     public static function wrap(string $grouped, string $orderBy, int $limit, string $handled = ''): string
@@ -77,6 +83,6 @@ final class FlaggedSourceLimit
             . 'COUNT(*) OVER (PARTITION BY g.domain_id) AS flag_total '
             . 'FROM (' . $grouped . ') AS g) AS ranked '
             . 'WHERE ranked.flag_rank <= ' . $cap . ' '
-            . 'ORDER BY ranked.domain_id ASC, ranked.flag_rank ASC';
+            . 'ORDER BY ranked.domain_id ASC, ' . ($handled === '' ? '' : 'ranked.flag_handled ASC, ') . 'ranked.flag_rank ASC';
     }
 }

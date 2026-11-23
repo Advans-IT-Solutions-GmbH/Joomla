@@ -1255,11 +1255,13 @@ final class Metrics
             ->group($this->db->quoteName('rep.domain_id') . ', ' . $this->db->quoteName('cur.source_ip'))
             ->having($this->flaggedHaving('cur'));
 
-        // Bound the work: keep only the top-ranked flagged sources of each domain
-        // (the SPF-only and delivered-failing ones come first) and let the
-        // database cut the rest, so the dashboard never reads, enriches or
-        // turns every source of a busy domain into action items. The domain
-        // view lists every source.
+        // Bound the work and keep one contract with the domain view: per domain the
+        // result is the top 50 OPEN sources in exactly the detail ranking (SPF-only,
+        // then delivered-failing, then address), followed by up to 200 HANDLED
+        // sources (done, ignored, snoozed) in that same ranking, so handled ones
+        // never take open slots and stay reopenable. The database cuts the rest, so
+        // the dashboard never reads, enriches or turns every source of a busy domain
+        // into action items; the domain view lists every source.
         $query = FlaggedSourceLimit::wrap(
             $grouped,
             $this->db->quoteName('g.spf_only') . ' DESC, '
