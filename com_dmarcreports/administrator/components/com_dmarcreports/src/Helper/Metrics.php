@@ -47,7 +47,7 @@ final class Metrics
         $key = 'CONCAT(CASE WHEN g.spf_only > 0 THEN ' . $db->quote('spf_only_source') . ' ELSE ' . $db->quote('align_source')
             . ' END, ' . $db->quote(':') . ', g.domain_id, ' . $db->quote(':') . ', g.source_ip)';
 
-        return 'EXISTS (SELECT 1 FROM ' . $db->quoteName('#__dmarc_actions') . ' AS ha WHERE ha.action_key = ' . $key
+        return 'EXISTS (SELECT 1 FROM ' . $db->quoteName('#__dmarc_actions') . ' AS ha WHERE ha.domain_id = g.domain_id AND ha.action_key = ' . $key
             . ' AND ha.status <> ' . $db->quote('open')
             . ' AND NOT (ha.status = ' . $db->quote('snoozed') . ' AND (ha.snooze_until IS NULL OR ha.snooze_until <= '
             . $db->quote(gmdate('Y-m-d H:i:s')) . ')))';
