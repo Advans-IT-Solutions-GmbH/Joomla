@@ -1528,7 +1528,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
     {
         if ($this->isJ2Commerce4($db)) {
             // #__j2store_cartitems FK to #__j2store_carts is `cart_id`; quantity column is `product_qty`
-            // (verified against production DB dump: advansj5_j2store_cartitems has product_qty decimal(12,4))
+            // J2Store cart items use cart_id as the cart FK and product_qty decimal(12,4) for quantity.
             // $userId is (int) — safe to inline; bind() on subquery is lost when cast to string.
             $subQuery = $this->createDbQuery($db)
                 ->select($db->quoteName('j2store_cart_id'))
