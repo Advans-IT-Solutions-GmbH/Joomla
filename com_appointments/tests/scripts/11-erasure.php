@@ -127,6 +127,14 @@ try {
     $admin->request('/administrator/index.php?option=com_appointments&task=bookings.erase', ['cid' => [$anonId], $token => 1]);
     $admin->request('/administrator/index.php?option=com_appointments&task=bookings.delete', ['cid' => [$anonId], $token => 1]);
     $check($fixture->row($anonId) === null, 'Administrator deletion also removes an already anonymised appointment');
+    // A batch with an ID that no longer exists deletes the others and is not refused as a whole.
+    $created = $fixture->booking($event, $day . ' 16:00:00');
+    $batchId = (int) $created['booking']['id'];
+    $erasedIds[] = $batchId;
+    $staleId = $batchId + 100000;
+    $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
+    $admin->request('/administrator/index.php?option=com_appointments&task=bookings.delete', ['cid' => [$staleId, $batchId], $token => 1]);
+    $check($fixture->row($batchId) === null, 'Administrator deletion skips a vanished appointment and still deletes the others');
 
     // Guest self-removal: the signed link of one guest removes only that guest's address.
     $created = $fixture->booking($event, $day . ' 13:00:00', ['guests' => 'keep@example.test, Leave@example.test']);

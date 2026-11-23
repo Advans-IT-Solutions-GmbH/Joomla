@@ -257,14 +257,24 @@ class BookingsController extends BaseController
         }
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $ids = array_values(array_unique(array_filter(array_map('intval', $this->input->post->get('cid', [], 'array')), static fn ($id) => $id > 0)));
+        $existing = [];
+        $missing = 0;
         foreach ($ids as $id) {
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
             $query->select($db->quoteName('eventtype_id'))->from($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . $id);
-            $eventId = (int) $db->setQuery($query)->loadResult();
+            $found = $db->setQuery($query)->loadResult();
+            if ($found === null || $found === false) {
+                // Already gone (deleted meanwhile, stale list): skipped and reported, not a refusal of the whole batch.
+                $missing++;
+                continue;
+            }
+            $eventId = (int) $found;
             if (!$eventId || !$user->authorise('core.delete', 'com_appointments.eventtype.' . $eventId)) {
                 throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
             }
+            $existing[] = $id;
         }
+        $ids = $existing;
         $this->setRedirect(Route::_('index.php?option=com_appointments&view=bookings', false));
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $deleted = 0;
@@ -292,6 +302,9 @@ class BookingsController extends BaseController
             }
         }
         $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_BOOKINGS_N_DELETED', $deleted), 'message');
+        if ($missing > 0) {
+            $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_BOOKINGS_N_MISSING', $missing), 'warning');
+        }
 
         return true;
     }
@@ -308,14 +321,24 @@ class BookingsController extends BaseController
         }
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $ids = array_values(array_unique(array_filter(array_map('intval', $this->input->post->get('cid', [], 'array')), static fn ($id) => $id > 0)));
+        $existing = [];
+        $missing = 0;
         foreach ($ids as $id) {
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
             $query->select($db->quoteName('eventtype_id'))->from($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . $id);
-            $eventId = (int) $db->setQuery($query)->loadResult();
+            $found = $db->setQuery($query)->loadResult();
+            if ($found === null || $found === false) {
+                // Already gone (deleted meanwhile, stale list): skipped and reported, not a refusal of the whole batch.
+                $missing++;
+                continue;
+            }
+            $eventId = (int) $found;
             if (!$eventId || !$user->authorise('core.delete', 'com_appointments.eventtype.' . $eventId)) {
                 throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
             }
+            $existing[] = $id;
         }
+        $ids = $existing;
         $delete = match (ComponentHelper::getParams('com_appointments')->get('erase_mode', 'anonymise')) {
             'anonymise' => false,
             'delete' => true,
