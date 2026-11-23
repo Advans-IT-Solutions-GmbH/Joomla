@@ -8,7 +8,7 @@ Nutze in diesem Repository die Vorgaben aus `/AGENTS.md` (Repo-Root) als maßgeb
 - Kein `Co-authored-by`-Trailer und keine Agent-Signatur («Copilot», «copilot-swe-agent», «Claude», «Generated with», «🤖») in einer Commit-Nachricht. Die CI-Prüfung «Commit hygiene» blockiert den Merge sonst.
 - Nie auf `main` pushen, immer Feature-Branch + PR (`fix/…`, `feat/…`, `docs/…`, `chore/…`); nie selbst mergen.
 - Conventional Commits (`fix:`/`feat:`) bestimmen die Release-Version.
-- Fertig (DoD): CI grün, Copilot-Überblick «🟢 Approval recommended» mit allen Threads erledigt, vor jedem Release der Test auf dev.
+- Fertig (DoD): CI grün, Copilot-Überblick «🟢 Approval recommended» mit allen Threads erledigt, vor jedem Release der Test auf dev. Merge nur bei grüner CI, 🟢 und ohne offenen Thread auf demselben Kopf. Bei einem Copilot-Befund die laufende CI sofort abbrechen (Details `AGENTS.md`).
 
 Repo-spezifische Skills liegen unter `.claude/skills/` und gelten auch für Copilot. Bei passendem Thema jeweils das `SKILL.md` im passenden Skill-Ordner lesen:
 - `.claude/skills/joomla-extensions/` — Entwicklung, Tests, Releases, CI/CD
