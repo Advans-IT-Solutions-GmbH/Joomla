@@ -897,7 +897,7 @@ class MetricsTest
             });
 
             $this->db->setQuery(
-                $this->db->getQuery(true)->delete($this->db->quoteName('#__dmarc_actions'))
+                $this->query()->delete($this->db->quoteName('#__dmarc_actions'))
                     ->where($this->db->quoteName('domain_id') . ' = ' . (int) $domainId)
             )->execute();
             $this->test('The domain source table includes all flagged sources beyond 500', function () use ($detail, $expectedIps) {
