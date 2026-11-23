@@ -110,24 +110,31 @@ final class MailHtml
             }
         }
 
-        // The layout is rendered around a marker and only then gets the body, so a layout can
-        // neither alter nor re-escape it.
-        $marker   = '<!--privacy-mail-body-' . bin2hex(random_bytes(6)) . '-->';
-        $level    = ob_get_level();
-        $rendered = null;
+        // Bracket the body with unique sentinels so a layout can style the actual HTML (paragraph
+        // classes, wrappers) while the message still proves that the layout includes it exactly once.
+        $startMarker = '<!--privacy-mail-body-' . bin2hex(random_bytes(6)) . '-start-->';
+        $endMarker   = '<!--privacy-mail-body-' . bin2hex(random_bytes(6)) . '-end-->';
+        $level       = ob_get_level();
+        $rendered    = null;
 
         try {
-            $rendered = $file->render(['mail' => $marker, 'extra' => $extra]);
+            $rendered = $file->render(['mail' => $startMarker . $html . $endMarker, 'extra' => $extra]);
         } finally {
             // A layout that throws after output leaves its buffer open; never let that reach the response.
             self::closeBuffers($level);
         }
 
-        if (!\is_string($rendered) || trim($rendered) === '' || substr_count($rendered, $marker) !== 1) {
+        if (
+            !\is_string($rendered)
+            || trim($rendered) === ''
+            || substr_count($rendered, $startMarker) !== 1
+            || substr_count($rendered, $endMarker) !== 1
+            || strpos($rendered, $endMarker) <= strpos($rendered, $startMarker)
+        ) {
             throw new \RuntimeException('The configured Joomla mail layout did not render the message body exactly once.');
         }
 
-        return str_replace($marker, $html, MailHelper::convertRelativeToAbsoluteUrls($rendered));
+        return MailHelper::convertRelativeToAbsoluteUrls(str_replace([$startMarker, $endMarker], '', $rendered));
     }
 
     /** Escaped plain text as HTML paragraphs, with URLs clickable. */

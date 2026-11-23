@@ -1230,6 +1230,15 @@ class DataAnonymizationTest
                     mb_substr($mailer->body, 0, 200));
             }
 
+            // A layout that styles the body it is given (paragraph classes, wrappers) keeps that styling.
+            file_put_contents($frameDir . '/styled.php',
+                "<?php defined('_JEXEC') or die; echo '<div class=\"styled\">' . str_replace('<p>', '<p class=\"mail-paragraph\">', \$displayData['mail']) . '</div>';");
+            $plugin->mailConfig = ['mail_style' => 'html', 'disable_htmllayout' => '1', 'mail_htmllayout' => 'zz-mailtest:styled'];
+            $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
+            $this->test('mail style: the layout can style the paragraphs of the body',
+                $factory->last->html === true && str_contains($factory->last->body, '<p class="mail-paragraph">')
+                && !str_contains($factory->last->body, '<!--privacy-mail-body-'));
+            @unlink($frameDir . '/styled.php');
             $plugin->mailConfig = ['mail_style' => 'html', 'disable_htmllayout' => '1', 'mail_htmllayout' => '../../etc/passwd'];
             $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
             $this->test('mail style: an invalid layout name still sends HTML, never reads another path',

@@ -63,6 +63,7 @@ namespace Advans\Component\Appointments\Tests\Unit {
                         'incoming'    => str_repeat('c', 64),
                         'remove'      => true,
                         'downloaded'  => true,
+                        'keep'        => true,
                     ],
                     'replace-id' => [
                         'destination' => '/site/plugins/example/current.php',
@@ -70,6 +71,7 @@ namespace Advans\Component\Appointments\Tests\Unit {
                         'incoming'    => str_repeat('e', 64),
                         'remove'      => false,
                         'downloaded'  => true,
+                        'keep'        => true,
                     ],
                 ],
             ];
