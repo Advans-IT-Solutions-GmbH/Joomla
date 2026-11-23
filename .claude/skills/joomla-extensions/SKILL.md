@@ -50,7 +50,7 @@ Advans-IT-Solutions-GmbH/Joomla
 2. **Conventional Commits** — prefix all commits: `fix:`, `feat:`, `docs:`, `chore:`, `test:`, `refactor:`. No `Co-authored-by` trailer and no agent signature (no Copilot/Ona/etc.) in commits, PR titles or bodies.
 3. **Auto-delete branches** is enabled — branches are deleted automatically after merge
 4. **One PR per plugin** — do not mix changes across plugins in a single PR
-5. **A Copilot finding stops CI** (binding): If the Copilot review of a PR finds a defect, the running normal CI of that PR is stopped immediately (`gh run cancel <id>`). The Copilot run itself is never cancelled. The defect is fixed first, then CI runs again with the fix push. Never re-run cancelled runs while Copilot findings on the current head are still open. This applies everywhere and always, to people and agents alike.
+5. **A Copilot finding stops CI** (binding, for cost reasons): As soon as Copilot reports a finding on the current head (🟡/🔴 or an open thread), immediately cancel all running CI runs of that PR (`gh run cancel <id>` for every non-completed run of the head SHA, except the Copilot review run itself). Fix the finding at once, reply in the thread with the fixing SHA, resolve it and re-request Copilot. CI runs again only with the push of the fix; never re-run cancelled runs while findings are open. Get the fix right the first time: think through edge cases and test before pushing. **Merge only** when, on the same latest head, CI is fully green, Copilot is 🟢 and no thread is open. There is no limit on review rounds (owner rule, 23.11.2026).
 
 ## Recorded Decisions
 
