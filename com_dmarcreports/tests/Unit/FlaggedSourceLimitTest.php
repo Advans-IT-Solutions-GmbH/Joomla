@@ -53,6 +53,6 @@ class FlaggedSourceLimitTest extends TestCase
             "PARTITION BY g.domain_id, (CASE WHEN g.source_ip IN ('192.0.2.1') THEN 1 ELSE 0 END)",
             $sql
         );
-        $this->assertStringContainsString('flag_rank <= 50', $sql);
+        $this->assertStringContainsString('ranked.flag_handled = 1 THEN ' . FlaggedSourceLimit::MAX . ' ELSE 50 END', $sql);
     }
 }

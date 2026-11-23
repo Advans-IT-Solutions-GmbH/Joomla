@@ -871,6 +871,34 @@ class MetricsTest
                         $bulk
                     ), true);
             });
+            // A done action of another class (align_source) for a source whose
+            // current action is spf_only_source must not hide the open action.
+            $stale = [];
+
+            foreach (array_slice($detailIps, 0, $limit) as $ip) {
+                $row = (object) [
+                    'domain_id'  => $domainId,
+                    'action_key' => 'align_source:' . $domainId . ':' . $ip,
+                    'category'   => 'alignment',
+                    'severity'   => 1,
+                    'status'     => 'done',
+                ];
+                $this->db->insertObject('#__dmarc_actions', $row);
+                $stale[] = $row->action_key;
+            }
+
+            $afterStale = $metrics->actionMetricsForAll($metrics->domainSummaries())[$domainId]['flagged_sources'] ?? [];
+
+            $this->test('Handled actions of a different class do not take the open slots', function () use ($afterStale, $detailIps, $limit) {
+                $ips = array_map(static fn (array $source): string => $source['ip'], $afterStale);
+
+                return count($afterStale) === $limit && $ips === array_slice($detailIps, 0, $limit);
+            });
+
+            $this->db->setQuery(
+                $this->db->getQuery(true)->delete($this->db->quoteName('#__dmarc_actions'))
+                    ->where($this->db->quoteName('domain_id') . ' = ' . (int) $domainId)
+            )->execute();
             $this->test('The domain source table includes all flagged sources beyond 500', function () use ($detail, $expectedIps) {
                 $tableIps = array_column($detail['top_sources'], 'source_ip');
                 sort($tableIps, SORT_STRING);

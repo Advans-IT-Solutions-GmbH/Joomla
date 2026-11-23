@@ -35,31 +35,23 @@ final class Metrics
     private array $flaggedTotals = [];
 
     /**
-     * SQL condition true for the sources already handled by the administrator
-     * (at most 1000 addresses are listed; any beyond count as open, which stays bounded).
-     *
-     * @param   array<int, array<int, string>>  $handled  Domain id => addresses.
+     * SQL condition (on the grouped source rows) true when the exact action the
+     * dashboard would generate for the source (spf_only_source, otherwise
+     * align_source, keyed code:domain:ip) is handled by the administrator: done,
+     * ignored or still snoozed. Mirrors ActionStatus::partition(). Evaluated by
+     * the database, so there is no address list and no cutoff.
      */
-    private function handledCondition(array $handled): string
+    private function handledCondition(): string
     {
-        $parts = [];
-        $left  = 1000;
+        $db  = $this->db;
+        $key = 'CONCAT(CASE WHEN g.spf_only > 0 THEN ' . $db->quote('spf_only_source') . ' ELSE ' . $db->quote('align_source')
+            . ' END, ' . $db->quote(':') . ', g.domain_id, ' . $db->quote(':') . ', g.source_ip)';
 
-        foreach ($handled as $domainId => $ips) {
-            $ips = \array_slice(array_values(array_unique(array_map('strval', $ips))), 0, max(0, $left));
-
-            if ($ips === [] || (int) $domainId <= 0) {
-                continue;
-            }
-
-            $left   -= \count($ips);
-            $quoted  = array_map(fn (string $ip): string => $this->db->quote($ip), $ips);
-            $parts[] = '(g.domain_id = ' . (int) $domainId . ' AND g.source_ip IN (' . implode(', ', $quoted) . '))';
-        }
-
-        return $parts === [] ? '' : '(' . implode(' OR ', $parts) . ')';
+        return 'EXISTS (SELECT 1 FROM ' . $db->quoteName('#__dmarc_actions') . ' AS ha WHERE ha.action_key = ' . $key
+            . ' AND ha.status <> ' . $db->quote('open')
+            . ' AND NOT (ha.status = ' . $db->quote('snoozed') . ' AND (ha.snooze_until IS NULL OR ha.snooze_until <= '
+            . $db->quote(gmdate('Y-m-d H:i:s')) . ')))';
     }
-
     /**
      * Change the per-domain cap of the bulk flagged-source query (clamped).
      */
@@ -210,7 +202,7 @@ final class Metrics
      *
      * @return  array<int, array<string, mixed>>
      */
-    public function actionMetricsForAll(array $summaries, array $handledSources = []): array
+    public function actionMetricsForAll(array $summaries): array
     {
         $ids = [];
 
@@ -229,7 +221,7 @@ final class Metrics
         $window   = 7 * 86400;
         $anchors  = $this->latestReportEndAll($ids);
         $this->flaggedTotals = [];
-        $flagged  = $this->flaggedSourcesAll($ids, $handledSources);
+        $flagged  = $this->flaggedSourcesAll($ids);
         $current  = $this->windowTotalsAll($ids, $window, 0);
         $previous = $this->windowTotalsAll($ids, 2 * $window, $window);
 
@@ -1193,7 +1185,7 @@ final class Metrics
      *
      * @return  array<int, array<int, array<string, mixed>>>
      */
-    private function flaggedSourcesAll(array $domainIds, array $handledSources = []): array
+    private function flaggedSourcesAll(array $domainIds): array
     {
         if ($domainIds === []) {
             return [];
@@ -1274,7 +1266,7 @@ final class Metrics
             . $this->db->quoteName('g.fail_delivered') . ' DESC, '
             . $this->db->quoteName('g.source_ip') . ' ASC',
             $this->flaggedLimit,
-            $this->handledCondition($handledSources)
+            $this->handledCondition()
         );
 
         $map = [];

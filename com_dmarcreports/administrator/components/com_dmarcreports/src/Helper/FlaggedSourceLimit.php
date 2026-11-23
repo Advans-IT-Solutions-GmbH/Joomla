@@ -55,9 +55,9 @@ final class FlaggedSourceLimit
      * @param   int     $limit      Rows to keep per domain (clamped).
      * @param   string  $handled    Optional SQL condition that is true for sources the
      *                              administrator already handled (done, ignored, snoozed).
-     *                              Open and handled sources are then capped separately,
-     *                              so handled ones never take the slots of open ones and
-     *                              stay listed for reopening.
+     *                              Open sources keep $limit rows per domain; handled ones
+     *                              are capped separately at {@see self::MAX}, so they never
+     *                              take the slots of open ones and stay listed for reopening.
      *
      * @return  string  The SQL text.
      */
@@ -67,12 +67,16 @@ final class FlaggedSourceLimit
         $partition = $handled === ''
             ? 'g.domain_id'
             : 'g.domain_id, (CASE WHEN ' . $handled . ' THEN 1 ELSE 0 END)';
+        $cap       = $handled === ''
+            ? (string) $limit
+            : '(CASE WHEN ranked.flag_handled = 1 THEN ' . self::MAX . ' ELSE ' . $limit . ' END)';
 
         return 'SELECT ranked.* FROM (SELECT g.*, '
+            . ($handled === '' ? '' : '(CASE WHEN ' . $handled . ' THEN 1 ELSE 0 END) AS flag_handled, ')
             . 'ROW_NUMBER() OVER (PARTITION BY ' . $partition . ' ORDER BY ' . $orderBy . ') AS flag_rank, '
             . 'COUNT(*) OVER (PARTITION BY g.domain_id) AS flag_total '
             . 'FROM (' . $grouped . ') AS g) AS ranked '
-            . 'WHERE ranked.flag_rank <= ' . $limit . ' '
+            . 'WHERE ranked.flag_rank <= ' . $cap . ' '
             . 'ORDER BY ranked.domain_id ASC, ranked.flag_rank ASC';
     }
 }
