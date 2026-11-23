@@ -248,7 +248,7 @@ foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
 
     try {
         // Joomla only copies the language files of tags that exist.
-        [$code, $output] = sh_cli_install(JOOMLA_ROOT, $package);
+        [$code, $output] = sh_cli_install_checked(JOOMLA_ROOT, $package);
 
         if ($code !== 0) {
             hp_fail("$tag: cannot install language files: " . sh_strip_ansi($output));

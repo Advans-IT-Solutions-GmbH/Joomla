@@ -195,7 +195,7 @@ HTACCESS, true, true);
             file_put_contents(self::HTACCESS, $htaccess);
         }
 
-        [$code, $output] = sh_cli_install(JOOMLA_ROOT, self::PACKAGE);
+        [$code, $output] = sh_cli_install_checked(JOOMLA_ROOT, self::PACKAGE);
         $normalised      = $this->normalise(strip_tags(sh_strip_ansi($output)));
 
         $this->test("$label: installation succeeds", $code === 0, "exit code $code\n$output");

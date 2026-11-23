@@ -32,6 +32,7 @@ class UpdateTest
         'component' => [
             'archive' => 'packages/com_dmarcreports.zip',
             'url'     => 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/com_dmarcreports/updates/update.xml',
+            'dir'     => '/var/www/html/administrator/components/com_dmarcreports',
             'where'   => "type = 'component' AND element = 'com_dmarcreports'",
             'element'  => 'com_dmarcreports',
             'type'     => 'component',
@@ -41,6 +42,7 @@ class UpdateTest
         'module' => [
             'archive' => 'packages/mod_dmarcreports.zip',
             'url'     => 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/mod_dmarcreports/updates/update.xml',
+            'dir'     => '/var/www/html/administrator/modules/mod_dmarcreports',
             'where'   => "type = 'module' AND element = 'mod_dmarcreports'",
             'element'  => 'mod_dmarcreports',
             'type'     => 'module',
@@ -50,6 +52,7 @@ class UpdateTest
         'task plugin' => [
             'archive' => 'packages/plg_task_dmarcreports.zip',
             'url'     => 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_task_dmarcreports/updates/update.xml',
+            'dir'     => '/var/www/html/plugins/task/dmarcreports',
             'where'   => "type = 'plugin' AND folder = 'task' AND element = 'dmarcreports'",
             'element'  => 'dmarcreports',
             'type'     => 'plugin',
@@ -59,6 +62,7 @@ class UpdateTest
         'system plugin' => [
             'archive' => 'packages/plg_system_dmarcmtasts.zip',
             'url'     => 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_system_dmarcmtasts/updates/update.xml',
+            'dir'     => '/var/www/html/plugins/system/dmarcmtasts',
             'where'   => "type = 'plugin' AND folder = 'system' AND element = 'dmarcmtasts'",
             'element'  => 'dmarcmtasts',
             'type'     => 'plugin',
@@ -98,7 +102,7 @@ class UpdateTest
         // independent update stream.
         foreach (self::CHILDREN as $label => $child) {
             $this->test("Standalone $label installed with its own update server", function () use ($zip, $child) {
-                return $this->installStandaloneChild($zip, $child['archive'], $child['url']);
+                return $this->installStandaloneChild($zip, $child['archive'], $child['url'], $child['dir']);
             });
             $this->test("Standalone $label linked to its own update site", function () use ($child) {
                 return $this->linkCount($child['where']) > 0 && $this->siteCount($child['url']) > 0;
@@ -257,12 +261,27 @@ class UpdateTest
         // and the maintenance:database --fix workaround emptied the registered version.
         $admin = '/var/www/html/administrator/components/com_dmarcreports';
         copy($admin . '/dmarcreports.xml', $admin . '/com_dmarcreports.xml');
+        // The old file is one an earlier installation wrote: the installer recognises it as its own and
+        // removes it, instead of pausing on it as unknown content.
+        $stateRoot = '/var/www/html/administrator/advans-installer-state';
+        $legacyHash = hash_file('sha256', $admin . '/com_dmarcreports.xml');
+        foreach (['pkg_dmarcreports', 'com_dmarcreports'] as $recordOwner) {
+            $recordFile = $stateRoot . '/' . $recordOwner . '/installed.php';
+            $record     = is_file($recordFile) ? $this->statePayload($recordFile) : ['version' => '', 'files' => []];
+            $record['files']['administrator/components/com_dmarcreports/com_dmarcreports.xml'] = $legacyHash;
+            @mkdir(dirname($recordFile), 0700, true);
+            file_put_contents($recordFile, "<?php exit; ?>\n" . json_encode($record, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        }
+        // Start from a site that has acknowledged no recommendation yet: the first attempt stops at the
+        // package itself, before any bundled extension is reached.
+        foreach (glob($stateRoot . '/*/backup-recommendation.php') ?: [] as $acknowledged) {
+            unlink($acknowledged);
+        }
         $this->db->query("UPDATE {$this->dbPrefix}extensions SET manifest_cache = JSON_SET(manifest_cache, '$.version', '')"
             . " WHERE type = 'component' AND element = 'com_dmarcreports'");
         // The backup recommendation stops the first package attempt; retries may encounter each
         // bundled extension's own version-scoped reminder before Joomla reaches its file-copy phase.
         [$firstCode, $firstOutput] = sh_cli_install('/var/www/html', $zip);
-        $stateRoot = '/var/www/html/administrator/advans-installer-state';
         $packageNotice = $this->statePayload($stateRoot . '/pkg_dmarcreports/backup-recommendation.php');
         $this->test('First package update stops before file changes with reminder metadata only', function () use ($firstCode, $firstOutput, $packageNotice) {
             if ($firstCode === 0) {
@@ -474,7 +493,7 @@ class UpdateTest
      * without <updateservers>), give its manifest back the standalone update
      * server and install it through the Joomla CLI.
      */
-    private function installStandaloneChild(string $packageZip, string $archive, string $url): bool
+    private function installStandaloneChild(string $packageZip, string $archive, string $url, string $installedDir): bool
     {
         // Stage inside the site's tmp folder, where the package itself is
         // installed from, so the Joomla CLI can read the archive.
@@ -499,7 +518,8 @@ class UpdateTest
             return false;
         }
 
-        $patched = false;
+        $patched   = false;
+        $originals = [];
         for ($i = 0; $i < $child->numFiles; $i++) {
             $name = (string) $child->getNameIndex($i);
             if (strpos($name, '/') !== false || substr($name, -4) !== '.xml') {
@@ -513,6 +533,7 @@ class UpdateTest
                 . '        <server type="extension" name="Standalone updates">' . $url . "</server>\n"
                 . "    </updateservers>\n";
             $child->addFromString($name, str_replace('</extension>', $block . '</extension>', $xml));
+            $originals[$name] = $xml;
             $patched = true;
         }
         $child->close();
@@ -529,6 +550,15 @@ class UpdateTest
 
         if ($exitCode !== 0) {
             echo '    ' . implode("\n    ", $output) . "\n";
+        }
+
+        // The update server is registered in the database now. The installed manifest goes back to the
+        // released bytes: a manifest edited on a site is local content, and the package update pauses on it
+        // by design. This test is about the channel switch, not about that pause.
+        foreach ($originals as $name => $xml) {
+            if ($exitCode === 0 && is_file($installedDir . '/' . $name)) {
+                file_put_contents($installedDir . '/' . $name, $xml);
+            }
         }
 
         return $exitCode === 0;

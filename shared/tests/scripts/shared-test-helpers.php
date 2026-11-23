@@ -232,13 +232,15 @@ function sh_cli_install(string $root, string $package): array
 /**
  * Install or update through the CLI and require that the shared installer decided by itself.
  * A first-attempt full-site-backup recommendation is retried for the same package only when the
- * installer wrote fresh reminder metadata. Other failed updates are never retried automatically.
+ * installer wrote fresh reminder metadata (a package stops once for itself and once for each bundled
+ * extension). Other failed updates are never retried automatically. The returned output is the one of
+ * the last attempt.
  *
  * @return array{0:int, 1:string}
  */
 function sh_cli_install_checked(string $root, string $package): array
 {
-    $allOutput = '';
+    $stopped = 0;
 
     for ($attempt = 0; $attempt < 16; $attempt++) {
         $before = [];
@@ -246,10 +248,8 @@ function sh_cli_install_checked(string $root, string $package): array
             $before[$path] = hash_file('sha256', $path);
         }
         [$code, $output] = sh_cli_install($root, $package);
-        $allOutput .= ($allOutput === '' ? '' : "\n") . $output;
-
         if ($code === 0) {
-            return [$code, $allOutput];
+            return [$code, $stopped === 0 ? $output : $output . "\n(" . $stopped . ' earlier attempt(s) stopped at the backup recommendation before file changes.)'];
         }
 
         clearstatcache();
@@ -262,13 +262,15 @@ function sh_cli_install_checked(string $root, string $package): array
         }
 
         if ($newRecommendations === []) {
-            return [$code, $allOutput];
+            return [$code, $output];
         }
 
-        $allOutput .= "\nA backup recommendation stopped the update before file changes; retrying the same package.";
+        // Only the outcome of the last attempt counts: the output of an attempt that stopped at the
+        // recommendation is expected to carry an error and must not be mistaken for the result.
+        $stopped++;
     }
 
-    return [1, $allOutput . "\nThe package update exceeded the bounded reminder retry count."];
+    return [1, $output . "\nThe package update exceeded the bounded reminder retry count."];
 }
 
 /**

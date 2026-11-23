@@ -47,9 +47,17 @@ $update = static function (): string {
         throw new RuntimeException('The package could not be copied.');
     }
 
-    $output = [];
-    exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=' . escapeshellarg($package) . ' --no-interaction 2>&1',
-        $output, $exitCode);
+    // The first update attempt of a version stops at the full-site backup recommendation: repeat it
+    // once, as the notice asks, and judge the attempt that ran.
+    for ($attempt = 0; $attempt < 2; $attempt++) {
+        $output = [];
+        exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=' . escapeshellarg($package) . ' --no-interaction 2>&1',
+            $output, $exitCode);
+
+        if ($exitCode === 0 || !str_contains(implode("\n", $output), 'Before you update')) {
+            break;
+        }
+    }
 
     return $exitCode . "\n" . implode("\n", $output);
 };
