@@ -13,6 +13,7 @@ define('_JEXEC', 1);
 
 require_once '/var/www/html/libraries/vendor/autoload.php';
 require_once '/var/www/html/administrator/components/com_dmarcreports/src/Helper/SourceClassifier.php';
+require_once '/var/www/html/administrator/components/com_dmarcreports/src/Helper/FlaggedSourceLimit.php';
 require_once '/var/www/html/administrator/components/com_dmarcreports/src/Helper/Metrics.php';
 require_once '/var/www/html/administrator/components/com_dmarcreports/src/Helper/ActionStatus.php';
 
@@ -856,14 +857,15 @@ class MetricsTest
 
             $bulk = $metrics->actionMetricsForAll($metrics->domainSummaries())[$domainId]['flagged_sources'] ?? [];
 
-            $limit = \Advans\Component\DmarcReports\Administrator\Helper\FlaggedSourceLimit::PER_DOMAIN;
+            $limit   = \Advans\Component\DmarcReports\Administrator\Helper\FlaggedSourceLimit::PER_DOMAIN;
+            $totalOk = (int) ($metrics->actionMetricsForAll($metrics->domainSummaries())[$domainId]['flagged_sources_total'] ?? 0) === count($detailIps);
 
-            $this->test('Bulk (dashboard) metrics are bounded to the top-ranked sources of the detail list', function () use ($bulk, $detailIps, $limit) {
+            $this->test('Bulk (dashboard) metrics are bounded to the top-ranked sources of the detail list', function () use ($bulk, $detailIps, $limit, $totalOk) {
                 $bulkIps = array_map(static fn (array $source): string => $source['ip'], $bulk);
 
                 return count($bulk) === $limit
                     && $bulkIps === array_slice($detailIps, 0, $limit)
-                    && (int) ($bulk[0]['flagged_total'] ?? 0) === count($detailIps)
+                    && $totalOk
                     && !in_array(false, array_map(
                         static fn (array $source): bool => (int) ($source['evidence_window_end'] ?? 0) === self::ANCHOR,
                         $bulk

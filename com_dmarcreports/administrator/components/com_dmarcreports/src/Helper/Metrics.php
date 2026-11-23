@@ -31,6 +31,35 @@ final class Metrics
     /** Most flagged sources per domain the bulk (dashboard) query loads. */
     private int $flaggedLimit = FlaggedSourceLimit::PER_DOMAIN;
 
+    /** @var array<int, int> Flagged-source count per domain from the last bulk query. */
+    private array $flaggedTotals = [];
+
+    /**
+     * SQL condition true for the sources already handled by the administrator
+     * (at most 1000 addresses are listed; any beyond count as open, which stays bounded).
+     *
+     * @param   array<int, array<int, string>>  $handled  Domain id => addresses.
+     */
+    private function handledCondition(array $handled): string
+    {
+        $parts = [];
+        $left  = 1000;
+
+        foreach ($handled as $domainId => $ips) {
+            $ips = \array_slice(array_values(array_unique(array_map('strval', $ips))), 0, max(0, $left));
+
+            if ($ips === [] || (int) $domainId <= 0) {
+                continue;
+            }
+
+            $left   -= \count($ips);
+            $quoted  = array_map(fn (string $ip): string => $this->db->quote($ip), $ips);
+            $parts[] = '(g.domain_id = ' . (int) $domainId . ' AND g.source_ip IN (' . implode(', ', $quoted) . '))';
+        }
+
+        return $parts === [] ? '' : '(' . implode(' OR ', $parts) . ')';
+    }
+
     /**
      * Change the per-domain cap of the bulk flagged-source query (clamped).
      */
@@ -181,7 +210,7 @@ final class Metrics
      *
      * @return  array<int, array<string, mixed>>
      */
-    public function actionMetricsForAll(array $summaries): array
+    public function actionMetricsForAll(array $summaries, array $handledSources = []): array
     {
         $ids = [];
 
@@ -199,7 +228,8 @@ final class Metrics
 
         $window   = 7 * 86400;
         $anchors  = $this->latestReportEndAll($ids);
-        $flagged  = $this->flaggedSourcesAll($ids);
+        $this->flaggedTotals = [];
+        $flagged  = $this->flaggedSourcesAll($ids, $handledSources);
         $current  = $this->windowTotalsAll($ids, $window, 0);
         $previous = $this->windowTotalsAll($ids, 2 * $window, $window);
 
@@ -227,6 +257,7 @@ final class Metrics
                 'dmarc_pass'         => (int) ($summary['dmarc_pass'] ?? 0),
                 'reject_under_p'     => (int) ($summary['reject_under_p'] ?? 0),
                 'flagged_sources'    => $anchor > 0 ? ($flagged[$domainId] ?? []) : [],
+                'flagged_sources_total' => $anchor > 0 ? ($this->flaggedTotals[$domainId] ?? 0) : 0,
                 'pass_rate_prev'     => null,
             ];
 
@@ -1162,7 +1193,7 @@ final class Metrics
      *
      * @return  array<int, array<int, array<string, mixed>>>
      */
-    private function flaggedSourcesAll(array $domainIds): array
+    private function flaggedSourcesAll(array $domainIds, array $handledSources = []): array
     {
         if ($domainIds === []) {
             return [];
@@ -1242,14 +1273,15 @@ final class Metrics
             $this->db->quoteName('g.spf_only') . ' DESC, '
             . $this->db->quoteName('g.fail_delivered') . ' DESC, '
             . $this->db->quoteName('g.source_ip') . ' ASC',
-            $this->flaggedLimit
+            $this->flaggedLimit,
+            $this->handledCondition($handledSources)
         );
 
         $map = [];
 
         foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
             $flagged = self::flaggedRow($row);
-            $flagged['flagged_total'] = (int) ($row['flag_total'] ?? 0);
+            $this->flaggedTotals[(int) $row['domain_id']] = (int) ($row['flag_total'] ?? 0);
             $end = (int) ($row['evidence_window_end'] ?? 0);
             $flagged['evidence_total'] = (int) $flagged['total'];
             $flagged['evidence_window_fallback'] = false;

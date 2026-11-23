@@ -44,4 +44,15 @@ class FlaggedSourceLimitTest extends TestCase
         );
         $this->assertLessThan(FlaggedSourceLimit::MAX, FlaggedSourceLimit::PER_DOMAIN);
     }
+
+    public function testHandledSourcesAreCappedSeparatelyFromOpenOnes(): void
+    {
+        $sql = FlaggedSourceLimit::wrap('SELECT 1', 'x', 50, "g.source_ip IN ('192.0.2.1')");
+
+        $this->assertStringContainsString(
+            "PARTITION BY g.domain_id, (CASE WHEN g.source_ip IN ('192.0.2.1') THEN 1 ELSE 0 END)",
+            $sql
+        );
+        $this->assertStringContainsString('flag_rank <= 50', $sql);
+    }
 }

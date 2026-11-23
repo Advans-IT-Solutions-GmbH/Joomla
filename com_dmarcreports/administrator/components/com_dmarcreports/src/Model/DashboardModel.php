@@ -125,7 +125,7 @@ class DashboardModel extends BaseDatabaseModel
         // Resolve the per-domain Action Center metrics for every domain in a
         // fixed, small number of grouped queries rather than fanning out to
         // several queries per domain.
-        $allMetrics = $metrics->actionMetricsForAll($summaries);
+        $allMetrics = $metrics->actionMetricsForAll($summaries, $this->handledSources($status, $summaries));
 
         // Close stored "new source" items whose source is now confirmed through
         // DKIM. A failure here must never keep the dashboard from rendering.
@@ -197,6 +197,52 @@ class DashboardModel extends BaseDatabaseModel
         usort($partition['suppressed'], $sort);
 
         return $this->actions = $partition;
+    }
+
+    /**
+     * The source addresses per domain whose action the administrator already
+     * handled (done, ignored or still snoozed), so the capped bulk query keeps
+     * them apart from the open ones.
+     *
+     * @param   array<int, array<string, mixed>>  $summaries
+     *
+     * @return  array<int, array<int, string>>
+     */
+    private function handledSources(ActionStatus $status, array $summaries): array
+    {
+        $domainIds = [];
+
+        foreach ($summaries as $summary) {
+            $domainIds[] = (int) ($summary['id'] ?? 0);
+        }
+
+        $handled = [];
+        $now     = time();
+
+        try {
+            foreach ($status->statuses() as $key => $state) {
+                if ($state['status'] === 'open' || ($state['status'] === 'snoozed' && $state['snooze_until'] <= $now)) {
+                    continue;
+                }
+
+                $parts    = explode(':', (string) $key, 3);
+                $domainId = (int) ($parts[1] ?? 0);
+
+                if (!\in_array($domainId, $domainIds, true)) {
+                    continue;
+                }
+
+                $ip = ActionStatus::sourceOf((string) $key, $domainId);
+
+                if ($ip !== '') {
+                    $handled[$domainId][] = $ip;
+                }
+            }
+        } catch (\Throwable $e) {
+            return [];
+        }
+
+        return $handled;
     }
 
     /**

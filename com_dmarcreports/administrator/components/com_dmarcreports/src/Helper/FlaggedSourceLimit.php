@@ -53,15 +53,23 @@ final class FlaggedSourceLimit
      * @param   string  $grouped    The grouped inner query; must expose `domain_id`.
      * @param   string  $orderBy    The ranking, e.g. "spf_only DESC, source_ip ASC".
      * @param   int     $limit      Rows to keep per domain (clamped).
+     * @param   string  $handled    Optional SQL condition that is true for sources the
+     *                              administrator already handled (done, ignored, snoozed).
+     *                              Open and handled sources are then capped separately,
+     *                              so handled ones never take the slots of open ones and
+     *                              stay listed for reopening.
      *
      * @return  string  The SQL text.
      */
-    public static function wrap(string $grouped, string $orderBy, int $limit): string
+    public static function wrap(string $grouped, string $orderBy, int $limit, string $handled = ''): string
     {
-        $limit = self::clamp($limit);
+        $limit     = self::clamp($limit);
+        $partition = $handled === ''
+            ? 'g.domain_id'
+            : 'g.domain_id, (CASE WHEN ' . $handled . ' THEN 1 ELSE 0 END)';
 
         return 'SELECT ranked.* FROM (SELECT g.*, '
-            . 'ROW_NUMBER() OVER (PARTITION BY g.domain_id ORDER BY ' . $orderBy . ') AS flag_rank, '
+            . 'ROW_NUMBER() OVER (PARTITION BY ' . $partition . ' ORDER BY ' . $orderBy . ') AS flag_rank, '
             . 'COUNT(*) OVER (PARTITION BY g.domain_id) AS flag_total '
             . 'FROM (' . $grouped . ') AS g) AS ranked '
             . 'WHERE ranked.flag_rank <= ' . $limit . ' '
