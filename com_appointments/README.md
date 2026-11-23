@@ -2112,15 +2112,34 @@ default menu item, the home page, whose modules then wrap the receipt.
 A reschedule or cancel link of a booking that the host or an administrator cancelled (and did not
 erase) opens a notice that the appointment is already cancelled, with its date and time, a way to
 a new booking and no form. The bookings table keeps that version for this purpose
-(`cancelled_version_utc`). Cancelling as the booking person erases the booking at once, so its
-links then answer 404 like every other link that opens nothing (an older version, a tampered
-signature, an unknown id, an erased booking). The 404 is one page of the
+(`cancelled_version_utc`). Cancelling as the booking person erases the booking at once. With the
+default **anonymise** mode its row stays without personal data and still carries that version, so a
+reschedule or cancel link of the cancelled version opens the neutral notice «This appointment has been
+cancelled and its personal data has been erased.» with **Book a new appointment**, and nothing of the
+appointment (no title, date or time). With **delete** mode no row exists, a signature cannot be
+verified without one, and the link answers 404 like every other link that opens nothing (an older
+version, a tampered signature, an unknown id). The 404 is one page of the
 component, «Link no longer valid»: «This link is not valid. After every change to an appointment,
 only the links in the latest email about it apply.», why that happens (rescheduled, cancelled or
 already used) and **Book a new appointment**. The page is the same for all of these cases and shows
 nothing of the appointment, so it does not reveal which case applies; the way to a new booking comes
 from the menu item of the address (`BackLink::again()`), never from the booking the link names. A
 form of such a link that is still open in another tab changes nothing and leads to the same page.
+
+**Special cases of a cancellation by the booking person**
+
+1. Old links: with **anonymise** they open the neutral erased notice (status 200, no appointment
+   data), with **delete** the «Link no longer valid» page (404); an older version, a tampered link and
+   an unknown id always get that 404 page.
+2. A cancellation by the host or an administrator does not erase: the data stays until the booking
+   retention, and the links of that version show the «already cancelled» notice with date and time.
+3. If the erasure after a successful cancellation fails, the failure is only logged; the cancellation
+   stands and the booking retention erases the data later.
+4. The cancellation reason appears only in the host's mail and is stored nowhere afterwards (the
+   erasure record holds no personal data).
+5. In **delete** mode the cancelled booking leaves the calendar feeds; the campaign statistics keep
+   their counters, which hold no personal data.
+6. The cancellation mail to the booking person contains no link.
 
 The cancellation mail to the booking person offers no link: the booking person's cancellation erases
 (or deletes, by the **erase mode** setting) the personal data right after the mails went out, and a

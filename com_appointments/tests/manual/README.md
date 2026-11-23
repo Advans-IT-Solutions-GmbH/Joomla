@@ -462,6 +462,9 @@ phone, time zone, language, guests, answers, free text and conference data.
 | DS-06 | NEG | Reuse the consumed cancel link or substitute another booking ID. | 404, no disclosure or second erasure action. |
 | DS-07 | INT | Inspect backend, CSV, ICS, feed and privacy export after erasure. | Previously stored contact, guest, answer and conference data no longer available. |
 | DS-08 | INT | Inspect audit table. | Only booking ID, action, path, timestamp and permitted administrator ID; no invitee data. |
+| DS-11 | NEG | Cancel as the booking person (anonymise mode), then open the old cancel and reschedule links in another browser. | Neutral notice «cancelled and personal data erased» with Book a new appointment, HTTP 200, no title/date/time/e-mail, no form. A tampered or older link answers 404 «Link no longer valid». |
+| DS-12 | NEG | Same with erase mode «Delete». | No row: the old links answer 404 «Link no longer valid»; the booking left the calendar feeds, the campaign counters stay. |
+| DS-13 | INT | Cancel as host or administrator, open the links; check the Options help page «Privacy» for the six special cases. | Data stays until retention; links show «already cancelled» with date and time; reason only in the host mail; cancellation mail to the booking person has no link; help page lists the six cases in DE/EN/FR. |
 
 **Important:** the component cannot retroactively erase delivered mail, exported files, external
 calendar copies or backups. Treat these separately from removal in the active extension database.

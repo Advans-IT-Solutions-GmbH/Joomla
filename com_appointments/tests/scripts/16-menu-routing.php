@@ -700,11 +700,11 @@ try {
             && str_contains($html, 'You will receive a confirmation by email.')
             && preg_match('#<h1[^>]*>\s*Appointment cancelled\s*</h1>#', $html) === 1,
             'The cancellation receipt shows the appointment, the coming confirmation mail and a new booking');
-        // Another browser with the same link: the booking is erased, the link is refused.
+        // Another browser with the same link: the booking is erased, the link shows only the neutral notice.
         $outsider = new AppointmentsHttp('http://localhost', 'menu-used-link');
         $html = $outsider->request($path);
-        $check($outsider->status === 404 && !str_contains($html, 'booking.manage'),
-            'The used cancel link is refused once the cancellation erased the booking');
+        $check($outsider->status === 200 && !str_contains($html, 'booking.manage') && str_contains($html, 'its personal data has been erased'),
+            'The used cancel link shows only the erased notice once the cancellation erased the booking');
     }
 
     // The back button of a booking page: hidden on a menu item of one event type, so the list of

@@ -350,20 +350,22 @@ try {
         && !str_contains($html, 'You will receive a confirmation by email.'),
         'The cancellation receipt names the appointment with date, time and zone, without promising a mail that failed');
     $check(str_contains($client->request($freshCancel), 'Your appointment has been cancelled'), 'Repeated same-browser completion is an idempotent receipt');
-    // Another browser with the same link: the booking is erased, so the link is as invalid as any
-    // other. The reschedule link of the same version too, and a form still open in another tab
-    // (opened before the cancellation, its token kept) changes nothing.
+    // Another browser with the same link: the booking is erased, so the link opens only the neutral
+    // notice that the appointment is cancelled and its data erased, nothing of the appointment. The
+    // reschedule link of the same version too, and a form still open in another tab (opened before
+    // the cancellation, its token kept) changes nothing.
     $html = $outsider->request($freshCancel);
-    $check($outsider->status === 404 && str_contains($html, 'This link is not valid.') && !str_contains($html, 'manage-confirm'),
-        'The used cancellation link is refused in another browser, without a form and without data');
+    $check($outsider->status === 200 && str_contains($html, 'its personal data has been erased') && !str_contains($html, 'manage-confirm')
+        && !str_contains($html, 'com-appointments-summary') && str_contains($html, 'com-appointments-book-again'),
+        'The used cancellation link shows the neutral erased notice with a way to book again, without a form and without data');
     $html = $outsider->request($fixture->link($moved, 'reschedule'));
-    $check($outsider->status === 404 && !str_contains($html, 'new-start') && !str_contains($html, 'booking.manage'),
-        'The reschedule link of the cancelled version is refused instead of offering times');
+    $check($outsider->status === 200 && str_contains($html, 'its personal data has been erased') && !str_contains($html, 'new-start') && !str_contains($html, 'booking.manage'),
+        'The reschedule link of the cancelled version shows the notice instead of offering times');
     parse_str((string) parse_url($freshCancel, PHP_URL_QUERY), $staleQuery);
     $outsider->request('/index.php?option=com_appointments&task=booking.manage', array_replace($staleQuery, [
         $staleToken => 1, 'confirm' => 1,
     ]));
-    $check($outsider->status === 404 && (int) $fixture->row((int) $booking['id'])['sequence'] === 2,
+    $check((int) $fixture->row((int) $booking['id'])['sequence'] === 2,
         'Submitting a cancellation for an erased appointment changes nothing');
     // Older links, tampered or unknown links stay one indistinguishable refusal: 404, a message for
     // the person and nothing technical.

@@ -102,8 +102,13 @@ if (!$this->completed && !$this->cancelled && $this->action === 'reschedule') {
             <?php endif; ?>
         <?php elseif ($this->cancelled) : ?>
             <?php // A link of a cancelled appointment: what was cancelled, no form. ?>
-            <p class="com-appointments-status" role="status" tabindex="-1" autofocus><?php echo Text::_('COM_APPOINTMENTS_MANAGE_ALREADY_CANCELLED'); ?></p>
-            <?php echo $summary((string) $this->item->title, (string) $this->item->start_utc, (string) $this->item->end_utc); ?>
+            <?php if ($this->item->anonymised_utc !== null) : ?>
+                <?php // Erased by the cancellation: nothing of the appointment is shown. ?>
+                <p class="com-appointments-status" role="status" tabindex="-1" autofocus><?php echo Text::_('COM_APPOINTMENTS_MANAGE_CANCELLED_ERASED'); ?></p>
+            <?php else : ?>
+                <p class="com-appointments-status" role="status" tabindex="-1" autofocus><?php echo Text::_('COM_APPOINTMENTS_MANAGE_ALREADY_CANCELLED'); ?></p>
+                <?php echo $summary((string) $this->item->title, (string) $this->item->start_utc, (string) $this->item->end_utc); ?>
+            <?php endif; ?>
         <?php else : ?>
             <?php echo $summary((string) $this->item->title, (string) $this->item->start_utc, (string) $this->item->end_utc, (string) $this->item->invitee_email); ?>
             <?php if ($this->action === 'cancel') : ?>

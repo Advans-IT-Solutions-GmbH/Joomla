@@ -9,18 +9,24 @@ Three independent paths are required. All three are part of version 1.
 
 ## Path 1 — self service from every e-mail
 
-Every e-mail the component sends to an invitee carries two signed links in its footer, in the
-recipient's language:
+Every e-mail the component sends to the primary invitee carries signed links in its footer, in the
+recipient's language: **Reschedule / cancel** — the existing booking link. There is no separate
+«Delete my data» link: cancelling as the booking person erases the data at once (decision #423).
+The cancellation mail itself carries no link.
 
-- **Reschedule / cancel** — the existing booking link.
-- **Delete my data** — a second link with its own action in the HMAC, so a cancel link can never be
-  replayed as a deletion.
+Special cases (also in README and help page «Privacy»):
 
-The deletion link opens a page on the site that states, in plain language, exactly what will be
-removed and what will remain, and asks for one confirmation. No login, no further e-mail round trip,
-no contact form.
+1. Old links: anonymise mode — the row keeps `cancelled_version_utc`, so a link of the cancelled
+   version opens a neutral notice (HTTP 200, no title/date/time, Book a new appointment); delete
+   mode — no row, a signature cannot be verified without it, so the link answers 404 «Link no
+   longer valid»; older, tampered and unknown links always get that 404.
+2. Cancel by host or admin does not erase; data stays until retention.
+3. A failed erase after a successful cancel is only logged; retention erases later.
+4. The cancel reason lives only in the host mail.
+5. Delete mode removes the booking from the feeds; campaign counters stay.
+6. The cancellation mail has no link.
 
-### What the confirmation page says
+### What the cancellation says
 
 - Which booking it concerns (event type, date, time) and which e-mail address.
 - That name, e-mail address, phone number and all answers to the booking form will be erased

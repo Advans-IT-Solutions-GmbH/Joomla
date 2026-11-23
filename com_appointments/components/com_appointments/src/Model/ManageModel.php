@@ -63,7 +63,21 @@ class ManageModel extends BaseDatabaseModel
         // Personal fields are encrypted at rest; one that cannot be decrypted is shown empty.
         $booking = $booking ? \Advans\Component\Appointments\Administrator\Helper\BookingData::fromApplication()->openObject($booking) : null;
 
-        if (!$booking || $booking->anonymised_utc !== null) {
+        if (!$booking) {
+            throw $this->invalid();
+        }
+
+        // A booking the invitee's cancellation anonymised keeps the row version the cancelled
+        // links were signed for, so only the holder of such a link gets the neutral notice. The
+        // row holds nothing personal; every other link to an anonymised booking is refused.
+        if ($booking->anonymised_utc !== null) {
+            $cancelledVersion = (string) ($booking->cancelled_version_utc ?? '');
+
+            if ((int) $booking->state === 2 && $cancelledVersion !== ''
+                && $this->links()->verify($id, $this->action(), $cancelledVersion, $this->signature())) {
+                return $booking;
+            }
+
             throw $this->invalid();
         }
 
