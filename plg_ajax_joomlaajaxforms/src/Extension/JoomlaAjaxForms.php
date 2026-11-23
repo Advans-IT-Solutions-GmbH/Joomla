@@ -2618,6 +2618,10 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             );
         } catch (\Throwable $e) {
             Log::add('Fallback mail layout failed, sending plain text: ' . $e->getMessage(), Log::WARNING, 'plg_ajax_joomlaajaxforms');
+            // The inline logo attached for the layout would travel with the text mail as a stray attachment.
+            if (method_exists($mailer, 'clearAttachments')) {
+                $mailer->clearAttachments();
+            }
             $mailer->isHtml(false);
             $mailer->setBody($plain);
             $mailer->AltBody = '';

@@ -2867,6 +2867,10 @@ class J2Commerce extends CMSPlugin implements SubscriberInterface
         } catch (\Throwable $e) {
             // A broken layout must not cost the recipient the notice: send the text as composed.
             Log::add('Privacy notice mail layout failed, sending plain text: ' . $e->getMessage(), Log::WARNING, 'plg_privacy_j2commerce');
+            // The inline logo attached for the layout would travel with the text mail as a stray attachment.
+            if (method_exists($mailer, 'clearAttachments')) {
+                $mailer->clearAttachments();
+            }
             $mailer->isHtml(false);
             $mailer->setBody($plain);
             $mailer->AltBody = '';
