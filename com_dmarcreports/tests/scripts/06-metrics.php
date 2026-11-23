@@ -954,7 +954,7 @@ class MetricsTest
                 $ip      = sprintf('2001:db8:7::%04x', $i);
                 $spfOnly = $i <= 260;
                 $ips[$i] = $ip;
-                $this->db->insertObject('#__dmarc_records', (object) [
+                $record = (object) [
                     'report_id'    => (int) $report->id,
                     'domain_id'    => $domainId,
                     'source_ip'    => $ip,
@@ -965,7 +965,8 @@ class MetricsTest
                     'dkim_aligned' => 0,
                     'spf_aligned'  => (int) $spfOnly,
                     'header_from'  => 'handled-sel.' . self::DOMAIN,
-                ]);
+                ];
+                $this->db->insertObject('#__dmarc_records', $record);
             }
 
             $metrics = new Metrics($this->db);
@@ -978,7 +979,7 @@ class MetricsTest
             };
 
             $put = function (int $i, string $code, string $status, ?string $snooze = null, ?int $column = null) use ($domainId, $ips): void {
-                $this->db->insertObject('#__dmarc_actions', (object) [
+                $action = (object) [
                     'domain_id'    => $column ?? $domainId,
                     'action_key'   => $code . ':' . $domainId . ':' . $ips[$i],
                     'category'     => 'source',
@@ -990,7 +991,8 @@ class MetricsTest
                     'last_seen'    => gmdate('Y-m-d H:i:s'),
                     'modified'     => gmdate('Y-m-d H:i:s'),
                     'modified_by'  => 7,
-                ]);
+                ];
+                $this->db->insertObject('#__dmarc_actions', $action);
             };
 
             $returned = function () use ($metrics, $domainId): array {

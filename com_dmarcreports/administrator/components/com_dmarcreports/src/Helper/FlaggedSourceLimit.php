@@ -69,19 +69,25 @@ final class FlaggedSourceLimit
      */
     public static function wrap(string $grouped, string $orderBy, int $limit, string $handled = ''): string
     {
-        $limit     = self::clamp($limit);
-        $partition = $handled === ''
-            ? 'g.domain_id'
-            : 'g.domain_id, (CASE WHEN ' . $handled . ' THEN 1 ELSE 0 END)';
-        $cap       = $handled === ''
-            ? (string) $limit
-            : '(CASE WHEN ranked.flag_handled = 1 THEN ' . self::MAX . ' ELSE ' . $limit . ' END)';
+        $limit = self::clamp($limit);
+
+        if ($handled === '') {
+            $source    = '(' . $grouped . ') AS g';
+            $partition = 'g.domain_id';
+            $cap       = (string) $limit;
+        } else {
+            // The handled flag is computed in its own layer, so the window only
+            // partitions by a plain column (no subquery inside the window spec).
+            $source    = '(SELECT g.*, (CASE WHEN ' . $handled . ' THEN 1 ELSE 0 END) AS flag_handled FROM ('
+                . $grouped . ') AS g) AS g';
+            $partition = 'g.domain_id, g.flag_handled';
+            $cap       = '(CASE WHEN ranked.flag_handled = 1 THEN ' . self::MAX . ' ELSE ' . $limit . ' END)';
+        }
 
         return 'SELECT ranked.* FROM (SELECT g.*, '
-            . ($handled === '' ? '' : '(CASE WHEN ' . $handled . ' THEN 1 ELSE 0 END) AS flag_handled, ')
             . 'ROW_NUMBER() OVER (PARTITION BY ' . $partition . ' ORDER BY ' . $orderBy . ') AS flag_rank, '
             . 'COUNT(*) OVER (PARTITION BY g.domain_id) AS flag_total '
-            . 'FROM (' . $grouped . ') AS g) AS ranked '
+            . 'FROM ' . $source . ') AS ranked '
             . 'WHERE ranked.flag_rank <= ' . $cap . ' '
             . 'ORDER BY ranked.domain_id ASC, ' . ($handled === '' ? '' : 'ranked.flag_handled ASC, ') . 'ranked.flag_rank ASC';
     }
