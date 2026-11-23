@@ -285,6 +285,14 @@ class UpdateTest
             }
         );
 
+        $this->test('Synthetic shared update-site fixture removed', function () use (
+            $taskSiteId,
+            $foreignExtensionId,
+            $foreignUpdateName
+        ) {
+            return $this->removeSharedUpdateFixture($taskSiteId, $foreignExtensionId, $foreignUpdateName);
+        });
+
         $this->test('Component tables still present after update', function () {
             foreach (['dmarc_domains', 'dmarc_sources', 'dmarc_reports', 'dmarc_tlsrpt_reports'] as $table) {
                 $result = $this->db->query("SHOW TABLES LIKE '{$this->dbPrefix}{$table}'");
@@ -583,6 +591,46 @@ class UpdateTest
         $row = $result ? $result->fetch_assoc() : null;
 
         return $row ? (int) $row['cnt'] : -1;
+    }
+
+    private function removeSharedUpdateFixture(int $siteId, int $extensionId, string $name): bool
+    {
+        if ($siteId < 1 || $extensionId < 1) {
+            return false;
+        }
+
+        $name = $this->db->real_escape_string($name);
+        $updateRemoved = $this->db->query(
+            "DELETE FROM {$this->dbPrefix}updates WHERE extension_id = $extensionId AND name = '$name'"
+        ) === true;
+        $linkRemoved = $this->db->query(
+            "DELETE FROM {$this->dbPrefix}update_sites_extensions"
+            . " WHERE update_site_id = $siteId AND extension_id = $extensionId"
+        ) === true;
+        $result = $this->db->query(
+            "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}update_sites_extensions WHERE update_site_id = $siteId"
+        );
+        $row = $result ? $result->fetch_assoc() : null;
+
+        if (!$row) {
+            return false;
+        }
+
+        $orphanedRowsRemoved = true;
+
+        if ((int) $row['cnt'] === 0) {
+            $orphanedRowsRemoved = $this->db->query(
+                "DELETE FROM {$this->dbPrefix}updates WHERE update_site_id = $siteId"
+            ) === true && $this->db->query(
+                "DELETE FROM {$this->dbPrefix}update_sites WHERE update_site_id = $siteId"
+            ) === true;
+        }
+
+        return $updateRemoved
+            && $linkRemoved
+            && $orphanedRowsRemoved
+            && $this->pendingUpdateCount($name, $extensionId) === 0
+            && $this->siteLinkCount($siteId, $extensionId) === 0;
     }
 
     private function test(string $name, callable $fn): void
