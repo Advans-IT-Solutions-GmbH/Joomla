@@ -11,7 +11,8 @@ defined('_JEXEC') or die;
 
 /**
  * Decides, for every existing destination whose bytes differ from the incoming file, what the
- * installation does with it. Unknown or locally changed bytes always halt the installation.
+ * installation does with it. Unknown or locally changed bytes halt the installation, except an
+ * adjustment the extension script vouches for exactly (ADJUST below).
  *
  * Own territory (the extension's own folders, media and language files):
  *  - known bytes this extension wrote or shipped: replaced;
@@ -20,7 +21,9 @@ defined('_JEXEC') or die;
  * Foreign territory (files of other extensions, site templates): the extension script decides per
  * operation through InstallerScript::foreignDecision():
  *  - REPLACE: the file is this extension's own copy (for example a mirror it maintains);
-+'+s file;'s file;
+ *  - ADJUST: a deliberate, minimal change to another extension's file. The script returns it only
+ *    for bytes it recognises exactly (for example a known stock release), so it applies to bytes
+ *    this installer has no record of; unrecognised bytes are answered with HALT;
  *  - SKIP: the file is left as it is and the extension adapts its operation;
  *  - HALT: no safe automatic choice exists; the installation pauses for review.
  */
