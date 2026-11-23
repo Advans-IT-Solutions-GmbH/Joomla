@@ -1,6 +1,6 @@
 # J2Commerce Product Compare Plugin
 
-**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2commerce-product-compare.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2commerce-product-compare.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-productcompare.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-productcompare.yml)

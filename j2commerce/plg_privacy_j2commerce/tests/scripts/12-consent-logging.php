@@ -24,8 +24,8 @@
  *     enabled request type (Show Export Data / Show Delete All Data)
  *   - update path: CLI reinstall keeps a disabled system plugin disabled, adds a missing
  *     default_privacy.php only next to an existing MyProfile override of an installed component,
- *     disables an unchanged J2Commerce 6 checkout override shipped by 1.5.5, keeps a changed one
- *     with a warning, and warns about custom checkout overrides without the J2Commerce event
+ *     pauses without changing an unchanged J2Commerce 6 checkout override shipped by 1.5.5, keeps a
+ *     changed one with a warning, and warns about custom checkout overrides without the event
  *
  * Stack-aware: #__j2store_orders (J2Commerce 4) or #__j2commerce_orders (J2Commerce 6).
  */
@@ -132,8 +132,6 @@ class ConsentLoggingTest
     private const SITE_URL    = 'http://localhost/index.php';
 
     /** script.php RETIRED_OVERRIDE_SUFFIX */
-    private const RETIRED_SUFFIX = '.plg_privacy_j2commerce-disabled';
-
     private $db;
     private int $passed = 0;
     private int $failed = 0;
@@ -1820,19 +1818,17 @@ class ConsentLoggingTest
         $j6        = is_dir(JPATH_SITE . '/components/com_j2commerce');
         $checkout  = "$htmlBase/com_j2commerce/checkout";
         $legacy    = "$checkout/default_shipping_payment.php";
-        $retired   = $legacy . self::RETIRED_SUFFIX;
+        $retired   = $legacy . '.plg_privacy_j2commerce-disabled';
         $noEvent   = "$checkout/bootstrap5/default_shipping_payment.php";
         $withEvent = "$checkout/uikit/default_shipping_payment.php";
         $fixture   = (string) @file_get_contents(__DIR__ . '/fixture-checkout-override-1.5.5.php');
-        $relative  = static fn (string $file): string => substr($file, strlen(JPATH_SITE . '/templates/'));
 
         // The unchanged 1.5.5 copy is deployed on every lane, not only where
         // com_j2commerce is installed: on a lane without that component it serves
         // as the negative case of the mixed-install assertion below.
-        foreach ([$legacy, $retired] as $file) {
-            $restore[] = [$file, is_file($file) ? file_get_contents($file) : null];
-            @mkdir(dirname($file), 0755, true);
-        }
+        $restore[] = [$legacy, is_file($legacy) ? file_get_contents($legacy) : null];
+        $restore[] = [$retired, is_file($retired) ? file_get_contents($retired) : null];
+        @mkdir(dirname($legacy), 0755, true);
 
         $this->test('Fixture of the checkout override shipped by 1.5.5 available', $fixture !== '');
         file_put_contents($legacy, $fixture);
@@ -1873,7 +1869,24 @@ class ConsentLoggingTest
         $setEnabled(0);
 
         [$exitCode, $output, $readable] = $this->runCliUpdate($package);
-        $this->test('CLI update of the package succeeds', $exitCode === 0, 'exit ' . $exitCode . ': ' . mb_substr($readable, -400));
+        $version   = $this->getJ2CommerceVersion();
+        $hasEvent  = $version !== '' && version_compare($version, '6.3.4', '>=');
+        $relative  = static fn (string $file): string => substr($file, strlen(JPATH_SITE . '/templates/'));
+
+        if ($j6 && $hasEvent) {
+            $diag = mb_substr($readable, 0, 1500);
+            clearstatcache();
+            $this->test('An unchanged earlier checkout override pauses the update', $exitCode !== 0, $diag);
+            $this->test('The conflict names the override and shows no renamed copy',
+                str_contains($output, preg_replace('/\s+/', '', $relative($legacy)))
+                    && is_file($legacy) && file_get_contents($legacy) === $fixture && !is_file($retired),
+                $diag);
+            unlink($legacy);
+            [$exitCode, $output, $readable] = $this->runCliUpdate($package);
+        }
+
+        $this->test('CLI update of the package succeeds after any required manual resolution',
+            $exitCode === 0, 'exit ' . $exitCode . ': ' . mb_substr($readable, -400));
 
         // The console cuts long words (paths) at its line length: compare without any
         // whitespace. By reference: $output is replaced by the second update below.
@@ -1906,8 +1919,7 @@ class ConsentLoggingTest
                 is_file($legacy)
                     && $output !== ''
                     && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_OUTDATED'))
-                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_BUNDLED'))
-                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_CHECKOUT_OVERRIDE_RETIRED')),
+                    && !$has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_BUNDLED')),
                 mb_substr($readable, 0, 1500)
             );
         }
@@ -1979,8 +1991,6 @@ class ConsentLoggingTest
         }
 
         if ($j6) {
-            $version   = $this->getJ2CommerceVersion();
-            $hasEvent  = $version !== '' && version_compare($version, '6.3.4', '>=');
             $outdated  = $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_OUTDATED');
             $bundled   = $this->messagePrefix('PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_BUNDLED');
             $diag      = mb_substr($readable, 0, 1500);
@@ -1994,10 +2004,8 @@ class ConsentLoggingTest
             $this->test('No untranslated installer message', $output !== '' && !$has('PLG_PRIVACY_J2COMMERCE_'), $diag);
 
             if ($hasEvent) {
-                $this->test("Update disables the unchanged 1.5.5 checkout override (J2Commerce $version)",
-                    !is_file($legacy) && is_file($retired) && file_get_contents($retired) === $fixture, $diag);
-                $this->test('Update reports the disabled checkout override',
-                    $has($this->messagePrefix('PLG_PRIVACY_J2COMMERCE_CHECKOUT_OVERRIDE_RETIRED')) && $has($relative($legacy)), $diag);
+                $this->test("The unchanged 1.5.5 override remains absent after manual resolution (J2Commerce $version)",
+                    !is_file($legacy) && !is_file($retired), $diag);
             } else {
                 $this->test("Update keeps the 1.5.5 checkout override while J2Commerce ($version) lacks the event", is_file($legacy), $diag);
                 $this->test('Update warns that J2Commerce is too old',

@@ -1,6 +1,6 @@
 # Appointments Privacy Plugin
 
-**Installation and updates:** the [shared backup/approval policy](../../../../README.md#installation-safety-and-repeatable-system-checks) applies to the owning component.
+**Installation and updates:** the [shared installer conflict and recovery policy](../../../../README.md#installation-safety-and-repeatable-system-checks) applies to the owning component.
 
 ## Description
 

@@ -70,10 +70,23 @@ class InstallationTest
                 return $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
             };
             $before = $snapshot();
-            exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=' . escapeshellarg($this->package()) . ' --no-interaction 2>&1', $output, $exitCode);
-            $text = (string) preg_replace('/\s+/u', ' ', implode("\n", $output));
+            $runUpdate = function (): array {
+                $output = [];
+                $exitCode = 0;
+                exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=' . escapeshellarg($this->package()) . ' --no-interaction 2>&1', $output, $exitCode);
 
-            return $exitCode === 0 && count($before) === 1 && $snapshot() === $before && !str_contains($text, 'required scheduled task');
+                return [$exitCode, (string) preg_replace('/\s+/u', ' ', implode("\n", $output))];
+            };
+            [$exitCode, $text] = $runUpdate();
+            $reminderStoppedCleanly = true;
+
+            if (str_contains($text, 'Before you update')) {
+                $reminderStoppedCleanly = $snapshot() === $before;
+                [$exitCode, $text] = $runUpdate();
+            }
+
+            return $reminderStoppedCleanly && $exitCode === 0 && count($before) === 1
+                && $snapshot() === $before && !str_contains($text, 'required scheduled task');
         });
 
         echo "\n=== Installation Test Summary ===\n";

@@ -13,7 +13,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     : dirname(__DIR__, 2) . '/shared/installer/load.php';
 
 use Joomla\CMS\Factory;
-use Advans\Installer\V2\InstallerScript;
+use Advans\Installer\V3\InstallerScript;
 use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
@@ -47,8 +47,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     /**
      * SHA-256 (line endings normalised to LF) of every J2Commerce 6 checkout override
      * (html/com_j2commerce/checkout/default_shipping_payment.php) that earlier versions of this
-     * plugin copied into site templates. An unchanged copy is renamed on install/update, see
-     * retireBundledCheckoutOverrides().
+     * plugin copied into site templates. An unchanged copy is surfaced as an explicit conflict;
+     * the installer never renames or deletes it.
      */
     private const BUNDLED_CHECKOUT_OVERRIDE_HASHES = [
         'f7f80680b6dad4b6a0644a165a004bfa60b70880167c83f861bd9857926a233f', // d2a8ac3
@@ -59,9 +59,6 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
     /** Marker line in the header of every checkout override this plugin shipped */
     private const BUNDLED_OVERRIDE_MARKER = 'Template override for plg_privacy_j2commerce';
-
-    /** Suffix of a retired checkout override (Joomla no longer loads the file) */
-    public const RETIRED_OVERRIDE_SUFFIX = '.plg_privacy_j2commerce-disabled';
 
     /**
      * Returns a fresh query object compatible with Joomla 5 and 6.
@@ -121,7 +118,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
             if (str_contains($content, self::BUNDLED_OVERRIDE_MARKER)
                 && in_array(hash('sha256', str_replace("\r\n", "\n", $content)), self::BUNDLED_CHECKOUT_OVERRIDE_HASHES, true)) {
-                $files[$override] = $this->removalCandidate($parent, 'Retire obsolete bundled checkout override by renaming it');
+                $files[$override] = $this->removalCandidate($parent, 'Remove obsolete bundled checkout override after manual review');
             }
         }
 
@@ -130,8 +127,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
     /**
      * Foreign operations of this plugin in site templates:
-     *  - an unchanged copy of a checkout override that an earlier version deployed is retired by
-     *    renaming it (the file stays next to it) after a verified backup, and reported;
+     *  - an unchanged copy of a checkout override that an earlier version deployed pauses the
+     *    installation for manual resolution; it is never renamed or deleted automatically;
      *  - a changed copy may contain shop changes: it is left in place and the update warns;
      *  - new overrides are only created where no file exists, so they never replace anything.
      */
@@ -143,8 +140,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             return is_string($content)
                 && str_contains($content, self::BUNDLED_OVERRIDE_MARKER)
                 && in_array(hash('sha256', str_replace("\r\n", "\n", $content)), self::BUNDLED_CHECKOUT_OVERRIDE_HASHES, true)
-                ? \Advans\Installer\V2\Planner::ADJUST
-                : \Advans\Installer\V2\Planner::SKIP;
+                ? \Advans\Installer\V3\Planner::HALT
+                : \Advans\Installer\V3\Planner::SKIP;
         }
 
         return parent::foreignDecision($destination, $existing, $known);
@@ -183,7 +180,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             }
 
             $this->warnIfJ2CommerceTooOld();
-            $this->retireBundledCheckoutOverrides();
+            $this->reportBundledCheckoutOverrides();
             $this->warnOutdatedCheckoutOverrides();
             $this->warnOutdatedJ2StoreCheckoutOverrides();
 
@@ -623,20 +620,10 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     }
 
     /**
-     * Retire J2Commerce 6 checkout overrides that earlier versions of this plugin copied into site
-     * templates (html/com_j2commerce/checkout/default_shipping_payment.php). Such a copy shadows the
-     * core bootstrap5 and uikit templates and lacks later core features (payment-step custom fields,
-     * payment descriptions, image URL handling, uikit markup).
-     *
-     * - Unchanged copy (hash of a shipped version) and J2Commerce fires the event: renamed with
-     *   RETIRED_OVERRIDE_SUFFIX, so the core template (which renders the checkbox through the event)
-     *   takes over. Renaming instead of deleting keeps the file for comparison and can be undone.
-     * - Changed copy (plugin marker, unknown hash): may contain shop changes, left in place with a
-     *   warning.
-     * - J2Commerce older than MIN_J2COMMERCE_EVENT_VERSION or version unknown: left in place, the
-     *   copy is then the only place that renders the checkbox.
+     * Report earlier checkout overrides without changing them. Known copies halt in preflight;
+     * changed copies remain untouched and are reported after installation.
      */
-    private function retireBundledCheckoutOverrides(): void
+    private function reportBundledCheckoutOverrides(): void
     {
         if (!is_dir(JPATH_SITE . '/components/com_j2commerce')) {
             return;
@@ -645,9 +632,8 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         $version    = $this->getJ2CommerceVersion();
         $hasEvent   = $version !== '' && version_compare($version, self::MIN_J2COMMERCE_EVENT_VERSION, '>=');
         $db         = Factory::getContainer()->get(DatabaseInterface::class);
-        $retired    = [];
+        $unchanged  = [];
         $modified   = [];
-        $failed     = [];
 
         foreach ($this->getFrontendTemplates($db) as $template) {
             $relative = $template . '/html/com_j2commerce/checkout/default_shipping_payment.php';
@@ -673,38 +659,26 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             if (!$hasEvent) {
                 continue;
             }
-
-            $target = $file . self::RETIRED_OVERRIDE_SUFFIX;
-
-            if (file_exists($target)) {
-                $target .= '-' . bin2hex(random_bytes(16));
-            }
-
-            if (@rename($file, $target)) {
-                $retired[] = $relative;
-            } else {
-                $failed[] = $relative;
-            }
+            $unchanged[] = $relative;
         }
 
         $app = Factory::getApplication();
 
-        if ($retired !== []) {
+        if ($unchanged !== []) {
             $app->enqueueMessage(
                 Text::sprintf(
-                    'PLG_PRIVACY_J2COMMERCE_CHECKOUT_OVERRIDE_RETIRED',
-                    htmlspecialchars(implode(', ', $retired)),
-                    self::RETIRED_OVERRIDE_SUFFIX
+                    'PLG_PRIVACY_J2COMMERCE_CHECKOUT_OVERRIDE_PAUSED',
+                    htmlspecialchars(implode(', ', $unchanged))
                 ),
-                'message'
+                'warning'
             );
         }
 
-        if ($modified !== [] || $failed !== []) {
+        if ($modified !== []) {
             $app->enqueueMessage(
                 Text::sprintf(
                     'PLG_PRIVACY_J2COMMERCE_WARN_CHECKOUT_OVERRIDE_BUNDLED',
-                    htmlspecialchars(implode(', ', array_merge($modified, $failed)))
+                    htmlspecialchars(implode(', ', $modified))
                 ),
                 'warning'
             );

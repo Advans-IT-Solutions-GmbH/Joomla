@@ -1,6 +1,6 @@
 # Appointments Privacy Completion Guard
 
-**Installation and updates:** see the [shared backup/approval policy](../../../../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../../../../README.md#installation-safety-and-repeatable-system-checks).
 
 ## Description
 

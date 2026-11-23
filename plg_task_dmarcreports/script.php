@@ -13,7 +13,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     : dirname(__DIR__) . '/shared/installer/load.php';
 
 use Joomla\CMS\Factory;
-use Advans\Installer\V2\InstallerScript;
+use Advans\Installer\V3\InstallerScript;
 use Joomla\CMS\Language\Text;
 
 class PlgTaskDmarcreportsInstallerScript extends InstallerScript

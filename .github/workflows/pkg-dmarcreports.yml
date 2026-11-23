@@ -318,7 +318,7 @@ jobs:
       - name: Update with Check for Updates and Update in the backend
         env:
           C: pkg_dmarcreports_j6_test
-          SCENARIOS: clean,modified,backup-failure
+          SCENARIOS: clean,modified
         run: |
           docker cp /tmp/new-package/extension.zip "$C:/tmp/extension-new.zip"
           docker cp pkg_dmarcreports/updates/update.xml "$C:/tmp/update.xml"

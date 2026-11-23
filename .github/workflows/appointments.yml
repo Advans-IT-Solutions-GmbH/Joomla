@@ -1023,7 +1023,7 @@ jobs:
           '
       - name: Update with Check for Updates and Update in the backend
         env:
-          SCENARIOS: clean,modified,backup-failure
+          SCENARIOS: clean,modified
         run: |
           unzip -p /tmp/new-package/extension.zip appointments-recovery.zip > /tmp/appointments-recovery.zip
           docker cp /tmp/appointments-recovery.zip "$C:/tmp/appointments-recovery.zip"

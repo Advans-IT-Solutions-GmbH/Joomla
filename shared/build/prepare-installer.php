@@ -21,6 +21,10 @@ $copyTree = static function (string $source, string $target) use (&$copyTree): v
             continue;
         }
 
+        if (in_array($entry->getFilename(), ['approve.php', 'export-backup.php'], true)) {
+            continue;
+        }
+
         $destination = $target . '/' . $entry->getFilename();
 
         if ($entry->isDir()) {

@@ -13,8 +13,8 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     : dirname(__DIR__, 2) . '/shared/installer/load.php';
 
 use Joomla\CMS\Factory;
-use Advans\Installer\V2\InstallerScript;
-use Advans\Installer\V2\Destinations;
+use Advans\Installer\V3\InstallerScript;
+use Advans\Installer\V3\Destinations;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -37,10 +37,10 @@ class PlgJ2commerceProductcompareInstallerScript extends InstallerScript
      */
     protected function foreignDecision(string $destination, string $existing, bool $known): string
     {
-        $mirror = rtrim(str_replace('\\', '/', \Advans\Installer\V2\FileGuard::normalize(JPATH_PLUGINS . '/j2store/productcompare')), '/') . '/';
+        $mirror = rtrim(str_replace('\\', '/', \Advans\Installer\V3\FileGuard::normalize(JPATH_PLUGINS . '/j2store/productcompare')), '/') . '/';
 
         if (str_starts_with(str_replace('\\', '/', $destination), $mirror)) {
-            return $this->mirrorOwner() === null ? \Advans\Installer\V2\Planner::REPLACE : \Advans\Installer\V2\Planner::SKIP;
+            return $this->mirrorOwner() === null ? \Advans\Installer\V3\Planner::REPLACE : \Advans\Installer\V3\Planner::SKIP;
         }
 
         return parent::foreignDecision($destination, $existing, $known);

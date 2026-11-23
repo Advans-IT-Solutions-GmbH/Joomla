@@ -5,37 +5,26 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-namespace Advans\Installer\AppointmentsConflict\V1;
+namespace Advans\Installer\AppointmentsConflict\V2;
 
 defined('_JEXEC') or die;
 
-use Advans\Installer\V2\Destinations;
-use Advans\Installer\V2\FileGuard;
-use Advans\Installer\V2\Knowledge;
-use Advans\Installer\V2\State;
+use Advans\Installer\V3\Destinations;
+use Advans\Installer\V3\FileGuard;
+use Advans\Installer\V3\Knowledge;
+use Advans\Installer\V3\State;
 
-/**
- * Bind Appointments review and recovery to the exact package and destination bytes.
- */
 final class Guard
 {
     public const REVIEW = 'recovery/review.php';
-    private const STAGED = '.advans-recovery-staged.php';
-
-    public static function assertFreshSource(string $source): void
-    {
-        $marker = $source . '/' . self::STAGED;
-        if (file_exists($marker) || is_link($marker)) {
-            throw new \RuntimeException('This installation directory contains staged local bytes. Upload a fresh release ZIP.');
-        }
-    }
+    private const MAX_TRANSFER_BYTES = 16777216;
 
     /**
      * @param array<string, string> $files Destination to staged source.
      * @param array{prefixes: list<string>, files: list<string>, languages: list<string>} $owned
-     * @return list<array{destination: string, existing: string, incoming: string, backup: string}>
+     * @return list<array{destination: string, existing: string, incoming: string}>
      */
-    public static function inspect(array $files, array $owned, Knowledge $knowledge, string $state): array
+    public static function inspect(array $files, array $owned, Knowledge $knowledge): array
     {
         $comparison = FileGuard::compare($files);
         $conflicts = [];
@@ -45,22 +34,16 @@ final class Guard
                 continue;
             }
 
-            State::directory($state . '/recovery/backups');
             $conflicts[] = [
                 'destination' => $destination,
                 'existing' => $hashes['existing'],
                 'incoming' => $hashes['incoming'],
-                'backup' => FileGuard::backup($destination, $hashes['existing'], $state . '/recovery/backups'),
             ];
         }
 
         return $conflicts;
     }
 
-    /**
-     * Only copy inputs used by one destination and not read as installer metadata may be
-     * substituted. Joomla still gets the original manifest and owns the installed path.
-     */
     public static function canKeep(string $destination, string $candidate, array $files): bool
     {
         $relative = Knowledge::relative($destination);
@@ -93,11 +76,14 @@ final class Guard
         $sources = array_combine(array_map([FileGuard::class, 'normalize'], array_keys($files)), array_values($files));
         $rows = [];
         foreach ($conflicts as $row) {
-            $candidate = $sources[$row['destination']];
+            $candidate = $sources[$row['destination']] ?? '';
+            if ($candidate === '') {
+                throw new \RuntimeException('A reviewed conflict is not part of this package.');
+            }
             $row['keep'] = self::canKeep($row['destination'], $candidate, $files);
             $row['remove'] = str_contains(str_replace('\\', '/', $candidate), '/.advans-operations/');
-            $id = hash('sha256', $row['destination'] . "\0" . $row['existing'] . "\0" . $row['incoming']);
-            $rows[$id] = $row;
+            $row['downloaded'] = false;
+            $rows[hash('sha256', $row['destination'] . "\0" . $row['existing'] . "\0" . $row['incoming'])] = $row;
         }
         ksort($rows);
         $id = hash('sha256', json_encode([$version, $manifestHash, $rows], JSON_THROW_ON_ERROR));
@@ -119,54 +105,44 @@ final class Guard
         return file_exists($file) || is_link($file) ? State::read($file) : [];
     }
 
-    public static function decide(string $state, string $plan, string $id, string $choice): void
+    public static function download(string $state, string $plan, string $id): array
+    {
+        $review = self::current($state);
+        $row = $review['rows'][$id] ?? null;
+        if (($review['id'] ?? null) !== $plan || !is_array($row) || !self::validRow($id, $row)
+            || self::liveHash($row) !== $row['existing']) {
+            throw new \RuntimeException('The file or review has changed; request the update again.');
+        }
+        $size = filesize($row['destination']);
+        $bytes = file_get_contents($row['destination']);
+        if (!is_int($size) || $size > self::MAX_TRANSFER_BYTES || !is_string($bytes)
+            || strlen($bytes) !== $size || !hash_equals($row['existing'], hash('sha256', $bytes))) {
+            throw new \RuntimeException('The local file cannot be safely downloaded.');
+        }
+
+        $review['rows'][$id]['downloaded'] = true;
+        State::write($state . '/' . self::REVIEW, $review);
+
+        return ['bytes' => $bytes, 'filename' => basename(str_replace('\\', '/', $row['destination']))];
+    }
+
+    public static function decide(string $state, string $plan, string $id, string $choice, bool $confirmed): void
     {
         $current = self::current($state);
         $row = $current['rows'][$id] ?? null;
-        if (($current['id'] ?? null) !== $plan || !is_array($row)
-            || !self::validChoice($row, $choice) || self::liveHash($row) !== $row['existing']) {
-            throw new \RuntimeException('The file or review has changed, or the choice is not supported.');
+        if (($current['id'] ?? null) !== $plan || !is_array($row) || !self::validRow($id, $row)
+            || $choice !== 'apply' || !$confirmed || empty($row['downloaded'])
+            || self::liveHash($row) !== $row['existing']) {
+            throw new \RuntimeException('Download and verify the local file before approving this update.');
         }
-        self::backupBytes($row);
+
         $current['choices'][$id] = $choice;
         State::write($state . '/' . self::REVIEW, $current);
     }
 
     public static function validChoice(array $row, mixed $choice): bool
     {
-        return $choice === 'replace' || ($choice === 'keep' && $row['keep']);
-    }
-
-    /** Stage only package inputs. Keep the unmodified hashes in the caller's installer ledger. */
-    public static function apply(array $review, array $files, string $sourceRoot = ''): void
-    {
-        if ($sourceRoot === '') {
-            throw new \RuntimeException('A fresh installation source directory is required.');
-        }
-        self::assertFreshSource($sourceRoot);
-        $marked = false;
-        $sources = array_combine(array_map([FileGuard::class, 'normalize'], array_keys($files)), array_values($files));
-        foreach ($review['rows'] as $id => $row) {
-            $source = $sources[$row['destination']] ?? '';
-            $choice = $review['choices'][$id] ?? null;
-            if ($source === '' || !self::validChoice($row, $choice)
-                || self::liveHash($row) !== $row['existing']
-                || hash_file('sha256', $source) !== $row['incoming']) {
-                throw new \RuntimeException('A reviewed file changed before installation.');
-            }
-            $bytes = self::backupBytes($row);
-            if ($choice === 'keep') {
-                if (!$marked) {
-                    State::write($sourceRoot . '/' . self::STAGED, ['review' => $review['id']]);
-                    $marked = true;
-                }
-                if (!self::canKeep($row['destination'], $source, $files) || is_link($source)
-                    || file_put_contents($source, $bytes, LOCK_EX) !== strlen($bytes)
-                    || hash_file('sha256', $source) !== $row['existing']) {
-                    throw new \RuntimeException('Cannot stage the selected local bytes.');
-                }
-            }
-        }
+        return $choice === 'apply' && !empty($row['downloaded']);
     }
 
     public static function bundledFiles(string $root, array $files): array
@@ -177,41 +153,41 @@ final class Guard
             str_starts_with(str_replace('\\', '/', FileGuard::normalize($source)), $prefix));
     }
 
-    public static function verifyInstalled(array $review): void
+    public static function journal(string $state, array $review): void
     {
+        $review['installed'] = false;
+        State::write($state . '/recovery/attempt.php', $review);
+        State::write($state . '/' . self::REVIEW, []);
+    }
+
+    public static function verifyInstalled(array $review, string $state): void
+    {
+        if (empty($review['rows'])) {
+            return;
+        }
+
         foreach ($review['rows'] ?? [] as $id => $row) {
-            if ($row['remove']) {
-                continue;
-            }
-            $expected = $review['choices'][$id] === 'keep' ? $row['existing'] : $row['incoming'];
-            if (self::liveHash($row) !== $expected) {
+            $current = self::liveHash($row);
+            if ($row['remove'] ? $current !== null : $current !== $row['incoming']) {
                 throw new \RuntimeException('Joomla did not install the reviewed bytes at the expected destination.');
             }
         }
+        $review['installed'] = true;
+        State::write($state . '/recovery/attempt.php', $review);
     }
 
     public static function liveHash(array $row): ?string
     {
-        $destination = $row['destination'];
+        $destination = FileGuard::normalize($row['destination']);
+        if (!self::safeDestination($destination)) {
+            throw new \RuntimeException('The reviewed destination is outside Appointments.');
+        }
         clearstatcache(true, $destination);
-        $checked = FileGuard::compare([$destination => $row['backup']]);
-        if (!file_exists($destination)) {
+        if (!file_exists($destination) && !is_link($destination)) {
             return null;
         }
 
-        $hash = $checked['differing'][$destination]['existing'] ?? $checked['incoming'][$destination];
-
-        return $hash;
-    }
-
-    public static function backupBytes(array $row): string
-    {
-        $bytes = FileGuard::restoreBytes($row['backup'], $row['destination'], $row['existing']);
-        if (!hash_equals($row['existing'], hash('sha256', $bytes))) {
-            throw new \RuntimeException('The backup changed while being read.');
-        }
-
-        return $bytes;
+        return FileGuard::compare([$destination => $destination])['incoming'][$destination];
     }
 
     /** @return resource */
@@ -235,13 +211,6 @@ final class Guard
         return $handle;
     }
 
-    public static function journal(string $state, array $review): void
-    {
-        // Consume before copying; a crashed attempt never supplies consent for another update.
-        State::write($state . '/recovery/attempt.php', $review);
-        State::write($state . '/' . self::REVIEW, []);
-    }
-
     public static function attempt(string $state): array
     {
         $file = $state . '/recovery/attempt.php';
@@ -249,84 +218,119 @@ final class Guard
         return file_exists($file) || is_link($file) ? State::read($file) : [];
     }
 
-    public static function pruneBackups(string $state, int $maximumAgeSeconds, ?int $now = null): int
-    {
-        $keep = [];
-        foreach ([self::current($state), self::attempt($state)] as $record) {
-            if ($record !== [] && !is_array($record['rows'] ?? null)) {
-                throw new \RuntimeException('Cannot inspect the referenced recovery review.');
-            }
-            foreach ($record['rows'] ?? [] as $row) {
-                if (!is_array($row) || !is_string($row['backup'] ?? null)) {
-                    throw new \RuntimeException('Cannot inspect the referenced recovery backups.');
-                }
-                $keep[] = $row['backup'];
-            }
-        }
-
-        return FileGuard::prune($state . '/recovery/backups', $maximumAgeSeconds, $keep, $now);
-    }
-
-    public static function restore(string $state, string $plan, string $id, string $expected): void
+    public static function restoreUpload(string $state, string $plan, string $id, string $expected, string $upload): void
     {
         $attempt = self::attempt($state);
         $row = $attempt['rows'][$id] ?? null;
-        if (($attempt['id'] ?? null) !== $plan || !is_array($row) || !$row['keep']
+        if (($attempt['id'] ?? null) !== $plan || !is_array($row)
+            || !self::validRow($id, $row) || empty($row['keep'])
             || ($expected !== '' && !hash_equals($row['incoming'], $expected))
-            || self::liveHash($row) !== ($expected === '' ? null : $expected)) {
-            throw new \RuntimeException('The destination has changed or cannot be restored in place.');
+            || self::liveHash(['destination' => $row['destination']]) !== ($expected === '' ? null : $expected)
+            || is_link($upload) || !is_file($upload) || !is_readable($upload)) {
+            throw new \RuntimeException('The destination or uploaded local copy is not eligible for recovery.');
         }
-        $bytes = self::backupBytes($row);
-        $destination = $row['destination'];
-        $temporaryDirectory = realpath(sys_get_temp_dir());
-        $siteRoot = realpath(JPATH_ROOT);
-        $directory = realpath(dirname($destination));
-        $temporaryDirectory = $temporaryDirectory === false ? false : FileGuard::normalize($temporaryDirectory);
-        $siteRoot = $siteRoot === false ? false : FileGuard::normalize($siteRoot);
-        if ($temporaryDirectory === false || $siteRoot === false || $directory === false
-            || $temporaryDirectory === $siteRoot || str_starts_with($temporaryDirectory, $siteRoot . DIRECTORY_SEPARATOR)
-            || stat($temporaryDirectory)['dev'] !== stat($directory)['dev']) {
-            throw new \RuntimeException('Recovery requires a private temporary directory on the same filesystem.');
+
+        $size = filesize($upload);
+        if (!is_int($size) || $size > self::MAX_TRANSFER_BYTES
+            || hash_file('sha256', $upload) !== $row['existing']) {
+            throw new \RuntimeException('The uploaded file does not match the reviewed local file.');
         }
-        $privateDirectory = $temporaryDirectory . DIRECTORY_SEPARATOR . 'appointments-' . bin2hex(random_bytes(16));
-        if (!mkdir($privateDirectory, 0700)) {
-            throw new \RuntimeException('Cannot create private restoration staging.');
+
+        $destination = FileGuard::normalize($row['destination']);
+        $directory = dirname($destination);
+
+        $permissions = $expected === '' ? 0644 : fileperms($destination);
+        if (!is_int($permissions)) {
+            throw new \RuntimeException('Cannot read the existing file permissions.');
         }
-        $temporary = $privateDirectory . DIRECTORY_SEPARATOR . 'restore';
+        $mode = $permissions & 0777;
+        if (hash_file('sha256', $upload) !== $row['existing']
+            || self::liveHash(['destination' => $destination]) !== ($expected === '' ? null : $expected)) {
+            throw new \RuntimeException('The upload or destination changed before recovery.');
+        }
+
+        $temporaryDirectory = $directory . DIRECTORY_SEPARATOR . '.appointments-recovery-' . bin2hex(random_bytes(16));
+
+        if (!mkdir($temporaryDirectory, 0700)) {
+            throw new \RuntimeException('Cannot create private recovery staging.');
+        }
+
+        $temporary = $temporaryDirectory . DIRECTORY_SEPARATOR . 'restore.tmp';
+        $input = fopen($upload, 'rb');
+        $output = fopen($temporary, 'xb');
+
+        if ($input === false || $output === false) {
+            if (is_resource($input)) {
+                fclose($input);
+            }
+            if (is_resource($output)) {
+                fclose($output);
+            }
+            if (file_exists($temporary) && !unlink($temporary)) {
+                throw new \RuntimeException('Cannot remove an incomplete recovery upload.');
+            }
+            if (!rmdir($temporaryDirectory)) {
+                throw new \RuntimeException('Cannot remove private recovery staging.');
+            }
+
+            throw new \RuntimeException('Cannot stage the uploaded local copy for recovery.');
+        }
+
         try {
-            $mask = umask(0077);
-            try {
-                $handle = fopen($temporary, 'xb');
-            } finally {
-                umask($mask);
+            $copied = stream_copy_to_stream($input, $output);
+
+            if ($copied !== $size || !fflush($output)) {
+                throw new \RuntimeException('Cannot stage the complete uploaded local copy.');
             }
-            if ($handle === false) {
-                throw new \RuntimeException('Cannot stage the restoration.');
+            fclose($input);
+            fclose($output);
+            $temporaryHash = hash_file('sha256', $temporary);
+
+            if (!chmod($temporary, $mode) || !is_string($temporaryHash) || !hash_equals($row['existing'], $temporaryHash)
+                || self::liveHash(['destination' => $destination]) !== ($expected === '' ? null : $expected)) {
+                throw new \RuntimeException('The staged upload or destination changed before recovery.');
             }
-            try {
-                if (fwrite($handle, $bytes) !== strlen($bytes) || !fflush($handle)) {
-                    throw new \RuntimeException('Cannot write the complete restoration.');
-                }
-            } finally {
-                fclose($handle);
+
+            if ($expected === '' ? !link($temporary, $destination) : !rename($temporary, $destination)) {
+                throw new \RuntimeException('Cannot publish the uploaded local copy.');
             }
-            $mode = $expected === '' ? 0644 : fileperms($destination);
-            if ($mode === false || !chmod($temporary, $mode & 0777)) {
-                throw new \RuntimeException('Cannot set the restored file permissions.');
-            }
-            if (hash_file('sha256', $temporary) !== $row['existing']
-                || self::liveHash($row) !== ($expected === '' ? null : $expected)) {
-                throw new \RuntimeException('The staged file or destination changed before recovery.');
-            }
-            // link() publishes a missing file atomically without replacing a newly created file.
-            if (!($expected === '' ? link($temporary, $destination) : rename($temporary, $destination))) {
-                throw new \RuntimeException('Cannot publish the restoration.');
+            if (self::liveHash(['destination' => $destination]) !== $row['existing']) {
+                throw new \RuntimeException('The recovered file did not verify after publication.');
             }
         } finally {
-            if (is_file($temporary)) {
-                unlink($temporary);
+            if (is_resource($input)) {
+                fclose($input);
             }
-            rmdir($privateDirectory);
+            if (is_resource($output)) {
+                fclose($output);
+            }
+            if (file_exists($temporary) && !unlink($temporary)) {
+                throw new \RuntimeException('Cannot remove the temporary recovery upload.');
+            }
+            if (is_dir($temporaryDirectory) && !rmdir($temporaryDirectory)) {
+                throw new \RuntimeException('Cannot remove private recovery staging.');
+            }
         }
+    }
+
+    private static function validRow(string $id, array $row): bool
+    {
+        return is_string($row['destination'] ?? null)
+            && is_string($row['existing'] ?? null)
+            && is_string($row['incoming'] ?? null)
+            && preg_match('/^[a-f0-9]{64}$/D', $row['existing']) === 1
+            && preg_match('/^[a-f0-9]{64}$/D', $row['incoming']) === 1
+            && hash_equals($id, hash('sha256', $row['destination'] . "\0" . $row['existing'] . "\0" . $row['incoming']))
+            && self::safeDestination(FileGuard::normalize($row['destination']));
+    }
+
+    private static function safeDestination(string $destination): bool
+    {
+        $relative = Knowledge::relative($destination);
+
+        return preg_match(
+            '#^(?:administrator/components/com_appointments|components/com_appointments|media/com_appointments|administrator/modules/mod_appointments|plugins/[^/]+/appointments[^/]*)(?:/|$)|^(?:administrator/)?language/[a-z]{2}-[A-Z]{2}/(?:com_appointments|plg_(?:task_appointments|privacy_appointments|content_appointmentsprivacy|system_appointments(?:dav|attribution)|user_appointments))\.ini$#D',
+            $relative
+        ) === 1;
     }
 }
