@@ -44,6 +44,7 @@ namespace Advans\Installer\AppointmentsConflict\V2 {
 }
 
 namespace Advans\Component\Appointments\Tests\Unit {
+    use Advans\Installer\AppointmentsConflict\V2\Guard;
     use PHPUnit\Framework\TestCase;
 
     final class RecoveryViewTest extends TestCase
