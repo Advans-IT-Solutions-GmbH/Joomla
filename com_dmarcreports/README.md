@@ -98,7 +98,7 @@ Open **Components → DMARC Reports**, then **Options** (top right) to set the d
 | Enable TLS-RPT (`tlsrpt_enable`) | `Off` | Enables TLS reporting-record guidance; this switch does not disable JSON report ingestion |
 | TLS-RPT reporting address (`tlsrpt_rua`) | Empty | Reporting destination used to generate the DNS record; publish DNS yourself |
 
-Per-domain report sources (mailbox host, port, encryption, username, password and folder) are managed inside the component UI under **Sources**, not in the global options. The mailbox password is encrypted at rest using Joomla's secret and is never written to a log.
+Per-domain report sources (mailbox host, port, encryption, username, password and folder) are managed inside the component UI under **Sources**, not in the global options. The mailbox password is encrypted at rest using Joomla's secret and is never written to a log. Leaving the password blank keeps the stored one only for the same server and account; if a concurrent save changed the target or the password, the save is refused and the localized "enter the password again" message is shown. This includes the serialization conflict that MariaDB reports with `innodb_snapshot_isolation=ON` (error 1020), so the result is the same with that setting on or off.
 
 ### Permissions and data handling
 
