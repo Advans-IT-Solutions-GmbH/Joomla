@@ -788,6 +788,22 @@ class ResetRequestTest
                     $this->test("$style: recipient unchanged", stripos($raw, (string) $user->email) !== false);
                 }
 
+                // A layout that drops the body or throws after output must not cost the mail or leak output:
+                // the message goes out as the plain text, the open buffer is closed.
+                file_put_contents($frameDir . '/nobody.php', "<?php defined('_JEXEC') or die; echo '<div class=\"frame\">no body</div>';");
+                file_put_contents($frameDir . '/boom.php', "<?php defined('_JEXEC') or die; ob_start(); echo 'PARTIAL-LAYOUT-OUTPUT'; throw new \\RuntimeException('layout failed');");
+
+                foreach (['nobody', 'boom'] as $broken) {
+                    $plugin->style = ['mail_style' => 'html', 'disable_htmllayout' => '1', 'mail_htmllayout' => 'zz-mailtest:' . $broken];
+                    ajaxforms_mailcatch_clear();
+                    $level = ob_get_level();
+                    $send->invoke($plugin, $user, str_repeat('a1b2c3d4', 4));
+                    $raw = ajaxforms_mailcatch_messages()[0] ?? '';
+                    $this->test("$broken layout: the mail is still sent as plain text",
+                        $raw !== '' && !preg_match('#^Content-Type:\s*multipart/alternative#mi', $raw) && stripos($raw, 'text/html') === false
+                        && !str_contains($raw, 'PARTIAL-LAYOUT-OUTPUT'));
+                    $this->test("$broken layout: no output buffer is left open", ob_get_level() === $level);
+                }
                 $url  = "https://example.test/member's/index.php?option=com_ajax&action=reset&token=a1b2";
                 $html = \Advans\Plugin\Ajax\JoomlaAjaxForms\Mail\MailHtml::textToHtml(
                     "Open $url.\n\nSay 'https://example.test/x' now",
@@ -812,6 +828,8 @@ class ResetRequestTest
                 $this->test('sender-supplied account URL remains clickable',
                     str_contains($html, '<a href="' . $accountLink . '">' . $accountLink . '</a>'));
             } finally {
+                @unlink($frameDir . '/nobody.php');
+                @unlink($frameDir . '/boom.php');
                 @unlink($frameDir . '/frame.php');
                 @rmdir($frameDir);
                 @rmdir(dirname($frameDir));

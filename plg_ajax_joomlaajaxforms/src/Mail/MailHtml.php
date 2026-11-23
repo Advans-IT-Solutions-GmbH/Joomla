@@ -135,25 +135,19 @@ final class MailHtml
             $rendered = $file->render(['mail' => $startMarker . $html . $endMarker, 'extra' => $extra]);
         } finally {
             // A layout that throws after output leaves its buffer open; never let that reach the response.
-            while (ob_get_level() > $level && @ob_end_clean()) {
-                // stop at a buffer that cannot be removed
-            }
+            self::closeBuffers($level);
         }
 
+        // An unusable layout is an error, not a reason to send unframed HTML: the caller falls back to the text
+        // mail and drops the logo attached for the layout.
         if (
             !\is_string($rendered)
             || trim($rendered) === ''
             || substr_count($rendered, $startMarker) !== 1
             || substr_count($rendered, $endMarker) !== 1
+            || strpos($rendered, $endMarker) <= strpos($rendered, $startMarker)
         ) {
-            return $html;
-        }
-
-        $start = strpos($rendered, $startMarker);
-        $end   = strpos($rendered, $endMarker);
-
-        if ($start === false || $end === false || $end <= $start) {
-            return $html;
+            throw new \RuntimeException('The configured Joomla mail layout did not render the message body exactly once.');
         }
 
         return MailHelper::convertRelativeToAbsoluteUrls(str_replace([$startMarker, $endMarker], '', $rendered));
@@ -197,6 +191,34 @@ final class MailHtml
         }
 
         return $out;
+    }
+
+    /**
+     * Close the output buffers a layout left open. A buffer that cannot be removed but can be cleaned
+     * is emptied, so partial layout output never reaches the response; then the cleanup stops.
+     */
+    private static function closeBuffers(int $level): void
+    {
+        while (ob_get_level() > $level) {
+            $currentLevel = ob_get_level();
+            $flags        = (int) (ob_get_status()['flags'] ?? 0);
+
+            if (($flags & PHP_OUTPUT_HANDLER_REMOVABLE) === 0) {
+                if (($flags & PHP_OUTPUT_HANDLER_CLEANABLE) !== 0) {
+                    @ob_clean();
+                }
+
+                break;
+            }
+
+            if (!@ob_end_clean() || ob_get_level() >= $currentLevel) {
+                if (((int) (ob_get_status()['flags'] ?? 0) & PHP_OUTPUT_HANDLER_CLEANABLE) !== 0) {
+                    @ob_clean();
+                }
+
+                break;
+            }
+        }
     }
 
     private static function escape(string $text): string

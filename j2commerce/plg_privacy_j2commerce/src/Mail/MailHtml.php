@@ -120,9 +120,7 @@ final class MailHtml
             $rendered = $file->render(['mail' => $marker, 'extra' => $extra]);
         } finally {
             // A layout that throws after output leaves its buffer open; never let that reach the response.
-            while (ob_get_level() > $level && @ob_end_clean()) {
-                // stop at a buffer that cannot be removed
-            }
+            self::closeBuffers($level);
         }
 
         if (!\is_string($rendered) || trim($rendered) === '' || substr_count($rendered, $marker) !== 1) {
@@ -164,6 +162,34 @@ final class MailHtml
         }
 
         return $out;
+    }
+
+    /**
+     * Close the output buffers a layout left open. A buffer that cannot be removed but can be cleaned
+     * is emptied, so partial layout output never reaches the response; then the cleanup stops.
+     */
+    private static function closeBuffers(int $level): void
+    {
+        while (ob_get_level() > $level) {
+            $currentLevel = ob_get_level();
+            $flags        = (int) (ob_get_status()['flags'] ?? 0);
+
+            if (($flags & PHP_OUTPUT_HANDLER_REMOVABLE) === 0) {
+                if (($flags & PHP_OUTPUT_HANDLER_CLEANABLE) !== 0) {
+                    @ob_clean();
+                }
+
+                break;
+            }
+
+            if (!@ob_end_clean() || ob_get_level() >= $currentLevel) {
+                if (((int) (ob_get_status()['flags'] ?? 0) & PHP_OUTPUT_HANDLER_CLEANABLE) !== 0) {
+                    @ob_clean();
+                }
+
+                break;
+            }
+        }
     }
 
     private static function escape(string $text): string
