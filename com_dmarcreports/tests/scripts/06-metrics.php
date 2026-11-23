@@ -585,6 +585,7 @@ class MetricsTest
 
             $this->testMixedPolicyContext();
             $this->runManyFlaggedSourcesTest();
+            $this->runHandledSourceSelectionTest();
 
             $this->test('Stored new-source items of DKIM-confirmed sources close automatically', function () use ($metrics, $domainId) {
                 $this->insertAction($domainId, 'new_source:' . $domainId . ':10.0.3.1', 'snoozed');
@@ -911,6 +912,178 @@ class MetricsTest
         }
     }
 
+    /**
+     * The dashboard's bulk query keeps at most 50 open and 200 handled flagged
+     * sources per domain. Handled means a stored action with the exact key of the
+     * source's current class (spf_only_source, otherwise align_source) for the same
+     * domain that is done, ignored, auto_done or still snoozed; an expired or
+     * empty snooze and the status open count as open again.
+     */
+    private function runHandledSourceSelectionTest(): void
+    {
+        $domainId = $this->insertDomain('handled-sel.' . self::DOMAIN);
+        $other    = $domainId + 1000000;
+        $limit    = \Advans\Component\DmarcReports\Administrator\Helper\FlaggedSourceLimit::PER_DOMAIN;
+        $max      = \Advans\Component\DmarcReports\Administrator\Helper\FlaggedSourceLimit::MAX;
+
+        try {
+            $report = (object) [
+                'domain_id'     => $domainId,
+                'source_id'     => 0,
+                'org_name'      => 'handled-sel',
+                'org_email'     => 'reports@handled-sel.test',
+                'report_id'     => 'handled-sel-' . $domainId,
+                'report_hash'   => hash('sha256', 'handled-sel|' . $domainId . '|' . self::ANCHOR),
+                'date_begin'    => self::ANCHOR - self::DAY,
+                'date_end'      => self::ANCHOR,
+                'policy_domain' => 'handled-sel.' . self::DOMAIN,
+                'policy_p'      => 'none',
+                'policy_pct'    => 100,
+                'message_count' => 0,
+                'created'       => gmdate('Y-m-d H:i:s'),
+            ];
+            $this->db->insertObject('#__dmarc_reports', $report, 'id');
+
+            // 1..260 pass DMARC only through SPF (class spf_only, ranked first, in
+            // address order); 261..263 only fail while delivered (class align).
+            $ips = [];
+
+            for ($i = 1; $i <= 263; $i++) {
+                $ip      = sprintf('2001:db8:7::%04x', $i);
+                $spfOnly = $i <= 260;
+                $ips[$i] = $ip;
+                $this->db->insertObject('#__dmarc_records', (object) [
+                    'report_id'    => (int) $report->id,
+                    'domain_id'    => $domainId,
+                    'source_ip'    => $ip,
+                    'count'        => 1,
+                    'disposition'  => 'none',
+                    'dkim_result'  => 'fail',
+                    'spf_result'   => $spfOnly ? 'pass' : 'fail',
+                    'dkim_aligned' => 0,
+                    'spf_aligned'  => (int) $spfOnly,
+                    'header_from'  => 'handled-sel.' . self::DOMAIN,
+                ]);
+            }
+
+            $metrics = new Metrics($this->db);
+
+            $reset = function () use ($domainId): void {
+                $this->db->setQuery(
+                    $this->query()->delete($this->db->quoteName('#__dmarc_actions'))
+                        ->where($this->db->quoteName('action_key') . ' LIKE ' . $this->db->quote('%:' . $domainId . ':2001:db8:7::%'))
+                )->execute();
+            };
+
+            $put = function (int $i, string $code, string $status, ?string $snooze = null, ?int $column = null) use ($domainId, $ips): void {
+                $this->db->insertObject('#__dmarc_actions', (object) [
+                    'domain_id'    => $column ?? $domainId,
+                    'action_key'   => $code . ':' . $domainId . ':' . $ips[$i],
+                    'category'     => 'source',
+                    'severity'     => 0,
+                    'status'       => $status,
+                    'snooze_until' => $snooze,
+                    'params'       => '',
+                    'first_seen'   => gmdate('Y-m-d H:i:s'),
+                    'last_seen'    => gmdate('Y-m-d H:i:s'),
+                    'modified'     => gmdate('Y-m-d H:i:s'),
+                    'modified_by'  => 7,
+                ]);
+            };
+
+            $returned = function () use ($metrics, $domainId): array {
+                $rows = $metrics->actionMetricsForAll($metrics->domainSummaries())[$domainId] ?? [];
+
+                return [
+                    array_map(static fn (array $s): string => $s['ip'], $rows['flagged_sources'] ?? []),
+                    (int) ($rows['flagged_sources_total'] ?? 0),
+                ];
+            };
+
+            // Expected result: the first $limit open sources in rank order plus
+            // every handled source up to $max, compared as ordered by rank.
+            $expect = function (array $handled) use ($ips, $limit, $max): array {
+                $open = [];
+                $done = [];
+
+                foreach ($ips as $i => $ip) {
+                    if (isset($handled[$i])) {
+                        if (count($done) < $max) {
+                            $done[$i] = $ip;
+                        }
+                    } elseif (count($open) < $limit) {
+                        $open[$i] = $ip;
+                    }
+                }
+
+                $all = $open + $done;
+                ksort($all);
+
+                return array_values($all);
+            };
+
+            foreach ([199, 200, 201, 230] as $count) {
+                $reset();
+                $handled = [];
+
+                for ($i = 1; $i <= $count; $i++) {
+                    $put($i, 'spf_only_source', $i % 2 ? 'done' : 'ignored');
+                    $handled[$i] = true;
+                }
+
+                [$got, $total] = $returned();
+                sort($got, SORT_STRING);
+                $want = $expect($handled);
+                sort($want, SORT_STRING);
+
+                $this->test("{$count} handled sources: open ones still selected, handled capped at {$max}", function () use ($got, $want, $total, $ips, $count, $max) {
+                    return $got === $want
+                        && $total === count($ips)
+                        && ($count <= $max || !in_array($ips[$max + 1], $got, true))
+                        && ($count < $max || in_array($ips[$max], $got, true));
+                });
+            }
+
+            // Exact action key per class, domain match and snooze expiry.
+            $reset();
+            $future = gmdate('Y-m-d H:i:s', time() + 3600);
+            $past   = gmdate('Y-m-d H:i:s', time() - 1);
+            $now    = gmdate('Y-m-d H:i:s');
+
+            $put(1, 'spf_only_source', 'done', null, $other);      // another domain's row: open
+            $put(2, 'align_source', 'done');                      // wrong class for an SPF-only source: open
+            $put(3, 'spf_only_source', 'snoozed', $future);       // running snooze: handled
+            $put(4, 'spf_only_source', 'snoozed', $past);         // expired snooze: open
+            $put(5, 'spf_only_source', 'snoozed', $now);          // expires exactly now: open
+            $put(6, 'spf_only_source', 'snoozed', null);          // snooze without end: open
+            $put(7, 'spf_only_source', 'open');                   // reopened: open
+            $put(8, 'spf_only_source', 'ignored');                // handled
+            $put(9, 'spf_only_source', 'auto_done');              // handled
+            $put(261, 'align_source', 'done');                    // exact key of an align source: handled
+            $put(262, 'spf_only_source', 'done');                 // wrong class for an align source: open
+
+            $handled = [3 => true, 8 => true, 9 => true, 261 => true];
+            [$got, $total] = $returned();
+            $want = $expect($handled);
+            sort($got, SORT_STRING);
+            sort($want, SORT_STRING);
+
+            $this->test('Handled lookup uses the exact key, the domain and the snooze rule', function () use ($got, $want, $total, $ips) {
+                return $got === $want && $total === count($ips);
+            });
+
+            $this->test('Open sources 1, 2, 4 to 7 stay selected and align source 261 is kept as handled', function () use ($got, $ips) {
+                foreach ([1, 2, 4, 5, 6, 7, 3, 8, 9, 261] as $i) {
+                    if (!in_array($ips[$i], $got, true)) {
+                        return false;
+                    }
+                }
+
+                return !in_array($ips[262], $got, true) && !in_array($ips[263], $got, true);
+            });        } finally {
+            $this->deleteDomain($domainId);
+        }
+    }
     private function insertAction(int $domainId, string $key, string $status): void
     {
         $row = (object) [
