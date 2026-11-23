@@ -79,7 +79,7 @@ the dashboard reads the cache only. Names never influence the classification.
 Detail metrics return every flagged source in the current reporting window. Dashboard/all-domain
 metrics (FlaggedSourceLimit) return per domain the top 50 open sources in the detail ranking, then up to
 200 handled ones (exact action key done/ignored/auto_done or running snooze) in the same ranking;
-lagged_sources_total carries the full count. Incomplete shared-deadline DNS outcomes are not cached, so later
+`flagged_sources_total` carries the full count. Incomplete shared-deadline DNS outcomes are not cached, so later
 page views can retry them.
 
 `new_source` is retired (no longer generated). `ActionStatus::resolveConfirmedNewSources()` closes
