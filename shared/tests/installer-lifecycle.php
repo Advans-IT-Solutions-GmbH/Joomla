@@ -1188,6 +1188,54 @@ namespace {
         $app->tag = 'en-GB';
         \Advans\Installer\V3\SystemCheck::loadLanguage();
         echo "PASS scheduled tasks: missing required task created switched on and reported, existing task unchanged, switched-off task reported, no message without required tasks, Scheduler trigger checked\n";
+        // Package handoff: a retried package attempt keeps what the earlier attempt decided for its children.
+        $firstChanges = [['destination' => '/site/plugins/task/x/x.xml', 'existing' => str_repeat('a', 64), 'incoming' => str_repeat('b', 64)]];
+        $handoff = \Advans\Installer\V3\InstallerScript::decisions([], $firstChanges);
+        $planner = \Advans\Installer\V3\Planner::class;
+        $retry = $planner::plan(
+            ['/site/plugins/task/x/x.xml' => ['existing' => str_repeat('a', 64), 'incoming' => str_repeat('b', 64)]],
+            [], static fn(): bool => true, static fn(): string => $planner::REPLACE,
+            \Advans\Installer\V3\Knowledge::load($work . '/none.php', $work . '/none.php'), $handoff
+        );
+        $assert($retry['changes'] === [] && $retry['halts'] === [], 'The planner skips what an earlier attempt decided.');
+        $assert(\Advans\Installer\V3\InstallerScript::decisions($handoff, $retry['changes']) === $handoff,
+            'A retried package attempt must keep the decisions of the earlier attempt for its bundled extensions.');
+        $more = \Advans\Installer\V3\InstallerScript::decisions($handoff, [['destination' => '/site/y.xml', 'existing' => str_repeat('c', 64), 'incoming' => str_repeat('d', 64)]]);
+        $assert(count($more) === 2 && isset($more['/site/plugins/task/x/x.xml'], $more['/site/y.xml']), 'New decisions are added to the earlier ones.');
+
+        // OSMap compatibility patch: a known stock file is adjusted by the software, anything else pauses.
+        require_once dirname(__DIR__, 2) . '/j2commerce/plg_osmap_j2commerce/script.php';
+        $osmap = new class extends \PlgosmapJ2commerceInstallerScript {
+            public function decide(string $destination, string $hash): string
+            {
+                return $this->foreignDecision($destination, $hash, false);
+            }
+
+            protected function stockFactoryHashes(): array
+            {
+                return ['stock' . str_repeat('0', 59) => 'test release'];
+            }
+        };
+        $factoryFile = \Advans\Installer\V3\FileGuard::normalize(JPATH_ADMINISTRATOR . '/components/com_osmap/library/Alledia/OSMap/Factory.php');
+        $assert($osmap->decide($factoryFile, 'stock' . str_repeat('0', 59)) === \Advans\Installer\V3\Planner::ADJUST,
+            'A known stock OSMap Factory.php must be adjusted without a step for the site owner.');
+        $assert($osmap->decide($factoryFile, str_repeat('f', 64)) === \Advans\Installer\V3\Planner::HALT,
+            'An unknown or locally modified OSMap Factory.php must pause the installation.');
+        $stockPlan = \Advans\Installer\V3\Planner::plan(
+            [$factoryFile => ['existing' => 'stock' . str_repeat('0', 59), 'incoming' => str_repeat('1', 64)]],
+            [], static fn(): bool => false, fn(string $d, string $e, bool $k): string => $osmap->decide($d, $e),
+            \Advans\Installer\V3\Knowledge::load($work . '/none.php', $work . '/none.php')
+        );
+        $unknownPlan = \Advans\Installer\V3\Planner::plan(
+            [$factoryFile => ['existing' => str_repeat('f', 64), 'incoming' => str_repeat('1', 64)]],
+            [], static fn(): bool => false, fn(string $d, string $e, bool $k): string => $osmap->decide($d, $e),
+            \Advans\Installer\V3\Knowledge::load($work . '/none.php', $work . '/none.php')
+        );
+        $assert(count($stockPlan['changes']) === 1 && $stockPlan['halts'] === [] && $unknownPlan['changes'] === [] && count($unknownPlan['halts']) === 1,
+            'Planning: the stock Factory.php is changed, an unknown one halts before anything is changed.');
+        $assert(preg_match('/\A[a-f0-9]{64}\z/', array_key_first((new \ReflectionClassConstant(\PlgosmapJ2commerceInstallerScript::class, 'STOCK_FACTORY'))->getValue())) === 1,
+            'The shipped stock hashes are SHA-256 values.');
+        echo "PASS package handoff keeps earlier decisions; OSMap patch: known stock file adjusted, unknown bytes pause\n";
         echo "PASS common lifecycle: known files update without server copies, conflicts pause before Joomla changes files, shared lock spans file copying, translated reports and refreshed state\n";
     } finally {
         $remove($work);

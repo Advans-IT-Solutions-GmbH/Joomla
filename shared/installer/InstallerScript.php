@@ -127,11 +127,7 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
                 // Keep what an earlier attempt of this package already decided: the planner skips those
                 // destinations now, and a handoff rewritten without them would leave the bundled
                 // extensions to judge the same files again without the package's catalog.
-                $decided = self::readHandoff($stateRoot);
-
-                foreach ($plan['changes'] as $change) {
-                    $decided[$change['destination']] = ['existing' => $change['existing'], 'incoming' => $change['incoming']];
-                }
+                $decided = self::decisions(self::readHandoff($stateRoot), $plan['changes']);
 
                 State::write($stateRoot . '/decided.php', ['expires' => time() + self::HANDOFF_SECONDS, 'files' => $decided]);
             }
@@ -340,6 +336,23 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
     {
         InstallerLock::release($this->installerLock);
         $this->installerLock = null;
+    }
+
+    /**
+     * The decisions handed to the bundled extensions: those of earlier attempts plus the new ones.
+     *
+     * @param array<string, mixed>            $previous Destination => existing and incoming hash.
+     * @param list<array<string, mixed>>      $changes  Changes the plan of this attempt decided.
+     *
+     * @return array<string, mixed>
+     */
+    public static function decisions(array $previous, array $changes): array
+    {
+        foreach ($changes as $change) {
+            $previous[$change['destination']] = ['existing' => $change['existing'], 'incoming' => $change['incoming']];
+        }
+
+        return $previous;
     }
 
     /** @return array<string, mixed> */

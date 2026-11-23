@@ -126,6 +126,24 @@ try {
     );
     expect($unknownForeignPlan['changes'] === [] && count($unknownForeignPlan['halts']) === 1,
         'An unknown foreign file must halt even when a caller requests replacement.');
+    $adjustedForeignPlan = Planner::plan(
+        $differingFor($foreignDestination),
+        [],
+        static fn(): bool => false,
+        static fn(): string => Planner::ADJUST,
+        $knowledge
+    );
+    expect(count($adjustedForeignPlan['changes']) === 1 && $adjustedForeignPlan['halts'] === [],
+        'An adjustment the script vouches for applies to bytes the installer has no record of.');
+    $haltedAdjustPlan = Planner::plan(
+        $differingFor($foreignDestination),
+        [],
+        static fn(): bool => false,
+        static fn(): string => Planner::HALT,
+        $knowledge
+    );
+    expect($haltedAdjustPlan['changes'] === [] && count($haltedAdjustPlan['halts']) === 1,
+        'A foreign file the script does not vouch for halts.');
     $skippedForeignPlan = Planner::plan(
         $differingFor($foreignDestination),
         [],

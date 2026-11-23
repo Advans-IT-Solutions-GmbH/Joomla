@@ -77,9 +77,6 @@ fi
 # stay unknown to later CLI runs. On real sites the cache belongs to the web server.
 chown -R www-data:www-data /var/www/html/administrator/cache 2>/dev/null || true
 install_with_web_installer /tmp/osmap.zip "OSMap"
-# OSMap <= 5.1.3 returns false where Table is expected. The installer never rewrites a file of another
-# extension on its own (it pauses on it), so the operator applies the documented one-line fix first.
-sed -i 's/return Table::getInstance($tableName, $prefix);/return Table::getInstance($tableName, $prefix) ?: null;/' /var/www/html/administrator/components/com_osmap/library/Alledia/OSMap/Factory.php
 install_with_web_installer /tmp/extension.zip "OSMap J2Commerce plugin" "${STRICT_INSTALL_MESSAGES:-1}" 1
 
 echo "Waiting for plugin in DB..."

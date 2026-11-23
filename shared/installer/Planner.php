@@ -20,7 +20,7 @@ defined('_JEXEC') or die;
  * Foreign territory (files of other extensions, site templates): the extension script decides per
  * operation through InstallerScript::foreignDecision():
  *  - REPLACE: the file is this extension's own copy (for example a mirror it maintains);
- *  - ADJUST: a deliberate, minimal change to another extension's file;
++'+s file;'s file;
  *  - SKIP: the file is left as it is and the extension adapts its operation;
  *  - HALT: no safe automatic choice exists; the installation pauses for review.
  */
@@ -89,7 +89,7 @@ final class Planner
                 continue;
             }
 
-            if ($decision === self::HALT || !$known) {
+            if ($decision === self::HALT || (!$known && $decision !== self::ADJUST)) {
                 $halts[] = $entry + ['territory' => 'foreign'];
 
                 continue;
