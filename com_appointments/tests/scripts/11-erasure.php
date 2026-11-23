@@ -239,6 +239,8 @@ try {
     // with a conference room, and runs the retention routine of the Scheduler for an old booking
     // with a room. None may throw after the commit; the room is released (the fixed provider has
     // nothing to tear down) or the failure is reported, never thrown.
+    // The booking form allows 10 bookings per hour and address; this suite has made 8 by now and books 3 more.
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
     $consoleEvent = $fixture->event();
     // The host already has 10:00 to 13:00 booked above.
     $plain = $fixture->booking($consoleEvent, $day . ' 14:00:00')['booking'];
