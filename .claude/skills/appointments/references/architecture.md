@@ -132,7 +132,7 @@ engine is where the bugs will be, and it has to be testable in isolation.
 | `IcsWriter` | Build RFC 5545 output for a booking and for a feed. See `references/calendar-and-ics.md`. |
 | `KeyProvider` | Derive one signing key per purpose from the Joomla site secret. See `references/data-model.md`, section "Signing keys". |
 | `FeedToken` | Create, verify and rotate the per-feed token; stores only its keyed digest, constant-time comparison. |
-| `SignedLink` | Create and verify the reschedule, cancel and erasure links. The action is part of the signature, so a cancel link is rejected for an erasure. |
+| `SignedLink` | Create and verify the reschedule and cancel links. The action is part of the signature, so a reschedule link is rejected for a cancellation. |
 | `MailComposer` | Render a template with booking placeholders, in the recipient's language, and attach the ICS. |
 | `ConferenceManager` | Resolve the configured provider and ask it for a link. See `references/conferencing.md`. |
 
@@ -191,7 +191,7 @@ simultaneous submissions for two overlapping slots of one host, across two event
 ## Security
 
 - Every state-changing request validates `Session::checkToken()`. The public booking form included.
-- The reschedule, cancel **and erasure** links carry an HMAC over booking id, action and the
+- The reschedule and cancel links carry an HMAC over booking id, action and the
   booking's current `modified` timestamp, keyed by `KeyProvider` (see `references/data-model.md`,
   section "Signing keys"). All three actions use the same contract, so the deletion link is never
   built with a separate or weaker mechanism. Changing the booking invalidates older links

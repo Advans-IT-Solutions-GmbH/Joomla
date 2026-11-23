@@ -271,18 +271,18 @@ final class BookingStore
         return $version + $provisioned + ['_conference_cleanup_error' => !empty($cleared['_conference_cleanup_error'])];
     }
 
-    public function erase(int $bookingId, \DateTimeImmutable $now, string $path, bool $delete = false, ?int $actor = null, ?SignedLink $links = null, string $signature = '', ?int $retentionDays = null, ?PrivacyCleanup $privacyCleanup = null): array
+    public function erase(int $bookingId, \DateTimeImmutable $now, string $path, bool $delete = false, ?int $actor = null, ?int $retentionDays = null, ?PrivacyCleanup $privacyCleanup = null): array
     {
-        if (!in_array($path, ['self_service', 'privacy_request', 'retention', 'admin'], true)
+        // `cancellation`: the invitee's own cancellation by signed link, erased right after it (ManageModel).
+        if (!in_array($path, ['cancellation', 'privacy_request', 'retention', 'admin'], true)
             || ($path === 'admin' ? $actor === null || $actor < 1 : $actor !== null)
-            || ($path === 'self_service' && $links === null)
             || ($path === 'retention' && ($retentionDays === null || $retentionDays < 0 || $retentionDays > 65535))
             || ($path !== 'retention' && $retentionDays !== null)
             || ($privacyCleanup !== null && $path !== 'privacy_request')) {
             throw new \InvalidArgumentException('Invalid erasure provenance.');
         }
         $db = $this->db;
-        $host = $this->bookingHost($bookingId, $links === null);
+        $host = $this->bookingHost($bookingId, true);
         if ($host === 0) {
             return ['changed' => false, 'notification' => null];
         }
@@ -291,9 +291,6 @@ final class BookingStore
         try {
             $this->lockHost($host);
             $booking = $this->lockedBooking($bookingId);
-            if ($links !== null && (!$booking || !$links->verify($bookingId, 'erase', $booking['modified_utc'], $signature))) {
-                throw new InvalidBookingLinkException();
-            }
             if (!$booking || $booking['anonymised_utc'] !== null) {
                 $db->transactionCommit();
 

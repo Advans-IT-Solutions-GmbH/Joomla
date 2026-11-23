@@ -59,7 +59,7 @@ is released the same way.
   `action` is one of `reschedule`, `cancel`, `erase`.
 - The link stops working once used, because `modified` changes.
 - A deletion is logged in a separate audit table that holds **no data of an invitee**: booking id,
-  timestamp, path used (`self_service`, `privacy_request`, `retention`, `admin`), and for the
+  timestamp, path used (`cancellation`, `privacy_request`, `retention`, `admin`), and for the
   `admin` path the acting administrator's Joomla user id. The operator needs this to prove the
   request was honoured, and it must not become a second copy of the data that was erased. See
   "What the audit table is, and what it is not" below.
@@ -252,7 +252,7 @@ component gives the operator the mechanism; the legal text is theirs.
 ## Tests that must exist
 
 - A deletion link erases exactly the fields in the table above and nothing else.
-- A deletion link signed for `cancel` is rejected for `erase`.
+- A reschedule link is rejected for `cancel`, and the removed `erase` action never verifies.
 - A used deletion link is rejected.
 - Deleting a future booking releases the slot, so the time becomes bookable again.
 - The host notification for a deletion-driven cancellation contains no invitee data.

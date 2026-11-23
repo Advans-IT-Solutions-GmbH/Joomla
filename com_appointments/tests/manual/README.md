@@ -395,8 +395,8 @@ For **every message actually sent**, check:
 - No internal diagnostics or conference secrets.
 - No management capabilities for unauthorised recipients.
 
-**Capability requirement:** only the primary invitee receives signed reschedule, cancellation and
-erasure links. Guests and the host do not thereby receive the invitee's management permissions.
+**Capability requirement:** only the primary invitee receives signed reschedule and cancellation
+links. Guests and the host do not thereby receive the invitee's management permissions.
 Check documentation and actual delivery for consistency during acceptance; the component README's
 earlier contradictory recipient sentence has been corrected to match this rule.
 
@@ -454,12 +454,12 @@ phone, time zone, language, guests, answers, free text and conference data.
 
 | ID | Type | Procedure | Expected result |
 |---|---|---|---|
-| DS-01 | POS | Open erase link without login. | Understandable explanation of the affected meeting, removal and retained anonymous record or full deletion. |
-| DS-02 | NEG | Only open the page; do not confirm. | No erasure yet. |
-| DS-03 | POS | Confirm in anonymisation mode. | All personal fields cleared; intended anonymous meeting metadata retained; anonymisation timestamp set. |
-| DS-04 | POS | Repeat for a future meeting. | Meeting cancelled and slot free; host message contains no former invitee data or erasure reason. |
+| DS-01 | POS | Open the cancel link without login. | Understandable explanation of the affected meeting and that cancelling removes the personal data (retained anonymous record or full deletion). |
+| DS-02 | NEG | Only open the page; do not confirm. | No cancellation and no erasure yet. |
+| DS-03 | POS | Confirm the cancellation in anonymisation mode. | Cancellation mails sent; all personal fields cleared; intended anonymous meeting metadata retained; anonymisation timestamp set. |
+| DS-04 | POS | Repeat for a future meeting. | Meeting cancelled and slot free; host message contains no former invitee data besides the cancellation reason it announces. |
 | DS-05 | POS | Switch to full deletion and repeat with a new booking. | Booking row removed; only minimal deletion evidence retained. |
-| DS-06 | NEG | Reuse a consumed erase link or substitute another booking ID. | No disclosure or second erasure action. |
+| DS-06 | NEG | Reuse the consumed cancel link or substitute another booking ID. | 404, no disclosure or second erasure action. |
 | DS-07 | INT | Inspect backend, CSV, ICS, feed and privacy export after erasure. | Previously stored contact, guest, answer and conference data no longer available. |
 | DS-08 | INT | Inspect audit table. | Only booking ID, action, path, timestamp and permitted administrator ID; no invitee data. |
 
@@ -696,7 +696,7 @@ Configure this scenario **only through Joomla administration**, without file/dat
 | 6 | Reschedule through signed link. | Same UID; existing calendar entry updated; old slot free. |
 | 7 | Subscribe to and refresh calendar feed. | Current meeting visible; no duplicate UID. |
 | 8 | Trigger reminder. | Correct reminder with ICS and valid links for the authorised recipient. |
-| 9 | Erase own data through erase link. | Future meeting cancelled; personal data removed; slot free; minimal audit entry. |
+| 9 | Cancel own appointment through the cancel link. | Cancellation mails sent; personal data removed; slot free; minimal audit entry. |
 | 10 | Book again, then export/remove through Joomla privacy. | Formal privacy workflow fully functional. |
 
 Then repeat the core flow **with JavaScript disabled**.

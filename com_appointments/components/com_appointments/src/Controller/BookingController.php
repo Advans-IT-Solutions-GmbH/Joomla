@@ -276,8 +276,8 @@ class BookingController extends BaseController
             return false;
         }
         // Fail closed like a new booking: a reschedule or cancellation is never saved while its
-        // mails cannot be sent. Erasure stays possible; its host notice is logged as not sent.
-        if ($model->action() !== 'erase' && \Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl::current() === null) {
+        // mails cannot be sent.
+        if (\Advans\Component\Appointments\Administrator\Helper\PublicSiteUrl::current() === null) {
             \Joomla\CMS\Log\Log::add('Appointment change refused: no valid public site URL is configured.', \Joomla\CMS\Log\Log::ERROR, 'com_appointments');
             $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKING_UNAVAILABLE'), 'error');
             $this->app->setUserState($focusKey, true);

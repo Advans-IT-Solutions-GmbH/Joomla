@@ -73,9 +73,9 @@ final class AnonymiserTest extends TestCase
         $helper = new Anonymiser();
         $booking = $this->booking();
         $links = new SignedLink(new KeyProvider('secret'));
-        $signature = $links->sign(7, 'erase', $booking['modified_utc']);
+        $signature = $links->sign(7, 'cancel', $booking['modified_utc']);
         $erased = $helper->anonymise($booking, $this->now());
-        self::assertFalse($links->verify(7, 'erase', $erased['modified_utc'], $signature));
+        self::assertFalse($links->verify(7, 'cancel', $erased['modified_utc'], $signature));
         self::assertSame($erased, $helper->anonymise($erased, $this->now()->modify('+1 day')));
     }
 
@@ -84,12 +84,12 @@ final class AnonymiserTest extends TestCase
         $booking = array_replace($this->booking(), ['modified_utc' => '2026-10-13 10:00:00']);
         $now = new \DateTimeImmutable('2026-10-13 10:00:00.500000', new \DateTimeZone('UTC'));
         $links = new SignedLink(new KeyProvider('secret'));
-        $signature = $links->sign(7, 'erase', $booking['modified_utc']);
+        $signature = $links->sign(7, 'cancel', $booking['modified_utc']);
         $erased = (new Anonymiser())->anonymise($booking, $now);
 
         self::assertSame('2026-10-13 10:00:01', $erased['modified_utc']);
         self::assertGreaterThan($booking['modified_utc'], $erased['modified_utc']);
-        self::assertFalse($links->verify(7, 'erase', $erased['modified_utc'], $signature));
+        self::assertFalse($links->verify(7, 'cancel', $erased['modified_utc'], $signature));
     }
 
     public function testPastAndAlreadyCancelledBookingsKeepStateAndSequence(): void
