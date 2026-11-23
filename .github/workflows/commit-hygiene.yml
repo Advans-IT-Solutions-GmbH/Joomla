@@ -22,4 +22,4 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    uses: Advans-IT-Solutions-GmbH/.github/.github/workflows/reusable-commit-hygiene.yml@d959f97951e8dcbf0113bff8f8938c456396f8bf # commit hygiene, to be re-pinned to the merge commit
+    uses: Advans-IT-Solutions-GmbH/.github/.github/workflows/reusable-commit-hygiene.yml@35f69b8dda59d630ae0ba62079bc5e051c1ab5a5 # commit hygiene, to be re-pinned to the merge commit
