@@ -54,7 +54,7 @@
 
 ## Commit-Konventionen
 - **Identität von Entwicklern:** Committe unter deinem **eigenen** GitHub-Account — mit deinem
-  Namen und deiner eigenen GitHub-No-Reply-Adresse (signiert, falls ein Schlüssel vorhanden ist;
+  Namen und deiner eigenen GitHub-No-Reply-Adresse (signiert und verifiziert;
   für Organisationsmitglieder gemäss internem Onboarding).
   - `git config user.name "<Dein Name>"`
   - `git config user.email "<deine eigene GitHub-No-Reply>"`
@@ -66,12 +66,11 @@
 - Niemals `@advans.ch`-Adressen verwenden — nutze deine No-Reply-Adresse. (Eine private E-Mail
   im Commit kann bei aktivierter „Block command line pushes that expose my email“ den Push
   ablehnen; die No-Reply-Adresse vermeidet das.)
-- **Signing:** Ist ein verifizierter Signierschlüssel vorhanden, signiere damit
-  (`git config commit.gpgsign true`); die Commit-E-Mail muss zu diesem Key passen, sonst ist
-  die Signatur nicht verifizierbar. Ohne Key committest du unsigniert — kein Commit darf an
-  einem fehlenden Key scheitern
-  (siehe „Repo-spezifisch (Joomla)“). Startet GPG in der Umgebung nicht, nicht reparieren, sondern
-  unsigniert committen und pushen.
+- **Signing:** Jeder Commit eines PR muss verifiziert signiert sein (SSH- oder GPG-Schlüssel,
+  der auf GitHub als Signing Key hinterlegt ist; die Commit-E-Mail muss zu diesem Key passen;
+  `git commit -S`). Scheitert das Signieren: anhalten und melden, nie unsigniert committen. Die
+  Pflichtprüfung „Commit hygiene“ (Teil von „Collect Results“) lässt einen PR mit unverifiziertem
+  Commit, mit `Co-authored-by`-Trailer oder mit Agent-Signatur nicht durch.
 - Conventional Commits: `fix:` → Patch, `feat:` → Minor, `feat!:`/`BREAKING CHANGE:` → Major.
   Scope optional (`fix(scope): ...`).
 - Kein `Co-authored-by`-Trailer und keine Agent-Signatur (kein „Ona“, „Copilot“ o. ä.).
@@ -102,9 +101,8 @@ Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den pass
 
 ## Repo-spezifisch (Joomla)
 Auf `main` verlangen das Organization-Ruleset und der Branch-Schutz dieses Repos verifizierte
-Signaturen. Das erfüllt der Squash-Merge, den GitHub signiert. Commits im Feature-Branch
-signierst du, wenn ein verifizierter Schlüssel vorhanden ist; ohne Schlüssel dürfen sie
-unsigniert sein.
+Signaturen auf jedem Commit eines PR; der signierte Squash-Merge ersetzt diese Prüfung nicht.
+Unsignierte Commits im Feature-Branch sind nicht erlaubt (siehe „Commit-Konventionen“).
 
 Die vollständigen Identitäts- und Signing-Konventionen in diesem Abschnitt und unter
 „Commit-Konventionen“ sind eigenständig und für externe Contributor ausreichend.
