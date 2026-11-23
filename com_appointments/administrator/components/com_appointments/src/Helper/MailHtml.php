@@ -193,7 +193,7 @@ final class MailHtml
                 }
             }
 
-            $mailer->addAttachment($path, 'site-logo', 'base64', (string) mime_content_type($path), 'inline');
+            $mailer->addAttachment($path, 'site-logo', 'base64', (\function_exists('mime_content_type') ? (string) mime_content_type($path) : 'application/octet-stream'), 'inline');
         } catch (\Throwable $e) {
             // No logo is better than no mail.
         }
