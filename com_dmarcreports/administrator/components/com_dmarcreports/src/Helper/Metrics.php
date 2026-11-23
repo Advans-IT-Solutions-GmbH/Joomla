@@ -28,6 +28,17 @@ final class Metrics
 {
     private DatabaseInterface $db;
 
+    /** Most flagged sources per domain the bulk (dashboard) query loads. */
+    private int $flaggedLimit = FlaggedSourceLimit::PER_DOMAIN;
+
+    /**
+     * Change the per-domain cap of the bulk flagged-source query (clamped).
+     */
+    public function setFlaggedSourceLimit(int $limit): void
+    {
+        $this->flaggedLimit = FlaggedSourceLimit::clamp($limit);
+    }
+
     public function __construct(?DatabaseInterface $db = null)
     {
         $this->db = $db ?? Factory::getContainer()->get(DatabaseInterface::class);
@@ -1221,20 +1232,24 @@ final class Metrics
             ->group($this->db->quoteName('rep.domain_id') . ', ' . $this->db->quoteName('cur.source_ip'))
             ->having($this->flaggedHaving('cur'));
 
-        $query = $this->query()
-            ->select('*')
-            ->from('(' . $grouped . ') AS ' . $this->db->quoteName('g'))
-            ->order(
-                $this->db->quoteName('domain_id') . ' ASC, '
-                . $this->db->quoteName('spf_only') . ' DESC, '
-                . $this->db->quoteName('fail_delivered') . ' DESC, '
-                . $this->db->quoteName('source_ip') . ' ASC'
-            );
+        // Bound the work: keep only the top-ranked flagged sources of each domain
+        // (the SPF-only and delivered-failing ones come first) and let the
+        // database cut the rest, so the dashboard never reads, enriches or
+        // turns every source of a busy domain into action items. The domain
+        // view lists every source.
+        $query = FlaggedSourceLimit::wrap(
+            $grouped,
+            $this->db->quoteName('g.spf_only') . ' DESC, '
+            . $this->db->quoteName('g.fail_delivered') . ' DESC, '
+            . $this->db->quoteName('g.source_ip') . ' ASC',
+            $this->flaggedLimit
+        );
 
         $map = [];
 
         foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
             $flagged = self::flaggedRow($row);
+            $flagged['flagged_total'] = (int) ($row['flag_total'] ?? 0);
             $end = (int) ($row['evidence_window_end'] ?? 0);
             $flagged['evidence_total'] = (int) $flagged['total'];
             $flagged['evidence_window_fallback'] = false;

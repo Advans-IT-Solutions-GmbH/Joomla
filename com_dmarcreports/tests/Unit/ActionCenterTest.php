@@ -754,7 +754,7 @@ class ActionCenterTest extends TestCase
         $this->assertSame([], $this->sourceItems($items));
     }
 
-    public function testCyonSharedGatewayNeedsAlignedDkimForLegitimateEvidence(): void
+    public function testSharedHostingGatewayNeedsAlignedDkimForLegitimateEvidence(): void
     {
         $legitimate = $this->itemsWithSources([
             [

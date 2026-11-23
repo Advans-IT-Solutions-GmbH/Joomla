@@ -856,17 +856,19 @@ class MetricsTest
 
             $bulk = $metrics->actionMetricsForAll($metrics->domainSummaries())[$domainId]['flagged_sources'] ?? [];
 
-            $this->test('Bulk metrics return the same complete, ranked flagged-source list', function () use ($bulk, $detailIps, $expectedIps) {
+            $limit = \Advans\Component\DmarcReports\Administrator\Helper\FlaggedSourceLimit::PER_DOMAIN;
+
+            $this->test('Bulk (dashboard) metrics are bounded to the top-ranked sources of the detail list', function () use ($bulk, $detailIps, $limit) {
                 $bulkIps = array_map(static fn (array $source): string => $source['ip'], $bulk);
 
-                return count($bulk) === count($expectedIps)
-                    && $bulkIps === $detailIps
+                return count($bulk) === $limit
+                    && $bulkIps === array_slice($detailIps, 0, $limit)
+                    && (int) ($bulk[0]['flagged_total'] ?? 0) === count($detailIps)
                     && !in_array(false, array_map(
                         static fn (array $source): bool => (int) ($source['evidence_window_end'] ?? 0) === self::ANCHOR,
                         $bulk
                     ), true);
             });
-
             $this->test('The domain source table includes all flagged sources beyond 500', function () use ($detail, $expectedIps) {
                 $tableIps = array_column($detail['top_sources'], 'source_ip');
                 sort($tableIps, SORT_STRING);
