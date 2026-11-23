@@ -396,6 +396,12 @@ foreach ($scenarios as $scenario) {
                         (bu_state($reviewFile)['choices'][$componentId] ?? '') === 'apply');
 
                     $retry = bu_update($browser, $package, $version);
+                    if (!$retry['updated'] && str_contains(bu_text($retry), 'Before you update')) {
+                        bu_check('the backup recommendation stops before a reviewed update copies files',
+                            file_get_contents($modifyFile) === $changed,
+                            bu_text($retry));
+                        $retry = bu_update($browser, $package, $version);
+                    }
                     $releaseBytes = (string) file_get_contents($modifyFile);
                     $releaseHash = hash('sha256', $releaseBytes);
                     $attemptFile = $state . '/recovery/attempt.php';
@@ -443,10 +449,17 @@ foreach ($scenarios as $scenario) {
             $paused = bu_text($result, ['danger', 'error']);
             bu_check('unknown foreign operation pauses the update', !$result['updated'] && str_contains($paused, 'The installation was paused. Nothing has been changed.'), $paused);
             bu_check('the pause names the file and explains the conflict',
-                str_contains($paused, 'media/advans-test-foreign/other.txt') && str_contains($paused, 'belongs to another extension'));
+                str_contains($paused, 'media/advans-test-foreign/other.txt')
+                && str_contains($paused, 'has local or unknown contents')
+                && !str_contains($paused, 'belongs to another extension'));
             bu_check('the foreign file and stored-copy inventory remain unchanged',
                 file_get_contents($foreign) === "belongs to another extension\n" && bu_backups() === $backupsBefore);
-            bu_check('the pause offers no approval bypass', !str_contains($paused, 'Approve') && !str_contains($paused, 'approve'));
+            $pauseMessages = array_filter(
+                $result['messages'],
+                static fn(array $message): bool => in_array($message['type'], ['danger', 'error'], true)
+            );
+            $pauseHtml = implode("\n", array_column($pauseMessages, 'html'));
+            bu_check('the pause offers no approval bypass', !preg_match('/<(?:a|button|form)\b/i', $pauseHtml));
             file_put_contents($foreign, "replaced by the test package\n");
             $retry = bu_update($browser, $variant, $version);
             bu_check('after manual conflict resolution the update completes', $retry['updated'], bu_text($retry));
