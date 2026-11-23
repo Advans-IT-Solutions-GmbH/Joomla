@@ -105,33 +105,26 @@ Advans-IT-Solutions-GmbH/Joomla
 Shared installer support and the repeatable administrator check are staged at build time
 (`shared/installer/`, `shared/build/prepare-installer.php`; PHP CLI 8.1+ required).
 See the root `README.md`, section "Installation safety and repeatable system checks", for
-how updates decide by themselves (own vs foreign territory, record and catalog of released files,
-backups, the pause with Approve for Super Users) and the administrator menu paths. An extension
-with a foreign file operation declares it in `guardedFiles()` and decides it in
-`foreignDecision()`; the README lists every such operation. Scheduled tasks an extension needs are
-listed in `shared/installer/tasks.php` (required, optional or required only while an option is on)
-and named per extension under `tasks` in `catalog.php`; after every installation and update
-`ScheduledTasks` creates a missing required task switched on, never changes an existing one and
-reports one that is switched off (root README, «Scheduled tasks decide by themselves too»). The runtime lives in the namespace
-`Advans\Installer\V2`: one request can load the runtimes of several extensions (a bulk update), and
-the loader reuses an already loaded class of the same namespace, so an incompatible change of the
-runtime moves it to a new version namespace (and every `script.php` with it).
-
-**Site backups on hosted sites: Akeeba only.** When you install a package on a hosted test
-installation (or a production change is prepared), a site backup is made only with Akeeba Backup.
-Disposable local and CI containers (`references/testing.md`) carry no Akeeba and need no backup,
-they are rebuilt instead. A new backup before the change on a hosted site is allowed and expected
-(`php cli/joomla.php akeeba:backup:take --profile=1 --description="…"` in the site root). Existing
-Akeeba backups (`.jpa` archives, their logs and records) are managed by the maintainer: never
-delete, move, rename or prune them, not even through Akeeba itself, only report count, size and
-age. The Akeeba configuration (profiles, output directory, quotas, post-processing) is the
-maintainer's too and stays unchanged, so what a new backup does with older archives is his
-setting, not the agent's. No self-made backups on the server: no `backup-*` folders, no `mysqldump`/`.sql` dumps, no
-`files.tar.gz`, no copies of `configuration.php`, no `state.json` snapshots, neither in the home
-directory nor in the webroot. Temporary work files go into one folder of your own, removed at the
-end of the task. The review backups the shared installer writes itself (root `README.md`, section
-"Installation safety and repeatable system checks") are part of the product and not affected.
-Binding is the internally maintained handbook (section "Web Host Backups: Akeeba Only").
+the release-hash checks, hash-only conflict pauses, local Appointments recovery, full-site backup
+recommendation and administrator menu paths. A modified or unknown file that an operation would
+replace, remove or adjust stops the update before Joomla copies files; resolve the conflict manually
+or defer the update. The installer does not create, reuse, export, restore or automatically delete
+file-content copies, and copies left by older versions are untouched. It recommends a current,
+complete backup that can be restored independently without specifying a product or claiming the
+backup exists. The first update attempt for each extension/version stops before changing files;
+retrying the same update acknowledges the reminder only. A package can therefore stop separately
+for itself and for bundled children. An extension with a foreign file operation declares it in
+`guardedFiles()` and decides it in `foreignDecision()`; the README lists each operation.
+Scheduled tasks an extension needs are listed in `shared/installer/tasks.php` (required, optional or
+required only while an option is on) and named per extension under `tasks` in `catalog.php`; after
+every installation and update `ScheduledTasks` creates a missing required task switched on, never
+changes an existing one and reports one that is switched off (root README, «Scheduled tasks decide
+by themselves too»). The current runtime uses `Advans\Installer\V3`. The V3 loader reuses loaded
+classes within its namespace, while V2 packages already on a site can coexist with V3 during bulk
+updates; an incompatible runtime change therefore moves to a new namespace (and every corresponding
+`script.php` with it).
+Keep the user-facing backup recommendation product-neutral; the installer must not create or manage
+hosted-site backups.
 
 See `references/release-workflow.md` for the full release process.
 See `references/testing.md` for running tests locally.

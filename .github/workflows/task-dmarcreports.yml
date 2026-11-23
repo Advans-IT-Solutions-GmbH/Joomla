@@ -324,7 +324,7 @@ jobs:
       - name: Update with Check for Updates and Update in the backend
         env:
           C: plg_task_dmarcreports_j6_test
-          SCENARIOS: clean,modified,backup-failure,foreign-pause
+          SCENARIOS: clean,modified,foreign-pause
         run: |
           docker cp /tmp/new-package/extension.zip "$C:/tmp/extension-new.zip"
           docker cp plg_task_dmarcreports/updates/update.xml "$C:/tmp/update.xml"

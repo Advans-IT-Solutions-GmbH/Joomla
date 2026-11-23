@@ -1,6 +1,6 @@
 # DMARC MTA-STS Policy System Plugin
 
-**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../README.md#installation-safety-and-repeatable-system-checks).
 
 ## Description
 

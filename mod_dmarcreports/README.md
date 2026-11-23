@@ -1,6 +1,6 @@
 # DMARC Reports Dashboard Module
 
-**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/moddmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/moddmarcreports.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-moddmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-moddmarcreports.yml)

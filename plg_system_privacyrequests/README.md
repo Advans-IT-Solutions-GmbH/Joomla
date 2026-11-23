@@ -126,10 +126,15 @@ Keep an operator contact route available when automated submission or delivery f
 
 ## Updating
 
-Install the newer standalone ZIP through Joomla's normal installer and shared
-approval/backup process. Updates preserve plugin publication state. Recheck the
-contact route, mail and active privacy callbacks on an isolated test installation;
-an update is not acceptance of native mail delivery or complete site-wide erasure.
+Before updating, take a current, complete site backup and ensure it can be restored
+independently; the installer cannot verify this. The first update attempt displays
+this recommendation and stops before changing files. If the installer reports a
+modified or unknown file, review the listed path and hashes, resolve the conflict
+manually or defer the update, then retry. The installer does not retain file-content
+copies or provide an approval bypass. Updates preserve plugin publication state.
+Recheck the contact route, mail and active privacy callbacks on an isolated test
+installation; an update is not acceptance of native mail delivery or complete
+site-wide erasure.
 
 ## Uninstall
 

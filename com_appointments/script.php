@@ -12,19 +12,18 @@ defined('_JEXEC') or die;
 require_once is_file(__DIR__ . '/advansinstaller/load.php')
     ? __DIR__ . '/advansinstaller/load.php'
     : dirname(__DIR__) . '/shared/installer/load.php';
-if (!class_exists(\Advans\Installer\AppointmentsConflict\V1\Guard::class, false)) {
+if (!class_exists(\Advans\Installer\AppointmentsConflict\V2\Guard::class, false)) {
     require_once is_file(__DIR__ . '/advansinstaller/AppointmentsConflict.php')
         ? __DIR__ . '/advansinstaller/AppointmentsConflict.php'
         : dirname(__DIR__) . '/shared/installer/AppointmentsConflict.php';
 }
 
 use Joomla\CMS\Factory;
-use Advans\Installer\AppointmentsConflict\V1\Guard as AppointmentsConflictGuard;
-use Advans\Installer\V2\BackupFailure;
-use Advans\Installer\V2\Destinations;
-use Advans\Installer\V2\InstallerScript;
-use Advans\Installer\V2\Knowledge;
-use Advans\Installer\V2\SystemCheck;
+use Advans\Installer\AppointmentsConflict\V2\Guard as AppointmentsConflictGuard;
+use Advans\Installer\V3\Destinations;
+use Advans\Installer\V3\InstallerScript;
+use Advans\Installer\V3\Knowledge;
+use Advans\Installer\V3\SystemCheck;
 use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
@@ -206,14 +205,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
     {
         try {
             $result = parent::postflight($type, $parent);
-            if ($result !== false && in_array($type, ['install', 'update'], true)) {
-                try {
-                    AppointmentsConflictGuard::pruneBackups($this->conflictState(), self::BACKUP_RETENTION_DAYS * 86400);
-                } catch (\RuntimeException | \JsonException $error) {
-                    Log::add('Cannot apply recovery backup retention: ' . $error->getMessage(), Log::WARNING, 'advans-installer');
-                }
-            }
-
             return $result;
         } finally {
             $this->releaseConflictLock();
@@ -337,9 +328,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
             }
             if ($firstReview !== null) {
                 try {
-                    AppointmentsConflictGuard::apply(
-                        $this->conflictReview, $this->conflictFiles, (string) $parent->getParent()->getPath('source')
-                    );
                     AppointmentsConflictGuard::journal($this->conflictState(), $this->conflictReview);
                 } catch (\RuntimeException | \JsonException $error) {
                     $this->reportConflictError($error);
@@ -392,10 +380,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->conflictReview = [];
 
         try {
-            if (!method_exists(AppointmentsConflictGuard::class, 'assertFreshSource')) {
-                throw new \RuntimeException('An older Appointments recovery runtime is loaded. Retry Appointments separately.');
-            }
-            AppointmentsConflictGuard::assertFreshSource($source);
             $manifestFile = (string) $parent->getParent()->getPath('manifest');
             $files = Destinations::merge(
                 Destinations::files($manifest, $source, $manifestFile),
@@ -412,8 +396,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
             }
             $conflicts = AppointmentsConflictGuard::inspect(
                 $files, $owned,
-                Knowledge::load($source . '/' . Knowledge::CATALOG, $state . '/' . Knowledge::RECORD),
-                $state
+                Knowledge::load($source . '/' . Knowledge::CATALOG, $state . '/' . Knowledge::RECORD)
             );
             $review = $conflicts === [] ? [] : AppointmentsConflictGuard::review(
                 $state, (string) $manifest->version, $conflicts, $files, (string) hash_file('sha256', $manifestFile)
@@ -427,18 +410,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
 
                 return true;
             }
-        } catch (BackupFailure $failure) {
-            Log::add($failure->getMessage(), Log::ERROR, 'advans-installer');
-            Factory::getApplication()->enqueueMessage(
-                Text::sprintf(
-                    'ADVANS_GUARD_BACKUP_FAILED',
-                    htmlspecialchars(Knowledge::relative($failure->destination), ENT_QUOTES, 'UTF-8'),
-                    htmlspecialchars(Knowledge::relative($state . '/recovery/backups'), ENT_QUOTES, 'UTF-8')
-                ),
-                'error'
-            );
-
-            return false;
         } catch (\RuntimeException | \JsonException $error) {
             $this->reportConflictError($error);
 
@@ -456,14 +427,13 @@ class Com_appointmentsInstallerScript extends InstallerScript
             $items .= '<li><code>' . $escape(Knowledge::relative($conflict['destination'])) . '</code><br>'
                 . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_EXISTING') . ': <code>' . $escape($conflict['existing'])
                 . '</code><br>' . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_INCOMING') . ': <code>'
-                . $escape($conflict['incoming']) . '</code><br>'
-                . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_BACKUP') . ': <code>'
-                . $escape(Knowledge::relative($conflict['backup'])) . '</code></li>';
+                . $escape($conflict['incoming']) . '</code></li>';
         }
 
         Factory::getApplication()->enqueueMessage(
             '<p><strong>' . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_TITLE') . '</strong></p><p>'
-            . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_EXPLANATION') . '</p><p><a href="index.php?option='
+            . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_EXPLANATION') . '</p><p>'
+            . Text::_('ADVANS_GUARD_BACKUP_RECOMMENDATION_BODY') . '</p><p><a href="index.php?option='
             . self::RECOVERY_OPTION . '">' . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_REVIEW') . '</a></p><ul>' . $items . '</ul>',
             'error'
         );
@@ -586,7 +556,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $this->ensureCloseTask();
         $this->removeLegacyManifest();
         $this->ensureTeamGroups();
-        AppointmentsConflictGuard::verifyInstalled($this->conflictReview);
+        AppointmentsConflictGuard::verifyInstalled($this->conflictReview, $this->conflictState());
 
         // An update only gets a short confirmation; the first installation shows
         // where to find the component and how to begin.
@@ -1034,7 +1004,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
     private function snapshotBundled(array $files): array
     {
         clearstatcache();
-        $comparison = \Advans\Installer\V2\FileGuard::compare($files);
+        $comparison = \Advans\Installer\V3\FileGuard::compare($files);
         foreach ($comparison['incoming'] as $path => $hash) {
             $comparison['existing'][$path] = file_exists($path) ? ($comparison['differing'][$path]['existing'] ?? $hash) : null;
         }

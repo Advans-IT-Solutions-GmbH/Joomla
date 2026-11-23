@@ -1,6 +1,6 @@
 # DMARC Reports Package
 
-**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/pkg-dmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/pkg-dmarcreports.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-pkg-dmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-pkg-dmarcreports.yml)
@@ -79,7 +79,7 @@ Installing the bundle does not prove that the configured mailbox, Scheduler trig
 
 ## Troubleshooting
 
-If installation stops for existing files, use the shared backup/approval procedure linked above; do not bypass the guard by copying child files manually. If an update is missing, check the **package** update site, not a child's standalone feed. If reports or policy delivery are missing, use the relevant child README's troubleshooting steps and component System Check. The package does not configure DNS, web-server rules or a cron trigger.
+If installation stops for a modified or unknown file, review the listed paths and hashes, resolve the conflict manually or defer the update, then retry. The installer does not create or retain file-content copies, and there is no approval bypass; do not copy child files manually to evade the stop. A package update may show the full-site backup recommendation separately for the package and its children. If an update is missing, check the **package** update site, not a child's standalone feed. If reports or policy delivery are missing, use the relevant child README's troubleshooting steps and component System Check. The package does not configure DNS, web-server rules or a cron trigger.
 
 ## Development
 

@@ -94,7 +94,32 @@ class UpdateTest
         copy($admin . '/dmarcreports.xml', $admin . '/com_dmarcreports.xml');
         $this->db->query("UPDATE {$this->dbPrefix}extensions SET manifest_cache = JSON_SET(manifest_cache, '$.version', '')"
             . " WHERE type = 'component' AND element = 'com_dmarcreports'");
-        // Reinstall the same package archive (update path).
+        // The backup recommendation stops the first package attempt; retries may encounter each
+        // bundled extension's own version-scoped reminder before Joomla reaches its file-copy phase.
+        [$firstCode, $firstOutput] = sh_cli_install('/var/www/html', $zip);
+        $stateRoot = '/var/www/html/administrator/advans-installer-state';
+        $packageNotice = $this->statePayload($stateRoot . '/pkg_dmarcreports/backup-recommendation.php');
+        $this->test('First package update stops before file changes with reminder metadata only', function () use ($firstCode, $firstOutput, $packageNotice) {
+            if ($firstCode === 0) {
+                echo "    The first update unexpectedly completed.\n";
+                return false;
+            }
+
+            if ($packageNotice === [] || (int) ($packageNotice['expires'] ?? 0) < time()
+                || !isset($packageNotice['version']) || array_diff(array_keys($packageNotice), ['version', 'expires']) !== []) {
+                echo "    " . implode("\n    ", explode("\n", $firstOutput)) . "\n";
+                return false;
+            }
+
+            return true;
+        });
+        foreach (['com_dmarcreports', 'mod_dmarcreports', 'plg_task_dmarcreports', 'plg_system_dmarcmtasts'] as $childId) {
+            $this->test("Package reminder stops before child $childId is reached", function () use ($stateRoot, $childId) {
+                return !is_file($stateRoot . '/' . $childId . '/backup-recommendation.php');
+            });
+        }
+
+        // Reinstall the same package archive (update path); only fresh reminder stops are retried.
         [$exitCode, $text] = sh_cli_install_checked('/var/www/html', $zip);
         $output = explode("\n", $text);
 
@@ -104,6 +129,25 @@ class UpdateTest
             }
             return $exitCode === 0;
         });
+
+        $reminderExtensions = [
+            'pkg_dmarcreports' => "type = 'package' AND element = 'pkg_dmarcreports'",
+            'com_dmarcreports' => "type = 'component' AND element = 'com_dmarcreports'",
+            'mod_dmarcreports' => "type = 'module' AND element = 'mod_dmarcreports'",
+            'plg_task_dmarcreports' => "type = 'plugin' AND folder = 'task' AND element = 'dmarcreports'",
+            'plg_system_dmarcmtasts' => "type = 'plugin' AND folder = 'system' AND element = 'dmarcmtasts'",
+        ];
+        foreach ($reminderExtensions as $id => $where) {
+            $this->test("Reminder is acknowledged for $id's installed manifest version", function () use ($id, $where, $stateRoot) {
+                $row = $this->db->query("SELECT manifest_cache FROM {$this->dbPrefix}extensions WHERE $where")->fetch_assoc();
+                $version = (string) (json_decode((string) ($row['manifest_cache'] ?? ''), true)['version'] ?? '');
+                $notice = $this->statePayload($stateRoot . '/' . $id . '/backup-recommendation.php');
+
+                return $version !== '' && ($notice['version'] ?? '') === $version
+                    && (int) ($notice['expires'] ?? 0) >= time()
+                    && array_diff(array_keys($notice), ['version', 'expires']) === [];
+            });
+        }
 
         $this->test('Component tables still present after update', function () {
             foreach (['dmarc_domains', 'dmarc_sources', 'dmarc_reports', 'dmarc_tlsrpt_reports'] as $table) {
@@ -270,6 +314,20 @@ class UpdateTest
         $row = $result ? $result->fetch_assoc() : null;
 
         return $row ? (int) $row['cnt'] : -1;
+    }
+
+    private function statePayload(string $path): array
+    {
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $bytes = (string) file_get_contents($path);
+        $prefix = "<?php exit; ?>\n";
+
+        return str_starts_with($bytes, $prefix)
+            ? (json_decode(substr($bytes, strlen($prefix)), true) ?: [])
+            : [];
     }
 
     private function test(string $name, callable $fn): void

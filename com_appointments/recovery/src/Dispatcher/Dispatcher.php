@@ -9,7 +9,7 @@ namespace Advans\Component\AppointmentsRecovery\Administrator\Dispatcher;
 
 defined('_JEXEC') or die;
 
-use Advans\Installer\AppointmentsConflict\V1\Guard;
+use Advans\Installer\AppointmentsConflict\V2\Guard;
 use Joomla\CMS\Dispatcher\ComponentDispatcher;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
@@ -29,7 +29,7 @@ final class Dispatcher extends ComponentDispatcher
 
         $root = dirname(__DIR__, 2);
         foreach (['FileGuard', 'Knowledge', 'State'] as $name) {
-            if (!class_exists('Advans\\Installer\\V2\\' . $name, false)) {
+            if (!class_exists('Advans\\Installer\\V3\\' . $name, false)) {
                 require_once $root . '/support/' . $name . '.php';
             }
         }
@@ -40,6 +40,31 @@ final class Dispatcher extends ComponentDispatcher
         $input = $app->getInput();
         $state = JPATH_ADMINISTRATOR . '/advans-installer-state/com_appointments';
         $page = self::PAGE;
+
+        if ($input->getMethod() === 'GET' && $input->getCmd('view') === 'download') {
+            $lock = null;
+            try {
+                $lock = Guard::lock($state);
+                $download = Guard::download($state, $input->getString('plan'), $input->getString('file'));
+                header('Content-Type: application/octet-stream');
+                header('Content-Disposition: attachment; filename*=UTF-8\'\'' . rawurlencode($download['filename']));
+                header('Content-Length: ' . strlen($download['bytes']));
+                header('Cache-Control: private, no-store');
+                header('X-Content-Type-Options: nosniff');
+                echo $download['bytes'];
+                exit;
+            } catch (\RuntimeException | \JsonException $error) {
+                Log::add($error->getMessage(), Log::WARNING, 'advans-installer');
+                $app->enqueueMessage(Text::_('COM_APPOINTMENTSRECOVERY_REFUSED'), 'error');
+                $app->redirect($page, 303);
+
+                return;
+            } finally {
+                if (is_resource($lock)) {
+                    fclose($lock);
+                }
+            }
+        }
 
         if ($input->getMethod() === 'POST') {
             if (!Session::checkToken('post')) {
@@ -53,11 +78,28 @@ final class Dispatcher extends ComponentDispatcher
                 $id = $post->getString('file');
                 switch ($post->getCmd('action')) {
                     case 'decide':
-                        Guard::decide($state, $plan, $id, $post->getCmd('choice'));
+                        Guard::decide(
+                            $state,
+                            $plan,
+                            $id,
+                            $post->getCmd('choice'),
+                            $post->getInt('confirm') === 1
+                        );
                         $app->enqueueMessage(Text::_('COM_APPOINTMENTSRECOVERY_SAVED'));
                         break;
                     case 'restore':
-                        Guard::restore($state, $plan, $id, $post->getString('expected', 'invalid'));
+                        $upload = $_FILES['restore'] ?? null;
+                        if (!is_array($upload) || ($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK
+                            || !is_string($upload['tmp_name'] ?? null) || !is_uploaded_file($upload['tmp_name'])) {
+                            throw new \RuntimeException('A local recovery file upload is required.');
+                        }
+                        Guard::restoreUpload(
+                            $state,
+                            $plan,
+                            $id,
+                            $post->getString('expected', 'invalid'),
+                            $upload['tmp_name']
+                        );
                         $app->enqueueMessage(Text::_('COM_APPOINTMENTSRECOVERY_RESTORED'));
                         break;
                     default:

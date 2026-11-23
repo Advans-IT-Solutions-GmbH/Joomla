@@ -38,12 +38,12 @@ namespace Joomla\CMS\Installer {
     }
 }
 
-namespace Advans\Installer\AppointmentsConflict\V1 {
+namespace Advans\Installer\AppointmentsConflict\V2 {
     function chmod(string $file, int $mode): bool
     {
         $directory = dirname($file);
-        if (\Advans\Installer\V2\FileGuard::normalize(dirname($directory))
-                !== \Advans\Installer\V2\FileGuard::normalize(realpath(sys_get_temp_dir())) || is_link($directory)
+        if (!preg_match('/^\.appointments-recovery-[a-f0-9]{32}$/D', basename($directory))
+            || is_link($directory)
             || (DIRECTORY_SEPARATOR === '/' && (fileperms($directory) & 0077) !== 0)) {
             throw new \RuntimeException('Restored plaintext must remain in private staging before publication.');
         }
@@ -156,6 +156,25 @@ namespace {
     $support = dirname(__DIR__) . '/installer';
     require_once $support . '/load.php';
     require_once $support . '/AppointmentsConflict.php';
+    $legacyV2 = $work . '/legacy-v2';
+    mkdir($legacyV2, 0700, true);
+    foreach (['InstallerScript', 'FileGuard', 'Destinations', 'Planner', 'Knowledge', 'Approval', 'State'] as $runtimeClass) {
+        file_put_contents(
+            $legacyV2 . '/' . $runtimeClass . '.php',
+            "<?php namespace Advans\\Installer\\V2; final class " . $runtimeClass . " {}\n"
+        );
+    }
+    spl_autoload_register(static function (string $class) use ($legacyV2): void {
+        $prefix = 'Advans\\Installer\\V2\\';
+
+        if (str_starts_with($class, $prefix)) {
+            $file = $legacyV2 . '/' . substr($class, strlen($prefix)) . '.php';
+
+            if (is_file($file)) {
+                require_once $file;
+            }
+        }
+    });
 
     $app = new class {
         public string $tag = 'en-GB';
@@ -302,14 +321,14 @@ namespace {
         $class = 'JFormFieldAdvanssystemcheck';
         require $duplicateRuntime . '/load.php';
         $assert($class === 'JFormFieldAdvanssystemcheck', 'Runtime loader overwrote Joomla FormHelper caller scope.');
-        $assert(class_exists(\Advans\Installer\V2\InstallerScript::class, false), 'Loading another extension did not reuse the shared runtime.');
+        $assert(class_exists(\Advans\Installer\V3\InstallerScript::class, false), 'Loading another extension did not reuse the shared runtime.');
         // Mixed bulk update: an older runtime already holds Advans\Installer; this one must still
         // use its own classes, from its own files.
         $assert(class_exists(\Advans\Installer\InstallerScript::class, false), 'The older runtime fixture is not loaded.');
 
         foreach (['InstallerScript', 'FileGuard', 'Destinations', 'Planner', 'Knowledge', 'Approval', 'State'] as $runtimeClass) {
             $file = (new \ReflectionClass('Advans\\Installer\\V2\\' . $runtimeClass))->getFileName();
-            $assert(realpath((string) $file) === realpath($support . '/' . $runtimeClass . '.php'), 'An older runtime replaced ' . $runtimeClass . '.');
+            $assert(realpath((string) $file) === realpath($legacyV2 . '/' . $runtimeClass . '.php'), 'The V3 loader replaced the installed V2 ' . $runtimeClass . '.');
         }
         $source = $work . '/source';
         $destination = JPATH_PLUGINS . '/ajax/joomlaajaxforms';
@@ -321,9 +340,12 @@ namespace {
         file_put_contents($destination . '/payload.php', '<?php echo "changed on this site";');
         file_put_contents($destination . '/untouched.php', '<?php echo "earlier release";');
         // The catalog of earlier releases knows the untouched file, not the changed one.
-        \Advans\Installer\V2\State::write($source . '/' . \Advans\Installer\V2\Knowledge::CATALOG, [
+        \Advans\Installer\V3\State::write($source . '/' . \Advans\Installer\V3\Knowledge::CATALOG, [
             'complete' => true,
-            'hashes'   => [hash('sha256', '<?php echo "earlier release";')],
+            'hashes'   => [
+                hash('sha256', '<?php echo "earlier payload";'),
+                hash('sha256', '<?php echo "earlier release";'),
+            ],
         ]);
         $xml = '<extension type="plugin" group="ajax"><name>PLG_AJAX_JOOMLAAJAXFORMS</name><files><filename>payload.php</filename><filename>untouched.php</filename></files></extension>';
         file_put_contents($source . '/joomlaajaxforms.xml', $xml);
@@ -333,7 +355,7 @@ namespace {
             public function getManifest(): \SimpleXMLElement { return $this->manifest; }
             public function getPath(string $key): string { return $key === 'manifest' ? $this->source . '/joomlaajaxforms.xml' : $this->source; }
         };
-        $installer = new class extends \Advans\Installer\V2\InstallerScript {
+        $installer = new class extends \Advans\Installer\V3\InstallerScript {
             /** @var array<string, string> */
             public array $foreign = [];
 
@@ -355,7 +377,90 @@ namespace {
         $backups = static fn(): array => glob($state . '/backups/*.php') ?: [];
         $messageText = static fn(): string => html_entity_decode(implode("\n", array_column($app->messages, 0)), ENT_QUOTES, 'UTF-8');
 
-        // Appointments stops before the shared retry/approval path for unknown owned files.
+        // A second PHP process cannot enter a shared installer lifecycle until the first has
+        // completed Joomla's file-copy phase and released its lock.
+        $lockRoot = $work . '/concurrent-installer-state';
+        $lockProbe = static function (string $root) use ($support): array {
+            $code = 'define("_JEXEC", 1); require ' . var_export($support . '/State.php', true) . '; '
+                . 'require ' . var_export($support . '/InstallerLock.php', true) . '; '
+                . '$handle = \\Advans\\Installer\\V3\\InstallerLock::acquire(' . var_export($root, true) . '); '
+                . 'echo is_resource($handle) ? "ACQUIRED" : "LOCKED"; '
+                . '\\Advans\\Installer\\V3\\InstallerLock::release($handle);';
+            $process = proc_open([PHP_BINARY, '-r', $code], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            $output = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+
+            return [proc_close($process), $output];
+        };
+        $firstLock = \Advans\Installer\V3\InstallerLock::acquire($lockRoot);
+        $assert(is_resource($firstLock), 'The shared installer lock could not be acquired.');
+        $nestedLock = \Advans\Installer\V3\InstallerLock::acquire($lockRoot);
+        $assert($nestedLock === $firstLock, 'A nested child extension must share the package installer lock.');
+        try {
+            \Advans\Installer\V3\InstallerLock::release($nestedLock);
+            [$lockCode, $lockOutput] = $lockProbe($lockRoot);
+            $assert($lockCode === 0 && $lockOutput === 'LOCKED', 'A nested child released the package lock or a concurrent process was not stopped: ' . $lockOutput);
+        } finally {
+            \Advans\Installer\V3\InstallerLock::release($firstLock);
+        }
+        [$lockCode, $lockOutput] = $lockProbe($lockRoot);
+        $assert($lockCode === 0 && $lockOutput === 'ACQUIRED', 'A later installer could not acquire the released lock.');
+        $assert(filesize($lockRoot . '/installer.lock') === 0, 'The installer lock must not retain file content.');
+        echo "PASS shared installer lock serializes independent installer processes without storing file bytes\n";
+
+        $recovery = \Advans\Installer\AppointmentsConflict\V2\Guard::class;
+        $emptyReviewState = $work . '/appointments-empty-review';
+        $previousAttempt = ['id' => 'previous-local-transfer', 'installed' => false, 'rows' => ['retained' => ['existing' => str_repeat('a', 64)]]];
+        \Advans\Installer\V3\State::write($emptyReviewState . '/recovery/attempt.php', $previousAttempt);
+        $recovery::verifyInstalled([], $emptyReviewState);
+        $assert(\Advans\Installer\V3\State::read($emptyReviewState . '/recovery/attempt.php') === $previousAttempt,
+            'An update without conflicts must not overwrite an earlier local-transfer recovery attempt.');
+
+        $partialState = $work . '/appointments-partial-install';
+        $partialDestination = JPATH_ADMINISTRATOR . '/components/com_appointments/src/partial.php';
+        mkdir(dirname($partialDestination), 0700, true);
+        $localBytes = '<?php echo "saved on the administrator computer";';
+        $incomingBytes = '<?php echo "partially installed package bytes";';
+        $existingHash = hash('sha256', $localBytes);
+        $incomingHash = hash('sha256', $incomingBytes);
+        $rowId = hash('sha256', $partialDestination . "\0" . $existingHash . "\0" . $incomingHash);
+        $partialRow = [
+            'destination' => $partialDestination,
+            'existing'    => $existingHash,
+            'incoming'    => $incomingHash,
+            'keep'        => true,
+            'remove'      => false,
+        ];
+        \Advans\Installer\V3\State::write($partialState . '/recovery/attempt.php', [
+            'id'        => 'partial-install',
+            'installed' => false,
+            'rows'      => [$rowId => $partialRow],
+        ]);
+        file_put_contents($partialDestination, $incomingBytes);
+        $localUploadDirectory = realpath(sys_get_temp_dir()) . '/appointments-upload-' . bin2hex(random_bytes(6));
+        mkdir($localUploadDirectory, 0700);
+        $localCopy = $localUploadDirectory . '/appointments-local-copy.php';
+        file_put_contents($localCopy, $localBytes);
+        $recovery::restoreUpload($partialState, 'partial-install', $rowId, $incomingHash, $localCopy);
+        $assert(file_get_contents($partialDestination) === $localBytes,
+            'A hash-verified row in a partial installation must remain recoverable before the global install completes.');
+        $missingDestination = JPATH_ADMINISTRATOR . '/components/com_appointments/src/missing-recovery.php';
+        $missingState = $work . '/appointments-missing-recovery';
+        $missingRowId = hash('sha256', $missingDestination . "\0" . $existingHash . "\0" . $incomingHash);
+        \Advans\Installer\V3\State::write($missingState . '/recovery/attempt.php', [
+            'id' => 'missing-install-file',
+            'rows' => [$missingRowId => array_replace($partialRow, ['destination' => $missingDestination])],
+        ]);
+        $recovery::restoreUpload($missingState, 'missing-install-file', $missingRowId, '', $localCopy);
+        $assert(file_get_contents($missingDestination) === $localBytes
+            && (glob(dirname($missingDestination) . '/.appointments-recovery-*') ?: []) === [],
+            'A hash-verified local copy must atomically restore a removed file and clean its request-scoped staging file.');
+        unlink($localCopy);
+        rmdir($localUploadDirectory);
+        echo "PASS Appointments recovery preserves prior metadata and allows hash-verified partial-install recovery\n";
+
+        // Appointments stops before Joomla copies any unknown owned files.
         $appointmentSource = $work . '/appointments-source';
         $appointmentState = JPATH_ADMINISTRATOR . '/advans-installer-state/com_appointments';
         $componentFile = JPATH_ADMINISTRATOR . '/components/com_appointments/example.php';
@@ -369,13 +474,17 @@ namespace {
             '<extension type="module" client="administrator"><name>MOD_APPOINTMENTS</name>'
             . '<files><filename module="mod_appointments">mod_appointments.php</filename><folder>src</folder></files></extension>');
         file_put_contents($appointmentSource . '/modules/mod_appointments/mod_appointments.php', '<?php');
-        mkdir(dirname($componentFile), 0700, true);
-        mkdir(dirname($pluginFile), 0700, true);
+        if (!is_dir(dirname($componentFile))) {
+            mkdir(dirname($componentFile), 0700, true);
+        }
+        if (!is_dir(dirname($pluginFile))) {
+            mkdir(dirname($pluginFile), 0700, true);
+        }
         file_put_contents($appointmentSource . '/plugins/task/appointments/appointments.xml',
             '<extension type="plugin" group="task"><name>PLG_TASK_APPOINTMENTS</name></extension>');
         $appointmentManifest = simplexml_load_string('<extension type="component"><name>COM_APPOINTMENTS</name></extension>');
-        $appointmentOwned = \Advans\Installer\V2\Destinations::owned($appointmentManifest, $appointmentSource);
-        $appointmentOwned = \Advans\Installer\V2\Destinations::mergeOwned($appointmentOwned, [
+        $appointmentOwned = \Advans\Installer\V3\Destinations::owned($appointmentManifest, $appointmentSource);
+        $appointmentOwned = \Advans\Installer\V3\Destinations::mergeOwned($appointmentOwned, [
             'prefixes' => [JPATH_ADMINISTRATOR . '/modules/mod_appointments'],
             'files' => [],
             'languages' => ['mod_appointments'],
@@ -387,59 +496,55 @@ namespace {
             file_put_contents($path, 'unidentified ' . $i);
             $appointmentFiles[$path] = $candidate;
         }
-        $appointmentKnowledge = \Advans\Installer\V2\Knowledge::load(
+        $appointmentKnowledge = \Advans\Installer\V3\Knowledge::load(
             $appointmentSource . '/missing-catalog.php', $appointmentState . '/installed.php'
         );
-        $conflicts = \Advans\Installer\AppointmentsConflict\V1\Guard::inspect(
-            $appointmentFiles, $appointmentOwned, $appointmentKnowledge, $appointmentState
+        $conflicts = \Advans\Installer\AppointmentsConflict\V2\Guard::inspect(
+            $appointmentFiles, $appointmentOwned, $appointmentKnowledge
         );
         $assert(count($conflicts) === 2, 'Unknown component and bundled plugin files must both stop the update.');
-        foreach ($conflicts as $conflict) {
-            $assert(
-                \Advans\Installer\V2\FileGuard::restoreBytes($conflict['backup'], $conflict['destination'], $conflict['existing'])
-                    === file_get_contents($conflict['destination']),
-                'The Appointments conflict backup must contain the verified existing bytes.'
-            );
-        }
-        // An existing shared approval cannot bypass this separate guard, and a new incoming hash
-        // must be shown on a retry rather than reusing an earlier comparison.
-        \Advans\Installer\V2\State::write(dirname($appointmentState) . '/approved.php', [
-            \Advans\Installer\V2\FileGuard::normalize($componentFile) => [
+        $assert(!is_dir($appointmentState . '/recovery/backups')
+            && file_get_contents($componentFile) === 'unidentified 0'
+            && file_get_contents($pluginFile) === 'unidentified 1',
+            'Appointment conflicts must not create server copies or alter either destination.');
+        // A pre-existing approval artifact is left untouched and cannot bypass the current review.
+        $legacyApproval = dirname($appointmentState) . '/approved.php';
+        \Advans\Installer\V3\State::write($legacyApproval, [
+            \Advans\Installer\V3\FileGuard::normalize($componentFile) => [
                 'existing' => hash_file('sha256', $componentFile),
                 'incoming' => hash_file('sha256', $appointmentFiles[$componentFile]),
             ],
-            \Advans\Installer\V2\FileGuard::normalize($pluginFile) => [
-                'existing' => hash_file('sha256', $pluginFile),
-                'incoming' => hash_file('sha256', $appointmentFiles[$pluginFile]),
-            ],
         ]);
+        $legacyApprovalHash = hash_file('sha256', $legacyApproval);
         file_put_contents($appointmentFiles[$componentFile], 'different release');
-        $retry = \Advans\Installer\AppointmentsConflict\V1\Guard::inspect(
-            $appointmentFiles, $appointmentOwned, $appointmentKnowledge, $appointmentState
+        $retry = \Advans\Installer\AppointmentsConflict\V2\Guard::inspect(
+            $appointmentFiles, $appointmentOwned, $appointmentKnowledge
         );
         $assert(count($retry) === 2 && $retry[0]['incoming'] === hash('sha256', 'different release'),
             'Retry must not accept an approval for another incoming hash.');
         $assert(file_get_contents($componentFile) === 'unidentified 0' && file_get_contents($pluginFile) === 'unidentified 1',
             'The conflict guard must not replace either destination.');
+        $assert(hash_file('sha256', $legacyApproval) === $legacyApprovalHash,
+            'A pre-existing approvals artifact must not be read as authorization or modified.');
         // The normal successful-install ledger records only release bytes actually present.
         copy($appointmentFiles[$componentFile], $componentFile);
-        $incoming = \Advans\Installer\V2\FileGuard::compare($appointmentFiles)['incoming'];
-        \Advans\Installer\V2\Knowledge::record($appointmentState . '/installed.php', 'fixture', $incoming);
-        $record = \Advans\Installer\V2\State::read($appointmentState . '/installed.php');
+        $incoming = \Advans\Installer\V3\FileGuard::compare($appointmentFiles)['incoming'];
+        \Advans\Installer\V3\Knowledge::record($appointmentState . '/installed.php', 'fixture', $incoming);
+        $record = \Advans\Installer\V3\State::read($appointmentState . '/installed.php');
         $assert(isset($record['files']['administrator/components/com_appointments/example.php'])
             && !isset($record['files']['plugins/task/appointments/example.php']),
             'The ledger must record installed release bytes, not preserved unknown bytes.');
-        $appointmentKnowledge = \Advans\Installer\V2\Knowledge::load(
+        $appointmentKnowledge = \Advans\Installer\V3\Knowledge::load(
             $appointmentSource . '/missing-catalog.php', $appointmentState . '/installed.php'
         );
         file_put_contents($appointmentFiles[$componentFile], 'later release');
-        $retry = \Advans\Installer\AppointmentsConflict\V1\Guard::inspect(
+        $retry = \Advans\Installer\AppointmentsConflict\V2\Guard::inspect(
             $appointmentFiles, $appointmentOwned, $appointmentKnowledge, $appointmentState
         );
         $assert(count($retry) === 1 && $retry[0]['existing'] === hash('sha256', 'unidentified 1'),
             'Recorded release bytes must not be treated as unknown on the next update.');
 
-        $recovery = \Advans\Installer\AppointmentsConflict\V1\Guard::class;
+        $recovery = \Advans\Installer\AppointmentsConflict\V2\Guard::class;
         $reviewState = $appointmentState . '/review-tests';
         $reviewSource = $appointmentSource . '/review-staging';
         mkdir($reviewSource, 0700, true);
@@ -456,9 +561,9 @@ namespace {
             $candidate = $reviewSource . '/review-' . $i . '.php';
             file_put_contents($path, 'unknown recovery ' . $i);
             file_put_contents($candidate, 'release recovery ' . $i);
-            $reviewFiles[\Advans\Installer\V2\FileGuard::normalize($path)] = $candidate;
+            $reviewFiles[\Advans\Installer\V3\FileGuard::normalize($path)] = $candidate;
         }
-        $rows = $recovery::inspect($reviewFiles, $appointmentOwned, $appointmentKnowledge, $reviewState);
+        $rows = $recovery::inspect($reviewFiles, $appointmentOwned, $appointmentKnowledge);
         $review = $recovery::review($reviewState, 'recovery-test', $rows, $reviewFiles);
         $refused = static function (callable $action) use ($assert): void {
             try {
@@ -471,77 +576,41 @@ namespace {
         $eligible = array_filter($review['rows'], static fn(array $row): bool => $row['keep']);
         $metadata = array_diff_key($review['rows'], $eligible);
         $assert(count($eligible) === 3 && count($metadata) === 1,
-            'Component, plugin and module code can be kept, but installer metadata cannot.');
+            'Only extension source, templates, forms, styles and scripts can be downloaded for local recovery.');
         $file = array_key_first($eligible);
         $removalDestination = $review['rows'][$file]['destination'];
-        $removalSource = \Advans\Installer\V2\Destinations::operation($appointmentSource, 'Remove obsolete code');
+        $removalSource = \Advans\Installer\V3\Destinations::operation($appointmentSource, 'Remove obsolete code');
         $assert(!$recovery::canKeep($removalDestination, $removalSource, [$removalDestination => $removalSource]),
-            'A removal marker must never be offered as a Keep local copy input, even under src.');
-        $refused(static fn() => $recovery::decide($reviewState, str_repeat('0', 64), $file, 'replace'));
-        $refused(static fn() => $recovery::decide($reviewState, $review['id'], '../configuration.php', 'replace'));
-        $refused(static fn() => $recovery::decide($reviewState, $review['id'], $file, 'approve'));
-        $refused(static fn() => $recovery::decide($reviewState, $review['id'], array_key_first($metadata), 'keep'));
-        $refused(static fn() => $recovery::apply($review, $reviewFiles, $reviewSource));
-        $assert($recovery::current($reviewState)['choices'] === [],
-            'Refused requests must not save any choice.');
-        foreach ($review['rows'] as $rowId => $row) {
-            $recovery::decide($reviewState, $review['id'], $rowId, $rowId === $file ? 'keep' : 'replace');
+            'A removal operation must never be offered for local recovery.');
+        $refused(static fn() => $recovery::decide($reviewState, str_repeat('0', 64), $file, 'apply', true));
+        $refused(static fn() => $recovery::decide($reviewState, $review['id'], '../configuration.php', 'apply', true));
+        $refused(static fn() => $recovery::decide($reviewState, $review['id'], $file, 'apply', true));
+        $refused(static fn() => $recovery::decide($reviewState, $review['id'], array_key_first($metadata), 'apply', true));
+        $assert(!is_dir($reviewState . '/recovery/backups')
+            && !str_contains((string) file_get_contents($reviewState . '/' . $recovery::REVIEW), 'unknown recovery'),
+            'A conflict plan must contain paths and hashes only, with no server-side content copy.');
+        $releaseHashes = \Advans\Installer\V3\FileGuard::compare($reviewFiles)['incoming'];
+        foreach (array_keys($review['rows']) as $rowId) {
+            $download = $recovery::download($reviewState, $review['id'], $rowId);
+            $assert(hash('sha256', $download['bytes']) === $review['rows'][$rowId]['existing'],
+                'The administrator download must match the reviewed local bytes.');
+            $recovery::decide($reviewState, $review['id'], $rowId, 'apply', true);
         }
         $approved = $recovery::current($reviewState);
-        $releaseHashes = \Advans\Installer\V2\FileGuard::compare($reviewFiles)['incoming'];
-        $recovery::apply($approved, $reviewFiles, $reviewSource);
-        $refused(static fn() => $recovery::assertFreshSource($reviewSource));
-        $refused(static fn() => $recovery::apply($approved, $reviewFiles, $reviewSource));
-        foreach ($approved['rows'] as $rowId => $row) {
-            $expected = $rowId === $file ? $row['existing'] : $row['incoming'];
-            $assert(hash_file('sha256', $reviewFiles[$row['destination']]) === $expected,
-                'Only the kept file may substitute its package copy input.');
+        $recovery::journal($reviewState, $approved);
+        foreach ($approved['rows'] as $row) {
             copy($reviewFiles[$row['destination']], $row['destination']);
         }
-        $recovery::journal($reviewState, $approved);
-        $recovery::verifyInstalled($approved);
-        \Advans\Installer\V2\Knowledge::record($reviewState . '/installed.php', 'fixture', $releaseHashes);
-        $keptRelative = \Advans\Installer\V2\Knowledge::relative($approved['rows'][$file]['destination']);
-        $assert(!isset(\Advans\Installer\V2\State::read($reviewState . '/installed.php')['files'][$keptRelative]),
-            'Kept local bytes must not enter the release ledger, and their staged source must not be reusable.');
-        $stagingBefore = glob(realpath(sys_get_temp_dir()) . '/appointments-*') ?: [];
-        $restoreId = array_key_first(array_diff_key($eligible, [$file => true]));
-        $restoreRow = $approved['rows'][$restoreId];
-        $refused(static fn() => $recovery::restore($reviewState, $approved['id'], $restoreId, str_repeat('f', 64)));
-        file_put_contents($restoreRow['destination'], 'later unrelated bytes');
-        $refused(static fn() => $recovery::restore($reviewState, $approved['id'], $restoreId, $restoreRow['incoming']));
-        $assert(file_get_contents($restoreRow['destination']) === 'later unrelated bytes',
-            'A stale restoration must leave unrelated bytes untouched.');
-        copy($reviewFiles[$restoreRow['destination']], $restoreRow['destination']);
-        $recovery::restore($reviewState, $approved['id'], $restoreId, $restoreRow['incoming']);
-        $assert(hash_file('sha256', $restoreRow['destination']) === $restoreRow['existing'],
-            'Explicit recovery must restore the verified original bytes.');
-        $refused(static fn() => $recovery::restore($reviewState, $approved['id'], $restoreId, $restoreRow['incoming']));
-        unlink($restoreRow['destination']);
-        $recovery::restore($reviewState, $approved['id'], $restoreId, '');
-        $assert(hash_file('sha256', $restoreRow['destination']) === $restoreRow['existing'],
-            'Explicit recovery may recreate a missing eligible file.');
-        $assert((glob(realpath(sys_get_temp_dir()) . '/appointments-*') ?: []) === $stagingBefore,
-            'Recovery must remove its private staging directory after publication.');
-        $backupRoot = $reviewState . '/recovery/backups';
-        $orphan = $backupRoot . '/' . hash('sha256', 'orphan backup') . '.php';
-        $pending = $backupRoot . '/' . hash('sha256', 'pending backup') . '.php';
-        $recent = $backupRoot . '/' . hash('sha256', 'recent backup') . '.php';
-        foreach ([$orphan, $pending, $recent] as $path) {
-            copy($restoreRow['backup'], $path);
-        }
-        $oldTime = time() - 181 * 86400;
-        foreach (array_merge(array_column($approved['rows'], 'backup'), [$orphan, $pending]) as $path) {
-            touch($path, $oldTime);
-        }
-        $pendingRow = $restoreRow;
-        $pendingRow['backup'] = $pending;
-        \Advans\Installer\V2\State::write($reviewState . '/recovery/review.php', [
-            'rows' => ['pending' => $pendingRow],
-        ]);
-        $assert($recovery::pruneBackups($reviewState, 180 * 86400) === 1 && !file_exists($orphan)
-            && is_file($pending) && is_file($recent) && is_file($restoreRow['backup']),
-            'Retention must remove expired orphan backups, preserving pending, latest-attempt and recent backups.');
+        $recovery::verifyInstalled($approved, $reviewState);
+        \Advans\Installer\V3\Knowledge::record($reviewState . '/installed.php', 'fixture', $releaseHashes);
+        $attempt = $recovery::attempt($reviewState);
+        $assert(($attempt['installed'] ?? false) === true
+            && !str_contains((string) file_get_contents($reviewState . '/recovery/attempt.php'), 'unknown recovery'),
+            'The recovery attempt must persist only hashes and paths, never the downloaded file bytes.');
+        $previousAttemptHash = hash_file('sha256', $reviewState . '/recovery/attempt.php');
+        $recovery::verifyInstalled([], $reviewState);
+        $assert(hash_file('sha256', $reviewState . '/recovery/attempt.php') === $previousAttemptHash,
+            'A conflict-free update must preserve the previous local-transfer recovery attempt.');
         require_once dirname(__DIR__, 2) . '/com_appointments/recovery/script.php';
         $companionInstaller = new \Com_appointmentsrecoveryInstallerScript();
         $parentChecks = \Joomla\CMS\Installer\InstallerScript::$preflightCalls;
@@ -551,8 +620,8 @@ namespace {
             'The independently installed companion must honor a failed Joomla compatibility preflight.');
         \Joomla\CMS\Installer\InstallerScript::$acceptPreflight = true;
 
-        // Exercise the real component entry point: it must stop before the shared installer can
-        // consume an approval, including when a bundled plugin is the only remaining conflict.
+        // Exercise the real component entry point: it must stop before shared installer processing,
+        // including when a bundled plugin is the only remaining conflict.
         mkdir($appointmentSource . '/administrator/language/en-GB', 0700, true);
         foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
             $languageDirectory = $appointmentSource . '/administrator/language/' . $tag;
@@ -596,14 +665,15 @@ namespace {
         $assert(isset($moduleFiles[$obsolete]) && str_contains($moduleFiles[$obsolete], '/.advans-operations/')
             && !isset($moduleFiles[str_replace('\\', '/', $moduleRoot . '/src/retained.php')]),
             'Module plans must guard obsolete declarations, but not a file retained by Joomla under a declared folder.');
-        $obsoleteRows = $recovery::inspect([$obsolete => $moduleFiles[$obsolete]], $appointmentOwned, $appointmentKnowledge, $reviewState);
+        $obsoleteRows = $recovery::inspect([$obsolete => $moduleFiles[$obsolete]], $appointmentOwned, $appointmentKnowledge);
         $obsoleteReview = $recovery::review($reviewState, 'obsolete-module', $obsoleteRows, $moduleFiles);
         $obsoleteId = array_key_first($obsoleteReview['rows']);
         $assert(!$obsoleteReview['rows'][$obsoleteId]['keep'] && $obsoleteReview['rows'][$obsoleteId]['remove'],
-            'Obsolete module code must have a verified backup and a removal-only review row.');
-        $refused(static fn() => $recovery::decide($reviewState, $obsoleteReview['id'], $obsoleteId, 'keep'));
-        $assert($recovery::backupBytes($obsoleteReview['rows'][$obsoleteId]) === 'unknown obsolete module',
-            'The obsolete module backup must preserve the unknown bytes.');
+            'Obsolete module code must be a removal-only review row and cannot be retained through a server copy.');
+        $refused(static fn() => $recovery::decide($reviewState, $obsoleteReview['id'], $obsoleteId, 'apply', true));
+        $assert(!is_dir($reviewState . '/recovery/backups')
+            && !str_contains((string) file_get_contents($reviewState . '/recovery/review.php'), 'unknown obsolete module'),
+            'A removal review must not write or persist old file bytes on the server.');
         $snapshotMethod = new \ReflectionMethod($moduleInstaller, 'snapshotBundled');
         (new \ReflectionProperty($moduleInstaller, 'conflictFiles'))->setValue($moduleInstaller, $moduleFiles);
         (new \ReflectionProperty($moduleInstaller, 'bundledSnapshots'))->setValue($moduleInstaller, [
@@ -637,7 +707,7 @@ namespace {
         file_put_contents($pluginSource . '/appointments.xml',
             '<extension type="plugin" group="task"><name>PLG_TASK_APPOINTMENTS</name>'
             . '<files><filename plugin="appointments">example.php</filename><folder>src</folder></files></extension>');
-        $pluginFiles = \Advans\Installer\V2\Destinations::files(
+        $pluginFiles = \Advans\Installer\V3\Destinations::files(
             simplexml_load_file($pluginSource . '/appointments.xml'), $pluginSource, $pluginSource . '/appointments.xml'
         );
         (new \ReflectionProperty($moduleInstaller, 'bundledSnapshots'))->setValue($moduleInstaller, [
@@ -660,12 +730,12 @@ namespace {
         rmdir($moduleRoot . '/src/obsolete');
 
         $appointmentInstaller = new \Com_appointmentsInstallerScript();
-        copy($reviewSource . '/.advans-recovery-staged.php', $appointmentSource . '/.advans-recovery-staged.php');
+        $assert(!file_exists($reviewSource . '/.advans-recovery-staged.php'),
+            'Appointments must not stage file-content copies on the server between requests.');
         $app->messages = [];
         $assert($appointmentInstaller->preflight('update', $appointmentParent) === false
-            && str_contains($messageText(), 'COM_APPOINTMENTS_INSTALL_CONFLICT_ERROR'),
-            'The real installer must reject a reused staging directory before the shared installer can trust its local bytes.');
-        unlink($appointmentSource . '/.advans-recovery-staged.php');
+            && str_contains($messageText(), 'COM_APPOINTMENTS_INSTALL_CONFLICT_TITLE'),
+            'The real installer must pause before Joomla copies files when local changes need review.');
         $app->messages = [];
         $assert($appointmentInstaller->preflight('update', $appointmentParent) === false,
             'The Appointments installer must stop before Joomla copies files.');
@@ -676,7 +746,7 @@ namespace {
             'Repeating an Appointments update must not approve unknown files.');
 
         copy($appointmentFiles[$pluginFile], $pluginFile);
-        \Advans\Installer\V2\State::write($appointmentState . '/installed.php', [
+        \Advans\Installer\V3\State::write($appointmentState . '/installed.php', [
             'version' => 'fixture',
             'files' => [
                 'administrator/components/com_appointments/example.php' => hash_file('sha256', $componentFile),
@@ -699,29 +769,49 @@ namespace {
         $assert(file_get_contents($componentFile) === 'changed during shared preflight',
             'The second comparison must not replace the changed file.');
 
-        // 1. Own files: the update decides by itself. The changed file is backed up, the untouched one is not.
+        // A pre-existing legacy copy is not read, changed, exported or pruned by the new runtime.
+        \Advans\Installer\V3\State::directory($state . '/backups');
+        $legacyCopy = $state . '/backups/legacy.php';
+        file_put_contents($legacyCopy, 'pre-existing server copy');
+        $legacyCopyHash = hash_file('sha256', $legacyCopy);
+        $recommendation = JPATH_ADMINISTRATOR . '/advans-installer-state/backup-recommendation.php';
+        if (is_file($recommendation)) {
+            unlink($recommendation);
+        }
+
+        // 1. The recommendation stops the first update; a retry is accepted without creating a copy.
         $app->messages = [];
-        $assert($installer->preflight('update', $parent) === true, 'An update of own files must not stop.');
-        $assert(file_get_contents($destination . '/payload.php') === '<?php echo "changed on this site";', 'Preflight changed a destination.');
-        $assert(count($backups()) === 1, 'Exactly the changed own file must be backed up.');
-        $changedBackup = $backups()[0];
-        $assert(
-            \Advans\Installer\V2\FileGuard::restoreBytes($changedBackup, $destination . '/payload.php', hash('sha256', '<?php echo "changed on this site";')) === '<?php echo "changed on this site";',
-            'The backup does not hold the changed bytes.'
-        );
+        $assert($installer->preflight('update', $parent) === false
+            && str_contains($messageText(), 'Before you update'),
+            'The first update attempt must show the independently-restorable full-site backup recommendation and stop.');
+        $assert(file_get_contents($destination . '/payload.php') === '<?php echo "changed on this site";'
+            && count($backups()) === 1,
+            'The recommendation must stop before changing files or creating server copies.');
+        $app->messages = [];
+        $assert($installer->preflight('update', $parent) === false
+            && str_contains($messageText(), 'plugins/ajax/joomlaajaxforms/payload.php'),
+            'An acknowledged update must still stop on modified own files.');
+        file_put_contents($destination . '/payload.php', '<?php echo "earlier payload";');
+        $app->messages = [];
+        $assert($installer->preflight('update', $parent) === true, 'After manually resolving the conflict, the known update must proceed.');
+        $assert(file_get_contents($destination . '/payload.php') === '<?php echo "earlier payload";', 'Preflight changed a destination.');
+        [$lockCode, $lockOutput] = $lockProbe(JPATH_ADMINISTRATOR . '/advans-installer-state');
+        $assert($lockCode === 0 && $lockOutput === 'LOCKED', 'The shared lock must span preflight and Joomla file copying.');
         $install();
         $assert($installer->postflight('update', $parent) === true, 'Successful extension postflight was not preserved.');
-        $report = $messageText();
-        $assert(str_contains($report, 'plugins/ajax/joomlaajaxforms/payload.php') && !str_contains($report, 'untouched.php'), 'The report must name exactly the changed own file.');
-        $assert(str_contains($report, 'advans-installer-state/plg_ajax_joomlaajaxforms/backups'), 'The report must name the backup location.');
-        $record = \Advans\Installer\V2\State::read($state . '/' . \Advans\Installer\V2\Knowledge::RECORD);
+        [$lockCode, $lockOutput] = $lockProbe(JPATH_ADMINISTRATOR . '/advans-installer-state');
+        $assert($lockCode === 0 && $lockOutput === 'ACQUIRED', 'Postflight must release the shared installer lock.');
+        $assert(count($backups()) === 1 && hash_file('sha256', $legacyCopy) === $legacyCopyHash,
+            'The update must preserve pre-existing server copies and create no new ones.');
+        $record = \Advans\Installer\V3\State::read($state . '/' . \Advans\Installer\V3\Knowledge::RECORD);
         $assert(($record['files']['plugins/ajax/joomlaajaxforms/payload.php'] ?? '') === hash('sha256', '<?php echo "new";'), 'The record lacks a written file.');
 
         // 2. The record makes the next update recognise the files this installation wrote.
         file_put_contents($source . '/payload.php', '<?php echo "newer";');
         $app->messages = [];
         $assert($installer->preflight('update', $parent) === true, 'An update over recorded files must not stop.');
-        $assert(count($backups()) === 1, 'A recorded, untouched file must not be backed up again.');
+        $assert(count($backups()) === 1 && hash_file('sha256', $legacyCopy) === $legacyCopyHash,
+            'A later update must not create, change or prune server copies.');
         $install();
         $installer->postflight('update', $parent);
         $assert(!str_contains($messageText(), 'payload.php'), 'An untouched file must not be reported.');
@@ -733,39 +823,37 @@ namespace {
         file_put_contents($source . '/foreign-incoming.php', '<?php echo "ours";');
         $installer->foreign = [$foreign => $source . '/foreign-incoming.php'];
         $app->tag = 'de-DE';
-        \Advans\Installer\V2\SystemCheck::loadLanguage();
+        \Advans\Installer\V3\SystemCheck::loadLanguage();
         $app->messages = [];
         $assert($installer->preflight('update', $parent) === false, 'An unclassified foreign file must pause the installation.');
         $assert(file_get_contents($foreign) === '<?php echo "other extension";', 'The pause changed the foreign file.');
         $paused = $messageText();
         $assert(str_contains($paused, 'Es wurde nichts verändert') && str_contains($paused, 'media/other_extension/other.php'), 'The pause must explain in the site language which file is affected.');
-        $plan = $state . '/plan.php';
-        $assert(is_file($plan) && str_contains($paused, hash_file('sha256', $plan)), 'The pause must name the review plan for the command-line approval.');
-        $process = proc_open([PHP_BINARY, $support . '/approve.php', '--approve', $plan, hash_file('sha256', $plan)], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
-        $output = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-        $assert(proc_close($process) === 0, 'Approval command failed: ' . $output);
+        $assert(str_contains($paused, hash('sha256', '<?php echo "other extension";'))
+            && str_contains($paused, hash('sha256', '<?php echo "ours";')),
+            'The pause must show current and incoming hashes without an approval bypass.');
         $app->tag = 'en-GB';
-        \Advans\Installer\V2\SystemCheck::loadLanguage();
+        \Advans\Installer\V3\SystemCheck::loadLanguage();
         $app->messages = [];
-        $assert($installer->preflight('update', $parent) === true, 'Approved retry was not accepted.');
+        $assert($installer->preflight('update', $parent) === false, 'Repeating an update must not bypass an unresolved conflict.');
         copy($source . '/foreign-incoming.php', $foreign);
+        $assert($installer->preflight('update', $parent) === true, 'An already-resolved file matching the package must be accepted.');
         $install();
         $installer->postflight('update', $parent);
-        $assert(str_contains($messageText(), 'media/other_extension/other.php'), 'The approved foreign change must be reported.');
-        $assert(!is_file($plan), 'A successful installation must remove the paused plan.');
+        $assert(count($backups()) === 1 && hash_file('sha256', $legacyCopy) === $legacyCopyHash,
+            'Resolving a conflict must not create or prune server copies.');
         $installer->foreign = [];
 
-        // 4. A backup that cannot be written stops the installation before anything changes.
+        // 4. An unknown local edit stops the installation; no server copy is created.
         file_put_contents($destination . '/payload.php', '<?php echo "changed again";');
-        mkdir($state . '/backups/' . hash('sha256', \Advans\Installer\V2\FileGuard::normalize($destination . '/payload.php') . "\0" . hash('sha256', '<?php echo "changed again";')) . '.php');
         $app->messages = [];
-        $assert($installer->preflight('update', $parent) === false, 'A failed backup must stop the installation.');
-        $assert(str_contains($messageText(), 'plugins/ajax/joomlaajaxforms/payload.php could not be written or checked'), 'The backup failure must be explained.');
-        $assert(file_get_contents($destination . '/payload.php') === '<?php echo "changed again";', 'A failed backup changed a destination.');
-        $assert(\Joomla\CMS\Log\Log::$entries !== [], 'A failed backup must be logged.');
-        \Joomla\CMS\Log\Log::$entries = [];
+        $assert($installer->preflight('update', $parent) === false, 'An unknown local edit must stop the installation.');
+        $assert(str_contains($messageText(), 'plugins/ajax/joomlaajaxforms/payload.php')
+            && str_contains($messageText(), hash('sha256', '<?php echo "changed again";')),
+            'The pause must identify the local file and its current hash.');
+        $assert(file_get_contents($destination . '/payload.php') === '<?php echo "changed again";'
+            && count($backups()) === 1,
+            'A conflict pause must leave the edited file and pre-existing server copy untouched.');
         file_put_contents($destination . '/payload.php', '<?php echo "newer";');
 
         foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
@@ -789,28 +877,28 @@ namespace {
         }
 
         \Joomla\CMS\Factory::$db->enabled = false;
-        $disabled = \Advans\Installer\V2\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $disabled = \Advans\Installer\V3\SystemCheck::results('plg_ajax_joomlaajaxforms');
         \Joomla\CMS\Factory::$db->enabled = true;
-        $enabled = \Advans\Installer\V2\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $enabled = \Advans\Installer\V3\SystemCheck::results('plg_ajax_joomlaajaxforms');
         $assert(count($disabled['warnings']) === count($enabled['warnings']) + 1, 'Repeating the check did not refresh actual plugin state.');
         $assert($enabled['blockers'] === [], 'Available platform was reported blocked.');
         $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_HTTPS_UNKNOWN'), array_column($enabled['warnings'], 1), true), 'CLI transport was incorrectly treated as verified.');
         $app->cli = false;
-        $insecure = \Advans\Installer\V2\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $insecure = \Advans\Installer\V3\SystemCheck::results('plg_ajax_joomlaajaxforms');
         $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_HTTPS_INSECURE'), array_column($insecure['warnings'], 1), true), 'HTTP request was not reported insecure.');
         \Joomla\CMS\Uri\Uri::$scheme = 'https';
-        $secure = \Advans\Installer\V2\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $secure = \Advans\Installer\V3\SystemCheck::results('plg_ajax_joomlaajaxforms');
         $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_HTTPS_CURRENT'), array_column($secure['passed'], 1), true), 'HTTPS administrator request was not recognized.');
         $rewrite = "RewriteCond %{QUERY_STRING} ^option=com_ [NC]\nRewriteRule ^index\\.php$ / [R=301,L]\n";
         file_put_contents(JPATH_ROOT . '/.htaccess', $rewrite);
-        $blocked = \Advans\Installer\V2\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $blocked = \Advans\Installer\V3\SystemCheck::results('plg_ajax_joomlaajaxforms');
         $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_BLOCKED'), array_column($blocked['warnings'], 1), true), 'Blocking option rewrite was not reported.');
         $assert(file_get_contents(JPATH_ROOT . '/.htaccess') === $rewrite, 'Routing check modified existing server configuration.');
         $allowlisted = "RewriteCond %{QUERY_STRING} !^option=com_ajax [NC]\n" . $rewrite;
         file_put_contents(JPATH_ROOT . '/.htaccess', $allowlisted);
-        $safe = \Advans\Installer\V2\SystemCheck::results('plg_ajax_joomlaajaxforms');
+        $safe = \Advans\Installer\V3\SystemCheck::results('plg_ajax_joomlaajaxforms');
         $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($safe['warnings'], 1), true), 'Allowlisted routes were blocked or incorrectly reported as HTTP-verified.');
-        $routing = new \Advans\Installer\V2\RoutingCheck();
+        $routing = new \Advans\Installer\V3\RoutingCheck();
         $assert($routing->analyse("RewriteRule ^component/(.*)$ / [R=301,L]") === ['component'], 'Component route blocking was missed.');
         $assert($routing->analyse("RewriteCond %{QUERY_STRING} !plugin= [NC]\nRewriteRule ^component/(.*)$ / [R=301,L]") === [], 'Plugin exclusion was ignored.');
         $assert($routing->analyse("RewriteCond %{QUERY_STRING} !plugin= [NC,OR]\nRewriteCond %{REQUEST_URI} ^/component/\nRewriteRule ^component/(.*)$ / [R=301,L]") === ['component'], 'OR group bypass was missed.');
@@ -823,26 +911,26 @@ namespace {
         ] as $privacyConditions) {
             $privacyRule = $privacyConditions . "RewriteRule ^index\\.php$ - [F,L]\n";
             file_put_contents(JPATH_ROOT . '/.htaccess', $privacyRule);
-            $privacy = \Advans\Installer\V2\SystemCheck::results('plg_privacy_j2commerce');
+            $privacy = \Advans\Installer\V3\SystemCheck::results('plg_privacy_j2commerce');
             $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_BLOCKED'), array_column($privacy['warnings'], 1), true), 'Privacy AJAX endpoint blocking was missed.');
             file_put_contents(JPATH_ROOT . '/.htaccess', "RewriteCond %{QUERY_STRING} !group=privacy [NC]\n" . $privacyRule);
-            $privacy = \Advans\Installer\V2\SystemCheck::results('plg_privacy_j2commerce');
+            $privacy = \Advans\Installer\V3\SystemCheck::results('plg_privacy_j2commerce');
             $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($privacy['warnings'], 1), true), 'Privacy AJAX route exclusion was ignored.');
         }
         foreach (['format=html', 'format=json&task=capabilities'] as $parameters) {
             $conditions = "RewriteCond %{QUERY_STRING} plugin=privacyrequests [NC]\nRewriteCond %{QUERY_STRING} group=system [NC]\nRewriteCond %{QUERY_STRING} " . $parameters . " [NC]\n";
             $rule = $conditions . "RewriteRule ^index\\.php$ - [F,L]\n";
             file_put_contents(JPATH_ROOT . '/.htaccess', $rule);
-            $privacy = \Advans\Installer\V2\SystemCheck::results('plg_system_privacyrequests');
+            $privacy = \Advans\Installer\V3\SystemCheck::results('plg_system_privacyrequests');
             $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_BLOCKED'), array_column($privacy['warnings'], 1), true), 'Generic privacy form/capability route blocking was missed.');
             file_put_contents(JPATH_ROOT . '/.htaccess', "RewriteCond %{QUERY_STRING} !plugin=privacyrequests [NC]\n" . $rule);
-            $privacy = \Advans\Installer\V2\SystemCheck::results('plg_system_privacyrequests');
+            $privacy = \Advans\Installer\V3\SystemCheck::results('plg_system_privacyrequests');
             $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($privacy['warnings'], 1), true), 'Generic privacy route exclusion was ignored.');
         }
         file_put_contents(JPATH_ROOT . '/.htaccess', "RewriteCond %{QUERY_STRING} plugin=joomlaajaxforms [NC]\nRewriteRule ^index\\.php$ - [F,L]\n");
-        $privacy = \Advans\Installer\V2\SystemCheck::results('plg_system_privacyrequests');
+        $privacy = \Advans\Installer\V3\SystemCheck::results('plg_system_privacyrequests');
         $assert(in_array(\Joomla\CMS\Language\Text::_('ADVANS_CHECK_ROUTING_UNVERIFIED'), array_column($privacy['warnings'], 1), true), 'Generic privacy check incorrectly targeted another AJAX plugin.');
-        $mixedShops = \Advans\Installer\V2\SystemCheck::results('plg_osmap_j2commerce');
+        $mixedShops = \Advans\Installer\V3\SystemCheck::results('plg_osmap_j2commerce');
         $shopRows = array_values(array_filter($mixedShops['passed'], static fn(array $row): bool => $row[0] === \Joomla\CMS\Language\Text::_('ADVANS_CHECK_SHOP')));
         $assert(count($shopRows) === 1 && $shopRows[0][1] === 'com_j2commerce, com_j2store', 'Mixed-shop check hid an enabled shop or implied a shared routing priority.');
         $productSource = $work . '/product-source';
@@ -858,19 +946,82 @@ namespace {
         $productManifest = $productSource . '/plg_j2commerce_productcompare.xml';
         file_put_contents($productManifest, $productXml);
         file_put_contents($canonical . '/productcompare.xml', '<foreign/>');
-        $productFiles = \Advans\Installer\V2\Destinations::files(simplexml_load_string($productXml), $productSource, $productManifest);
-        $productOwned = \Advans\Installer\V2\Destinations::owned(simplexml_load_string($productXml), $productSource);
-        $assert(\Advans\Installer\V2\Destinations::isOwned($canonical . '/productcompare.xml', $productOwned), 'The options manifest lies in the plugin folder and is its own file.');
-        $assert(!\Advans\Installer\V2\Destinations::isOwned($mirror . '/payload.php', $productOwned), 'The Joomla 5 mirror lies in J2Store\'s plugin group and is foreign territory.');
-        $assert(\Advans\Installer\V2\Destinations::isOwned(JPATH_ADMINISTRATOR . '/language/en-GB/plg_j2commerce_productcompare.ini', $productOwned), 'The plugin language file is its own file.');
-        $assert(!\Advans\Installer\V2\Destinations::isOwned(JPATH_ADMINISTRATOR . '/language/en-GB/plg_j2store_other.ini', $productOwned), 'Another extension\'s language file is foreign.');
+        $productFiles = \Advans\Installer\V3\Destinations::files(simplexml_load_string($productXml), $productSource, $productManifest);
+        $productOwned = \Advans\Installer\V3\Destinations::owned(simplexml_load_string($productXml), $productSource);
+        $assert(\Advans\Installer\V3\Destinations::isOwned($canonical . '/productcompare.xml', $productOwned), 'The options manifest lies in the plugin folder and is its own file.');
+        $assert(!\Advans\Installer\V3\Destinations::isOwned($mirror . '/payload.php', $productOwned), 'The Joomla 5 mirror lies in J2Store\'s plugin group and is foreign territory.');
+        $assert(\Advans\Installer\V3\Destinations::isOwned(JPATH_ADMINISTRATOR . '/language/en-GB/plg_j2commerce_productcompare.ini', $productOwned), 'The plugin language file is its own file.');
+        $assert(!\Advans\Installer\V3\Destinations::isOwned(JPATH_ADMINISTRATOR . '/language/en-GB/plg_j2store_other.ini', $productOwned), 'Another extension\'s language file is foreign.');
         require dirname(__DIR__, 2) . '/j2commerce/plg_j2commerce_productcompare/script.php';
         $decide = new \ReflectionMethod(\PlgJ2commerceProductcompareInstallerScript::class, 'foreignDecision');
-        $mirrorPayload = \Advans\Installer\V2\FileGuard::normalize($mirror . '/payload.php');
-        $assert($decide->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $mirrorPayload, str_repeat('0', 64), false) === \Advans\Installer\V2\Planner::REPLACE, 'A mirror that holds only this plugin\'s files must be replaced after a backup.');
+        $mirrorPayload = \Advans\Installer\V3\FileGuard::normalize($mirror . '/payload.php');
+        $mirrorTarget = str_replace('\\', '/', $mirror . '/payload.php');
+        file_put_contents($mirrorPayload, '<?php echo "unknown prior file";');
+        $productInstaller = new \PlgJ2commerceProductcompareInstallerScript();
+        $mirrorComparison = \Advans\Installer\V3\FileGuard::compare([$mirrorPayload => $productFiles[$mirrorTarget]]);
+        $mirrorPlan = \Advans\Installer\V3\Planner::plan(
+            $mirrorComparison['differing'],
+            [],
+            static fn(): bool => false,
+            static fn(string $destination, string $existing, bool $known): string => $decide->invoke($productInstaller, $destination, $existing, $known),
+            \Advans\Installer\V3\Knowledge::load($work . '/missing-catalog.php', $work . '/missing-record.php')
+        );
+        $assert(count($mirrorPlan['halts']) === 1 && file_get_contents($mirrorPayload) === '<?php echo "unknown prior file";',
+            'A clean install must pause on an unknown pre-existing Product Compare mirror file without changing it.');
         file_put_contents($mirror . '/other.xml', '<extension type="plugin" group="j2store"><name>plg_j2store_other</name></extension>');
-        $assert($decide->invoke(new \PlgJ2commerceProductcompareInstallerScript(), $mirrorPayload, str_repeat('0', 64), false) === \Advans\Installer\V2\Planner::SKIP, 'A mirror folder owned by another extension must be left untouched.');
+        $assert($decide->invoke($productInstaller, $mirrorPayload, str_repeat('0', 64), false) === \Advans\Installer\V3\Planner::SKIP,
+            'A mirror folder owned by another extension must be left untouched.');
         unlink($mirror . '/other.xml');
+        unlink($mirrorPayload);
+
+        require dirname(__DIR__, 2) . '/j2commerce/plg_osmap_j2commerce/script.php';
+        $factory = JPATH_ADMINISTRATOR . '/components/com_osmap/library/Alledia/OSMap/Factory.php';
+        $factorySource = "<?php\nreturn Table::getInstance(\$tableName, \$prefix);\n";
+        $factoryReplacement = "<?php\nreturn Table::getInstance(\$tableName, \$prefix) ?: null;\n";
+        mkdir(dirname($factory), 0700, true);
+        file_put_contents($factory, $factorySource);
+        $osmapInstaller = new \PlgosmapJ2commerceInstallerScript();
+        $sourceParent = new class($productSource) {
+            public function __construct(private string $source) {}
+            public function getParent(): self { return $this; }
+            public function getPath(string $key): string { return $this->source; }
+        };
+        $guardedFiles = new \ReflectionMethod(\PlgosmapJ2commerceInstallerScript::class, 'guardedFiles');
+        $factoryFiles = $guardedFiles->invoke($osmapInstaller, 'install', $sourceParent);
+        $factoryComparison = \Advans\Installer\V3\FileGuard::compare($factoryFiles);
+        $osmapDecision = new \ReflectionMethod(\PlgosmapJ2commerceInstallerScript::class, 'foreignDecision');
+        $factoryPlan = \Advans\Installer\V3\Planner::plan(
+            $factoryComparison['differing'],
+            [],
+            static fn(): bool => false,
+            static fn(string $destination, string $existing, bool $known): string => $osmapDecision->invoke($osmapInstaller, $destination, $existing, $known),
+            \Advans\Installer\V3\Knowledge::load($work . '/missing-catalog.php', $work . '/missing-record.php')
+        );
+        $assert(count($factoryPlan['halts']) === 1 && file_get_contents($factory) === $factorySource
+            && file_get_contents((string) $factoryFiles[$factory]) === $factoryReplacement,
+            'A clean install must pause before changing an existing OSMap Factory.php file.');
+
+        require dirname(__DIR__, 2) . '/j2commerce/plg_privacy_j2commerce/script.php';
+        $override = JPATH_SITE . '/templates/example/html/com_j2commerce/checkout/default_shipping_payment.php';
+        $overrideBytes = (string) file_get_contents(dirname(__DIR__, 2) . '/j2commerce/plg_privacy_j2commerce/tests/scripts/fixture-checkout-override-1.5.5.php');
+        mkdir(dirname($override), 0700, true);
+        file_put_contents($override, $overrideBytes);
+        $privacyInstaller = new \Plgprivacyj2commerceInstallerScript();
+        $privacyDecision = new \ReflectionMethod(\Plgprivacyj2commerceInstallerScript::class, 'foreignDecision');
+        $removeCandidate = \Advans\Installer\V3\Destinations::operation($productSource, 'Remove obsolete checkout override after manual review');
+        $overrideComparison = \Advans\Installer\V3\FileGuard::compare([$override => $removeCandidate]);
+        $overridePlan = \Advans\Installer\V3\Planner::plan(
+            $overrideComparison['differing'],
+            [hash_file('sha256', $removeCandidate) => \Advans\Installer\V3\State::read($removeCandidate)['operation']],
+            static fn(): bool => false,
+            static fn(string $destination, string $existing, bool $known): string => $privacyDecision->invoke($privacyInstaller, $destination, $existing, $known),
+            \Advans\Installer\V3\Knowledge::load($work . '/missing-catalog.php', $work . '/missing-record.php')
+        );
+        $assert(count($overridePlan['halts']) === 1 && file_get_contents($override) === $overrideBytes,
+            'A clean install must pause on an earlier supported Privacy checkout override without renaming or deleting it.');
+        $assert(!is_dir($work . '/site/administrator/advans-installer-state/backup'),
+            'Special-operation conflict planning must not create server-side file copies.');
+
         $optionsInstaller = new \ReflectionMethod(\PlgJ2commerceProductcompareInstallerScript::class, 'installOptionsManifest');
         $optionsParent = new class($productManifest) {
             public function __construct(private string $manifest) {}
@@ -897,7 +1048,7 @@ namespace {
         // 6. Scheduled tasks: a missing required task is created switched on and reported, an
         //    existing one is never changed or duplicated, one switched off on purpose is reported,
         //    an extension without required tasks says nothing.
-        $tasks = \Advans\Installer\V2\ScheduledTasks::class;
+        $tasks = \Advans\Installer\V3\ScheduledTasks::class;
         $handled = new \ReflectionProperty($tasks, 'handled');
         $db = \Joomla\CMS\Factory::$db;
         $reset = static function () use ($handled, $app): void {
@@ -906,7 +1057,7 @@ namespace {
             $app->saved = [];
         };
         $app->tag = 'en-GB';
-        \Advans\Installer\V2\SystemCheck::loadLanguage();
+        \Advans\Installer\V3\SystemCheck::loadLanguage();
         $strings = \Joomla\CMS\Language\Text::$strings;
         $text = static fn(): string => html_entity_decode(implode("\n", array_column($app->messages, 0)), ENT_QUOTES, 'UTF-8');
         $repository = dirname(__DIR__, 2);
@@ -938,7 +1089,7 @@ namespace {
         $assert(count($app->messages) === 2 && $app->messages[0][1] === 'message', 'The created task and an unproven Lazy Scheduler trigger must be reported.');
         $assert(str_contains($text(), 'was missing. The installation created it and switched it on: it runs every day at 02:15 UTC. It anonymises shop orders')
             && str_contains($text(), 'Retention period: 7 years after the end of the fiscal year on 06-30'), 'The report must name the schedule, the purpose and the settings: ' . $text());
-        $passed = array_column(\Advans\Installer\V2\SystemCheck::results('plg_privacy_j2commerce')['passed'], 1);
+        $passed = array_column(\Advans\Installer\V3\SystemCheck::results('plg_privacy_j2commerce')['passed'], 1);
         $assert(in_array($strings['ADVANS_CHECK_TASK_NOT_RUN'], $passed, true), 'The system check must list the switched-on task that has not run yet.');
 
         // Update with the task switched on: nothing saved, nothing said.
@@ -956,7 +1107,7 @@ namespace {
             $assert($app->saved === [] && $db->tasks === $before, 'A task switched off on purpose must not be changed or duplicated.');
             $assert(count($app->messages) === 2 && str_contains($text(), 'is switched off or in the trash')
                 && str_contains($text(), 'System → Manage → Scheduled Tasks') && str_contains($text(), 'Lazy Scheduler'), 'A switched-off required task must be reported with the menu path and the trigger warning.');
-            $blockers = array_column(\Advans\Installer\V2\SystemCheck::results('plg_privacy_j2commerce')['blockers'], 1);
+            $blockers = array_column(\Advans\Installer\V3\SystemCheck::results('plg_privacy_j2commerce')['blockers'], 1);
             $assert(in_array($strings['ADVANS_CHECK_TASK_OFF'], $blockers, true), 'The system check must report a switched-off required task as a blocker.');
         }
 
@@ -1015,7 +1166,7 @@ namespace {
             ['id' => 3, 'state' => 1, 'last_execution' => null, 'last_exit_code' => 0, 'times_executed' => 0],
             ['id' => 7, 'state' => 1, 'last_execution' => gmdate('Y-m-d H:i:s', time() - 3600), 'last_exit_code' => 0, 'times_executed' => 4],
         ];
-        $inspected = \Advans\Installer\V2\ScheduledTasks::inspect('plg_privacy_j2commerce');
+        $inspected = \Advans\Installer\V3\ScheduledTasks::inspect('plg_privacy_j2commerce');
         $routineRow = array_values(array_filter($inspected, static fn(array $row): bool => $row['routine'] === $routine))[0] ?? null;
         $assert($routineRow !== null && (int) ($routineRow['task']['id'] ?? 0) === 7, 'Duplicate enabled tasks must prefer the task with the most recent execution.');
 
@@ -1030,14 +1181,14 @@ namespace {
 
         foreach (['de-DE', 'fr-FR'] as $tag) {
             $app->tag = $tag;
-            \Advans\Installer\V2\SystemCheck::loadLanguage();
-            $assert(\Advans\Installer\V2\ScheduledTasks::schedule(['rule-type' => 'interval-days', 'interval-days' => 1, 'exec-time' => '02:15']) !== 'ADVANS_TASKS_DAILY_AT', 'Untranslated schedule in ' . $tag);
+            \Advans\Installer\V3\SystemCheck::loadLanguage();
+            $assert(\Advans\Installer\V3\ScheduledTasks::schedule(['rule-type' => 'interval-days', 'interval-days' => 1, 'exec-time' => '02:15']) !== 'ADVANS_TASKS_DAILY_AT', 'Untranslated schedule in ' . $tag);
         }
 
         $app->tag = 'en-GB';
-        \Advans\Installer\V2\SystemCheck::loadLanguage();
+        \Advans\Installer\V3\SystemCheck::loadLanguage();
         echo "PASS scheduled tasks: missing required task created switched on and reported, existing task unchanged, switched-off task reported, no message without required tasks, Scheduler trigger checked\n";
-        echo "PASS common lifecycle: own files decided automatically with verified backups and record, foreign pause with approval, backup failure stops before changes, translated reports and refreshed state\n";
+        echo "PASS common lifecycle: known files update without server copies, conflicts pause before Joomla changes files, shared lock spans file copying, translated reports and refreshed state\n";
     } finally {
         $remove($work);
     }

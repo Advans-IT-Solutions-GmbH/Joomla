@@ -5,26 +5,24 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-namespace Advans\Installer\V2;
+namespace Advans\Installer\V3;
 
 defined('_JEXEC') or die;
 
 /**
  * Decides, for every existing destination whose bytes differ from the incoming file, what the
- * installation does with it. The decision never asks the administrator unless continuing could
- * cause damage that a backup cannot undo.
+ * installation does with it. Unknown or locally changed bytes always halt the installation.
  *
  * Own territory (the extension's own folders, media and language files):
- *  - untouched (bytes this extension wrote or shipped): replaced, no backup needed;
- *  - changed on this site: backed up, then replaced or removed, and reported.
+ *  - known bytes this extension wrote or shipped: replaced;
+ *  - changed or unknown: installation halts before Joomla copies any files.
  *
  * Foreign territory (files of other extensions, site templates): the extension script decides per
  * operation through InstallerScript::foreignDecision():
- *  - REPLACE: the file is this extension's own copy (for example a mirror it maintains): backed up
- *    and replaced; reported only when it had been changed;
- *  - ADJUST: a deliberate, minimal change to another extension's file: backed up, changed, reported;
+ *  - REPLACE: the file is this extension's own copy (for example a mirror it maintains);
+ *  - ADJUST: a deliberate, minimal change to another extension's file;
  *  - SKIP: the file is left as it is and the extension adapts its operation;
- *  - HALT: no safe automatic choice exists; the installation pauses for a Super User.
+ *  - HALT: no safe automatic choice exists; the installation pauses for review.
  */
 final class Planner
 {
@@ -33,18 +31,12 @@ final class Planner
     public const SKIP = 'skip';
     public const HALT = 'halt';
 
-    /** Report categories. */
-    public const REPORT_REPLACED = 'replaced';
-    public const REPORT_REMOVED = 'removed';
-    public const REPORT_FOREIGN = 'foreign';
-
     /**
      * @param array<string, array{existing: string, incoming: string}> $differing Normalized destination => hashes.
      * @param array<string, string> $operations Incoming hash of a staged operation marker => operation name.
      * @param callable(string): bool $owned Whether a destination is in the extension's own territory.
      * @param callable(string, string, bool): string $foreign Decision for a foreign destination
      *        (destination, existing hash, known) => REPLACE, ADJUST, SKIP or HALT.
-     * @param array<string, mixed> $approved Explicit approvals: destination => {existing, incoming}.
      * @param array<string, mixed> $decided  Destinations a package already decided for its children.
      * @return array{changes: list<array<string, mixed>>, halts: list<array<string, mixed>>, skipped: list<string>}
      */
@@ -54,7 +46,6 @@ final class Planner
         callable $owned,
         callable $foreign,
         Knowledge $knowledge,
-        array $approved = [],
         array $decided = []
     ): array {
         $changes = [];
@@ -65,8 +56,6 @@ final class Planner
             $existing = $hashes['existing'];
             $incoming = $hashes['incoming'];
             $operation = $operations[$incoming] ?? 'replace';
-            $removal = $operation !== 'replace';
-
             if (self::matches($decided, $destination, $existing, $incoming)) {
                 continue;
             }
@@ -81,11 +70,13 @@ final class Planner
             ];
 
             if ($owned($destination)) {
-                $changes[] = $entry + [
-                    'territory' => 'own',
-                    'backup'    => !$known,
-                    'report'    => $known ? null : ($removal ? self::REPORT_REMOVED : self::REPORT_REPLACED),
-                ];
+                if (!$known) {
+                    $halts[] = $entry + ['territory' => 'own'];
+
+                    continue;
+                }
+
+                $changes[] = $entry + ['territory' => 'own'];
 
                 continue;
             }
@@ -98,21 +89,17 @@ final class Planner
                 continue;
             }
 
-            if ($decision === self::HALT && !self::matches($approved, $destination, $existing, $incoming)) {
+            if ($decision === self::HALT || !$known) {
                 $halts[] = $entry + ['territory' => 'foreign'];
 
                 continue;
             }
 
-            if (!in_array($decision, [self::REPLACE, self::ADJUST, self::HALT], true)) {
+            if (!in_array($decision, [self::REPLACE, self::ADJUST], true)) {
                 throw new \RuntimeException('Unknown installer decision for a foreign destination.');
             }
 
-            $report = $decision === self::REPLACE
-                ? ($known ? null : ($removal ? self::REPORT_REMOVED : self::REPORT_REPLACED))
-                : self::REPORT_FOREIGN;
-            // Foreign territory is always backed up, even when its bytes are known.
-            $changes[] = $entry + ['territory' => 'foreign', 'backup' => true, 'report' => $report];
+            $changes[] = $entry + ['territory' => 'foreign'];
         }
 
         return ['changes' => $changes, 'halts' => $halts, 'skipped' => $skipped];

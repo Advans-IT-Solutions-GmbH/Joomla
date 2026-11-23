@@ -106,78 +106,43 @@ Keep using DMARC Reports' existing
 **System Check** view for its deeper IMAP/DNS/MTA-STS diagnostics; the common tab does not contact
 external systems or replace that view.
 
-**Updates decide by themselves.** Before Joomla copies anything, the installer compares every
-declared destination (media, languages, bundled plugins, package children, the Joomla 5 Product
-Compare mirror and the known installer-managed changes to other extensions' files) with the
-incoming file. Identical and absent destinations need no decision. For every other one the
-installer decides without asking, and an administrator who does not know the topic is never asked a
-technical question:
+**Updates stop safely on conflicts.** Before Joomla copies files, the installer compares each
+destination with the installed-file record and the catalog of released hashes. Identical files and
+files that match a known release can proceed. A modified or unknown file that an operation would
+replace, remove or adjust stops the update before Joomla copies anything. The notice lists each
+path, its current and incoming SHA-256 hashes, why it is affected, and how to resolve the conflict.
+Unknown provenance is not proof of a local edit; review the file and operation, resolve it manually
+or defer the update, then retry. There is no approval command or retry-based bypass.
 
-| Destination | Its current bytes | Decision |
-|---|---|---|
-| Own territory: the extension's folders, its media folder, its manifest storage, its language files by name | written or shipped by this extension (untouched) | replaced |
-| Own territory | not known from the record or catalog | normally backed up, then replaced or removed; listed in the report. Appointments instead stops before copying, as described below |
-| Foreign territory (other extensions, site templates) | per operation, see below | backed up first in every case |
+Before the first update attempt for each extension, the installer also stops once with a clear
+recommendation to take a current, complete site backup and ensure it can be restored independently.
+It cannot verify that a backup exists or is restorable. Retrying acknowledges the reminder only; it
+does not prove that the notice was read or record backup status. A package update can show this
+notice once for the package and separately for child extensions as Joomla reaches their installers.
 
-"Untouched" means the bytes equal the file this installer wrote during the last successful
-installation on this site (the record `installed.php`) or a file of any earlier release of the
-extension (the catalog `advans-known-hashes.php` at the root of the package, which Joomla never installs). The build creates the
-catalog by rebuilding every earlier release from its merged release commit (`release: <prefix>
-vX.Y.Z`; the publish workflow deletes older tags, the release commits remain) with that commit's own
-build scripts, and hashing the built files, so the manifests and language files the build stamps
-match what sites installed. The CI of every extension proves this against the latest published
-release asset (`.github/scripts/verify-known-hashes.py`). An installation made before this
-mechanism has no record; the catalog can recognise its files when their hashes are present.
+The shared installer never creates, reads for reuse, exports, restores or automatically deletes
+file-content copies. Any copies made by earlier installer versions are left untouched. Its state
+under **`administrator/advans-installer-state/EXTENSION/`** contains only non-sensitive path/hash
+metadata, release records, reminder state and conflict plans. The V3 installer lock serializes
+concurrent V3 installs; it does not coordinate unrelated filesystem writers or older runtime
+versions, so avoid overlapping updates and deployments.
 
-Appointments additionally stops on unknown component, bundled-plugin and bundled-module files,
-including when the record or catalog is missing or incomplete. It displays each path and both hashes and saves a
-verified file backup. Unknown provenance is not proof of an edit. The Appointments Recovery
-companion records explicit decisions for the exact hashes and can restore eligible backups.
-Retrying or approving the shared installer plan does not override this stop. See
+Appointments additionally pauses on unknown component, bundled-plugin and bundled-module files.
+Its Recovery companion can stream an affected existing file to the administrator's computer;
+after the file has been downloaded, the administrator can explicitly apply the package operation.
+To recover later, upload that local file in a separate request. The companion validates the plan,
+path, hashes and current destination before writing it. File bytes are not retained on the server
+between requests, and recovery does not roll back database or extension metadata. See
 [Update conflicts and recovery](com_appointments/README.md#update-conflicts-and-recovery).
 
-The installer changes files of other extensions only in these operations:
+Special operations remain guarded: an unknown OSMap compatibility target pauses for manual review;
+Product Compare leaves another extension's mirror untouched and skips it, while a changed or
+unknown mirror pauses; Privacy does not rename or delete copied checkout overrides during updates.
+Review and resolve a conflict without relying on an installer-created file copy. Customisations
+belong in template overrides, which updates do not replace.
 
-| Operation | Automatic decision |
-|---|---|
-| Product Compare mirror under `plugins/j2store/productcompare` (Joomla 5, J2Store's plugin group) | Holds only this plugin's files: backed up and replaced, a file changed by hand is reported. Belongs to another extension (another manifest there, or a link elsewhere): left byte-identical and the mirror is skipped; the plugin is registered in its own `j2commerce` group, stays inactive under J2Store and the installation says why and how to resolve it (Joomla offers no updates for that registration on Joomla 5, because one feed cannot serve both groups there) |
-| OSMap compatibility patch of `administrator/components/com_osmap/library/Alledia/OSMap/Factory.php` (OSMap 5.1.3 and older) | Backed up, then the one faulty line is changed and every other byte kept (changes on the site included); reported. Applied only while the faulty line is present |
-| J2Commerce Privacy: retirement of an unchanged checkout override that an earlier version copied into a site template | Backed up, then renamed with `.plg_privacy_j2commerce-disabled` (the file stays) and reported. A changed copy is left in place with a warning |
-| J2Commerce Privacy: template overrides for MyProfile and the J2Store checkout | Created only where no file exists, never replaced |
-
-Any other destination outside the extension's own territory whose bytes are not known is a case
-without a safe automatic choice. The installation then **pauses before anything changes** and
-explains in plain language (in the site's language) which file would be affected and why. Each
-such file is already backed up. A Super User approves by repeating the same installation within
-one hour: **Approve** opens **System → Update → Extensions** (or **System → Install → Extensions**
-when the package was uploaded), and updating (or installing the same package) once more approves
-exactly the reviewed old and new hashes and completes the installation (Joomla renders messages without forms, so the button cannot submit by itself). Other administrators see that a
-Super User has to approve. Server administrators can approve on the command line instead:
-
-```text
-php /path/to/unpacked/advansinstaller/approve.php --approve /path/to/site/administrator/advans-installer-state/EXTENSION/plan.php REVIEWED_PLAN_SHA256
-```
-
-Run it as the filesystem user that performs the Joomla install, then repeat the installation.
-Changed bytes need a new pause and approval; an approval never covers other files.
-
-**A backup that cannot be written or verified stops the installation before any file changes**,
-with a message that names the file and the directory the server administrator has to make
-writable. An unreadable destination or a symbolic link stops it the same way. All backups are
-written and verified during preflight, before Joomla copies the first file.
-
-**Report.** After the installation a short notice lists the files that had been changed on this
-site and were replaced or removed, and the adjusted files of other extensions, each with the backup
-location. Customisations belong in template overrides, which updates do not replace.
-
-**Where state and backups live.** Backups, the record and a paused plan
-are stored in **`administrator/advans-installer-state/EXTENSION/`**, outside Joomla's disposable
-cache and extension directories. Backup containers are non-executable PHP envelopes with the
-original bytes as base64, their hash and destination binding; opening one over HTTP discloses
-nothing. **Retention:** the next successful installation of the same extension removes backups
-that are older than 180 days and were not used again; Appointments Recovery also protects backups
-referenced by its pending review or latest recovery attempt. Half a year leaves room to notice a lost
-change long after the update without letting backups pile up. Do not run concurrent installs.
+**Report.** After a successful installation, the installer reports completed checks and operations.
+It does not claim that a site backup exists or list a server-side file backup.
 
 **Checksum.** Every `updates/update.xml` carries the `<sha256>` of its release asset, so Joomla
 verifies the download. Package builds are reproducible (`shared/build/deterministic-zip.sh`: fixed
@@ -240,7 +205,7 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 | File under `shared/` | Starts |
 |---|---|
 | `build/**`, `installer/**` | every extension workflow (the DMARC package also stages the support and verifies its assembled bundle) |
-| `tests/installer-*.php` | Infrastructure Tests: offline ownership, automatic decisions, record and catalog, pause and approval, backup-failure stop, retention and translation regressions |
+| `tests/installer-*.php` | Infrastructure Tests: offline ownership, release records and catalog, hash-only conflict pauses, installer locking, no-copy behavior, legacy-copy preservation and translation regressions |
 | `tests/run-tests.sh` | every extension workflow (the local runners delegate here) |
 | `tests/lang-lint.php`, `tests/help-lint.php`, `tests/requirements-check.php`, `tests/deprecated-api-scan.php` | every extension workflow (job `Language Files`); `help-lint.php` also runs over the whole repository in Shared Path Coverage |
 | `tests/scripts/shared-test-helpers.php` | every extension workflow (loaded by the shared suites) |
@@ -248,7 +213,7 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 | `tests/scripts/shared-backend-views.php` | Appointments, DMARC Reports component, Import/Export, Cleanup |
 | `tests/scripts/shared-help-pages.php` | Appointments (its bundled plugins), AJAX Forms, OSMap, Product Compare, Privacy, Privacy Requests |
 | `tests/scripts/shared-update-from-previous.php` | AJAX Forms, OSMap, Privacy (job `Update from previous release (J6)`: CLI update from the previous release commit, recognised without a record) |
-| `tests/scripts/shared-backend-update.php` | Appointments, DMARC Reports Package, DMARC Reports Task Plugin (job `Backend update from the published release (J6)`: Check for Updates and Update in the backend from the published release, a file changed by hand, a backup that cannot be written, a pause with Approve), Product Compare (job `Backend update with foreign files (J5)`), OSMap and Privacy (foreign operations in `Update from previous release (J6)`) |
+| `tests/scripts/shared-backend-update.php` | Appointments (including local download/upload recovery), DMARC Reports Package and Task Plugin (job `Backend update from the published release (J6)`), Product Compare (job `Backend update with foreign files (J5)`), OSMap and Privacy (manual conflict-resolution scenarios) |
 | `tests/scripts/shared-deprecations.php`, `tests/scripts/shared-deprecation-tracer.php` | AJAX Forms, OSMap, Privacy (production-like lane) |
 | `tests/Dockerfile.template`, `tests/scripts/docker-entrypoint.sh`, `tests/scripts/install-extension.php` | nothing: templates that every extension has copied into its own `tests/` tree, read by no lane |
 

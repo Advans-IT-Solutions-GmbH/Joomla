@@ -5,12 +5,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-namespace Advans\Installer\V2;
+namespace Advans\Installer\V3;
 
 defined('_JEXEC') or die;
 
 (static function (): void {
-    foreach (['RoutingCheck', 'SystemCheck', 'ScheduledTasks', 'Destinations', 'FileGuard', 'State', 'Knowledge', 'Planner', 'Approval', 'InstallerScript'] as $class) {
+    foreach (['RoutingCheck', 'SystemCheck', 'ScheduledTasks', 'Destinations', 'FileGuard', 'State', 'Knowledge', 'Planner', 'InstallerLock', 'InstallerScript'] as $class) {
         if (!class_exists(__NAMESPACE__ . '\\' . $class, false)) {
             require_once __DIR__ . '/' . $class . '.php';
         }

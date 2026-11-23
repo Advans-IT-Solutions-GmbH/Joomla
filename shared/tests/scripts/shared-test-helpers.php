@@ -231,30 +231,44 @@ function sh_cli_install(string $root, string $package): array
 
 /**
  * Install or update through the CLI and require that the shared installer decided by itself.
- * Updates of the extension's own files never pause; a pause (a fresh review plan) fails the
- * call with an explanation instead of being approved behind the test's back.
+ * A first-attempt full-site-backup recommendation is retried for the same package only when the
+ * installer wrote fresh reminder metadata. Other failed updates are never retried automatically.
  *
  * @return array{0:int, 1:string}
  */
 function sh_cli_install_checked(string $root, string $package): array
 {
-    $started = time();
-    [$code, $output] = sh_cli_install($root, $package);
+    $allOutput = '';
 
-    if ($code === 0) {
-        return [$code, $output];
-    }
-
-    $plans = glob($root . '/administrator/advans-installer-state/*/plan.php') ?: [];
-    clearstatcache();
-
-    foreach ($plans as $plan) {
-        if (filemtime($plan) >= $started) {
-            return [$code, $output . "\nThe shared installer paused for an approval ($plan); updates of own files must decide by themselves."];
+    for ($attempt = 0; $attempt < 16; $attempt++) {
+        $before = [];
+        foreach (glob($root . '/administrator/advans-installer-state/*/backup-recommendation.php') ?: [] as $path) {
+            $before[$path] = hash_file('sha256', $path);
         }
+        [$code, $output] = sh_cli_install($root, $package);
+        $allOutput .= ($allOutput === '' ? '' : "\n") . $output;
+
+        if ($code === 0) {
+            return [$code, $allOutput];
+        }
+
+        clearstatcache();
+        $newRecommendations = [];
+        foreach (glob($root . '/administrator/advans-installer-state/*/backup-recommendation.php') ?: [] as $path) {
+            $hash = hash_file('sha256', $path);
+            if ($hash !== false && ($before[$path] ?? null) !== $hash) {
+                $newRecommendations[] = $path;
+            }
+        }
+
+        if ($newRecommendations === []) {
+            return [$code, $allOutput];
+        }
+
+        $allOutput .= "\nA backup recommendation stopped the update before file changes; retrying the same package.";
     }
 
-    return [$code, $output];
+    return [1, $allOutput . "\nThe package update exceeded the bounded reminder retry count."];
 }
 
 /**
