@@ -28,6 +28,38 @@ final class Metrics
 {
     private DatabaseInterface $db;
 
+    /** Most flagged sources per domain the bulk (dashboard) query loads. */
+    private int $flaggedLimit = FlaggedSourceLimit::PER_DOMAIN;
+
+    /** @var array<int, int> Flagged-source count per domain from the last bulk query. */
+    private array $flaggedTotals = [];
+
+    /**
+     * SQL condition (on the grouped source rows) true when the exact action the
+     * dashboard would generate for the source (spf_only_source, otherwise
+     * align_source, keyed code:domain:ip) is handled by the administrator: done,
+     * ignored or still snoozed. Mirrors ActionStatus::partition(). Evaluated by
+     * the database, so there is no address list and no cutoff.
+     */
+    private function handledCondition(): string
+    {
+        $db  = $this->db;
+        $key = 'CONCAT(CASE WHEN g.spf_only > 0 THEN ' . $db->quote('spf_only_source') . ' ELSE ' . $db->quote('align_source')
+            . ' END, ' . $db->quote(':') . ', g.domain_id, ' . $db->quote(':') . ', g.source_ip)';
+
+        return 'EXISTS (SELECT 1 FROM ' . $db->quoteName('#__dmarc_actions') . ' AS ha WHERE ha.domain_id = g.domain_id AND ha.action_key = ' . $key
+            . ' AND ha.status <> ' . $db->quote('open')
+            . ' AND NOT (ha.status = ' . $db->quote('snoozed') . ' AND (ha.snooze_until IS NULL OR ha.snooze_until <= '
+            . $db->quote(gmdate('Y-m-d H:i:s')) . ')))';
+    }
+    /**
+     * Change the per-domain cap of the bulk flagged-source query (clamped).
+     */
+    public function setFlaggedSourceLimit(int $limit): void
+    {
+        $this->flaggedLimit = FlaggedSourceLimit::clamp($limit);
+    }
+
     public function __construct(?DatabaseInterface $db = null)
     {
         $this->db = $db ?? Factory::getContainer()->get(DatabaseInterface::class);
@@ -188,6 +220,7 @@ final class Metrics
 
         $window   = 7 * 86400;
         $anchors  = $this->latestReportEndAll($ids);
+        $this->flaggedTotals = [];
         $flagged  = $this->flaggedSourcesAll($ids);
         $current  = $this->windowTotalsAll($ids, $window, 0);
         $previous = $this->windowTotalsAll($ids, 2 * $window, $window);
@@ -216,6 +249,7 @@ final class Metrics
                 'dmarc_pass'         => (int) ($summary['dmarc_pass'] ?? 0),
                 'reject_under_p'     => (int) ($summary['reject_under_p'] ?? 0),
                 'flagged_sources'    => $anchor > 0 ? ($flagged[$domainId] ?? []) : [],
+                'flagged_sources_total' => $anchor > 0 ? ($this->flaggedTotals[$domainId] ?? 0) : 0,
                 'pass_rate_prev'     => null,
             ];
 
@@ -1221,20 +1255,27 @@ final class Metrics
             ->group($this->db->quoteName('rep.domain_id') . ', ' . $this->db->quoteName('cur.source_ip'))
             ->having($this->flaggedHaving('cur'));
 
-        $query = $this->query()
-            ->select('*')
-            ->from('(' . $grouped . ') AS ' . $this->db->quoteName('g'))
-            ->order(
-                $this->db->quoteName('domain_id') . ' ASC, '
-                . $this->db->quoteName('spf_only') . ' DESC, '
-                . $this->db->quoteName('fail_delivered') . ' DESC, '
-                . $this->db->quoteName('source_ip') . ' ASC'
-            );
+        // Bound the work and keep one contract with the domain view: per domain the
+        // result is the top 50 OPEN sources in exactly the detail ranking (SPF-only,
+        // then delivered-failing, then address), followed by up to 200 HANDLED
+        // sources (done, ignored, snoozed) in that same ranking, so handled ones
+        // never take open slots and stay reopenable. The database cuts the rest, so
+        // the dashboard never reads, enriches or turns every source of a busy domain
+        // into action items; the domain view lists every source.
+        $query = FlaggedSourceLimit::wrap(
+            $grouped,
+            $this->db->quoteName('g.spf_only') . ' DESC, '
+            . $this->db->quoteName('g.fail_delivered') . ' DESC, '
+            . $this->db->quoteName('g.source_ip') . ' ASC',
+            $this->flaggedLimit,
+            $this->handledCondition()
+        );
 
         $map = [];
 
         foreach ($this->db->setQuery($query)->loadAssocList() ?: [] as $row) {
             $flagged = self::flaggedRow($row);
+            $this->flaggedTotals[(int) $row['domain_id']] = (int) ($row['flag_total'] ?? 0);
             $end = (int) ($row['evidence_window_end'] ?? 0);
             $flagged['evidence_total'] = (int) $flagged['total'];
             $flagged['evidence_window_fallback'] = false;
