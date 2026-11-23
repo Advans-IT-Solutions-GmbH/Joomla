@@ -1,0 +1,23 @@
+name: Commit Hygiene
+
+# Owner decision of 2026-11-23: a pull request with an unverified commit, a Co-authored-by
+# trailer or an agent signature in a commit message must not be mergeable.
+#
+# No path filter: this workflow is therefore an unconditional pull_request workflow, and
+# .github/scripts/collect-results.sh requires it on every pull request. The required check
+# "Collect Results" fails when this workflow does not succeed.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  commit-hygiene:
+    name: Commit hygiene
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: Advans-IT-Solutions-GmbH/.github/.github/workflows/reusable-commit-hygiene.yml@5a3231b6d3de6a02e140303b6a7c812550d0fba8 # commit hygiene, to be re-pinned to the merge commit
