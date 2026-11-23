@@ -1217,6 +1217,7 @@ class DataAnonymizationTest
         $frameDir = JPATH_SITE . '/templates/zz-mailtest/html/layouts/joomla/mail';
         @mkdir($frameDir, 0777, true);
         file_put_contents($frameDir . '/frame.php', "<?php defined('_JEXEC') or die; echo '<div class=\"frame\">' . \$displayData['mail'] . '</div>';");
+        $markerlessLayout = $frameDir . '/markerless.php';
 
         try {
             foreach (['html', 'both'] as $style) {
@@ -1233,6 +1234,31 @@ class DataAnonymizationTest
             $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
             $this->test('mail style: an invalid layout name still sends HTML, never reads another path',
                 $factory->last->html === true && !str_contains($factory->last->body, 'root:'));
+
+            $plugin->mailConfig = [
+                'mail_style' => 'html',
+                'disable_htmllayout' => '1',
+                'mail_htmllayout' => 'zz-mailtest:missing',
+            ];
+            $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
+            $this->test('mail style: missing layout falls back to the unchanged plain-text mail',
+                $factory->last->html === false && $factory->last->body === $textBody && $factory->last->AltBody === '');
+
+            if (file_put_contents(
+                $markerlessLayout,
+                "<?php defined('_JEXEC') or die; echo '<div class=\"markerless\">UNFRAMED</div>';"
+            ) === false || !is_file($markerlessLayout)) {
+                throw new \RuntimeException('Cannot create the markerless mail-layout fixture.');
+            }
+
+            $plugin->mailConfig = [
+                'mail_style' => 'html',
+                'disable_htmllayout' => '1',
+                'mail_htmllayout' => 'zz-mailtest:markerless',
+            ];
+            $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
+            $this->test('mail style: layout without the body marker falls back to the unchanged plain-text mail',
+                $factory->last->html === false && $factory->last->body === $textBody && $factory->last->AltBody === '');
 
             $plugin->mailConfig = ['mail_style' => 'both', 'disable_htmllayout' => '0'];
             $plugin->call('sendCustomerRetentionNotice', $app, $retained, $lifetime, $email, 'de-DE');
@@ -1262,6 +1288,7 @@ class DataAnonymizationTest
             $plugin->mailConfig = null;
             Factory::$application = $previousFactoryApp;
             @unlink($frameDir . '/frame.php');
+            @unlink($markerlessLayout);
             @rmdir($frameDir);
             @rmdir(dirname($frameDir));
             @rmdir(dirname($frameDir, 2));

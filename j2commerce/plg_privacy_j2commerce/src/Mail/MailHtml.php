@@ -126,7 +126,7 @@ final class MailHtml
         }
 
         if (!\is_string($rendered) || trim($rendered) === '' || substr_count($rendered, $marker) !== 1) {
-            return $html;
+            throw new \RuntimeException('The configured Joomla mail layout did not render the message body exactly once.');
         }
 
         return str_replace($marker, $html, MailHelper::convertRelativeToAbsoluteUrls($rendered));
