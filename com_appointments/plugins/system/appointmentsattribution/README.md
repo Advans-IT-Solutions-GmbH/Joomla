@@ -34,6 +34,10 @@ Component uninstall removes the plugin. Disabling the plugin stops recording on 
 
 No own parameters. The component option **Origin of bookings** (`attribution_capture`, off by default) decides: while it is off the plugin records nothing.
 
+## Permissions
+
+The plugin has no permissions of its own and adds no administrator screen. Who sees the stored origin of a booking is decided by the permissions on the event type (see the help page of the component, section «Permissions»).
+
 ## Privacy and Data Handling
 
 The session holds only what a booking needs (first visit with its single IP address, first and last touch, page count, last page), at most until the session ends with the configured session lifetime. Joomla stores the session as configured (database or files). A booking copies the values into its encrypted personal fields and they are removed from the session at once; with the option off nothing is kept. See the component README.

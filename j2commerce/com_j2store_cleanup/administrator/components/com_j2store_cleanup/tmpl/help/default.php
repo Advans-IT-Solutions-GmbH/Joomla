@@ -51,6 +51,15 @@ $helpSections = [
         ['p', 'COM_J2STORE_CLEANUP_HELP_REQ_READONLY'],
         ['p', 'COM_J2STORE_CLEANUP_HELP_REQ_DEFAULT'],
     ]],
+    'installation' => ['COM_J2STORE_CLEANUP_HELP_INSTALL_TITLE', [
+        ['ul', [
+            'COM_J2STORE_CLEANUP_HELP_INSTALL_NEW',
+            'COM_J2STORE_CLEANUP_HELP_INSTALL_BACKUP',
+            'COM_J2STORE_CLEANUP_HELP_INSTALL_CONFLICT',
+            'COM_J2STORE_CLEANUP_HELP_INSTALL_UPDATES',
+            'COM_J2STORE_CLEANUP_HELP_INSTALL_UNINSTALL',
+        ]],
+    ]],
     'detection' => ['COM_J2STORE_CLEANUP_HELP_DETECT_TITLE', [
         ['p', 'COM_J2STORE_CLEANUP_HELP_DETECT_INTRO'],
         ['ul', [

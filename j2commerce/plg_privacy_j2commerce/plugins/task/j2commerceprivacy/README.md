@@ -28,7 +28,7 @@ The routine is **required** (it performs the legally required anonymisation). Af
 
 ## Updating
 
-Update the parent privacy ZIP. Existing child plugin state is preserved; there is no independent release/update channel. Check the task's own parameters after a policy change.
+Update the parent privacy ZIP. Existing child plugin state is preserved; there is no independent release/update channel. Before updating, take a current, complete site backup that can be restored independently; the installer cannot verify this. The first update attempt displays this recommendation and stops before changing files; start the update again afterwards. The installer keeps no file copies; a modified or unknown file that the update would replace stops it before anything is copied, with the path and SHA-256 hashes listed, until you resolve it manually or defer the update. There is no approval command or bypass. Check the task's own parameters after a policy change.
 
 ## Uninstall
 
@@ -55,7 +55,7 @@ The installer-created task runs daily at 02:15 UTC; Joomla still needs a working
 
 ## Usage, Permissions and Data Handling
 
-Restrict Scheduler configuration to trusted administrators and test on isolated synthetic data before enabling destructive retention. Cleanup examines **all existing shop data sets**, not only the active shop, so migration copies do not retain personal data unnoticed. With order anonymisation off, stale consent evidence can still be removed.
+The plugin ships no `access.xml` and no permissions of its own; Joomla's Scheduler permissions decide who may change, run or delete the task, and the task sends no mail and writes no table of its own. Restrict Scheduler configuration to trusted administrators and test on isolated synthetic data before enabling destructive retention. Cleanup examines **all existing shop data sets**, not only the active shop, so migration copies do not retain personal data unnoticed. With order anonymisation off, stale consent evidence can still be removed.
 
 The task writes execution logs and modifies the parent's/shop's records, not a separate cleanup database. It is not a substitute for confirmed privacy requests, a website-wide erasure guarantee or backup retention. Refer to the [parent retention logic](../../../README.md#retention-logic) for the account/guest/lifetime distinctions.
 

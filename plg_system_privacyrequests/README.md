@@ -25,8 +25,10 @@ ownership.
 
 Build `plg_system_privacyrequests` with its `build.sh` wrapper and install the ZIP
 through Joomla's normal extension installer. The shared
-[installation approval policy](../README.md#installation-safety-and-repeatable-system-checks)
-applies. Installation does not enable this plugin, change mail transport, or create
+[installer conflict and recovery policy](../README.md#installation-safety-and-repeatable-system-checks)
+applies: the installer decides by itself, keeps no file copies, recommends a current
+complete site backup before the first update attempt and stops on modified or unknown files.
+Installation does not enable this plugin, change mail transport, or create
 Scheduler tasks. An operator must enable **System - Privacy requests** deliberately
 after testing the site's privacy plugins, permissions, mail and retention policy.
 Set its required **Operator contact route** to an existing publicly accessible local
@@ -48,7 +50,7 @@ index.php?option=com_ajax&plugin=privacyrequests&group=system&format=html
 
 ### Help
 
-The plugin's edit screen has a **Help** tab (de-DE, en-GB, fr-FR), the first tab after Joomla's own **Plugin** tab, which points to it with a note. It explains what the plugin does, the setup step by step, the **Operator contact route** setting, how a request is processed, the limits and locks, how it works with the J2Commerce privacy plugin and Appointments, and typical problems.
+The plugin's edit screen has a **Help** tab (de-DE, en-GB, fr-FR), the first tab after Joomla's own **Plugin** tab, which points to it with a note. It explains what the plugin does, the setup step by step, installation, update and uninstall, the **Operator contact route** setting, how a request is processed, the limits and locks, permissions, data and retention, how it works with the J2Commerce privacy plugin and Appointments, and typical problems.
 
 ### Distribution and updates
 
@@ -76,7 +78,7 @@ The coupled candidate is an **upgrade of an existing Appointments/shop test
 installation**, not a requirement to install either product for this adapter.
 The installed acceptance sequence is the generic plugin ZIP, the Appointments
 component ZIP, then the existing J2Commerce privacy ZIP. Use Joomla's normal
-installer and its exact-file approval process, not manual Core/plugin copies.
+installer and its conflict handling (see the installer policy above), not manual Core/plugin copies.
 
 1. Save a matching files/database/encryption-key backup and record plugin, mail and
    Scheduler states. Pause new adapter intake and administrator removal/completion
@@ -148,6 +150,17 @@ preserve the matching lawful recovery evidence before uninstalling. Disabling al
 removes the adapter's processing guard: do not process or complete adapter-managed
 requests while it is disabled.
 
+## Configuration and permissions
+
+The only setting is **Operator contact route** (required, no default value; see
+[Installation and activation](#installation-and-activation)). The plugin ships no
+`access.xml` and no permissions of its own. It evaluates the Joomla permission
+**Configure ACL & Options** (`core.admin`) of the Privacy component: only accounts that
+have it see the review checkboxes and the delivery-failure warning on a removal request
+and are subject to the Remove/Complete locks. To let another account process requests,
+grant this permission to its group in the Privacy component's options (tab
+**Permissions**). The public request page needs no login. The plugin needs no Scheduler
+task and checks none.
 ## Native Core lifecycle
 
 Creation and renewal use the public **administrator RequestModel::save** to save an

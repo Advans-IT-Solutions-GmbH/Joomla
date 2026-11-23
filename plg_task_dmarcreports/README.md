@@ -40,9 +40,23 @@ recommended way to install the whole DMARC solution together.
 Standalone installs register their own update server; package installs use the package channel. Release retention is latest-only per
 extension/tag family, not the monorepo's global latest release.
 
+**What the installer does.** It checks the platform (Joomla 5.4+, PHP 8.1+) and decides by itself, without questions. Before Joomla copies files it compares every file it would replace, remove or adjust with the installed-file record and the released hashes. A modified or unknown file stops the update before anything is copied; the notice lists the path, the current and incoming SHA-256 hashes and the reason. Resolve the conflict manually or defer the update, then retry. The installer keeps no copy of file contents and has no approval or bypass step. Before the first update attempt it stops once and recommends a current, complete full-site backup (files and database); it cannot verify that one exists, and the retry only acknowledges the note. After a fresh installation it enables the plugin; after an update it leaves the enabled or disabled state alone and points out a disabled plugin. After every installation and update it also checks the scheduled task (see [Scheduled tasks](#scheduled-tasks)).
+
 ## Configuration
 
 Help: the Help button of the plugin edit screen and the note at the top of its options open the **Help & tips** page of the DMARC Reports component (`index.php?option=com_dmarcreports&view=help`), which explains the terms, the Action Center entries and the typical tasks.
+
+The plugin has no options of its own besides the note that links to the help page (and, in installed builds, a read-only **System check** tab). Everything it uses is configured in the component options and in the task:
+
+| Setting | Where | Default | Purpose |
+|---------|-------|---------|---------|
+| Auto-create domains (`auto_create_domains`) | The task's own parameter | `No` | Lets the task create unknown domains; only effective with the two component options below |
+| Create unknown domains automatically | Component options | `Off` | General gate for automatic domain creation |
+| Allow automatic domain creation from scheduler tasks | Component options | `Off` | Extra gate for scheduled tasks; changing it needs administrator rights on the component |
+| IMAP timeout, maximum messages and the run and message limits | Component options | see the [component README](../com_dmarcreports/README.md#configuration) | Applied to each source on its own |
+| Execution rule (interval) | **System → Manage → Scheduled Tasks** | every hour | Joomla's standard task fields |
+
+**Permissions.** The plugin has no `access.xml`. Creating or changing the task needs Joomla's Scheduler permissions (the component *Scheduled Tasks*); changing the gates above needs administrator rights on `com_dmarcreports`. The task runs under no person's permissions, so restrict both.
 
 1. Nothing to create: the installation creates the scheduled task **DMARC Reports - Automatic ingestion** (see [Scheduled tasks](#scheduled-tasks)).
 2. Adjust its execution rule under System → Manage → Scheduled Tasks if every hour does not suit you.

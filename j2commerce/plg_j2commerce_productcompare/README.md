@@ -73,6 +73,8 @@ The CI uses the official Joomla Docker images (newest Joomla 5.4.x and 6.x, prin
 
 The manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`), and the install script makes sure the update site is present after every install or update. New versions appear under **System → Update → Extensions**. You can also install a newer ZIP over the existing installation.
 
+Before updating, take a current, complete site backup that can be restored independently; the installer cannot verify this. The first update attempt displays this recommendation and stops before changing files; start the update again afterwards. The installer decides by itself and keeps no file copies. If it reports a modified or unknown file that the update would replace (on Joomla 5 this includes a changed or unknown copy under `plugins/j2store/productcompare`), it stops before copying anything and lists the path and the SHA-256 hashes: review the file, resolve it manually or defer the update, then retry. There is no approval command or bypass. A copy owned by another extension is left byte-identical and skipped, as described above. Settings and the enabled state are kept. The plugin needs no Scheduler task and creates no tables.
+
 ## Uninstall
 
 Uninstall via **System → Manage → Extensions**. The plugin creates no database tables. Joomla removes the registered Product Compare folder. On Joomla 5 the installer also cleans up any remaining Product Compare copy under `plugins/j2commerce/productcompare/`. A `plugins/j2store/productcompare/` directory owned by another extension is not removed. Joomla removes Product Compare's media and language files; template overrides are not removed.
@@ -90,7 +92,7 @@ Uninstall via **System → Manage → Extensions**. The plugin creates no databa
 ### Help tab
 
 The plugin's edit screen (**System → Manage → Plugins → J2Commerce - Product Compare**) has a **Help** tab, the
-first tab after Joomla's own **Plugin** tab. It explains, in de-DE, en-GB and fr-FR, what the plugin does, prerequisites and setup (J2Store 4 or J2Commerce 6, where the button appears, template overrides), every setting with its default, and typical problems with what to do.
+first tab after Joomla's own **Plugin** tab. It explains, in de-DE, en-GB and fr-FR, what the plugin does, prerequisites and setup (J2Store 4 or J2Commerce 6, where the button appears, template overrides), installation, update and uninstall, every setting with its default, permissions and data handling, and typical problems with what to do.
 A note at the top of the **Plugin** tab points to it.
 
 The page is described in the manifest (fieldset `help`, field type `helppage`) and rendered by
@@ -104,7 +106,7 @@ structure).
 
 Only selected product IDs are persisted in the browser's `localStorage`, under `j2store_compare_products`; there is no expiry timestamp or account synchronization. Remove products from the comparison bar or clear this site's browser storage to clear the selection. Uninstalling the server plugin does not erase previously stored browser data.
 
-Comparison requests use the current visitor's session, form token, access levels and content language. The plugin has no own database tables, Scheduler routine or notification mail. Product data is queried locally when the comparison is opened; administrators control plugin configuration, not a separate public comparison permission. Joomla's update checks are separate from the comparison feature.
+Comparison requests use the current visitor's session, form token, access levels and content language. The plugin has no own database tables, Scheduler routine or notification mail. Product data is queried locally when the comparison is opened; administrators control plugin configuration, not a separate public comparison permission. The plugin ships no `access.xml` and no permissions of its own: only accounts that may edit plugins can change its settings (give another account access under **System → Manage → Plugins**). Joomla's update checks are separate from the comparison feature.
 
 1. Browse products
 2. Click "Compare" button
