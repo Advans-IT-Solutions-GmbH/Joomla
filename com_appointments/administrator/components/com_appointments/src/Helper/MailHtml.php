@@ -122,8 +122,28 @@ final class MailHtml
                 // A failing layout must not lose the mail: the escaped paragraphs below are sent instead.
             } finally {
                 // A layout that throws after output leaves its buffer open; never let that reach the response.
-                while (ob_get_level() > $level && @ob_end_clean()) {
-                    // stop at a buffer that cannot be removed
+                while (ob_get_level() > $level) {
+                    $currentLevel = ob_get_level();
+                    $status       = ob_get_status();
+                    $flags        = (int) ($status['flags'] ?? 0);
+
+                    if (($flags & PHP_OUTPUT_HANDLER_REMOVABLE) === 0) {
+                        if (($flags & PHP_OUTPUT_HANDLER_CLEANABLE) !== 0) {
+                            @ob_clean();
+                        }
+
+                        break;
+                    }
+
+                    if (!@ob_end_clean() || ob_get_level() >= $currentLevel) {
+                        $status = ob_get_status();
+
+                        if (((int) ($status['flags'] ?? 0) & PHP_OUTPUT_HANDLER_CLEANABLE) !== 0) {
+                            @ob_clean();
+                        }
+
+                        break;
+                    }
                 }
             }
 
