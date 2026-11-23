@@ -92,7 +92,12 @@ final class NotificationService
         return $this->data ??= BookingData::fromApplication();
     }
 
-    public function send(array $booking, string $purpose, \DateTimeImmutable $now, bool $hostOnly = false): void
+    /**
+     * @param   bool  $withLinks  false for a booking that is deleted: its signed links would lead nowhere, so the
+     *                            invitee's mail carries none and the guests, who could only remove their address
+     *                            from a booking that is gone, get no mail.
+     */
+    public function send(array $booking, string $purpose, \DateTimeImmutable $now, bool $hostOnly = false, bool $withLinks = true): void
     {
         if (!in_array($purpose, DefaultTemplates::SENT, true)) {
             throw new \InvalidArgumentException('Unsupported notification purpose.');
@@ -191,9 +196,9 @@ final class NotificationService
                     $presentation['{state_label}'] = $language->_($stateKey);
                     $template['subject'] = strtr($template['subject'], $presentation);
                     $template['body'] = strtr($template['body'], $presentation);
-                    // A cancelled appointment offers only the erase link (ManageLinks), also in the placeholders.
-                    $links = $canManage ? ManageLinks::forState($this->links($booking, $tag), (int) $booking['state'])
-                        : ($isGuest ? $this->guestLinks($booking, $address, $tag) : []);
+                    // A cancelled appointment offers no link (ManageLinks), also in the placeholders.
+                    $links = !$withLinks ? [] : ($canManage ? ManageLinks::forState($this->links($booking, $tag), (int) $booking['state'])
+                        : ($isGuest ? $this->guestLinks($booking, $address, $tag) : []));
                     $recipientBooking = $booking;
                     if ($isHost && !empty($booking['conference_url'])) {
                         $recipientBooking['conference_url'] = $conferences->hostUrl($booking) ?? $booking['conference_url'];
@@ -267,7 +272,7 @@ final class NotificationService
                         $known[(string) $recipientBooking['conference_url']] = $language->_('COM_APPOINTMENTS_MAIL_JOIN');
                     }
                     foreach (['reschedule_url' => 'COM_APPOINTMENTS_MAIL_RESCHEDULE', 'cancel_url' => 'COM_APPOINTMENTS_MAIL_CANCEL',
-                        'erase_url' => 'COM_APPOINTMENTS_MAIL_DELETE', 'guest_remove_url' => 'COM_APPOINTMENTS_MAIL_GUEST_REMOVE'] as $field => $key) {
+                        'guest_remove_url' => 'COM_APPOINTMENTS_MAIL_GUEST_REMOVE'] as $field => $key) {
                         if (!empty($links[$field])) {
                             $known[(string) $links[$field]] = $language->_($key);
                         }
@@ -689,7 +694,7 @@ final class NotificationService
     }
 
     /**
-     * The signed reschedule, cancel and erase addresses of $booking (id, modified_utc and, when
+     * The signed reschedule and cancel addresses of $booking (id, modified_utc and, when
      * known, eventtype_id). $language is the language of the reader (a tag such as de-DE), which
      * chooses the menu item that frames the pages (ManageMenuItem); '' uses the site default.
      */
@@ -698,7 +703,7 @@ final class NotificationService
         $base = $this->linkBase();
         $signed = new SignedLink(new KeyProvider((string) Factory::getApplication()->get('secret')));
         $result = [];
-        $names = ['reschedule' => 'reschedule_url', 'cancel' => 'cancel_url', 'erase' => 'erase_url'];
+        $names = ['reschedule' => 'reschedule_url', 'cancel' => 'cancel_url'];
         $frame = $this->frame($booking, $language);
 
         foreach ($names as $action => $key) {

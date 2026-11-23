@@ -38,7 +38,8 @@ try {
     )->item(0);
     $check($cancelExit instanceof DOMElement && trim($cancelExit->textContent) === 'Cancel',
         'A signed management form has a non-mutating Cancel exit to the public overview');
-    $token = $client->token($html);
+    $firstTime = (new DOMXPath($dayDocument))->query('//input[@type="radio"][@name="start"]')->item(0);
+    $token = $client->token($client->request($reschedule . '&start=' . urlencode($firstTime instanceof DOMElement ? $firstTime->getAttribute('value') : '')));
     $client->request('/index.php?option=com_appointments&task=booking.manage', [
         'id' => $booking['id'], 'action' => 'erase', 'signature' => str_repeat('0', 64), 'confirm' => 1, $token => 1,
     ]);
@@ -198,9 +199,14 @@ try {
         }
     }
     $slotForm = $slotLink !== '' ? $client->request($slotLink) : '';
-    $token = $client->token($slotForm);
     $check($client->status === 200 && str_contains($slotForm, 'value="' . $day . ' 12:00:00"'),
         'Reschedule calendar offers the slot before the competing booking after choosing its day');
+    $slotBase = preg_replace('/#.*$/', '', $slotLink);
+    $confirmPage = $slotLink !== '' ? $client->request($slotBase . '&start=' . urlencode($day . ' 12:00:00')) : '';
+    $token = $client->token($confirmPage);
+    $check($client->status === 200 && str_contains($confirmPage, 'id="manage-confirm"') && $token !== ''
+        && str_contains($confirmPage, 'name="start" value="' . $day . ' 12:00:00"'),
+        'Choosing a time leads to the confirmation step of the reschedule form');
     $check(preg_match('#<title>\s*Reschedule your appointment\s*</title>#', $form) === 1,
         'The manage page sets its own title without a menu item of its own');
     // Release test 22.10.: the manage pages show the appointment in the invitee's zone and
@@ -208,10 +214,10 @@ try {
     $zurich = new DateTimeZone('Europe/Zurich');
     $localStart = (new DateTimeImmutable($moved['start_utc'], new DateTimeZone('UTC')))->setTimezone($zurich);
     $localEnd = (new DateTimeImmutable($moved['end_utc'], new DateTimeZone('UTC')))->setTimezone($zurich);
-    $check(str_contains($form, $localStart->format('l, j F Y'))
-        && str_contains($form, $localStart->format('H:i') . ' – ' . $localEnd->format('H:i'))
+    $check(str_contains($confirmPage, $localStart->format('l, j F Y'))
+        && str_contains($confirmPage, $localStart->format('H:i') . ' – ' . $localEnd->format('H:i'))
         && str_contains($form, 'All times are shown in the Europe/Zurich time zone.')
-        && !str_contains($form, $moved['start_utc'] . ' UTC'),
+        && !str_contains($confirmPage, $moved['start_utc'] . ' UTC'),
         'Manage page shows the appointment date and times in the invitee time zone, not in UTC');
     $slotOption = (new DateTimeImmutable($day . ' 12:00:00', new DateTimeZone('UTC')))->setTimezone($zurich);
     $slotDocument = new DOMDocument();
@@ -225,6 +231,9 @@ try {
     $check($legend instanceof DOMElement && str_contains($legend->textContent, $slotOption->format('l, j F Y'))
         && $slotLabel instanceof DOMElement && str_contains($slotLabel->textContent, $slotOption->format('H:i')),
         'Reschedule options name the weekday, date and time in the selected zone');
+    $check(str_contains($form, 'data-appointments-booking') && str_contains($form, 'id="appointment-time-form"')
+        && str_contains($form, 'com-appointments-invitee-email') && str_contains($form, htmlspecialchars((string) $fixture->row((int) $booking['id'])['invitee_email'], ENT_QUOTES)),
+        'The reschedule form uses the booking layout and adds the event type title and the invitee e-mail');
     // Night test 23.10.: rescheduling without the confirmation checkbox shows the message
     // at the checkbox, also after the visitor reloads the page, and changes nothing.
     parse_str(parse_url($fresh, PHP_URL_QUERY), $rescheduleQuery);
@@ -245,10 +254,9 @@ try {
     $check($confirmError($refused) && $fixture->row((int) $booking['id'])['start_utc'] === $day . ' 11:00:00',
         'Rescheduling without the confirmation checkbox shows the message at the checkbox and changes nothing');
     $check($client->landedAt($refused, null) && preg_match('#<input[^>]*id="manage-confirm"[^>]*autofocus#', $refused) === 1
-        && !str_contains($refused, 'com_appointments.focusSystemMessage')
-        && preg_match('#/media/com_appointments/js/booking(\.min)?\.js#', $refused) !== 1,
+        && !str_contains($refused, 'com_appointments.focusSystemMessage'),
         'A refused reschedule has no result fragment or region and the invalid checkbox keeps the focus');
-    $reloadedReschedule = $client->request($fresh . '&month=' . substr($day, 0, 7) . '&day=' . $day . '&timezone=Europe%2FZurich');
+    $reloadedReschedule = $client->request($fresh . '&month=' . substr($day, 0, 7) . '&day=' . $day . '&timezone=Europe%2FZurich&start=' . urlencode($day . ' 12:00:00'));
     $check($confirmError($reloadedReschedule), 'The confirmation message is still at the checkbox after a reload');
     foreach (['', substr($day, 0, 7)] as $invalidZoneMonth) {
         $refused = $client->request('/index.php?option=com_appointments&task=booking.manage', array_replace($rescheduleQuery, [
@@ -270,9 +278,8 @@ try {
             && $fixture->row((int) $booking['id'])['start_utc'] === $day . ' 11:00:00',
             'An invalid manage timezone returns a usable form with a one-shot native-message focus request, month=' . $invalidZoneMonth);
         $reload = $client->request($fresh);
-        $check(!str_contains($reload, 'com_appointments.focusSystemMessage')
-            && preg_match('#/media/com_appointments/js/booking(\.min)?\.js#', $reload) !== 1,
-            'The manage refusal focus option is consumed and an ordinary form remains script-free');
+        $check(!str_contains($reload, 'com_appointments.focusSystemMessage'),
+            'The manage refusal focus option is consumed');
     }
     $otherEvent = $fixture->event();
     $fixture->booking($otherEvent, $day . ' 12:00:00');
@@ -327,10 +334,12 @@ try {
         'A failed notification is shown once, inside the result, as the description of the focused status');
     $cancelled = $fixture->row((int) $booking['id']);
     $check(str_contains($html, 'Your appointment has been cancelled') && (int) $cancelled['state'] === 2
-        && (int) $cancelled['sequence'] === 2 && $cancelled['uid'] === $booking['uid'] && $cancelled['cancel_reason'] === 'Fixture reason',
-        'Signed cancellation stores the optional reason and updates the stable calendar entry');
-    // Live finding 16.11.2026: the receipt names the cancelled appointment in the invitee's zone. It
-    // promises the confirmation mail only when the mails went out (here the host mail failed).
+        && (int) $cancelled['sequence'] === 2 && $cancelled['uid'] === $booking['uid'] && $cancelled['cancel_reason'] === null
+        && $cancelled['anonymised_utc'] !== null && $cancelled['invitee_email'] === null,
+        'Signed cancellation updates the stable calendar entry and erases the personal data at once, the reason included');
+    // The receipt names the cancelled appointment in the invitee's zone from the session of the browser
+    // (the row no longer holds anything personal). It promises the confirmation mail only when the
+    // mails went out (here the host mail failed).
     $zurich = new DateTimeZone('Europe/Zurich');
     $cancelledStart = (new DateTimeImmutable($cancelled['start_utc'], new DateTimeZone('UTC')))->setTimezone($zurich);
     $cancelledEnd = (new DateTimeImmutable($cancelled['end_utc'], new DateTimeZone('UTC')))->setTimezone($zurich);
@@ -341,41 +350,34 @@ try {
         && !str_contains($html, 'You will receive a confirmation by email.'),
         'The cancellation receipt names the appointment with date, time and zone, without promising a mail that failed');
     $check(str_contains($client->request($freshCancel), 'Your appointment has been cancelled'), 'Repeated same-browser completion is an idempotent receipt');
-    // Another browser with the same link: the appointment is cancelled, with its date and time,
-    // and no form. The reschedule link of the same version says the same.
+    // Another browser with the same link: the booking is erased, so the link opens only the neutral
+    // notice that the appointment is cancelled and its data erased, nothing of the appointment. The
+    // reschedule link of the same version too, and a form still open in another tab (opened before
+    // the cancellation, its token kept) changes nothing.
     $html = $outsider->request($freshCancel);
-    $check($outsider->status === 200 && str_contains($html, 'This appointment has already been cancelled.') && $cancelledWhen($html)
-        && !str_contains($html, 'booking.manage') && !str_contains($html, 'manage-confirm'),
-        'The used cancellation link reports the cancelled appointment in another browser, without a form');
+    $check($outsider->status === 200 && str_contains($html, 'its personal data has been erased') && !str_contains($html, 'manage-confirm')
+        && !str_contains($html, 'com-appointments-summary') && str_contains($html, 'com-appointments-book-again'),
+        'The used cancellation link shows the neutral erased notice with a way to book again, without a form and without data');
     $html = $outsider->request($fixture->link($moved, 'reschedule'));
-    $check($outsider->status === 200 && str_contains($html, 'This appointment has already been cancelled.')
-        && !str_contains($html, 'new-start') && !str_contains($html, 'booking.manage'),
-        'The reschedule link of the cancelled version reports the cancellation instead of offering times');
-    // A form still open in another tab (opened before the cancellation, its token kept) changes
-    // nothing and lands on the same notice.
+    $check($outsider->status === 200 && str_contains($html, 'its personal data has been erased') && !str_contains($html, 'new-start') && !str_contains($html, 'booking.manage'),
+        'The reschedule link of the cancelled version shows the notice instead of offering times');
     parse_str((string) parse_url($freshCancel, PHP_URL_QUERY), $staleQuery);
-    $html = $outsider->request('/index.php?option=com_appointments&task=booking.manage', array_replace($staleQuery, [
+    $outsider->request('/index.php?option=com_appointments&task=booking.manage', array_replace($staleQuery, [
         $staleToken => 1, 'confirm' => 1,
     ]));
-    $check($outsider->status === 200 && str_contains($html, 'This appointment has already been cancelled.')
-        && (int) $fixture->row((int) $booking['id'])['sequence'] === 2,
-        'Submitting a cancellation for a cancelled appointment changes nothing and shows the notice');
-    // Older links, the erase link of the cancelled version and tampered or unknown links stay one
-    // indistinguishable refusal: 404, a message for the person and nothing technical.
-    $erasePrevious = $fixture->link($moved, 'erase');
+    $check((int) $fixture->row((int) $booking['id'])['sequence'] === 2,
+        'Submitting a cancellation for an erased appointment changes nothing');
+    // Older links, tampered or unknown links stay one indistinguishable refusal: 404, a message for
+    // the person and nothing technical.
     $tampered = preg_replace('/signature=[0-9a-f]{4}/', 'signature=0000', $freshCancel);
     $unknown = $fixture->link(['id' => 2147483000, 'modified_utc' => $moved['modified_utc']], 'cancel');
-    foreach (['an older cancel link' => $cancel, 'the erase link of the cancelled version' => $erasePrevious,
+    foreach (['an older cancel link' => $cancel,
         'a tampered link' => $tampered, 'an unknown appointment' => $unknown] as $label => $link) {
         $html = $outsider->request($link);
         $check($outsider->status === 404 && str_contains($html, 'This link is not valid.')
             && !str_contains($html, 'already been cancelled') && !str_contains($html, '/var/www') && stripos($html, 'stack trace') === false,
             'The refusal of ' . $label . ' is a friendly 404 without technical details');
     }
-    // Privacy (review finding): once a booking is erased, an earlier receipt of the same browser
-    // shows only the generic outcome, nothing of the appointment or the person: neither date, time,
-    // zone nor event title. Self-service erasure with the link of the cancellation mail here, the
-    // administrator's erasure of a rescheduled booking below.
     $eventTitle = (string) $fixture->db->query("SELECT title FROM {$fixture->prefix}appointments_eventtypes WHERE id={$event}")->fetch_row()[0];
     $receiptLeaks = static fn (string $html, string $title, DateTimeImmutable $start): array => array_keys(array_filter([
         'date' => str_contains($html, $start->format('l, j F Y')),
@@ -384,12 +386,8 @@ try {
         'title' => str_contains($html, $title),
         'summary' => str_contains($html, 'com-appointments-summary'),
     ]));
-    $html = $fixture->apply($client, $fixture->link($fixture->row((int) $booking['id']), 'erase'));
-    $check($fixture->row((int) $booking['id'])['anonymised_utc'] !== null, 'Fixture: the cancelled booking is erased through its signed link');
-    $html = $client->request($freshCancel);
-    $leaks = $receiptLeaks($html, $eventTitle, $cancelledStart);
-    $check($client->status === 200 && str_contains($html, 'Your appointment has been cancelled') && $leaks === [],
-        'After a self-service erasure the earlier cancellation receipt shows only the generic outcome: ' . implode(', ', $leaks));
+    // Privacy (review finding): once a booking is erased by the administrator, an earlier receipt of
+    // the same browser shows only the generic outcome, nothing of the appointment or the person.
     $adminEvent = $fixture->event();
     $adminTitle = (string) $fixture->db->query("SELECT title FROM {$fixture->prefix}appointments_eventtypes WHERE id={$adminEvent}")->fetch_row()[0];
     $adminCase = $fixture->booking($adminEvent, $laterDay . ' 13:00:00');
@@ -456,9 +454,9 @@ try {
     }
 
     // Audit 18.11.2026, B6 and B8: the booking person cancels with a reason. The host's mail names
-    // the reason; the booking person's mail offers only the erase link (no reschedule or cancel link
-    // for an appointment that no longer exists); the guest learns neither. Every mail still carries
-    // the calendar cancellation of the same entry.
+    // the reason; the booking person's mail offers no link (the data is erased, nothing is left to
+    // reschedule or cancel); the guest learns neither. Every mail still carries the calendar
+    // cancellation of the same entry.
     $reasonEvent = $fixture->event();
     $reasonDay = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify('+6 days')->format('Y-m-d');
     $reasonCase = $fixture->booking($reasonEvent, $reasonDay . ' 10:00:00', ['guests' => 'guest@example.test']);
@@ -466,7 +464,8 @@ try {
     $before = AppointmentsMail::snapshot();
     $fixture->apply($reasonCase['browser'], $fixture->link($reasonCase['booking'], 'cancel'), ['reason' => $reasonText]);
     $cancelledRow = $fixture->row((int) $reasonCase['booking']['id']);
-    $check((int) $cancelledRow['state'] === 2 && $cancelledRow['cancel_reason'] === $reasonText, 'Fixture: the booking person cancels with a reason');
+    $check((int) $cancelledRow['state'] === 2 && $cancelledRow['cancel_reason'] === null && $cancelledRow['anonymised_utc'] !== null,
+        'Fixture: the booking person cancels with a reason, which the erasure does not keep');
     $hostAddress = strtolower((string) $fixture->db->query("SELECT email FROM {$fixture->prefix}users WHERE id={$fixture->host}")->fetch_row()[0]);
     $byRecipient = [];
     foreach (AppointmentsMail::messagesSince($before) as $mime) {
@@ -481,9 +480,9 @@ try {
         && AppointmentsMail::isInvitation($hostMail, AppointmentsMail::expectedMethod($hostMail, 'CANCEL')),
         'The host cancellation mail names the reason the booking person gave');
     $inviteeText = $text($inviteeMail);
-    $check(str_contains($inviteeText, 'action=erase') && !str_contains($inviteeText, 'action=reschedule') && !str_contains($inviteeText, 'action=cancel')
-        && !str_contains(AppointmentsMail::decoded($inviteeMail), 'action=reschedule') && AppointmentsMail::isInvitation($inviteeMail, 'CANCEL'),
-        'The cancellation mail of the booking person offers only the erase link and cancels the calendar entry');
+    $check(!str_contains($inviteeText, 'action=') && !str_contains(AppointmentsMail::decoded($inviteeMail), 'action=')
+        && AppointmentsMail::isInvitation($inviteeMail, 'CANCEL'),
+        'The cancellation mail of the booking person offers no link and cancels the calendar entry');
     $check($guestMail !== '' && !str_contains(AppointmentsMail::decoded($guestMail), 'Private reason')
         && !str_contains(AppointmentsMail::decoded($inviteeMail), 'Private reason'),
         'Neither the guest nor the booking person receives the reason in the mail');

@@ -10,6 +10,7 @@ namespace Advans\Component\Appointments\Site\Model;
 
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
+use Advans\Component\Appointments\Administrator\Helper\SlotRules;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Service\AvailabilityService;
 use Advans\Component\Appointments\Administrator\Service\BookingStore;
@@ -30,7 +31,7 @@ class ManageModel extends BaseDatabaseModel
     public function action(): string
     {
         $action = Factory::getApplication()->getInput()->getCmd('action');
-        if (!in_array($action, ['reschedule', 'cancel', 'erase'], true)) {
+        if (!in_array($action, ['reschedule', 'cancel'], true)) {
             throw $this->invalid();
         }
 
@@ -63,7 +64,21 @@ class ManageModel extends BaseDatabaseModel
         // Personal fields are encrypted at rest; one that cannot be decrypted is shown empty.
         $booking = $booking ? \Advans\Component\Appointments\Administrator\Helper\BookingData::fromApplication()->openObject($booking) : null;
 
-        if (!$booking || $booking->anonymised_utc !== null) {
+        if (!$booking) {
+            throw $this->invalid();
+        }
+
+        // A booking the invitee's cancellation anonymised keeps the row version the cancelled
+        // links were signed for, so only the holder of such a link gets the neutral notice. The
+        // row holds nothing personal; every other link to an anonymised booking is refused.
+        if ($booking->anonymised_utc !== null) {
+            $cancelledVersion = (string) ($booking->cancelled_version_utc ?? '');
+
+            if ((int) $booking->state === 2 && $cancelledVersion !== ''
+                && $this->links()->verify($id, $this->action(), $cancelledVersion, $this->signature())) {
+                return $booking;
+            }
+
             throw $this->invalid();
         }
 
@@ -77,7 +92,7 @@ class ManageModel extends BaseDatabaseModel
         // older link, a tampered one and an unknown id stay one indistinguishable refusal.
         $cancelledVersion = (string) ($booking->cancelled_version_utc ?? '');
 
-        if ($this->action() !== 'erase' && (int) $booking->state === 2 && $cancelledVersion !== ''
+        if ((int) $booking->state === 2 && $cancelledVersion !== ''
             && $this->links()->verify($id, $this->action(), $cancelledVersion, $this->signature())) {
             return $booking;
         }
@@ -87,21 +102,22 @@ class ManageModel extends BaseDatabaseModel
 
     /**
      * Whether the page of $booking only reports that the appointment is cancelled: a reschedule or
-     * cancel link of a cancelled appointment. Its erase link keeps working.
+     * cancel link of a cancelled appointment that was not erased (cancelled by the host or an
+     * administrator). The invitee's own cancellation erases the booking, so its links are refused.
      */
     public function cancelled(object $booking): bool
     {
-        return (int) $booking->state === 2 && $this->action() !== 'erase';
+        return (int) $booking->state === 2;
     }
 
     /**
      * What the receipt of this browser session shows of the completed change: title, start and
      * end in UTC, the zone they are shown in, the event type and whether the mails went out.
      *
-     * The session keeps no detail of the appointment, only the row version this change produced
-     * and whether the mails went out. The details are read from the booking now, and only while
-     * it still exists, is not erased and is still that version. Otherwise (erased, deleted, changed
-     * since) and for an erasure the receipt is the generic outcome alone: empty.
+     * A cancellation keeps these in the session, because its booking is erased at once; they are
+     * no personal data. A reschedule keeps only the row version it produced, and the details are
+     * read from the booking now, only while it still exists, is not erased and is still that
+     * version. Otherwise (erased, deleted, changed since) the receipt is the generic outcome alone: empty.
      *
      * @return array{title?: string, start_utc?: string, end_utc?: string, timezone?: string, eventtype_id?: int, mailed?: bool}
      */
@@ -110,7 +126,20 @@ class ManageModel extends BaseDatabaseModel
         $app = Factory::getApplication();
         $receipt = $app->getUserState($this->receiptKey(), false);
 
-        if ($this->action() === 'erase' || !is_array($receipt) || !is_string($receipt['modified_utc'] ?? null) || $receipt['modified_utc'] === '') {
+        if ($this->action() === 'cancel' && is_array($receipt)) {
+            $zone = (string) ($receipt['timezone'] ?? '');
+
+            return [
+                'title' => (string) ($receipt['title'] ?? ''),
+                'start_utc' => (string) ($receipt['start_utc'] ?? ''),
+                'end_utc' => (string) ($receipt['end_utc'] ?? ''),
+                'timezone' => in_array($zone, \DateTimeZone::listIdentifiers(), true) ? $zone : 'UTC',
+                'eventtype_id' => (int) ($receipt['eventtype_id'] ?? 0),
+                'mailed' => !empty($receipt['mailed']),
+            ];
+        }
+
+        if (!is_array($receipt) || !is_string($receipt['modified_utc'] ?? null) || $receipt['modified_utc'] === '') {
             return [];
         }
 
@@ -159,6 +188,18 @@ class ManageModel extends BaseDatabaseModel
         };
     }
 
+    /** Minutes the event type of the booking lasts now: what a reschedule saves, not the old booking's length. */
+    public function currentDurationMinutes(object $booking): int
+    {
+        $db = $this->getDatabase();
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select('e.*')->from($db->quoteName('#__appointments_eventtypes', 'e'))
+            ->where($db->quoteName('e.id') . ' = ' . (int) $booking->eventtype_id);
+        $event = $db->setQuery($query)->loadAssoc();
+
+        return $event ? max(1, intdiv(SlotRules::fromEventType($event)->getDurationSeconds(), 60)) : 0;
+    }
+
     public function getSlots(object $booking, string $month, string $timezone, \DateTimeImmutable $now): array
     {
         if (!UtcTimestamp::isDate($month . '-01') || !in_array($timezone, \DateTimeZone::listIdentifiers(), true)) {
@@ -196,11 +237,7 @@ class ManageModel extends BaseDatabaseModel
         $store = new BookingStore($this->getDatabase());
         $notification = new NotificationService($this->getDatabase());
 
-        if ($action === 'erase') {
-            $result = $store->erase((int) $booking->id, $now, 'self_service', $this->deleteMode(), null, $this->links(), $this->signature());
-            $messageBooking = $result['notification'];
-            $purpose = 'erasure_notice';
-        } elseif ($action === 'cancel') {
+        if ($action === 'cancel') {
             $messageBooking = (int) $booking->state === 2 ? null
                 : $store->changeState((int) $booking->id, 2, $now, $this->links(), $this->signature(), $reason);
             $purpose = 'cancellation';
@@ -212,25 +249,25 @@ class ManageModel extends BaseDatabaseModel
             $messageBooking = $store->reschedule((int) $booking->id, $start, $now, $this->links(), $this->signature(), $timezone);
             $purpose = 'reschedule';
         }
-        $outcome = $action === 'erase' ? $result : $messageBooking;
-        if (!empty($outcome['_conference_cleanup_error'])) {
+        if (!empty($messageBooking['_conference_cleanup_error'])) {
             Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_CLEANUP_FAILED'), 'warning');
         }
         if (($messageBooking['conference_state'] ?? '') === 'failed') {
             Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_MISSING'), 'warning');
         }
-        // The receipt belongs to this browser session. It keeps no detail of the appointment, only
-        // the version this change committed (not a later reread, which could already be someone
-        // else's change): receipt() and receiptLinks() read the booking again and show it only
-        // while it is still that version. An erasure keeps nothing, and turns every earlier
-        // receipt of this booking in this session into the generic outcome.
-        $receipt = true;
-
-        if ($action !== 'erase') {
-            $receipt = ['modified_utc' => (string) ($action === 'reschedule'
-                ? ($messageBooking['_rescheduled_version'] ?? '') : ($messageBooking['modified_utc'] ?? '')), 'mailed' => false];
-        } else {
+        // The receipt belongs to this browser session. A reschedule keeps no detail of the appointment,
+        // only the version it committed (not a later reread, which could already be someone else's
+        // change): receipt() and receiptLinks() read the booking again and show it only while it is
+        // still that version. A cancellation erases the booking right below, so its receipt keeps the
+        // event type's title and the times, which are no personal data, and turns every earlier receipt
+        // of this booking in this session into the generic outcome.
+        if ($action === 'cancel') {
             $this->forgetReceipts((int) $booking->id);
+            $receipt = ['title' => (string) $booking->title, 'start_utc' => (string) $booking->start_utc,
+                'end_utc' => (string) $booking->end_utc, 'timezone' => (string) $booking->invitee_timezone,
+                'eventtype_id' => (int) $booking->eventtype_id, 'mailed' => false];
+        } else {
+            $receipt = ['modified_utc' => (string) ($messageBooking['_rescheduled_version'] ?? ''), 'mailed' => false];
         }
 
         $this->rememberReceipt((int) $booking->id);
@@ -238,18 +275,37 @@ class ManageModel extends BaseDatabaseModel
 
         if ($messageBooking !== null && empty($messageBooking['_conference_missing']) && empty($messageBooking['_conference_error'])) {
             try {
-                $notification->send($messageBooking, $purpose, $now, $action === 'erase');
-
-                if (is_array($receipt)) {
-                    // Only now the receipt says that the confirmation is on its way.
-                    Factory::getApplication()->setUserState($this->receiptKey(), ['mailed' => true] + $receipt);
-                }
+                $notification->send($messageBooking, $purpose, $now);
+                // Only now the receipt says that the confirmation is on its way.
+                Factory::getApplication()->setUserState($this->receiptKey(), ['mailed' => true] + $receipt);
             } catch (NotificationException $e) {
                 // The change is saved: a warning like the other partial outcomes on this page.
                 Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_MANAGE_MAIL_FAILED'), 'warning');
             }
         } elseif (!empty($messageBooking['_conference_error'])) {
             Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_STORAGE_ERROR'), 'error');
+        }
+
+        if ($action === 'cancel') {
+            $this->eraseCancelled((int) $booking->id, $now, $store);
+        }
+    }
+
+    /**
+     * The cancellation erases the invitee's data at once (erase mode of the configuration), after its
+     * mails went out. The cancellation itself is saved: an erasure that fails is logged and the
+     * retention task erases the booking later.
+     */
+    private function eraseCancelled(int $id, \DateTimeImmutable $now, BookingStore $store): void
+    {
+        try {
+            $result = $store->erase($id, $now, 'cancellation', $this->deleteMode());
+
+            if (!empty($result['_conference_cleanup_error'])) {
+                Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_CLEANUP_FAILED'), 'warning');
+            }
+        } catch (\Throwable $e) {
+            \Joomla\CMS\Log\Log::add('Erasure after a cancellation failed: ' . $e->getMessage(), \Joomla\CMS\Log\Log::ERROR, 'com_appointments');
         }
     }
 

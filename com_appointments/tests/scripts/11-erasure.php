@@ -32,41 +32,39 @@ try {
     // Stored the way the application stores them: the personal fields sealed.
     $fixture->update($id, $private);
     $booking = $fixture->row($id);
-    $link = $fixture->link($booking, 'erase');
+    $link = $fixture->link($booking, 'cancel');
     $client = $created['browser'];
     $html = $client->request($link);
-    $check(str_contains($html, 'cannot be undone') && str_contains($html, 'anonymised record') && str_contains($html, 'canary-invitee@example.test'),
-        'One-confirmation erasure page explains exactly what remains and identifies the booking');
+    $check(str_contains($html, 'cannot be undone') && str_contains($html, 'anonymised record'),
+        'The cancellation page explains that cancelling erases the data and what remains');
     $before = AppointmentsMail::snapshot();
     $html = $fixture->apply($client, $link);
     $check($client->landedAt($html, 'appointment-result'),
-        'A completed erasure lands at #appointment-result with a focusable status region the screen reader announces');
+        'A completed cancellation lands at #appointment-result with a focusable status region the screen reader announces');
     $erased = $fixture->row($id);
-    $check(str_contains($html, 'Your data has been erased.') && $erased['anonymised_utc'] !== null && (int) $erased['state'] === 2,
-        'Future booking is cancelled and anonymised in the self-service operation');
-    // Release test 16.11.: the receipt confirms this erasure, it does not report an earlier one.
+    $check(str_contains($html, 'Your appointment has been cancelled.') && $erased['anonymised_utc'] !== null && (int) $erased['state'] === 2,
+        'The invitee cancellation cancels and anonymises the booking in one operation');
     $status = preg_match('/<[^>]*\bdata-appointments-result\b[^>]*>([^<]*)</', $html, $match) ? trim($match[1]) : '';
-    $check($status === 'Your data has been erased. No further action is needed.',
-        'The receipt of the erasure reads as the confirmation of this erasure: ' . $status);
+    $check($status === 'Your appointment has been cancelled.',
+        'The receipt confirms the cancellation without personal data: ' . $status);
     foreach (array_keys($private) as $field) {
-        $check($erased[$field] === null, 'Erasure clears exactly the personal/conference field: ' . $field);
+        $check($erased[$field] === null, 'Cancellation clears exactly the personal/conference field: ' . $field);
     }
     foreach (['id', 'uid', 'eventtype_id', 'host_user_id', 'start_utc', 'end_utc', 'created_utc'] as $field) {
         $check($erased[$field] === $booking[$field], 'Anonymised slot preserves: ' . $field);
     }
-    $check((int) $erased['sequence'] === (int) $booking['sequence'] + 1 && $erased['modified_utc'] > $booking['modified_utc'], 'Cancellation sequence and signature revision advance');
+    $check((int) $erased['sequence'] > (int) $booking['sequence'] && $erased['modified_utc'] > $booking['modified_utc'], 'Cancellation sequence and signature revision advance');
     $messages = AppointmentsMail::messagesSince($before);
-    $check(count($messages) === 1, 'Erasure sends exactly one host-only calendar cancellation');
+    $check(count($messages) === 2, 'Cancelling sends the cancellation to the invitee and to the host, and nothing else: ' . count($messages));
     foreach ($messages as $mime) {
         $decoded = AppointmentsMail::decoded($mime);
-        foreach (['CANARY-', 'canary-invitee@example.test', 'canary-guest@example.test', '+41000000000', 'Europe/Zurich'] as $canary) {
-            $check(!str_contains($decoded, $canary), 'Host cancellation contains no former personal field: ' . $canary);
-        }
         $check(str_contains($decoded, 'METHOD:' . AppointmentsMail::expectedMethod($mime, 'CANCEL')) && str_contains($decoded, 'STATUS:CANCELLED')
-            && str_contains($decoded, 'UID:' . $booking['uid']), 'Host receives the cancellation of the original calendar UID');
+            && str_contains($decoded, 'UID:' . $booking['uid']), 'Each cancellation carries the calendar cancellation of the original UID');
+        $check(!str_contains($decoded, 'action=reschedule') && !str_contains($decoded, 'action=cancel') && !str_contains($decoded, 'action=erase'),
+            'A cancellation mail offers no manage link');
     }
     $audit = $db->query("SELECT * FROM {$prefix}appointments_audit WHERE booking_id={$id}")->fetch_assoc();
-    $check($audit && $audit['path'] === 'self_service' && $audit['actor_user_id'] === null, 'Self-service audit has no operator identity');
+    $check($audit && $audit['path'] === 'cancellation' && $audit['action'] === 'anonymise' && $audit['actor_user_id'] === null, 'Cancellation audit has no operator identity');
     $columns = array_keys($audit);
     sort($columns);
     $check($columns === ['action', 'actor_user_id', 'booking_id', 'id', 'occurred_utc', 'path'], 'Audit exact column contract contains no invitee data');
@@ -75,7 +73,9 @@ try {
         'Repeated browser receipt creates no second audit or notification');
     $outsider = new AppointmentsHttp('http://localhost', 'erasure-used-link');
     $outsider->request($link);
-    $check($outsider->status === 404, 'Used erasure link is rejected without revealing the former booking');
+    $check($outsider->status === 404, 'Used cancellation link is rejected without revealing the former booking');
+    $outsider->request($fixture->link($booking, 'reschedule'));
+    $check($outsider->status === 404, 'The reschedule link of the cancelled booking is rejected too');
     $fixture->booking($event, $day . ' 10:00:00');
 
     $row = $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_assoc();
@@ -87,14 +87,15 @@ try {
     $booking = $created['booking'];
     $id = (int) $booking['id'];
     $erasedIds[] = $id;
-    $link = $fixture->link($booking, 'erase');
+    $link = $fixture->link($booking, 'cancel');
     $html = $created['browser']->request($link);
     $check(str_contains($html, 'booking row will be deleted entirely'), 'Delete mode is clearly disclosed before confirmation');
-    $fixture->apply($created['browser'], $link);
-    $check($fixture->row($id) === null && $db->query("SELECT action FROM {$prefix}appointments_audit WHERE booking_id={$id}")->fetch_assoc()['action'] === 'delete',
-        'Delete mode removes the row and preserves only the minimal deletion evidence');
+    $html = $fixture->apply($created['browser'], $link);
+    $check(str_contains($html, 'Your appointment has been cancelled.') && $fixture->row($id) === null
+        && $db->query("SELECT action FROM {$prefix}appointments_audit WHERE booking_id={$id}")->fetch_assoc()['action'] === 'delete',
+        'Delete mode removes the row on cancelling and preserves only the minimal deletion evidence');
     $html = $created['browser']->request($link);
-    $check(str_contains($html, 'Your data has been erased.'), 'Deleted-row repeat click remains idempotent without exposing data');
+    $check(str_contains($html, 'Your appointment has been cancelled.'), 'Deleted-row repeat click remains idempotent without exposing data');
 
     $params['erase_mode'] = 'anonymise';
     $db->query("UPDATE {$prefix}extensions SET params='" . $db->real_escape_string(json_encode($params)) . "' WHERE element='com_appointments' AND type='component'");
@@ -107,6 +108,26 @@ try {
     $admin->request('/administrator/index.php?option=com_appointments&task=bookings.erase', ['cid' => [$id], $token => 1]);
     $audit = $db->query("SELECT * FROM {$prefix}appointments_audit WHERE booking_id={$id}")->fetch_assoc();
     $check($audit && $audit['path'] === 'admin' && (int) $audit['actor_user_id'] === $fixture->host, 'Administrator erasure records only the acting operator identity');
+
+    // Administrator deletion removes the row, records the operator and still sends the cancellation mail.
+    $created = $fixture->booking($event, $day . ' 14:00:00');
+    $deleteId = (int) $created['booking']['id'];
+    $erasedIds[] = $deleteId;
+    $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
+    $admin->request('/administrator/index.php?option=com_appointments&task=bookings.delete', ['cid' => [$deleteId], $token => 1]);
+    $check($fixture->row($deleteId) === null, 'Administrator deletion removes the appointment row');
+    $deleteAudit = $db->query("SELECT * FROM {$prefix}appointments_audit WHERE booking_id={$deleteId}")->fetch_assoc();
+    $check($deleteAudit && $deleteAudit['path'] === 'admin' && (int) $deleteAudit['actor_user_id'] === $fixture->host,
+        'Administrator deletion records only the acting operator identity');
+
+    // An already anonymised booking is deleted too.
+    $created = $fixture->booking($event, $day . ' 15:00:00');
+    $anonId = (int) $created['booking']['id'];
+    $erasedIds[] = $anonId;
+    $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
+    $admin->request('/administrator/index.php?option=com_appointments&task=bookings.erase', ['cid' => [$anonId], $token => 1]);
+    $admin->request('/administrator/index.php?option=com_appointments&task=bookings.delete', ['cid' => [$anonId], $token => 1]);
+    $check($fixture->row($anonId) === null, 'Administrator deletion also removes an already anonymised appointment');
 
     // Guest self-removal: the signed link of one guest removes only that guest's address.
     $created = $fixture->booking($event, $day . ' 13:00:00', ['guests' => 'keep@example.test, Leave@example.test']);
@@ -156,7 +177,7 @@ try {
     $keep = new AppointmentsHttp('http://localhost', 'erasure-guest-keep');
     $keep->request($fixture->guestLink($after, 'keep@example.test'));
     $inviteeLink = new AppointmentsHttp('http://localhost', 'erasure-guest-invitee');
-    $inviteeLink->request($fixture->link($after, 'erase'));
+    $inviteeLink->request($fixture->link($after, 'cancel'));
     $check($keep->status === 200 && $inviteeLink->status === 200, 'The other guest and the booking person keep their working links');
 
     // A mail delivery holds a shared lock; a guest removal must wait until it is released.

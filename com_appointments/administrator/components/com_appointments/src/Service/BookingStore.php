@@ -271,18 +271,18 @@ final class BookingStore
         return $version + $provisioned + ['_conference_cleanup_error' => !empty($cleared['_conference_cleanup_error'])];
     }
 
-    public function erase(int $bookingId, \DateTimeImmutable $now, string $path, bool $delete = false, ?int $actor = null, ?SignedLink $links = null, string $signature = '', ?int $retentionDays = null, ?PrivacyCleanup $privacyCleanup = null): array
+    public function erase(int $bookingId, \DateTimeImmutable $now, string $path, bool $delete = false, ?int $actor = null, ?int $retentionDays = null, ?PrivacyCleanup $privacyCleanup = null): array
     {
-        if (!in_array($path, ['self_service', 'privacy_request', 'retention', 'admin'], true)
+        // `cancellation`: the invitee's own cancellation by signed link, erased right after it (ManageModel).
+        if (!in_array($path, ['cancellation', 'privacy_request', 'retention', 'admin'], true)
             || ($path === 'admin' ? $actor === null || $actor < 1 : $actor !== null)
-            || ($path === 'self_service' && $links === null)
             || ($path === 'retention' && ($retentionDays === null || $retentionDays < 0 || $retentionDays > 65535))
             || ($path !== 'retention' && $retentionDays !== null)
             || ($privacyCleanup !== null && $path !== 'privacy_request')) {
             throw new \InvalidArgumentException('Invalid erasure provenance.');
         }
         $db = $this->db;
-        $host = $this->bookingHost($bookingId, $links === null);
+        $host = $this->bookingHost($bookingId, true);
         if ($host === 0) {
             return ['changed' => false, 'notification' => null];
         }
@@ -291,13 +291,22 @@ final class BookingStore
         try {
             $this->lockHost($host);
             $booking = $this->lockedBooking($bookingId);
-            if ($links !== null && (!$booking || !$links->verify($bookingId, 'erase', $booking['modified_utc'], $signature))) {
-                throw new InvalidBookingLinkException();
-            }
-            if (!$booking || $booking['anonymised_utc'] !== null) {
+            if (!$booking || ($booking['anonymised_utc'] !== null && !($delete && $path === 'admin'))) {
                 $db->transactionCommit();
 
                 return ['changed' => false, 'notification' => null];
+            }
+            if ($booking['anonymised_utc'] !== null) {
+                // An administrator's delete also removes the row of an already anonymised booking:
+                // nothing personal is left, so there is no mail and no further cleanup.
+                $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                $db->setQuery($query->delete($db->quoteName('#__appointments_bookings'))
+                    ->where($db->quoteName('id') . ' = ' . $bookingId))->execute();
+                $db->insertObject('#__appointments_audit', (object) ['booking_id' => $bookingId, 'action' => 'delete',
+                    'path' => $path, 'actor_user_id' => $actor, 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')]);
+                $db->transactionCommit();
+
+                return ['changed' => true, 'notification' => null, 'booking' => $booking];
             }
             if ($path === 'retention') {
                 $event = $this->lockedEvent((int) $booking['eventtype_id']);
@@ -372,7 +381,8 @@ final class BookingStore
             $privacyCleanup->forget($bookingId, $cleanupKey);
         }
 
-        return ['changed' => true, 'notification' => $notification,
+        // 'booking': the row as it was erased, read under the lock (the admin delete mails from it).
+        return ['changed' => true, 'notification' => $notification, 'booking' => $booking,
             '_close_missed' => !empty($closeMissed),
             '_calendar_cleanup_error' => !$mirrored,
             '_conference_cleanup_error' => $conferenceFailed];

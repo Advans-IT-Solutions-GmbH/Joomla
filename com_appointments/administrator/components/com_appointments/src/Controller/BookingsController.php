@@ -238,6 +238,64 @@ class BookingsController extends BaseController
         return $success;
     }
 
+    /**
+     * Deletes the selected bookings, whatever the erase mode: the row goes. A booking that was still
+     * to take place (pending or confirmed, end in the future) is announced as cancelled to the invitee
+     * and the host with the calendar cancellation, the same mail as a cancellation (NotificationService,
+     * purpose `cancellation`), without links to the booking that no longer exists. Needs «Delete» on
+     * the event type of each booking; the deletion is recorded in the audit log like an erasure.
+     */
+    public function delete(): bool
+    {
+        $token = Session::getFormToken();
+        $user = $this->app->getIdentity();
+        if ($this->input->getMethod() !== 'POST' || $this->input->post->get($token, '', 'alnum') !== '1') {
+            throw new \RuntimeException(Text::_('JINVALID_TOKEN'), 403);
+        }
+        if (!$user->authorise('core.manage', 'com_appointments')) {
+            throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+        }
+        $db = Factory::getContainer()->get(DatabaseInterface::class);
+        $ids = array_values(array_unique(array_filter(array_map('intval', $this->input->post->get('cid', [], 'array')), static fn ($id) => $id > 0)));
+        foreach ($ids as $id) {
+            $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+            $query->select($db->quoteName('eventtype_id'))->from($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . $id);
+            $eventId = (int) $db->setQuery($query)->loadResult();
+            if (!$eventId || !$user->authorise('core.delete', 'com_appointments.eventtype.' . $eventId)) {
+                throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
+            }
+        }
+        $this->setRedirect(Route::_('index.php?option=com_appointments&view=bookings', false));
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $deleted = 0;
+        foreach ($ids as $id) {
+            $result = (new BookingStore($db))->erase($id, $now, 'admin', true, (int) $user->id);
+            if (!empty($result['changed'])) {
+                $deleted++;
+            }
+            if (!empty($result['_conference_cleanup_error'])) {
+                $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_CLEANUP_FAILED'), 'warning');
+            }
+            $locked = $result['booking'] ?? null;
+            if (empty($result['changed']) || $locked === null || $locked['anonymised_utc'] !== null || (int) $locked['state'] === 2) {
+                continue;
+            }
+            $end = \Advans\Component\Appointments\Administrator\Helper\UtcTimestamp::parse((string) $locked['end_utc']);
+            if ($end === null || $end <= $now) {
+                continue;
+            }
+            try {
+                // The cancellation advances the invitation's SEQUENCE, so calendar clients apply it.
+                (new NotificationService($db))->send(array_merge($locked, ['state' => 2, 'sequence' => (int) $locked['sequence'] + 1]), 'cancellation', $now, false, false);
+            } catch (NotificationException $e) {
+                $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKINGS_MAIL_FAILED'), 'error');
+            }
+        }
+        $this->app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_BOOKINGS_N_DELETED', $deleted), 'message');
+
+        return true;
+    }
+
     public function erase(): bool
     {
         $token = Session::getFormToken();

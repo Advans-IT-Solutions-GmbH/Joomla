@@ -118,6 +118,7 @@ final class MailComposer
 
         // {guest_email} and {guest_remove_url} are only filled in a mail to an additional guest:
         // the recipient's own address and the signed link that removes only that address.
+        // {erase_url} no longer exists; it stays an empty token so a customised template never shows it as text.
         foreach (['reschedule_url', 'cancel_url', 'erase_url', 'guest_email', 'guest_remove_url'] as $field) {
             $result['{' . $field . '}'] = $this->value($links[$field] ?? null);
         }

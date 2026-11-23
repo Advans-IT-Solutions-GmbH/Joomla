@@ -323,8 +323,8 @@ try {
         }
     }
 
-    // Self-service erasure removes the origin; the booking stays in the statistics as a count only, now as cancelled.
-    $html = $fixture->apply($visitor, $fixture->link($booking, 'erase'));
+    // Cancelling erases the origin; the booking stays in the statistics as a count only, now as cancelled.
+    $html = $fixture->apply($visitor, $fixture->link($booking, 'cancel'));
     $erased = $fixture->row($id);
     $check($erased['anonymised_utc'] !== null && $erased['attribution'] === null, 'Erasure removes the origin with the personal fields');
     $stats = $db->query("SELECT * FROM {$prefix}appointments_campaign_stats WHERE eventtype_id={$event}")->fetch_all(MYSQLI_ASSOC);

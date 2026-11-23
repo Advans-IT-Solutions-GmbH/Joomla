@@ -780,7 +780,7 @@ off, they learn of new bookings only through the calendar.
   `FeedCalendar`, `FeedToken`, the Feeds view, the feed rate-limit bucket, `12-feed.php`; migration
   `2.0.0.sql` drops `feed_token` and its unique indexes from event types and hosts (the hosts table
   stays as the booking lock target). Preflight of 2.0.0 warns when `legacy_feeds` was still on.
-- Not affected: the signed reschedule, cancel and erase links in invitee mails. They are required by
+- Not affected: the signed reschedule and cancel links in invitee mails. They are required by
   the deletion path without an account (`privacy-and-deletion.md`) and grant no calendar access.
 
 ## 16. Clients and refresh

@@ -20,7 +20,7 @@ final class SignedLink
     /** Sign the current row version, not an expiry time or a recipient address. */
     public function sign(int $bookingId, string $action, string $modifiedUtc): string
     {
-        if ($bookingId < 1 || !in_array($action, ['reschedule', 'cancel', 'erase'], true)) {
+        if ($bookingId < 1 || !in_array($action, ['reschedule', 'cancel'], true)) {
             throw new \InvalidArgumentException('Invalid signed booking action.');
         }
 

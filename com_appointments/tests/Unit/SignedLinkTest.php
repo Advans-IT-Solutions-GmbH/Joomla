@@ -14,23 +14,23 @@ final class SignedLinkTest extends TestCase
     {
         $keys = new KeyProvider('test-site-secret');
         $links = new SignedLink($keys);
-        $signature = $links->sign(42, 'erase', '2026-10-14 10:00:00');
+        $signature = $links->sign(42, 'cancel', '2026-10-14 10:00:00');
 
-        self::assertSame('c0d51212681e9fb8da54ac3f77250cf32c898a48b7758fa20a9fde52d9fdd26e', $signature);
+        self::assertSame('bbeda7f3e9dafff8c8e7f186546b6450a1f838dae5f9d2d34ef6fc6894e4164e', $signature);
         self::assertSame(
-            hash_hmac('sha256', "42\nerase\n2026-10-14 10:00:00", $keys->key(KeyProvider::PURPOSE_SIGNED_LINK)),
+            hash_hmac('sha256', "42\ncancel\n2026-10-14 10:00:00", $keys->key(KeyProvider::PURPOSE_SIGNED_LINK)),
             $signature
         );
         self::assertNotSame(
-            hash_hmac('sha256', "42\nerase\n2026-10-14 10:00:00", $keys->key(KeyProvider::PURPOSE_RATE_LIMIT)),
+            hash_hmac('sha256', "42\ncancel\n2026-10-14 10:00:00", $keys->key(KeyProvider::PURPOSE_RATE_LIMIT)),
             $signature
         );
-        self::assertTrue($links->verify(42, 'erase', '2026-10-14 10:00:00', $signature));
-        self::assertFalse($links->verify(43, 'erase', '2026-10-14 10:00:00', $signature));
-        self::assertFalse($links->verify(42, 'cancel', '2026-10-14 10:00:00', $signature));
+        self::assertTrue($links->verify(42, 'cancel', '2026-10-14 10:00:00', $signature));
+        self::assertFalse($links->verify(43, 'cancel', '2026-10-14 10:00:00', $signature));
+        self::assertFalse($links->verify(42, 'erase', '2026-10-14 10:00:00', $signature), 'The erase action no longer exists');
         self::assertFalse($links->verify(42, 'reschedule', '2026-10-14 10:00:00', $signature));
-        self::assertFalse($links->verify(42, 'erase', '2026-10-14 10:00:01', $signature));
-        self::assertFalse((new SignedLink(new KeyProvider('another-secret')))->verify(42, 'erase', '2026-10-14 10:00:00', $signature));
+        self::assertFalse($links->verify(42, 'cancel', '2026-10-14 10:00:01', $signature));
+        self::assertFalse((new SignedLink(new KeyProvider('another-secret')))->verify(42, 'cancel', '2026-10-14 10:00:00', $signature));
     }
 
     public function testEveryAllowedActionHasAnIndependentSignature(): void
@@ -38,12 +38,12 @@ final class SignedLinkTest extends TestCase
         $links = new SignedLink(new KeyProvider('secret'));
         $signatures = [];
 
-        foreach (['cancel', 'reschedule', 'erase'] as $action) {
+        foreach (['cancel', 'reschedule'] as $action) {
             $signatures[] = $signature = $links->sign(1, $action, '2026-10-14 10:00');
             self::assertTrue($links->verify(1, $action, '2026-10-14 10:00:00', $signature));
         }
 
-        self::assertCount(3, array_unique($signatures));
+        self::assertCount(2, array_unique($signatures));
     }
 
     public function testMalformedInputsNeverVerify(): void
@@ -51,11 +51,11 @@ final class SignedLinkTest extends TestCase
         $links = new SignedLink(new KeyProvider('secret'));
 
         foreach ([
-            [0, 'erase', '2026-10-14 10:00:00', ''],
-            [1, "erase\ncancel", '2026-10-14 10:00:00', ''],
-            [1, 'erase', '2026-02-30 10:00:00', ''],
-            [1, 'erase', 'tomorrow', ''],
-            [1, 'erase', '2026-10-14 10:00:00', str_repeat('0', 64)],
+            [0, 'cancel', '2026-10-14 10:00:00', ''],
+            [1, "cancel\nreschedule", '2026-10-14 10:00:00', ''],
+            [1, 'cancel', '2026-02-30 10:00:00', ''],
+            [1, 'cancel', 'tomorrow', ''],
+            [1, 'cancel', '2026-10-14 10:00:00', str_repeat('0', 64)],
         ] as $arguments) {
             self::assertFalse($links->verify(...$arguments));
         }
@@ -79,7 +79,7 @@ final class SignedLinkTest extends TestCase
         self::assertFalse((new SignedLink(new KeyProvider('another-secret')))->verifyGuest(42, 'guest@example.test', '2026-10-14 10:00:00', $signature));
 
         // Neither kind of link verifies as the other.
-        foreach (['reschedule', 'cancel', 'erase'] as $action) {
+        foreach (['reschedule', 'cancel'] as $action) {
             self::assertFalse($links->verify(42, $action, '2026-10-14 10:00:00', $signature));
             self::assertFalse($links->verifyGuest(42, 'guest@example.test', '2026-10-14 10:00:00', $links->sign(42, $action, '2026-10-14 10:00:00')));
         }

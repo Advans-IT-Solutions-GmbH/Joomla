@@ -73,10 +73,11 @@ try {
             && str_contains(AppointmentsMail::calendars($mime)[0] ?? '', 'UID:' . $created['booking']['uid']),
             'Reminder has one invitation with the existing booking UID');
         $canManage = preg_match('/^To:.*invitee@example\.test/mi', $mime) === 1;
-        foreach (['reschedule', 'cancel', 'erase'] as $action) {
+        foreach (['reschedule', 'cancel'] as $action) {
             $check(str_contains($decoded, 'action=' . $action) === $canManage,
                 'Only the primary invitee receives the reminder ' . $action . ' capability');
         }
+        $check(!str_contains($decoded, 'action=erase'), 'No reminder carries an erase link');
     }
     $invitee = array_values(array_filter($messages, static fn (string $mime): bool => preg_match('/^To:.*invitee@example\.test/mi', $mime) === 1));
     $check($invitee && str_contains(AppointmentsMail::decoded($invitee[0]), 'http://localhost/index.php?option=com_appointments'),

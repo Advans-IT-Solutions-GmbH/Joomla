@@ -111,9 +111,11 @@ final class AppointmentsFixture
 
     public function apply(AppointmentsHttp $client, string $link, array $fields = []): string
     {
-        $html = $client->request($link);
-        $token = $client->token($html);
         parse_str(parse_url($link, PHP_URL_QUERY), $query);
+        // A reschedule form with a chosen time is the confirmation step, which carries the token.
+        $page = $client->request($link . (($query['action'] ?? '') === 'reschedule' && is_string($fields['start'] ?? null)
+            ? '&start=' . urlencode($fields['start']) : ''));
+        $token = $client->token($page);
         $fields = array_replace($fields, ($query['action'] ?? '') === 'reschedule'
             && is_string($fields['start'] ?? null) && !isset($fields['day'])
                 ? ['day' => substr($fields['start'], 0, 10)]
