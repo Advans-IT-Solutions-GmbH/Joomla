@@ -120,6 +120,15 @@ try {
     $check($deleteAudit && $deleteAudit['path'] === 'admin' && (int) $deleteAudit['actor_user_id'] === $fixture->host,
         'Administrator deletion records only the acting operator identity');
 
+    // An already anonymised booking is deleted too.
+    $created = $fixture->booking($event, $day . ' 15:00:00');
+    $anonId = (int) $created['booking']['id'];
+    $erasedIds[] = $anonId;
+    $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
+    $admin->request('/administrator/index.php?option=com_appointments&task=bookings.erase', ['cid' => [$anonId], $token => 1]);
+    $admin->request('/administrator/index.php?option=com_appointments&task=bookings.delete', ['cid' => [$anonId], $token => 1]);
+    $check($fixture->row($anonId) === null, 'Administrator deletion also removes an already anonymised appointment');
+
     // Guest self-removal: the signed link of one guest removes only that guest's address.
     $created = $fixture->booking($event, $day . ' 13:00:00', ['guests' => 'keep@example.test, Leave@example.test']);
     $guestBooking = $created['booking'];

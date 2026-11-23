@@ -45,6 +45,9 @@ class HtmlView extends BaseHtmlView
     protected $errors = [];
     /** The new time chosen on the reschedule page (UTC), null while the time is still being chosen. */
     protected ?\DateTimeImmutable $selected = null;
+
+    /** Minutes the appointment lasts after a reschedule (the event type's current duration). */
+    protected int $durationMinutes = 0;
     /** Entries of an earlier submission shown again; the reschedule page has none (the booking partials read it). */
     protected array $inputData = [];
     /** Clock of the times shown, '24' or '12' (as on the booking page). */
@@ -145,7 +148,8 @@ class HtmlView extends BaseHtmlView
         $app = Factory::getApplication();
         $input = $app->getInput();
         $model = $this->getModel();
-        $this->addTemplatePath(JPATH_SITE . '/components/com_appointments/tmpl/eventtype');
+        // Appended, not prepended (addTemplatePath): the manage layout and its overrides come first.
+        $this->_path['template'][] = JPATH_SITE . '/components/com_appointments/tmpl/eventtype';
         $zoneName = $input->getString('timezone', $this->zone->getName());
 
         if (!in_array($zoneName, \DateTimeZone::listIdentifiers(), true)) {
@@ -198,6 +202,7 @@ class HtmlView extends BaseHtmlView
             $this->day = $month . '-01';
         }
 
+        $this->durationMinutes = $model->currentDurationMinutes($this->item);
         $this->slots = RescheduleSlots::byLocalDay($model->getSlots($this->item, $month, $zoneName, $now), $current, $this->zone);
 
         if ($requested !== null) {

@@ -33,7 +33,8 @@ $withOffset = Text::_('COM_APPOINTMENTS_TIME_WITH_OFFSET');
 $icon = static fn (string $paths): string => '<svg class="com-appointments-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">' . $paths . '</svg>';
 $currentStart = UtcTimestamp::parse((string) $this->item->start_utc);
 $currentEnd = UtcTimestamp::parse((string) $this->item->end_utc);
-$minutes = $currentStart !== null && $currentEnd !== null ? max(1, intdiv($currentEnd->getTimestamp() - $currentStart->getTimestamp(), 60)) : 0;
+$minutes = $this->durationMinutes > 0 ? $this->durationMinutes
+    : ($currentStart !== null && $currentEnd !== null ? max(1, intdiv($currentEnd->getTimestamp() - $currentStart->getTimestamp(), 60)) : 0);
 $errors = $this->errors;
 $invalid = isset($errors['confirm']) ? ' is-invalid' : '';
 $confirmAria = isset($errors['confirm']) ? ' aria-invalid="true" aria-describedby="manage-confirm-error" autofocus' : '';
@@ -63,7 +64,7 @@ $range = static function (DateDisplay $dates, \DateTimeImmutable $start, \DateTi
                         <li class="com-appointments-duration"><?php echo $icon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'); ?><span><?php echo Text::sprintf($minutes === 1 ? 'COM_APPOINTMENTS_DURATION_MINUTES_1' : 'COM_APPOINTMENTS_DURATION_MINUTES_MORE', $minutes); ?></span></li>
                     <?php endif; ?>
                     <li class="com-appointments-invitee-email"><?php echo $icon('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>'); ?><span><?php echo $this->escape((string) $this->item->invitee_email); ?></span></li>
-                    <?php if ($currentStart !== null && $currentEnd !== null) : ?>
+                    <?php if ($confirm && $currentStart !== null && $currentEnd !== null) : ?>
                         <li class="com-appointments-current">
                             <?php echo $icon('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'); ?>
                             <span class="com-appointments-selected-text">
@@ -74,7 +75,7 @@ $range = static function (DateDisplay $dates, \DateTimeImmutable $start, \DateTi
                         </li>
                     <?php endif; ?>
                     <?php if ($confirm && $currentStart !== null && $currentEnd !== null) : ?>
-                        <?php $newEnd = $this->selected->modify('+' . max(1, intdiv($currentEnd->getTimestamp() - $currentStart->getTimestamp(), 60)) . ' minutes'); ?>
+                        <?php $newEnd = $this->selected->modify('+' . max(1, $minutes) . ' minutes'); ?>
                         <li class="com-appointments-selected">
                             <?php echo $icon('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'); ?>
                             <span class="com-appointments-selected-text">

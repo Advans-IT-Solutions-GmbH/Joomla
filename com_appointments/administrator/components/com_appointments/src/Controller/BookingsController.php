@@ -257,21 +257,18 @@ class BookingsController extends BaseController
         }
         $db = Factory::getContainer()->get(DatabaseInterface::class);
         $ids = array_values(array_unique(array_filter(array_map('intval', $this->input->post->get('cid', [], 'array')), static fn ($id) => $id > 0)));
-        $rows = [];
         foreach ($ids as $id) {
             $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
-            $booking = $db->setQuery($query->select('*')->from($db->quoteName('#__appointments_bookings'))
-                ->where($db->quoteName('id') . ' = ' . $id))->loadAssoc();
-            if (!$booking || !$user->authorise('core.delete', 'com_appointments.eventtype.' . (int) $booking['eventtype_id'])) {
+            $query->select($db->quoteName('eventtype_id'))->from($db->quoteName('#__appointments_bookings'))->where($db->quoteName('id') . ' = ' . $id);
+            $eventId = (int) $db->setQuery($query)->loadResult();
+            if (!$eventId || !$user->authorise('core.delete', 'com_appointments.eventtype.' . $eventId)) {
                 throw new \RuntimeException(Text::_('JERROR_ALERTNOAUTHOR'), 403);
             }
-            // Personal fields are encrypted at rest: the mail needs the opened row.
-            $rows[$id] = \Advans\Component\Appointments\Administrator\Helper\BookingData::fromApplication()->openLenient($booking);
         }
         $this->setRedirect(Route::_('index.php?option=com_appointments&view=bookings', false));
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $deleted = 0;
-        foreach ($rows as $id => $booking) {
+        foreach ($ids as $id) {
             $result = (new BookingStore($db))->erase($id, $now, 'admin', true, (int) $user->id);
             if (!empty($result['changed'])) {
                 $deleted++;
@@ -279,12 +276,17 @@ class BookingsController extends BaseController
             if (!empty($result['_conference_cleanup_error'])) {
                 $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_CONFERENCE_CLEANUP_FAILED'), 'warning');
             }
-            $end = \Advans\Component\Appointments\Administrator\Helper\UtcTimestamp::parse((string) $booking['end_utc']);
-            if (empty($result['changed']) || $booking['anonymised_utc'] !== null || (int) $booking['state'] === 2 || $end === null || $end <= $now) {
+            $locked = $result['booking'] ?? null;
+            if (empty($result['changed']) || $locked === null || $locked['anonymised_utc'] !== null || (int) $locked['state'] === 2) {
+                continue;
+            }
+            $end = \Advans\Component\Appointments\Administrator\Helper\UtcTimestamp::parse((string) $locked['end_utc']);
+            if ($end === null || $end <= $now) {
                 continue;
             }
             try {
-                (new NotificationService($db))->send(array_merge($booking, ['state' => 2]), 'cancellation', $now, false, false);
+                // The cancellation advances the invitation's SEQUENCE, so calendar clients apply it.
+                (new NotificationService($db))->send(array_merge($locked, ['state' => 2, 'sequence' => (int) $locked['sequence'] + 1]), 'cancellation', $now, false, false);
             } catch (NotificationException $e) {
                 $this->app->enqueueMessage(Text::_('COM_APPOINTMENTS_BOOKINGS_MAIL_FAILED'), 'error');
             }
