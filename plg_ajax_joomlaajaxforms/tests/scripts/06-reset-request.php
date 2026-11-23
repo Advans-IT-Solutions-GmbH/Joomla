@@ -756,7 +756,10 @@ class ResetRequestTest
 
             $frameDir = JPATH_SITE . '/templates/zz-mailtest/html/layouts/joomla/mail';
             @mkdir($frameDir, 0777, true);
-            file_put_contents($frameDir . '/frame.php', "<?php defined('_JEXEC') or die; echo '<div class=\"frame\">' . \$displayData['mail'] . '</div>';");
+            file_put_contents(
+                $frameDir . '/frame.php',
+                "<?php defined('_JEXEC') or die; \$displayData['mail'] = str_replace('<p>', '<p class=\"mail-paragraph\">', \$displayData['mail']); echo '<div class=\"frame\">' . \$displayData['mail'] . '</div>';"
+            );
 
             $send = new ReflectionMethod($plugin, 'sendResetEmail');
             $send->setAccessible(true);
@@ -778,6 +781,8 @@ class ResetRequestTest
                     $this->test("$style: fallback has HTML and text parts",
                         (bool) preg_match('#^Content-Type:\s*multipart/alternative#mi', $raw) && stripos($text, 'text/plain') !== false);
                     $this->test("$style: HTML part sits in the template override", str_contains($text, '<div class="frame">'));
+                    $this->test("$style: template override styles the rendered paragraphs",
+                        str_contains($text, '<p class="mail-paragraph">'));
                     $this->test("$style: account name is escaped in the HTML part",
                         str_contains($text, '&lt;i&gt;Eve&lt;/i&gt;') && !str_contains($text, '<i>Eve</i> &amp;'));
                     $this->test("$style: recipient unchanged", stripos($raw, (string) $user->email) !== false);

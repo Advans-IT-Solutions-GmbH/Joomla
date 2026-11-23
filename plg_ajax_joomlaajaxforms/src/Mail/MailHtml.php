@@ -124,14 +124,15 @@ final class MailHtml
             }
         }
 
-        // The layout is rendered around a marker and only then gets the body, so a layout can
-        // neither alter nor re-escape it.
-        $marker   = '<!--ajaxforms-mail-body-' . bin2hex(random_bytes(6)) . '-->';
-        $level    = ob_get_level();
-        $rendered = null;
+        // Bracket the body with unique sentinels so overrides can style the actual HTML while
+        // still verifying that the layout includes it exactly once.
+        $startMarker = '<!--ajaxforms-mail-body-' . bin2hex(random_bytes(6)) . '-start-->';
+        $endMarker   = '<!--ajaxforms-mail-body-' . bin2hex(random_bytes(6)) . '-end-->';
+        $level       = ob_get_level();
+        $rendered    = null;
 
         try {
-            $rendered = $file->render(['mail' => $marker, 'extra' => $extra]);
+            $rendered = $file->render(['mail' => $startMarker . $html . $endMarker, 'extra' => $extra]);
         } finally {
             // A layout that throws after output leaves its buffer open; never let that reach the response.
             while (ob_get_level() > $level && @ob_end_clean()) {
@@ -139,11 +140,23 @@ final class MailHtml
             }
         }
 
-        if (!\is_string($rendered) || trim($rendered) === '' || substr_count($rendered, $marker) !== 1) {
+        if (
+            !\is_string($rendered)
+            || trim($rendered) === ''
+            || substr_count($rendered, $startMarker) !== 1
+            || substr_count($rendered, $endMarker) !== 1
+        ) {
             return $html;
         }
 
-        return str_replace($marker, $html, MailHelper::convertRelativeToAbsoluteUrls($rendered));
+        $start = strpos($rendered, $startMarker);
+        $end   = strpos($rendered, $endMarker);
+
+        if ($start === false || $end === false || $end <= $start) {
+            return $html;
+        }
+
+        return MailHelper::convertRelativeToAbsoluteUrls(str_replace([$startMarker, $endMarker], '', $rendered));
     }
 
     /** Escaped plain text as HTML paragraphs; only explicitly supplied account URLs become links. */
