@@ -80,7 +80,7 @@ succeeds and the other receives the friendly message and a reloaded slot list.
 ## Stage 7 — reschedule, cancel and the deletion path
 
 - `SignedLink` with the action in the signature.
-- Reschedule page and cancel page, each reachable only from a valid link. (The separate erase page was dropped: cancelling erases at once.)
+- Reschedule page, cancel page, erase page, each reachable only from a valid link.
 - The reschedule **updates the booking in place**, raises `sequence` and keeps `uid`, per
   `references/data-model.md`, section "Rescheduling updates the row". A reschedule onto a slot that
   was taken in the meantime fails on the unique index and gets the same friendly response as a lost

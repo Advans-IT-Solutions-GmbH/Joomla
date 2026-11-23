@@ -14,10 +14,10 @@ defined('_JEXEC') or die;
 /**
  * The signed links a mail to the booking person offers, by the state of the booking.
  *
- * A cancelled appointment can no longer be rescheduled or cancelled: its mails offer no link (their
- * reschedule and cancel links would open the notice that the appointment is cancelled). Every other
- * state offers both. The links that are left out are also empty in the template placeholders
- * ({reschedule_url}, {cancel_url}) of the mail.
+ * A cancelled appointment can no longer be rescheduled or cancelled: its mails offer only the
+ * erase link (their reschedule and cancel links would open the notice that the appointment is
+ * cancelled). Every other state offers all three. The links that are left out are also empty in
+ * the template placeholders ({reschedule_url}, {cancel_url}) of the mail.
  */
 final class ManageLinks
 {
@@ -25,6 +25,7 @@ final class ManageLinks
     public const FOOTER = [
         'reschedule_url' => 'COM_APPOINTMENTS_MAIL_RESCHEDULE',
         'cancel_url' => 'COM_APPOINTMENTS_MAIL_CANCEL',
+        'erase_url' => 'COM_APPOINTMENTS_MAIL_DELETE',
     ];
 
     /** State of a cancelled booking. */

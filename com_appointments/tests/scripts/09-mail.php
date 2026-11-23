@@ -74,15 +74,16 @@ $inspect = static function (array $before, array $booking, string $method, strin
         $decoded = AppointmentsMail::decoded($mime);
         if (preg_match('/^To:.*invitee@example\.test/mi', $unfolded)) {
             if ($method === 'CANCEL') {
-                // A cancelled appointment offers no link at all.
-                $check(!str_contains($decoded, 'action='), 'The cancellation mail offers no reschedule, cancel or erase link');
+                // Audit 18.11.2026, B6: a cancelled appointment can only have its data erased.
+                $check(!str_contains($decoded, 'action=reschedule') && !str_contains($decoded, 'action=cancel')
+                    && str_contains($decoded, 'action=erase'), 'The cancellation mail offers only the erase link, no reschedule or cancel link');
             } else {
                 $check(str_contains($decoded, 'action=reschedule') && str_contains($decoded, 'action=cancel')
-                    && !str_contains($decoded, 'action=erase'), 'Mandatory action links survive customized template content');
+                    && str_contains($decoded, 'action=erase'), 'Mandatory action links survive customized template content');
             }
             if ($localizedSubject === 'Validé :') {
                 $decoded = AppointmentsMail::decoded($mime);
-                $check(str_contains($decoded, "Modifier l'horaire") && !str_contains($decoded, 'Supprimer vos données'),
+                $check(str_contains($decoded, "Modifier l'horaire") && str_contains($decoded, 'Supprimer vos données à tout moment'),
                     'French mandatory footer works independently of installed Joomla language packs');
             }
         } else {

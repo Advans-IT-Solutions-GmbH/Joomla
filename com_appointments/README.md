@@ -128,7 +128,7 @@ working unchanged. Without either, the profile's records block with `credential`
 Close is treated as a separate system with its own data protection handling. The component **never
 deletes or anonymises anything in Close**, and nothing on the website waits for Close:
 
-- Retention, erasure on cancellation, administrator erasure and native privacy **Remove** only delete the
+- Retention, self-service erasure, administrator erasure and native privacy **Remove** only delete the
   local transfer record (the link to the remote IDs). A booking erased before it was sent is not sent.
   Records already in Close keep their last transferred status, and an uncertain creation of an erased
   booking is no longer followed up from the website; check it in Close if needed.
@@ -408,7 +408,7 @@ bookings after the update, until the setting is made (see section "Scheduler, re
   The mails follow the site's mail templates setting (com_mails): with «Mail Format» set to HTML or
   «HTML and plain text», the text is sent as HTML in the site's mail layout, including a template
   override such as `mytemplate:mailtemplate`, with links clickable and the text as alternative part.
-  The reschedule, cancel and meeting links show their label as link text in the HTML part, so a
+  The reschedule, cancel, erase and meeting links show their label as link text in the HTML part, so a
   long signed URL cannot widen the mail. In the plain-text part the links the component adds itself stand
   as full URLs, each on a line of its own.
   On a site with plain-text mails the HTML alternative is the same text as escaped paragraphs without
@@ -418,14 +418,13 @@ bookings after the update, until the setting is made (see section "Scheduler, re
   paragraphs (never bare text) and the plain-text alternative is kept.
 
 - **Signed appointment management and erasure.** Only the primary invitee receives the no-login
-  reschedule and cancellation capabilities, including in reminders. The host receives
+  reschedule, cancellation and erasure capabilities, including in reminders. The host receives
   calendar invitations without these bearer links. Each additional guest receives only a signed
   link of their own that removes their address from the booking and changes nothing else. Rescheduling updates the existing
   booking and UID under the host lock; it cannot take an
-  overlapping slot from another event type. Cancellation releases the slot; when the booking person
-  cancels, the confirmation and host mails go out first and the personal data is erased right after
-  in one transaction (contact data, guests, answers, free text and conference metadata), optionally
-  deleting the row entirely. There is no separate erase link. A future appointment triggers only a host cancellation with no former
+  overlapping slot from another event type. Cancellation releases the slot. Erasure clears all
+  contact data, guests, answers, free text and conference metadata in one transaction, optionally
+  deleting the row entirely. A future appointment triggers only a host cancellation with no former
   invitee data. The administrator can erase selected bookings with event-specific permission.
 
 - **Scheduled reminders and retention.** The bundled task plugin offers separate reminder and
@@ -471,7 +470,7 @@ components. The guest links in e-mails and the calendar subscriptions stay non-S
   An event type without either menu item has no booking page. Addresses without a menu item, such
   as `/component/appointments/eventtype/<alias>`, `/component/appointments/?view=eventtype&id=…`
   and non-SEF `index.php?option=com_appointments&view=eventtype&id=…`, answer 404.
-- **Links in e-mails** (reschedule, cancel) are built as
+- **Links in e-mails** (reschedule, cancel, erase) are built as
   `index.php?option=com_appointments&view=manage&id=…&action=…&signature=…&Itemid=…` from the public
   site URL. They are signed, are also sent by the reminder task from the command line, where no site
   router is available, and must stay valid for as long as the booking exists. On a multilingual site
@@ -528,7 +527,7 @@ same answer as an address that does not exist, so it does not reveal that a view
 | Booking page (`view=eventtype&id=…`) | its *Book an appointment* menu item (same event type), or below an *Event types* item | event type and schedule published, access level, content language; the menu item's layout; `format=raw` only for the date-and-time part that the booking script loads |
 | «My calendars» (`view=mycalendars`, layout `device` for one device) | a *My calendars* menu item only | signed in, internet calendars on, own devices |
 | Confirmation (`view=booking`) | any frame | the last booking of this browser session |
-| Reschedule, cancel (`view=manage`) | any frame | signature bound to booking, action and row version |
+| Reschedule, cancel, erase (`view=manage`) | any frame | signature bound to booking, action and row version |
 | Account activation (`view=activation`) | any frame | one-time token, exchanged into the session |
 | Tasks `booking.submit`, `booking.ics`, `booking.manage`, `guest.confirm`, `guest.remove`, `feed.download`, `devices.create`, `devices.rename`, `devices.remove`, `activation.complete` | any frame | POST with form token, signature, session or feed token, as described for each |
 
@@ -611,9 +610,9 @@ action `remove_guest` and the path `privacy_request`, without the address. A con
 reason blocks guest removals like invitee removals.
 
 Formal removal uses the same transaction, anonymisation/deletion mode and host-only future
-cancellation notice as the signed cancellation. A nonempty **Legal reason to block formal removal**
+cancellation notice as the signed erase link. A nonempty **Legal reason to block formal removal**
 blocks matching Joomla removal requests and explains the reason to the administrator. This option
-does not alter the erasure on cancellation or automatic retention; operators must configure those
+does not alter signed self-service erasure or automatic retention; operators must configure those
 policies consistently with their legal obligations. Accent differences never establish ownership,
 and the request's email remains authoritative even if another privacy plugin has already changed
 the associated Joomla user object.
@@ -1582,13 +1581,13 @@ receives the focus. An answer longer than its field allows (first and last name 
 e-mail address and text field 255, textarea 8000, or the field's own «Maximum characters») gets
 the length message with that number, not the message of a missing or invalid value. A missing
 telephone number marks the number field only, not the preselected calling code. A missing consent
-and a missing confirmation on the reschedule and cancel pages each have their own message. Only problems the visitor cannot fix in a field (an
+and a missing confirmation on the reschedule, cancel and erase pages each have their own message. Only problems the visitor cannot fix in a field (an
 expired or tampered form, too many attempts, a time just taken) appear as a message above the form.
 
 Dates and times follow the site language: the month and the day are written in words with the
 weekday and month names of the installed Joomla language, times read `09:00`, and the time zone is
 stated once per page. The patterns are the `COM_APPOINTMENTS_DATE_FORMAT_*` keys of the component
-language file and can be changed with a language override. The reschedule and cancel pages
+language file and can be changed with a language override. The reschedule, cancel and erase pages
 show the appointment in the invitee's time zone, like the booking page.
 
 The booking page shows the times in the schedule's zone. The **Time zone** field below the calendar
@@ -1744,7 +1743,7 @@ personal data into `utm_*` values.
 
 Each public page sets its own browser title and main heading when the active menu item does not
 point at it: the event type's title for a booking page below an *Event types* item, the
-confirmation heading and the heading of the reschedule or cancel page in the frame of a
+confirmation heading and the heading of the reschedule, cancel or erase page in the frame of a
 booking page. When a menu item points at the page (for one
 event type: at that event type), its browser page title (or else its menu title) applies and its
 page heading replaces the default heading when the menu item shows the page heading. In both
@@ -1926,7 +1925,7 @@ Create Overrides → com_appointments**), which copies the files to
 | `eventtype/default_details.php` | Step 2: the details form |
 | `booking/default.php` | Step 3: the confirmation |
 | `eventtypes/default.php` | The list of event types |
-| `manage/default.php` | The reschedule and cancel pages |
+| `manage/default.php` | The reschedule, cancel and erase pages |
 
 An override must keep the ids, the `data-appointments-*` attributes and the form field names it
 copies, because the booking script and the server rely on them.
@@ -1947,7 +1946,7 @@ copies, because the booking script and the server rely on them.
 | Privacy notice | `p.com-appointments-privacy-note` with `a.com-appointments-privacy-link`, the last element of the information column |
 | Checkboxes | `div.form-check` with `input.form-check-input` and `label.form-check-label` (no margin, centred with the box); with a checkbox mode the consent `.com-appointments-privacy > .com-appointments-consent` with the link `a.com-appointments-privacy-link` and `p.form-text.com-appointments-consent-text`, confirmation `.com-appointments-confirm` |
 | Errors | The control gets `.is-invalid`, `aria-invalid="true"` and `aria-describedby`; the message is `div.invalid-feedback.com-appointments-field-error` with the id `booking-<field>-error` or `manage-<field>-error` (the browser's check before sending: `<control id>-check`) |
-| Actions | `div.com-appointments-actions` with `button.btn.btn-primary` (cancel: `btn-danger`) |
+| Actions | `div.com-appointments-actions` with `button.btn.btn-primary` (cancel and erase: `btn-danger`) |
 | Confirmation | `#appointment-confirmation.com-appointments-card.com-appointments-confirmation-card.com-appointments-state-<0/1/2>` with `span.com-appointments-confirmation-mark`, `h1.com-appointments-heading` ("Appointment confirmed", "Appointment received" while it awaits approval, "Appointment cancelled"), `p.com-appointments-status` (see Result), `h2.com-appointments-title`, `dl.com-appointments-summary`, `p.com-appointments-join > a.btn.btn-primary`, and `.com-appointments-confirmation-actions` with `a.com-appointments-calendar-add` (the `.ics` download), `a.com-appointments-reschedule` and `a.com-appointments-cancel`, then `p.com-appointments-confirmation-note` |
 | Summary | `h2.com-appointments-title`, `dl.com-appointments-summary` (date, time, time zone, location or email address), `p.com-appointments-status` |
 | Result | A completed form shows its outcome as `p.com-appointments-status[role=status][tabindex=-1][autofocus][data-appointments-result]`: the confirmation, the completed manage page inside `div#appointment-result.com-appointments-manage` and the page with the app password of a new device. A successful booking redirects to `#appointment-confirmation` and a successful reschedule, cancellation or erasure to `#appointment-result`, so the outcome is in the first screen even below modules the template places above the component. A fragment keeps the browser from running `autofocus`, so the booking script focuses the status there; the device page is the answer to its form and relies on `autofocus`. Messages queued for the outcome (a notification email that could not be delivered, a missing or unreleased conference) are taken from Joomla's message queue and shown inside the result as `div#appointment-notices.com-appointments-notices` with one `div.alert.alert-<type>.com-appointments-alert` each; the status names them with `aria-describedby="appointment-notices"`, so they are in view and read out with it instead of above the component. A template override of the confirmation or the manage page may not print them, so with an override they stay in Joomla's message queue and the template shows them as before; the booking script focuses that live system-message region when an override leaves the notices there. On the confirmation, the stored warning of a failed conference (`p#appointment-conference-missing`, also after a reload) is part of the same `aria-describedby`. A refused field-error submission has no fragment or result, so the browser's native autofocus stays on the first invalid field; if the time is missing or malformed and no slot control can receive focus, `#booking-start-error` is the focusable alert. A page-level Joomla message is focused in its live system-message container only when a server-provided booking error or retained result notice requests it, no field, modal or success result already owns focus, and the visitor has not interacted |
@@ -2069,7 +2068,7 @@ empty, so a telephone appointment shows no empty location:
 | `{state_label}` | The translated status |
 | `{consent_utc}`, `{consent_version}` | The consent proof (UTC time and label version) with **Privacy notice on the booking form** *Consent checkbox*, otherwise empty |
 | `{start_utc}`, `{end_utc}`, `{state}`, `{id}`, `{uid}`, `{sequence}` and the other booking columns | Raw booking values |
-| `{reschedule_url}`, `{cancel_url}` | Signed links, in mails to the booking person only |
+| `{reschedule_url}`, `{cancel_url}`, `{erase_url}` | Signed links, in mails to the booking person only |
 | `{guest_email}`, `{guest_remove_url}` | In a guest template only: the guest's own address and the signed link that removes only that address |
 | `{calendar_title}` | In a calendar user template only: the title of the target calendar |
 
@@ -2082,8 +2081,8 @@ never receives the invitee's. Feed credentials are never included in mail.
 
 ### Managing an appointment and deleting data
 
-Every invitee message contains separate, action-specific signed reschedule and cancellation
-links. A link is invalidated when the booking changes. The confirmation requires the
+Every invitee message contains separate, action-specific signed reschedule, cancellation and
+erasure links. A link is invalidated when the booking changes. The confirmation requires the
 browser's normal Joomla CSRF token and one explicit confirmation, never a login or another email
 round trip. A completed action has a same-browser receipt; repeating it does not repeat
 notifications or audit entries. The receipt of a cancellation or a reschedule names the event type,
@@ -2095,16 +2094,11 @@ The links carry the `Itemid` of the event type's **Book an appointment** menu it
 its receipt stand in that menu item's frame. Without it Joomla's router falls back to the language's
 default menu item, the home page, whose modules then wrap the receipt.
 
-A reschedule or cancel link of a booking that the host or an administrator cancelled (and did not
-erase) opens a notice that the appointment is already cancelled, with its date and time, a way to
+A reschedule or cancel link of the version that was cancelled (by the invitee, in another tab or by
+the host) opens a notice that the appointment is already cancelled, with its date and time, a way to
 a new booking and no form. The bookings table keeps that version for this purpose
-(`cancelled_version_utc`). Cancelling as the booking person erases the booking at once. With the
-default **anonymise** mode its row stays without personal data and still carries that version, so a
-reschedule or cancel link of the cancelled version opens the neutral notice «This appointment has been
-cancelled and its personal data has been erased.» with **Book a new appointment**, and nothing of the
-appointment (no title, date or time). With **delete** mode no row exists, a signature cannot be
-verified without one, and the link answers 404 like every other link that opens nothing (an older
-version, a tampered signature, an unknown id). The 404 is one page of the
+(`cancelled_version_utc`). Every other link that opens nothing (an older version, a tampered
+signature, an unknown id, an erased booking, a used erase link) answers 404 with one page of the
 component, «Link no longer valid»: «This link is not valid. After every change to an appointment,
 only the links in the latest email about it apply.», why that happens (rescheduled, cancelled or
 already used) and **Book a new appointment**. The page is the same for all of these cases and shows
@@ -2112,26 +2106,9 @@ nothing of the appointment, so it does not reveal which case applies; the way to
 from the menu item of the address (`BackLink::again()`), never from the booking the link names. A
 form of such a link that is still open in another tab changes nothing and leads to the same page.
 
-**Special cases of a cancellation by the booking person**
-
-1. Old links: with **anonymise** they open the neutral erased notice (status 200, no appointment
-   data), with **delete** the «Link no longer valid» page (404); an older version, a tampered link and
-   an unknown id always get that 404 page.
-2. A cancellation by the host or an administrator does not erase: the data stays until the booking
-   retention, and the links of that version show the «already cancelled» notice with date and time.
-3. If the erasure after a successful cancellation fails, the failure is only logged; the cancellation
-   stands and the booking retention erases the data later.
-4. The cancellation reason appears only in the host's mail and is stored nowhere afterwards (the
-   erasure record holds no personal data).
-5. In **delete** mode the cancelled booking leaves the calendar feeds; the campaign statistics keep
-   their counters, which hold no personal data.
-6. The cancellation mail to the booking person contains no link.
-
-The cancellation mail to the booking person offers no link: the booking person's cancellation erases
-(or deletes, by the **erase mode** setting) the personal data right after the mails went out, and a
-cancelled appointment can no longer be rescheduled or cancelled, so the mails carry no link, also not in
-the placeholders `{reschedule_url}` and `{cancel_url}` of an edited template (`{erase_url}` no longer
-exists and renders empty). The host's
+The cancellation mail to the booking person offers only the erase link: an appointment that is
+cancelled can no longer be rescheduled or cancelled, so its mails carry neither link, also not in
+the placeholders `{reschedule_url}` and `{cancel_url}` of an edited template. The host's
 cancellation mail (`host_cancellation`, with a target calendar `calendar_cancelled` for the host only)
 names the reason the booking person gave; the line is left
 out when there is none. The booking person's and the guests' mails do not repeat it.
@@ -2168,7 +2145,7 @@ outdated link and a link of an erased booking answer 404; the same browser sees 
 Both steps are rate limited. A calendar entry the guest already accepted stays in their calendar,
 which the page says.
 
-The deletion audit stores only booking ID, action (`anonymise`, `delete` or `remove_guest`), path (`cancellation`, `privacy_request`, `retention`, `admin`; `self_service` for a guest removal),
+The deletion audit stores only booking ID, action (`anonymise`, `delete` or `remove_guest`), path,
 timestamp and, for administrator actions, the acting operator's Joomla user ID. It contains no invitee data, but that staff identifier is
 accountability data and has its own retention. Staff data-subject requests about `actor_user_id`
 entries must be answered by the operator from `#__appointments_audit`; the invitee privacy export

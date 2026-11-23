@@ -275,7 +275,7 @@ Deletion evidence. **Contains no data of an invitee.** A test asserts the exact 
 | `id` | `INT UNSIGNED AUTO_INCREMENT` | |
 | `booking_id` | `INT UNSIGNED NOT NULL` | may point at a deleted row |
 | `action` | `VARCHAR(32) NOT NULL` | `anonymise`, `delete`, `remove_guest` (one guest address taken out of a booking's guest list) |
-| `path` | `VARCHAR(32) NOT NULL` | `cancellation` (the booking person's cancel), `privacy_request`, `retention`, `admin`; `remove_guest` uses `self_service` (guest link) or `privacy_request` |
+| `path` | `VARCHAR(32) NOT NULL` | `self_service`, `privacy_request`, `retention`, `admin`; `remove_guest` uses `self_service` (guest link) or `privacy_request` |
 | `actor_user_id` | `INT UNSIGNED NULL` | set only for `admin` |
 | `occurred_utc` | `DATETIME NOT NULL` | |
 
@@ -311,7 +311,7 @@ Nothing is stored, which is the point:
 
 - A generated secret in the component parameters is **dropped by Joomla's Options screen** unless it
   is declared in the configuration form, because `com_config` keeps only the parameters the form
-  declares. Losing it would silently invalidate every reschedule and cancel link that is
+  declares. Losing it would silently invalidate every reschedule, cancel and erasure link that is
   already in someone's mailbox.
 - Declaring it as a form field would print the secret into the HTML of the Options screen, which is
   exactly what the architecture's "no secret is ever written anywhere" rule forbids.

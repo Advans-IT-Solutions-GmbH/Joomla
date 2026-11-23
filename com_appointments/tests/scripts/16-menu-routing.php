@@ -554,8 +554,8 @@ try {
             }
         }
     }
-    $check(isset($mailLinks['reschedule'], $mailLinks['cancel']) && !isset($mailLinks['erase']),
-        'The confirmation mail carries the reschedule and cancel links, no erase link');
+    $check(isset($mailLinks['reschedule'], $mailLinks['cancel'], $mailLinks['erase']),
+        'The confirmation mail carries the reschedule, cancel and erase links');
     $check(isset($mailLinks['cancel']) && str_starts_with($mailLinks['cancel'], 'http://localhost/index.php?option=com_appointments&view=manage&id='),
         'Mail links stay non-SEF and independent of the router');
 
@@ -667,7 +667,7 @@ try {
         $state['pageCache'] = null;
 
         // The cancellation below uses the links of the newest mail.
-        if (isset($rescheduleMail['cancel'])) {
+        if (isset($rescheduleMail['cancel'], $rescheduleMail['erase'])) {
             $mailLinks = $rescheduleMail;
         }
     }
@@ -681,6 +681,8 @@ try {
         if ($guest->status !== 200) {
             $dump('cancel link', $guest, $html);
         }
+        $erase = $guest->request(preg_replace('#^https?://[^/]+#', '', $mailLinks['erase'] ?? ''));
+        $check($guest->status === 200, 'The signed erase link of the mail opens its page');
         $html = $guest->request($path);
         [$action, $fields] = $formData($html, '//form[contains(@class, "com-appointments-manage-form")]');
         $fields[$guest->token($html)] = 1;
@@ -700,11 +702,13 @@ try {
             && str_contains($html, 'You will receive a confirmation by email.')
             && preg_match('#<h1[^>]*>\s*Appointment cancelled\s*</h1>#', $html) === 1,
             'The cancellation receipt shows the appointment, the coming confirmation mail and a new booking');
-        // Another browser with the same link: the booking is erased, the link shows only the neutral notice.
+        // Another browser with the same link: the cancellation, in the same frame, with the way to a new booking.
         $outsider = new AppointmentsHttp('http://localhost', 'menu-used-link');
         $html = $outsider->request($path);
-        $check($outsider->status === 200 && !str_contains($html, 'booking.manage') && str_contains($html, 'its personal data has been erased'),
-            'The used cancel link shows only the erased notice once the cancellation erased the booking');
+        $check($outsider->status === 200 && str_contains($html, 'This appointment has already been cancelled.')
+            && !str_contains($html, 'booking.manage') && preg_match($bookingPage, $first($links($html, 'com-appointments-book-again'))) === 1,
+            'The used cancel link reports the cancellation without a form and offers a new booking: '
+            . $first($links($html, 'com-appointments-book-again')));
     }
 
     // The back button of a booking page: hidden on a menu item of one event type, so the list of

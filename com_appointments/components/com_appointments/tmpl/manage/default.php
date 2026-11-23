@@ -14,8 +14,8 @@ use Joomla\CMS\Language\Text;
 use Joomla\CMS\Router\Route;
 
 defined('_JEXEC') or die;
-$headings = ['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL'];
-$results = ['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULED', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCELLED'];
+$headings = ['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL', 'erase' => 'COM_APPOINTMENTS_MANAGE_ERASE'];
+$results = ['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULED', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCELLED', 'erase' => 'COM_APPOINTMENTS_MANAGE_ERASED'];
 $dates = new DateDisplay(static fn (string $key): string => Text::_($key));
 $dayFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_DAY');
 $timeFormat = Text::_('COM_APPOINTMENTS_DATE_FORMAT_TIME');
@@ -102,20 +102,18 @@ if (!$this->completed && !$this->cancelled && $this->action === 'reschedule') {
             <?php endif; ?>
         <?php elseif ($this->cancelled) : ?>
             <?php // A link of a cancelled appointment: what was cancelled, no form. ?>
-            <?php if ($this->item->anonymised_utc !== null) : ?>
-                <?php // Erased by the cancellation: nothing of the appointment is shown. ?>
-                <p class="com-appointments-status" role="status" tabindex="-1" autofocus><?php echo Text::_('COM_APPOINTMENTS_MANAGE_CANCELLED_ERASED'); ?></p>
-            <?php else : ?>
-                <p class="com-appointments-status" role="status" tabindex="-1" autofocus><?php echo Text::_('COM_APPOINTMENTS_MANAGE_ALREADY_CANCELLED'); ?></p>
-                <?php echo $summary((string) $this->item->title, (string) $this->item->start_utc, (string) $this->item->end_utc); ?>
-            <?php endif; ?>
+            <p class="com-appointments-status" role="status" tabindex="-1" autofocus><?php echo Text::_('COM_APPOINTMENTS_MANAGE_ALREADY_CANCELLED'); ?></p>
+            <?php echo $summary((string) $this->item->title, (string) $this->item->start_utc, (string) $this->item->end_utc); ?>
         <?php else : ?>
             <?php echo $summary((string) $this->item->title, (string) $this->item->start_utc, (string) $this->item->end_utc, (string) $this->item->invitee_email); ?>
-            <?php if ($this->action === 'cancel') : ?>
+            <?php if ($this->action === 'erase') : ?>
                 <div class="com-appointments-notice">
                     <p><?php echo Text::_('COM_APPOINTMENTS_MANAGE_ERASURE_DATA'); ?></p>
                     <p><?php echo Text::_($this->deleteMode ? 'COM_APPOINTMENTS_MANAGE_ERASURE_DELETE' : 'COM_APPOINTMENTS_MANAGE_ERASURE_ANONYMISE'); ?></p>
+                    <p><?php echo Text::_('COM_APPOINTMENTS_MANAGE_ERASURE_FUTURE'); ?></p>
                 </div>
+            <?php endif; ?>
+            <?php if ($this->action === 'cancel') : ?>
                 <form method="post" action="<?php echo Route::_('index.php?option=com_appointments&task=booking.manage'); ?>" class="com-appointments-form com-appointments-manage-form">
                     <input type="hidden" name="id" value="<?php echo (int) $this->item->id; ?>">
                     <input type="hidden" name="action" value="<?php echo $this->escape($this->action); ?>">
@@ -125,6 +123,23 @@ if (!$this->completed && !$this->cancelled && $this->action === 'reschedule') {
                         <textarea class="form-control<?php echo $invalid('reason'); ?>" id="cancel-reason" name="reason" maxlength="2000"<?php echo $aria('reason'); ?>><?php echo $this->escape($this->reason); ?></textarea>
                         <?php echo $error('reason'); ?>
                     </div>
+                    <div class="com-appointments-field">
+                        <div class="form-check com-appointments-confirm">
+                            <input class="form-check-input<?php echo $invalid('confirm'); ?>" id="manage-confirm" type="checkbox" name="confirm" value="1" required<?php echo $aria('confirm'); ?>>
+                            <label class="form-check-label" for="manage-confirm"><?php echo Text::_('COM_APPOINTMENTS_MANAGE_CONFIRM'); ?></label>
+                            <?php echo $error('confirm'); ?>
+                        </div>
+                    </div>
+                    <?php echo HTMLHelper::_('form.token'); ?>
+                    <div class="com-appointments-actions">
+                        <button type="submit" class="btn btn-danger"><?php echo Text::_($headings[$this->action]); ?></button>
+                    </div>
+                </form>
+            <?php elseif ($this->action === 'erase') : ?>
+                <form method="post" action="<?php echo Route::_('index.php?option=com_appointments&task=booking.manage'); ?>" class="com-appointments-form com-appointments-manage-form">
+                    <input type="hidden" name="id" value="<?php echo (int) $this->item->id; ?>">
+                    <input type="hidden" name="action" value="<?php echo $this->escape($this->action); ?>">
+                    <input type="hidden" name="signature" value="<?php echo $this->escape($this->signature); ?>">
                     <div class="com-appointments-field">
                         <div class="form-check com-appointments-confirm">
                             <input class="form-check-input<?php echo $invalid('confirm'); ?>" id="manage-confirm" type="checkbox" name="confirm" value="1" required<?php echo $aria('confirm'); ?>>

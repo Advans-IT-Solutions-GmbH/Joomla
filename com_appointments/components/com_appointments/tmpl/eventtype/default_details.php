@@ -215,7 +215,7 @@ $textField = function (string $key, string $label, string $type, string $autocom
                     <label class="form-check-label" for="booking-consent"><?php echo $consentLabel . $mark; ?></label>
                     <?php echo $error('consent'); ?>
                 </div>
-                <p id="booking-consent-text" class="form-text com-appointments-consent-text"><?php echo $this->escape($consentText); ?></p>
+                <p id="booking-consent-text" class="form-text com-appointments-consent-text"><?php echo $this->escape($consentText); ?> <?php echo Text::_('COM_APPOINTMENTS_BOOKING_ERASURE_NOTICE'); ?></p>
             </div>
         <?php endif; ?>
         <input type="hidden" name="booking[start]" value="<?php echo $this->escape($this->selected->format('Y-m-d H:i:s')); ?>">

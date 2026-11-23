@@ -93,7 +93,7 @@ class HtmlView extends BaseHtmlView
         // says so in its heading; every other page names the action of its link.
         $this->applyPageTitle('manage', Text::_($this->cancelled || ($this->completed && $this->action === 'cancel')
             ? 'COM_APPOINTMENTS_BOOKING_CANCELLED_TITLE'
-            : ['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL'][$this->action]));
+            : ['reschedule' => 'COM_APPOINTMENTS_MANAGE_RESCHEDULE', 'cancel' => 'COM_APPOINTMENTS_MANAGE_CANCEL', 'erase' => 'COM_APPOINTMENTS_MANAGE_ERASE'][$this->action]));
         $focusKey = 'com_appointments.manage_focus_message.' . $app->getInput()->getInt('id') . '.' . $this->action;
         $focusMessage = !$this->completed && (bool) $app->getUserState($focusKey, false);
         $app->setUserState($focusKey, null);
@@ -277,7 +277,7 @@ class HtmlView extends BaseHtmlView
 
     /**
      * The page of a signed link that opens nothing: an earlier link of an appointment that was
-     * rescheduled or cancelled since, a tampered link or an unknown or erased appointment.
+     * rescheduled or cancelled since, a used erase link, a tampered link or an unknown appointment.
      * One page for all of them, still with status 404 and the same text, so it does not tell which
      * applies (the privacy boundary of the signed pages). It explains that only the links of the
      * newest mail apply and offers a new booking (BackLink::again(), from the address alone).

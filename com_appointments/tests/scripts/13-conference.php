@@ -320,12 +320,12 @@ try {
         'Real cancellation tears down the implicit room and removes stored conference values');
     $eraseBrowser = new AppointmentsHttp('http://localhost', 'conference-erase');
     $before = AppointmentsMail::snapshot();
-    $fixture->apply($eraseBrowser, $fixture->link($fixedB, 'cancel'));
+    $fixture->apply($eraseBrowser, $fixture->link($fixedB, 'erase'));
     $erased = $fixture->row((int) $fixedB['id']);
     $check($erased['anonymised_utc'] !== null && $erased['invitee_email'] === null
         && $erased['conference_url'] === null && $erased['conference_room'] === null
         && $erased['conference_provider'] === null && $erased['conference_error'] === null,
-        'Cancellation erases guest conference links, identifiers and diagnostics together with invitee data');
+        'Self-service erasure clears guest conference links, identifiers and diagnostics together with invitee data');
 
     foreach (AppointmentsMail::messagesSince($before) as $mime) {
         $check(!str_contains(AppointmentsMail::decoded($mime), 'https://meet.example.com/event-permanent'),
