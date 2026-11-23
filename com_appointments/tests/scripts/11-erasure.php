@@ -125,8 +125,14 @@ try {
     $erasedIds[] = $anonId;
     $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
     $admin->request('/administrator/index.php?option=com_appointments&task=bookings.erase', ['cid' => [$anonId], $token => 1]);
-    $admin->request('/administrator/index.php?option=com_appointments&task=bookings.delete', ['cid' => [$anonId], $token => 1]);
+    $anonymised = $fixture->row($anonId);
+    $check($anonymised !== null && $anonymised['anonymised_utc'] !== null, 'The administrator erasure anonymises the appointment first');
+    $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
+    $deleteResponse = $admin->request('/administrator/index.php?option=com_appointments&task=bookings.delete', ['cid' => [$anonId], $token => 1]);
     $check($fixture->row($anonId) === null, 'Administrator deletion also removes an already anonymised appointment');
+    if ($fixture->row($anonId) !== null) {
+        echo '    HTTP ' . $admin->status . ': ' . substr(trim(preg_replace('/\s+/', ' ', strip_tags($deleteResponse))), 0, 400) . "\n";
+    }
     // A batch with an ID that no longer exists deletes the others and is not refused as a whole.
     $created = $fixture->booking($event, $day . ' 16:00:00');
     $batchId = (int) $created['booking']['id'];

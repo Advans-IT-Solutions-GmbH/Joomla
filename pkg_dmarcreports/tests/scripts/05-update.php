@@ -246,9 +246,14 @@ class UpdateTest
                     && $this->siteCount($failureChild['url']) === 1
                     && $this->siteId($failureChild['url']) === $failureSiteId;
             });
-            $this->test('Failed cleanup restores pending updates for retry', function () use ($pendingUpdates) {
+            // Joomla itself clears the pending update of every extension it installs (it matches element,
+            // type, folder and client), so the rows of the four bundled extensions are gone after any
+            // attempt that installed them. Only the pending update of the unrelated extension is the
+            // package's to keep: its streams are never touched, and a rolled-back cleanup restores
+            // everything it had removed.
+            $this->test('Failed cleanup keeps the pending update of the unrelated extension', function () use ($pendingUpdates) {
                 foreach ($pendingUpdates as $update) {
-                    if ($this->pendingUpdateCount($update['name'], $update['extensionId']) !== 1) {
+                    if ($update['unrelated'] && $this->pendingUpdateCount($update['name'], $update['extensionId']) !== 1) {
                         return false;
                     }
                 }
@@ -405,9 +410,16 @@ class UpdateTest
                     $child,
                     $foreignExtensionId
                 ) {
-                    return $foreignExtensionId > 0
+                    $ok = $foreignExtensionId > 0
                         && $this->siteCount($child['url']) === 1
                         && $this->siteLinkCount($this->siteId($child['url']), $foreignExtensionId) === 1;
+
+                    if (!$ok) {
+                        echo '    shared site: ' . $this->siteCount($child['url']) . ' site(s) with the location, '
+                            . $this->siteLinkCount($this->siteId($child['url']), $foreignExtensionId) . " link(s) to extension $foreignExtensionId\n";
+                    }
+
+                    return $ok;
                 });
 
                 $this->test('Synthetic shared-site fixture is removed', function () use (

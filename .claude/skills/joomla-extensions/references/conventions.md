@@ -52,6 +52,24 @@ bodies.
 - No direct `$_GET`/`$_POST` — use `$app->getInput()`
 - No `JFactory::` — use DI container or `$this->getApplication()`
 
+## Frontend Forms
+
+Every form an extension shows on the site follows the same reference pattern, whatever the extension:
+
+- Sign-in style forms (login and similar two-part pages) follow the checkout pattern: two columns,
+  the form beside the supporting part (alternatives, notes), stacked on narrow screens.
+- Single-column forms (requests, confirmations, reminders) follow the password reset pattern: one
+  column, the label above the field, one primary button, the secondary way out beside or below it.
+- Privacy requests follow the password reset pattern.
+- Forms that belong to an appointment follow the appointment form: the choice of day and time first,
+  then the details and the confirmation.
+
+The extensions are public and must look right in any site template, so a form uses only what Joomla
+and the template provide: Joomla and Bootstrap standard classes (`form-control`, `form-label`,
+`form-check`, `btn btn-primary`, `row`/`col-*`, `card`, `alert`) and the CSS custom properties of the
+active template. No colours, fonts, logos or brand texts of any company in an extension's markup,
+CSS or language files, and no fixed colour values where a template variable or a Bootstrap class
+exists. Check a form on a template other than the one it was developed on before it ships.
 ## Language Files
 
 - Every extension, including every bundled plugin and all future extensions, ships exactly

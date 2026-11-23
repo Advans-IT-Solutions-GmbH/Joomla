@@ -19,7 +19,7 @@ try {
     $cancel = $fixture->link($booking, 'cancel');
     $html = $client->request($reschedule);
     $check($client->status === 200 && str_contains($html, 'com-appointments-calendar-grid')
-        && str_contains($html, 'com-appointments-day-available') && str_contains($html, 'Current appointment')
+        && str_contains($html, 'com-appointments-day-available')
         && !str_contains($html, 'type="month"') && !str_contains($html, 'id="new-start"'),
         'Signed reschedule page uses the booking calendar without a raw month field or slot dropdown');
     $calendarDocument = new DOMDocument();

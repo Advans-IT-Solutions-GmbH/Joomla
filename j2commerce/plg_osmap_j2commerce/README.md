@@ -70,7 +70,7 @@ New or re-enabled products are picked up on the next sitemap request.
 - Builds SEF URLs from the shop menu item path and article alias (with language prefix)
 - Configurable default priority and change frequency (plugin-wide)
 - Excludes products that are not publicly visible (see *Description*)
-- Patches OSMap ≤ 5.1.3 `Factory::getTable()` bug on install/update
+- Pauses on OSMap ≤ 5.1.3 until its `Factory::getTable()` bug is fixed by hand (one command, see below)
 
 ## Requirements
 
@@ -79,10 +79,12 @@ New or re-enabled products are picked up on the next sitemap request.
 - J2Commerce (formerly J2Store) 4.x or later
 - [OSMap Free or Pro](https://extensions.joomla.org/extension/osmap/) 5.x or later
 
-> **OSMap ≤ 5.1.3 compatibility:** The installer script automatically patches a
-> bug in OSMap ≤ 5.1.3 where `Factory::getTable()` returns `false` instead of
-> `null`, causing a `TypeError` in PHP 8.1+. The patch is applied on install
-> and update and is idempotent — OSMap ≥ 5.1.4 already contains the fix.
+> **OSMap ≤ 5.1.3 compatibility:** OSMap ≤ 5.1.3 has a bug where `Factory::getTable()` returns
+> `false` instead of `null`, causing a `TypeError` in PHP 8.1+. The installer never rewrites a
+> file of another extension on its own: with the buggy file the installation pauses before
+> changing anything and names `Factory.php`. Apply the one-line fix (command under
+> *Troubleshooting*), then repeat the installation. OSMap ≥ 5.1.4 already contains the fix and
+> needs nothing.
 
 ## Installation
 
@@ -104,7 +106,7 @@ On every install and update, the installer script (`script.php`):
 - removes update sites of this plugin that still point to the repository's
   former path (`advansit/Joomla`), so Joomla only queries the current update
   server;
-- patches OSMap ≤ 5.1.3 (see above).
+- needs the one-line fix in OSMap ≤ 5.1.3 first (see above).
 
 ### .htaccess Requirements
 
@@ -164,7 +166,7 @@ command or bypass. Settings and the enabled state are kept. The plugin needs no 
 ## Uninstall
 
 Uninstall the plugin via **System → Manage → Extensions**. The plugin has no
-uninstall routine: the OSMap ≤ 5.1.3 patch and the disabled state of the legacy
+uninstall routine: a fix you applied to OSMap ≤ 5.1.3 and the disabled state of the legacy
 `plg_osmap_j2store` plugin are not reverted.
 
 ## Configuration
@@ -436,9 +438,8 @@ and that the `.htaccess` / `web.config` rewrite rules are in place.
 
 **TypeError: Factory::getTable() must be of type ?Table, false returned**
 
-This is a bug in OSMap ≤ 5.1.3. The installer script patches it automatically
-on plugin install or update. If you see this error before installing the plugin,
-apply the fix manually:
+This is a bug in OSMap ≤ 5.1.3. The plugin installation pauses on it and changes nothing.
+Apply the fix manually, then repeat the installation:
 
 ```bash
 sed -i 's/return Table::getInstance($tableName, $prefix);/return Table::getInstance($tableName, $prefix) ?: null;/' \

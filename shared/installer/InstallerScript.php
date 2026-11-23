@@ -124,7 +124,10 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
             }
 
             if ($isPackage) {
-                $decided = [];
+                // Keep what an earlier attempt of this package already decided: the planner skips those
+                // destinations now, and a handoff rewritten without them would leave the bundled
+                // extensions to judge the same files again without the package's catalog.
+                $decided = self::readHandoff($stateRoot);
 
                 foreach ($plan['changes'] as $change) {
                     $decided[$change['destination']] = ['existing' => $change['existing'], 'incoming' => $change['incoming']];

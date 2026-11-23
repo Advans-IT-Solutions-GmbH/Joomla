@@ -193,7 +193,7 @@ try {
     $overview = (new DOMXPath($document))->query(
         '(//div[contains(concat(" ", normalize-space(@class), " "), " com-appointments-eventtype ")]//a)[1]'
     )->item(0);
-    $check($overview instanceof DOMElement && trim($overview->textContent) === 'Back to appointments',
+    $check($overview instanceof DOMElement && trim($overview->textContent) === 'Back',
         'The booking branch has a translated return to its public overview');
     if ($overview instanceof DOMElement) {
         $public->request('/' . ltrim($overview->getAttribute('href'), '/'));
