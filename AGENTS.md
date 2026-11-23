@@ -96,6 +96,13 @@
 - **Prüfpunkte bei jeder Änderung:** keine neue externe Adresse im Laufzeitcode und kein neuer externer Vorgabewert ohne Entscheid des Maintainers. Logo und Link wie oben.
 - Massgeblich ist die intern gepflegte SSOT (Handbuch, Abschnitt «Swiss Label Conformity»). Kurzfassung für die Skills: `.claude/skills/joomla-extensions/SKILL.md`, Abschnitt «swiss made software label».
 
+## Pakete
+
+Mehrteilige Erweiterungen (mehr als eine installierbare Erweiterung) werden immer als echtes
+Joomla-Paket `pkg_*` ausgeliefert, einteilige als eigenes ZIP. Das Paket ist das Release-Asset, die
+ZIPs der Teile liegen nur darin. `shared/tests/package-structure-check.php` (Job «Infrastructure
+Tests») erzwingt das; Einzelheiten: Skill `joomla-extensions`, `references/conventions.md`, «Packaging».
+
 ## Skills
 Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
 

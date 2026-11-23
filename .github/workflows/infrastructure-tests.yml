@@ -15,6 +15,11 @@ on:
       - 'shared/tests/installer-pattern.php'
       - 'shared/tests/installer-lifecycle.php'
       - 'shared/tests/update-changelog-lint.php'
+      - 'shared/tests/package-structure-check.php'
+      - '*/*.xml'
+      - 'j2commerce/*/*.xml'
+      - '*/build.sh'
+      - 'j2commerce/*/build.sh'
   pull_request:
     branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
@@ -27,6 +32,11 @@ on:
       - 'shared/tests/installer-pattern.php'
       - 'shared/tests/installer-lifecycle.php'
       - 'shared/tests/update-changelog-lint.php'
+      - 'shared/tests/package-structure-check.php'
+      - '*/*.xml'
+      - 'j2commerce/*/*.xml'
+      - '*/build.sh'
+      - 'j2commerce/*/build.sh'
 
 permissions: {}
 
@@ -65,3 +75,5 @@ jobs:
         run: php shared/tests/installer-lifecycle.php
       - name: Check update and Joomla changelog XML
         run: php shared/tests/update-changelog-lint.php
+      - name: Check that multi-part extensions ship as packages
+        run: php shared/tests/package-structure-check.php

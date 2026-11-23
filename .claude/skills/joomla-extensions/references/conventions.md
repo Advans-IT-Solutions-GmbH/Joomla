@@ -52,6 +52,20 @@ bodies.
 - No direct `$_GET`/`$_POST` — use `$app->getInput()`
 - No `JFactory::` — use DI container or `$this->getApplication()`
 
+## Packaging
+
+A multi-part extension (more than one installable extension: component, module, plugin, template,
+library) is always shipped as a real Joomla package `pkg_<name>`. The package is the release asset
+(`pkg_<name>.zip`); the ZIPs of its parts exist only inside it. A single-part extension is shipped as
+its own ZIP. `php shared/tests/package-structure-check.php` (job «Infrastructure Tests») fails when an
+extension root holds several installable extensions without a package listing every one of them, or
+when a package manifest lists a child that does not exist or misses a child its `build.sh` stages.
+Roots still to be converted are named in `PENDING` in that script; the list only shrinks.
+
+A package adopts the parts that are already installed (also standalone, or installed by an older
+script) without a manual step: no data or parameters are lost, no extension row is duplicated, the
+old update sites give way to the package's, and uninstalling the package removes all its parts.
+
 ## Frontend Forms
 
 Every form an extension shows on the site follows the same reference pattern, whatever the extension:
