@@ -4,7 +4,7 @@ Nutze in diesem Repository die Vorgaben aus `/AGENTS.md` (Repo-Root) als maßgeb
 
 ## Harte Regeln (Details in `AGENTS.md`)
 
-- Commits sind mit dem SSH-Schlüssel des Maintainers signiert (Identität `Advans IT Solutions GmbH <89843389+advansit@users.noreply.github.com>`), jeder Commit des PR zeigt «Verified». Kann nicht signiert werden: anhalten und melden, nie unsigniert committen.
+- Jeder Commit des PR ist signiert und zeigt «Verified». In Sitzungen des Maintainers: SSH-Signatur, Identität `Advans IT Solutions GmbH <89843389+advansit@users.noreply.github.com>`; sonst die eigene Identität und der eigene Schlüssel der Person, in deren Sitzung du arbeitest (Details in `AGENTS.md`). Kann nicht signiert werden: anhalten und melden, nie unsigniert committen.
 - Kein `Co-authored-by`-Trailer und keine Agent-Signatur («Copilot», «copilot-swe-agent», «Claude», «Generated with», «🤖») in einer Commit-Nachricht. Die CI-Prüfung «Commit hygiene» blockiert den Merge sonst.
 - Nie auf `main` pushen, immer Feature-Branch + PR (`fix/…`, `feat/…`, `docs/…`, `chore/…`); nie selbst mergen.
 - Conventional Commits (`fix:`/`feat:`) bestimmen die Release-Version.

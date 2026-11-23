@@ -7,9 +7,11 @@ name: Commit Hygiene
 # .github/scripts/collect-results.sh requires it on every pull request. The required check
 # "Collect Results" fails when this workflow does not succeed.
 
+run-name: "${{ github.event_name == 'pull_request' && format('PR #{0} base={1} base-sha={2} head-sha={3} merge-sha={4}', github.event.pull_request.number, github.event.pull_request.base.ref, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha) || (github.event_name == 'push' && github.event.head_commit.message) || github.workflow }}"
+
 on:
   pull_request:
-    branches: [main]
+    branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
 
 permissions:
   contents: read
