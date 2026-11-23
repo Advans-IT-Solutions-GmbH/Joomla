@@ -40,7 +40,14 @@ final class MailHtml
      *
      * @return  bool  True when the mail goes out as HTML.
      */
-    public static function apply(object $mailer, string $plain, string $language, string $siteName, ?array $config = null): bool
+    public static function apply(
+        object $mailer,
+        string $plain,
+        string $language,
+        string $siteName,
+        ?array $config = null,
+        array $linkUrls = []
+    ): bool
     {
         $config ??= ComponentHelper::getParams('com_mails')->toArray();
 
@@ -52,7 +59,7 @@ final class MailHtml
         }
 
         $mailer->isHtml(true);
-        $mailer->setBody(self::render($plain, $language, $siteName, $config, $mailer));
+        $mailer->setBody(self::render($plain, $language, $siteName, $config, $mailer, $linkUrls));
         $mailer->AltBody = $plain;
 
         return true;
@@ -65,9 +72,16 @@ final class MailHtml
     }
 
     /** HTML body: the text as escaped paragraphs, inside the layout when the site uses one. */
-    public static function render(string $plain, string $language, string $siteName, array $config, ?object $mailer = null): string
+    public static function render(
+        string $plain,
+        string $language,
+        string $siteName,
+        array $config,
+        ?object $mailer = null,
+        array $linkUrls = []
+    ): string
     {
-        $html = self::textToHtml($plain);
+        $html = self::textToHtml($plain, $linkUrls);
 
         if ((string) ($config['disable_htmllayout'] ?? '1') !== '1') {
             return $html;
@@ -132,9 +146,10 @@ final class MailHtml
         return str_replace($marker, $html, MailHelper::convertRelativeToAbsoluteUrls($rendered));
     }
 
-    /** Escaped plain text as HTML paragraphs, with URLs clickable. */
-    public static function textToHtml(string $plain): string
+    /** Escaped plain text as HTML paragraphs; only explicitly supplied account URLs become links. */
+    public static function textToHtml(string $plain, array $linkUrls = []): string
     {
+        $linkUrls = array_fill_keys(array_filter($linkUrls, 'is_string'), true);
         $blocks = preg_split('/\R{2,}/u', trim(str_replace(["\r\n", "\r"], "\n", $plain))) ?: [];
         $out    = '';
 
@@ -155,6 +170,11 @@ final class MailHtml
                 while ($piece !== '' && strpbrk(substr($piece, -1), '.,;:!?)]}\'') !== false) {
                     $tail  = substr($piece, -1) . $tail;
                     $piece = substr($piece, 0, -1);
+                }
+
+                if (!isset($linkUrls[$piece])) {
+                    $linked .= self::escape($piece . $tail);
+                    continue;
                 }
 
                 $linked .= '<a href="' . self::escape($piece) . '">' . self::escape($piece) . '</a>' . self::escape($tail);

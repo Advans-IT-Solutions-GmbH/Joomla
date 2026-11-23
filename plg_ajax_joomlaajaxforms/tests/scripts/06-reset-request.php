@@ -784,11 +784,28 @@ class ResetRequestTest
                 }
 
                 $url  = "https://example.test/member's/index.php?option=com_ajax&action=reset&token=a1b2";
-                $html = \Advans\Plugin\Ajax\JoomlaAjaxForms\Mail\MailHtml::textToHtml("Open $url.\n\nSay 'https://example.test/x' now");
+                $html = \Advans\Plugin\Ajax\JoomlaAjaxForms\Mail\MailHtml::textToHtml(
+                    "Open $url.\n\nSay 'https://example.test/x' now",
+                    [$url]
+                );
                 $this->test('link keeps an apostrophe inside the URL',
                     preg_match('#<a href="([^"]+)">#', $html, $m) === 1 && html_entity_decode($m[1], ENT_QUOTES, 'UTF-8') === $url);
                 $this->test('trailing sentence dot and quote stay outside the link',
-                    str_contains($html, '</a>.') && str_contains($html, 'href="https://example.test/x"'));
+                    str_contains($html, '</a>.')
+                    && str_contains($html, 'Say &#039;https://example.test/x&#039; now')
+                    && !str_contains($html, '<a href="https://example.test/x"'));
+
+                $registrantName = 'https://example.test/member?name=Eve&next=account';
+                $accountLink    = 'https://example.test/account';
+                $html           = \Advans\Plugin\Ajax\JoomlaAjaxForms\Mail\MailHtml::textToHtml(
+                    "Registrant: $registrantName\n\nOpen $accountLink",
+                    [$accountLink]
+                );
+                $this->test('URL-valued registrant name stays escaped plain text',
+                    substr_count($html, '<a href=') === 1
+                    && str_contains($html, 'Registrant: ' . htmlspecialchars($registrantName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')));
+                $this->test('sender-supplied account URL remains clickable',
+                    str_contains($html, '<a href="' . $accountLink . '">' . $accountLink . '</a>'));
             } finally {
                 @unlink($frameDir . '/frame.php');
                 @rmdir($frameDir);

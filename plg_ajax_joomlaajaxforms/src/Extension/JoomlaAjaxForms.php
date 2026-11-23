@@ -2396,7 +2396,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
             $mailer->addRecipient($user->email, $user->name);
             $mailer->setSubject($subject);
-            $this->setFallbackBody($mailer, $body, $language);
+            $this->setFallbackBody($mailer, $body, $language, [$resetLink]);
             $this->logFailedMail($mailer->Send(), 'Reset email');
         } catch (\Throwable $e) {
             Log::add('Reset email error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
@@ -2454,7 +2454,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
             $mailer->addRecipient($user->email, $user->name);
             $mailer->setSubject($subject);
-            $this->setFallbackBody($mailer, $body, $language);
+            $this->setFallbackBody($mailer, $body, $language, [$loginLink]);
             $this->logFailedMail($mailer->Send(), 'Remind email');
         } catch (\Throwable $e) {
             Log::add('Remind email error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
@@ -2522,7 +2522,7 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
             $mailer = Factory::getContainer()->get(MailerFactoryInterface::class)->createMailer();
             $mailer->addRecipient($user->email, $user->name);
             $mailer->setSubject($subject);
-            $this->setFallbackBody($mailer, $body, $language);
+            $this->setFallbackBody($mailer, $body, $language, [$activationLink]);
             $this->logFailedMail($mailer->Send(), 'Activation email');
         } catch (\Throwable $e) {
             Log::add('Activation email error: ' . $e->getMessage(), Log::ERROR, 'plg_ajax_joomlaajaxforms');
@@ -2605,10 +2605,17 @@ class JoomlaAjaxForms extends CMSPlugin implements SubscriberInterface
      * Body of a plain-text fallback mail in the site's mail style: the text as composed, or HTML in
      * the layout of com_mails with that text as alternative part. A failing layout leaves the text mail.
      */
-    protected function setFallbackBody(object $mailer, string $plain, string $languageTag): void
+    protected function setFallbackBody(object $mailer, string $plain, string $languageTag, array $linkUrls = []): void
     {
         try {
-            MailHtml::apply($mailer, $plain, $languageTag, (string) $this->getApplication()->get('sitename'), $this->mailStyleConfig());
+            MailHtml::apply(
+                $mailer,
+                $plain,
+                $languageTag,
+                (string) $this->getApplication()->get('sitename'),
+                $this->mailStyleConfig(),
+                $linkUrls
+            );
         } catch (\Throwable $e) {
             Log::add('Fallback mail layout failed, sending plain text: ' . $e->getMessage(), Log::WARNING, 'plg_ajax_joomlaajaxforms');
             $mailer->isHtml(false);
