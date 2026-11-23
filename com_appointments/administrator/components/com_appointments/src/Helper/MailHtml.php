@@ -91,20 +91,15 @@ final class MailHtml
             }
 
             $extra = ['siteName' => $siteName, 'lang' => substr($language, 0, 2)];
-            $logo  = (string) ($config['mail_logofile'] ?? '');
+            $logo  = '';
 
-            if ($logo !== '' && $mailer !== null && method_exists($mailer, 'addAttachment')) {
-                try {
-                    // Decode once, then check and attach the same filesystem path (core checks the decoded
-                    // name but attaches the encoded one, so «site%20logo.png» would be lost).
-                    $path = Path::check(JPATH_ROOT . '/' . rawurldecode(HTMLHelper::_('cleanImageURL', $logo)->url));
+            // The logo is only resolved here: it is attached after the layout has passed validation, so a
+            // failing or unusable layout leaves the mailer's attachments untouched.
+            if ($mailer !== null && method_exists($mailer, 'addAttachment')) {
+                $logo = self::logoPath((string) ($config['mail_logofile'] ?? ''));
 
-                    if (is_file($path)) {
-                        $mailer->addAttachment($path, 'site-logo', 'base64', mime_content_type($path), 'inline');
-                        $extra['logo'] = 'site-logo';
-                    }
-                } catch (\Throwable $e) {
-                    // No logo is better than no mail.
+                if ($logo !== '') {
+                    $extra['logo'] = 'site-logo';
                 }
             }
 
@@ -148,11 +143,60 @@ final class MailHtml
             }
 
             if (\is_string($rendered) && trim($rendered) !== '' && substr_count($rendered, $marker) === 1) {
+                if ($logo !== '') {
+                    self::attachLogo($mailer, $logo);
+                }
+
                 return self::assemble($rendered, $marker, $html, $base, self::requestRoot());
             }
         }
 
         return $html;
+    }
+
+    /**
+     * Filesystem path of the configured logo, or '' without a usable file.
+     */
+    private static function logoPath(string $logo): string
+    {
+        if ($logo === '') {
+            return '';
+        }
+
+        try {
+            // Decode once, then check and attach the same filesystem path (core checks the decoded
+            // name but attaches the encoded one, so «site%20logo.png» would be lost).
+            $path = Path::check(JPATH_ROOT . '/' . rawurldecode(HTMLHelper::_('cleanImageURL', $logo)->url));
+
+            return is_file($path) ? $path : '';
+        } catch (\Throwable $e) {
+            // No logo is better than no mail.
+            return '';
+        }
+    }
+
+    /**
+     * Attach the logo inline as «site-logo», once per mailer: a second render on the same mailer
+     * must not add it again.
+     *
+     * @param   object  $mailer  Mailer of the message.
+     * @param   string  $path    Existing logo file.
+     */
+    public static function attachLogo(object $mailer, string $path): void
+    {
+        try {
+            if (method_exists($mailer, 'getAttachments')) {
+                foreach ((array) $mailer->getAttachments() as $attachment) {
+                    if (($attachment[2] ?? null) === 'site-logo' || ($attachment[7] ?? null) === 'site-logo') {
+                        return;
+                    }
+                }
+            }
+
+            $mailer->addAttachment($path, 'site-logo', 'base64', (string) mime_content_type($path), 'inline');
+        } catch (\Throwable $e) {
+            // No logo is better than no mail.
+        }
     }
 
     /**

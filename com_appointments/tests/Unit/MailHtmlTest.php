@@ -179,4 +179,30 @@ final class MailHtmlTest extends TestCase
         $this->assertStringNotContainsString('<script>', $html);
         $this->assertStringNotContainsString('"onmouseover', $html);
     }
-}
+
+    public function testLogoIsAttachedOncePerMailer(): void
+    {
+        $logo   = tempnam(sys_get_temp_dir(), 'logo');
+        $mailer = new class {
+            public array $attachments = [];
+
+            public function addAttachment(string $path, string $name): void
+            {
+                $this->attachments[] = [$path, '', $name];
+            }
+
+            public function getAttachments(): array
+            {
+                return $this->attachments;
+            }
+        };
+        $mailer->addAttachment('/other/file.pdf', 'invoice.pdf');
+
+        MailHtml::attachLogo($mailer, $logo);
+        MailHtml::attachLogo($mailer, $logo);
+        unlink($logo);
+
+        $this->assertCount(2, $mailer->attachments);
+        $this->assertSame('invoice.pdf', $mailer->attachments[0][2]);
+        $this->assertSame('site-logo', $mailer->attachments[1][2]);
+    }}
