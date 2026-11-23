@@ -25,29 +25,45 @@ class UpdateTest
 
     /**
      * The bundled extensions: their archive inside the package, the standalone
-     * update server their own repository manifest declares and the
-     * #__extensions filter that identifies them.
+     * update server their own repository manifest declares, the #__extensions
+     * filter that identifies them and the identity of pending update rows.
      */
     private const CHILDREN = [
         'component' => [
             'archive' => 'packages/com_dmarcreports.zip',
             'url'     => 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/com_dmarcreports/updates/update.xml',
             'where'   => "type = 'component' AND element = 'com_dmarcreports'",
+            'element'  => 'com_dmarcreports',
+            'type'     => 'component',
+            'folder'   => '',
+            'clientId' => 1,
         ],
         'module' => [
             'archive' => 'packages/mod_dmarcreports.zip',
             'url'     => 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/mod_dmarcreports/updates/update.xml',
             'where'   => "type = 'module' AND element = 'mod_dmarcreports'",
+            'element'  => 'mod_dmarcreports',
+            'type'     => 'module',
+            'folder'   => '',
+            'clientId' => 1,
         ],
         'task plugin' => [
             'archive' => 'packages/plg_task_dmarcreports.zip',
             'url'     => 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_task_dmarcreports/updates/update.xml',
             'where'   => "type = 'plugin' AND folder = 'task' AND element = 'dmarcreports'",
+            'element'  => 'dmarcreports',
+            'type'     => 'plugin',
+            'folder'   => 'task',
+            'clientId' => 0,
         ],
         'system plugin' => [
             'archive' => 'packages/plg_system_dmarcmtasts.zip',
             'url'     => 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_system_dmarcmtasts/updates/update.xml',
             'where'   => "type = 'plugin' AND folder = 'system' AND element = 'dmarcmtasts'",
+            'element'  => 'dmarcmtasts',
+            'type'     => 'plugin',
+            'folder'   => 'system',
+            'clientId' => 0,
         ],
     ];
 
@@ -113,6 +129,57 @@ class UpdateTest
             return $sharedLinkAdded && $this->siteLinkCount($taskSiteId, $foreignExtensionId) === 1;
         });
 
+        $pendingUpdates = [];
+
+        foreach (self::CHILDREN as $label => $child) {
+            $extensionId = $this->extensionId($child['where']);
+            $siteId      = $this->siteId($child['url']);
+            $name        = 'pkg-update-test-' . str_replace(' ', '-', strtolower($label));
+            $seeded = false;
+            $this->test("Pending update seeded for $label", function () use (
+                &$seeded,
+                $name,
+                $siteId,
+                $extensionId,
+                $child
+            ) {
+                $seeded = $extensionId > 0 && $siteId > 0 && $this->seedPendingUpdate(
+                    $name,
+                    $siteId,
+                    $extensionId,
+                    $child['element'],
+                    $child['type'],
+                    $child['folder'],
+                    $child['clientId']
+                );
+
+                return $seeded;
+            });
+            $pendingUpdates[] = ['name' => $name, 'extensionId' => $extensionId, 'unrelated' => false];
+        }
+
+        $foreignUpdateName = 'pkg-update-test-unrelated';
+        $foreignSeeded = false;
+        $this->test('Pending update seeded for unrelated extension', function () use (
+            &$foreignSeeded,
+            $foreignUpdateName,
+            $taskSiteId,
+            $foreignExtensionId
+        ) {
+            $foreignSeeded = $taskSiteId > 0 && $foreignExtensionId > 0 && $this->seedPendingUpdate(
+                $foreignUpdateName,
+                $taskSiteId,
+                $foreignExtensionId,
+                'com_config',
+                'component',
+                '',
+                1
+            );
+
+            return $foreignSeeded;
+        });
+        $pendingUpdates[] = ['name' => $foreignUpdateName, 'extensionId' => $foreignExtensionId, 'unrelated' => true];
+
         // Make the first channel-switch attempt fail after removing child links.
         // The installer must keep going, disclose the incomplete switch, and
         // roll back so a later package update can retry the cleanup.
@@ -175,6 +242,15 @@ class UpdateTest
                     && $this->siteCount($failureChild['url']) === 1
                     && $this->siteId($failureChild['url']) === $failureSiteId;
             });
+            $this->test('Failed cleanup restores pending updates for retry', function () use ($pendingUpdates) {
+                foreach ($pendingUpdates as $update) {
+                    if ($this->pendingUpdateCount($update['name'], $update['extensionId']) !== 1) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
         }
 
         // A site installed before the manifest rename still has com_dmarcreports.xml,
@@ -193,6 +269,21 @@ class UpdateTest
             }
             return $exitCode === 0;
         });
+
+        $this->test(
+            'Successful retry removes child updates and preserves the unrelated update',
+            function () use ($pendingUpdates) {
+                foreach ($pendingUpdates as $update) {
+                    $expected = $update['unrelated'] ? 1 : 0;
+
+                    if ($this->pendingUpdateCount($update['name'], $update['extensionId']) !== $expected) {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+        );
 
         $this->test('Component tables still present after update', function () {
             foreach (['dmarc_domains', 'dmarc_sources', 'dmarc_reports', 'dmarc_tlsrpt_reports'] as $table) {
@@ -454,6 +545,40 @@ class UpdateTest
         $result = $this->db->query(
             "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}update_sites_extensions"
             . " WHERE update_site_id = $siteId AND extension_id = $extensionId"
+        );
+        $row = $result ? $result->fetch_assoc() : null;
+
+        return $row ? (int) $row['cnt'] : -1;
+    }
+
+    private function seedPendingUpdate(
+        string $name,
+        int $siteId,
+        int $extensionId,
+        string $element,
+        string $type,
+        string $folder,
+        int $clientId
+    ): bool {
+        $name       = $this->db->real_escape_string($name);
+        $element    = $this->db->real_escape_string($element);
+        $type       = $this->db->real_escape_string($type);
+        $folder     = $this->db->real_escape_string($folder);
+        $data       = $this->db->real_escape_string('{}');
+        $detailsUrl = $this->db->real_escape_string('https://example.test/update.xml');
+        $query = "INSERT INTO {$this->dbPrefix}updates"
+            . ' (update_site_id, extension_id, name, description, element, type, folder, client_id, version, data, detailsurl, infourl, extra_query)'
+            . " VALUES ($siteId, $extensionId, '$name', '', '$element', '$type', '$folder', $clientId, '99.0.0', '$data', '$detailsUrl', '', '')";
+
+        return $this->db->query($query) === true && $this->db->affected_rows === 1;
+    }
+
+    private function pendingUpdateCount(string $name, int $extensionId): int
+    {
+        $name = $this->db->real_escape_string($name);
+        $result = $this->db->query(
+            "SELECT COUNT(*) AS cnt FROM {$this->dbPrefix}updates"
+            . " WHERE extension_id = $extensionId AND name = '$name'"
         );
         $row = $result ? $result->fetch_assoc() : null;
 
