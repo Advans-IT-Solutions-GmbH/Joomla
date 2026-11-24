@@ -11,7 +11,7 @@
     <creationDate>2026-11</creationDate>
     <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
     <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
-    <version>1.0.0</version>
+    <version>1.7.0</version>
     <description>MOD_APPOINTMENTS_XML_DESCRIPTION</description>
     <namespace path="src">Advans\Module\Appointments</namespace>
 
