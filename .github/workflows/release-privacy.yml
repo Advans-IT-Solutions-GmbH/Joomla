@@ -229,7 +229,8 @@ jobs:
           TITLE="release: privacy v${VERSION}"
           git fetch origin main 2>/dev/null || true
           git switch -C "$BRANCH" origin/main
-          git add j2commerce/pkg_privacy_j2commerce/ j2commerce/plg_privacy_j2commerce/
+          git add j2commerce/pkg_privacy_j2commerce/
+          git add j2commerce/plg_privacy_j2commerce/
           if git diff --staged --quiet; then
             echo "::notice::No version file changes detected; no release PR was opened."
             exit 0

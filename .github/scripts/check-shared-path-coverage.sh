@@ -61,9 +61,14 @@ pattern_matches() {
             [[ "$file" == "$prefix/"* ]]
             return
             ;;
-        *'*'*|*'?'*|*'['*)
+        *'**'*|*'?'*|*'['*)
             echo "::error::Unsupported path pattern: ${pattern}" >&2
             exit 2
+            ;;
+        *'*'*)
+            # One path segment per '*' (for example */build.sh): same depth, then a glob match.
+            [[ "${file//[^\/]/}" == "${pattern//[^\/]/}" && "$file" == $pattern ]]
+            return
             ;;
         *)
             [[ "$file" == "$pattern" ]]

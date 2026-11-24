@@ -215,7 +215,8 @@ jobs:
           TITLE="release: appointments v${VERSION}"
           git fetch origin main 2>/dev/null || true
           git switch -C "$BRANCH" origin/main
-          git add pkg_appointments/ com_appointments/
+          git add pkg_appointments/
+          git add com_appointments/
           if git diff --staged --quiet; then
             echo "::notice::No version file changes detected; no release PR was opened."
             exit 0

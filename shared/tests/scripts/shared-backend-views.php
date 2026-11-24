@@ -245,14 +245,17 @@ function bv_discover_views(string $option): array
 
 echo "=== Backend Views (authenticated HTTP) ===\n\n";
 
-$manifest = sh_read_package_manifest($package);
+// A package (pkg_appointments) is installed as it is; its views, manifest and language files are
+// those of the component it bundles.
+$component = sh_package_component($package);
+$manifest = sh_read_package_manifest($component ?? $package);
 
 if ($manifest === null) {
     bv_fail("cannot read the extension manifest from $package");
     exit(1);
 }
 
-if ($manifest['type'] !== 'component') {
+if ($component === null || $manifest['type'] !== 'component') {
     bv_fail("this suite renders backend views of components; {$manifest['element']} is a {$manifest['type']}");
     exit(1);
 }
@@ -273,7 +276,7 @@ $hasHelp = is_file(JOOMLA_ROOT . '/administrator/components/' . $option . '/tmpl
 echo $hasHelp ? "Help view: present, every page must link to it\n" : "Help view: none\n";
 echo 'Views: ' . implode(', ', array_map(static fn (string $v): string => $v === '' ? '(default)' : $v, $views)) . "\n\n";
 
-$englishStrings = sh_read_package_language($package, 'en-GB');
+$englishStrings = sh_read_package_language($component, 'en-GB');
 
 if (!$englishStrings) {
     bv_fail('the package has no en-GB language file, so a rendered page cannot be recognised');
@@ -292,7 +295,7 @@ foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
             continue;
         }
 
-        $strings = sh_read_package_language($package, $tag);
+        $strings = sh_read_package_language($component, $tag);
 
         if (!$strings) {
             bv_fail("$tag: package has no language strings");

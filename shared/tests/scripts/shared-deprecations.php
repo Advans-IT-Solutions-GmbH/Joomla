@@ -94,7 +94,23 @@ foreach ($canaryFailures as $line) {
     echo "FAIL canary: $line\n";
 }
 
-$isOwn     = dep_own_matcher($manifest, $package);
+// A package's own code is the code of the extensions it bundles (packages/*.zip).
+$children  = sh_package_children($package);
+$matchers  = [dep_own_matcher($manifest, $package)];
+
+foreach ($children as $childArchive => $childManifest) {
+    $matchers[] = dep_own_matcher($childManifest, $childArchive);
+}
+
+$isOwn = static function (array $frame) use ($matchers): bool {
+    foreach ($matchers as $matcher) {
+        if ($matcher($frame)) {
+            return true;
+        }
+    }
+
+    return false;
+};
 $isLibrary = static fn (string $file): bool => str_starts_with($file, JOOMLA_ROOT . '/libraries/') || $file === TRACER_TARGET;
 
 // 1. Compile-time deprecations of every PHP file in the package.
@@ -104,6 +120,15 @@ $zip = new ZipArchive();
 $zip->open($package);
 $zip->extractTo($lintDir);
 $zip->close();
+
+foreach (array_keys($children) as $childArchive) {
+    $childZip = new ZipArchive();
+
+    if ($childZip->open($childArchive) === true) {
+        $childZip->extractTo($lintDir . '/packages-extracted/' . basename($childArchive, '.zip'));
+        $childZip->close();
+    }
+}
 
 $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($lintDir, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
 $linted   = 0;

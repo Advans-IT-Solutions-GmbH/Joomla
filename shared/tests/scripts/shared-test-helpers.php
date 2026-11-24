@@ -95,6 +95,73 @@ function sh_read_package_manifest(string $package): ?array
 }
 
 /**
+ * The extensions a package bundles (packages/*.zip), each written to a file in the system temporary
+ * directory: archive path => its manifest (sh_read_package_manifest()). Empty when $package is not
+ * a package, so a suite can treat a package and a single extension the same way.
+ *
+ * @return array<string, array>
+ */
+function sh_package_children(string $package): array
+{
+    $manifest = sh_read_package_manifest($package);
+
+    if (($manifest['type'] ?? '') !== 'package') {
+        return [];
+    }
+
+    $zip = new ZipArchive();
+
+    if ($zip->open($package) !== true) {
+        return [];
+    }
+
+    $children = [];
+    $packageHash = (string) hash_file('sha256', $package);
+
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $name = (string) $zip->getNameIndex($i);
+
+        if (!preg_match('#^packages/([^/]+\.zip)$#', $name, $match)) {
+            continue;
+        }
+
+        $archive = sys_get_temp_dir() . '/sh-child-' . substr(hash('sha256', $packageHash . "\0" . $name), 0, 16) . '-' . $match[1];
+
+        if (!is_file($archive)) {
+            file_put_contents($archive, (string) $zip->getFromIndex($i));
+        }
+
+        $child = sh_read_package_manifest($archive);
+
+        if ($child !== null) {
+            $children[$archive] = $child;
+        }
+    }
+
+    $zip->close();
+
+    return $children;
+}
+
+/**
+ * The archive of the component in $package: the package itself for a component ZIP, the bundled
+ * component's archive for a package, null when there is none.
+ */
+function sh_package_component(string $package): ?string
+{
+    if ((sh_read_package_manifest($package)['type'] ?? '') === 'component') {
+        return $package;
+    }
+
+    foreach (sh_package_children($package) as $archive => $child) {
+        if ($child['type'] === 'component') {
+            return $archive;
+        }
+    }
+
+    return null;
+}
+/**
  * The next version above $version for test packages: the last numeric part is
  * raised by one, a pre-release suffix is dropped (1.2.3 -> 1.2.4,
  * 1.2.3-rc1 -> 1.2.4).
