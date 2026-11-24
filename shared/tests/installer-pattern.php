@@ -192,7 +192,7 @@ namespace {
                 if ($definition['type'] === 'package') {
                     $manifestTarget = str_replace('\\', '/', dirname($installed) . '/' . basename($manifestFile));
                     $assert(isset($files[$manifestTarget]), 'Package manifest is not guarded in Joomla manifest storage.');
-                    $languageTarget = str_replace('\\', '/', JPATH_ROOT . '/language/en-GB/pkg_dmarcreports.ini');
+                    $languageTarget = str_replace('\\', '/', JPATH_ROOT . '/language/en-GB/' . strtolower((string) $manifest->name) . '.ini');
                     $assert(isset($files[$languageTarget]), 'Package site-client language destination is not guarded.');
                     continue;
                 }

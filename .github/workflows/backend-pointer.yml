@@ -7,6 +7,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'pkg_appointments/**'
       - 'com_appointments/**'
       - 'mod_dmarcreports/**'
       - 'shared/build/**'
@@ -15,6 +16,7 @@ on:
   pull_request:
     branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
+      - 'pkg_appointments/**'
       - 'com_appointments/**'
       - 'mod_dmarcreports/**'
       - 'shared/build/**'
@@ -40,7 +42,7 @@ jobs:
           persist-credentials: false
       - name: Build current-head packages
         run: |
-          (cd com_appointments && bash build.sh && cp com_appointments_*.zip tests/extension.zip)
+          (cd pkg_appointments && bash build.sh && cp pkg_appointments_*.zip ../com_appointments/tests/extension.zip)
           (cd mod_dmarcreports && bash build.sh && cp mod_dmarcreports_*.zip tests/extension.zip)
       - name: Install pinned browser test dependencies
         working-directory: shared/tests/browser

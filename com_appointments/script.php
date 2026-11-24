@@ -12,24 +12,12 @@ defined('_JEXEC') or die;
 require_once is_file(__DIR__ . '/advansinstaller/load.php')
     ? __DIR__ . '/advansinstaller/load.php'
     : dirname(__DIR__) . '/shared/installer/load.php';
-if (!class_exists(\Advans\Installer\AppointmentsConflict\V2\Guard::class, false)) {
-    require_once is_file(__DIR__ . '/advansinstaller/AppointmentsConflict.php')
-        ? __DIR__ . '/advansinstaller/AppointmentsConflict.php'
-        : dirname(__DIR__) . '/shared/installer/AppointmentsConflict.php';
-}
 
 use Joomla\CMS\Factory;
-use Advans\Installer\AppointmentsConflict\V2\Guard as AppointmentsConflictGuard;
-use Advans\Installer\V3\Destinations;
 use Advans\Installer\V3\InstallerScript;
-use Advans\Installer\V3\Knowledge;
 use Advans\Installer\V3\SystemCheck;
-use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
-use Joomla\CMS\Log\Log;
 use Joomla\CMS\Table\Asset;
-use Joomla\CMS\User\CurrentUserInterface;
-use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
 use Joomla\Filesystem\File;
@@ -37,6 +25,13 @@ use Joomla\Filesystem\Folder;
 use Advans\Component\Appointments\Administrator\Service\Team\EpochAnchor;
 use Advans\Component\Appointments\Administrator\Service\Team\TeamServices;
 
+/**
+ * Installer script of the component. The component is installed, updated and removed through the
+ * package pkg_appointments, which also installs the dashboard module and the plugins, reviews the
+ * files of all of them (Appointments Recovery), creates the scheduled tasks and owns the update
+ * channel. This script does what only the component itself can do: its requirements, its tables,
+ * its data migrations and its permission tree.
+ */
 class Com_appointmentsInstallerScript extends InstallerScript
 {
     protected $minimumJoomla = '5.4';
@@ -54,29 +49,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
      * @var list<array{0: string, 1: string, 2: int, 3: list<string>}>
      */
     private array $keptTemplates = [];
-
-    /**
-     * The plugins this package bundles: [group, element, enabled when first installed].
-     * The team calendar plugins (CalDAV endpoint, key handling at sign-in) stay
-     * disabled until an operator enables them: nothing is reachable by default.
-     * The attribution plugin only records the origin of a visit in the session
-     * (component option «Origin of bookings»).
-     */
-    private const BUNDLED_PLUGINS = [
-        ['task', 'appointments', true],
-        ['privacy', 'appointments', true],
-        ['content', 'appointmentsprivacy', true],
-        ['system', 'appointmentsdav', false],
-        ['system', 'appointmentsattribution', true],
-        ['user', 'appointments', false],
-    ];
-
-    /**
-     * The administrator modules this package bundles below modules/<element>/. The dashboard
-     * module is published at the position cpanel when it is installed the first time; an update
-     * leaves its instances as the operator set them.
-     */
-    private const BUNDLED_MODULES = ['mod_appointments'];
 
     /** The names of the mail templates, as in the template list, for the update message (reportKeptTemplates()). */
     private const PURPOSE_LABELS = [
@@ -176,50 +148,12 @@ class Com_appointmentsInstallerScript extends InstallerScript
     /**
      * Hard requirement checks before the files are copied.
      *
-     * @param   string  $type    install|update|discover_install
+     * @param   string  $type    install|update|discover_install|uninstall
      * @param   mixed   $parent  The installer parent.
      *
      * @return  bool
      */
-    private $conflictLock = null;
-    private array $conflictReview = [];
-    private array $conflictFiles = [];
-    private array $bundledSnapshots = [];
-    private const RECOVERY_OPTION = 'com_appointmentsrecovery';
-
     public function preflight($type, $parent)
-    {
-        $accepted = false;
-        try {
-            $accepted = $this->preflightAppointments($type, $parent);
-
-            return $accepted;
-        } finally {
-            if (!$accepted) {
-                $this->releaseConflictLock();
-            }
-        }
-    }
-
-    public function postflight($type, $parent)
-    {
-        try {
-            $result = parent::postflight($type, $parent);
-            return $result;
-        } finally {
-            $this->releaseConflictLock();
-        }
-    }
-
-    private function releaseConflictLock(): void
-    {
-        if (is_resource($this->conflictLock)) {
-            fclose($this->conflictLock);
-            $this->conflictLock = null;
-        }
-    }
-
-    private function preflightAppointments($type, $parent): bool
     {
         if ($type === 'uninstall') {
             return $this->prepareUninstall();
@@ -230,28 +164,16 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $language->load('com_appointments', __DIR__ . '/administrator', null, true);
         SystemCheck::loadLanguage();
 
-        if (in_array($type, ['install', 'update'], true)) {
-            try {
-                $this->conflictLock = AppointmentsConflictGuard::lock($this->conflictState());
-                $this->conflictReview = [];
-            } catch (\RuntimeException $error) {
-                $this->reportConflictError($error);
+        // The component alone would leave its module and plugins, its file review and its update
+        // channel behind: it is installed and updated only by the package, which also takes over an
+        // installation of the standalone component of earlier versions.
+        if (in_array($type, ['install', 'update'], true) && !$this->installedByPackage()) {
+            Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_PACKAGE_REQUIRED'), 'error');
 
-                return false;
-            }
-        }
-
-        if (in_array($type, ['install', 'update'], true) && !$this->checkUnknownFiles($type, $parent)) {
             return false;
         }
 
         if (!parent::preflight($type, $parent)) {
-            return false;
-        }
-
-        $firstReview = $this->conflictReview['id'] ?? null;
-        if (in_array($type, ['install', 'update'], true) && (!$this->checkUnknownFiles($type, $parent)
-            || $firstReview !== ($this->conflictReview['id'] ?? null))) {
             return false;
         }
 
@@ -321,126 +243,24 @@ class Com_appointmentsInstallerScript extends InstallerScript
         // A conversion that failed stays marked as pending and is repeated by the next installation.
         $this->hasLegacyFeedTokens = $type !== 'uninstall' && ($this->feedTokenColumnsAreLegacy() || $this->feedTokenConversionPending());
 
-        if (in_array($type, ['install', 'update'], true)) {
-            if (!$this->checkUnknownFiles($type, $parent)
-                || $firstReview !== ($this->conflictReview['id'] ?? null)) {
-                return false;
-            }
-            if ($firstReview !== null) {
-                try {
-                    AppointmentsConflictGuard::journal($this->conflictState(), $this->conflictReview);
-                } catch (\RuntimeException | \JsonException $error) {
-                    $this->reportConflictError($error);
-
-                    return false;
-                }
-            }
-            try {
-                foreach ($parent->getManifest()->plugins->plugin as $entry) {
-                    $folder = (string) $entry['folder'];
-                    $plugin = AppointmentsConflictGuard::bundledFiles($parent->getParent()->getPath('source') . '/' . $folder, $this->conflictFiles);
-                    $this->bundledSnapshots[$folder] = $this->snapshotBundled($plugin);
-                }
-                foreach (self::BUNDLED_MODULES as $element) {
-                    $folder = 'modules/' . $element;
-                    $files = AppointmentsConflictGuard::bundledFiles($parent->getParent()->getPath('source') . '/' . $folder, $this->conflictFiles);
-                    $this->bundledSnapshots[$folder] = $this->snapshotBundled($files);
-                }
-            } catch (\RuntimeException $error) {
-                $this->reportConflictError($error);
-
-                return false;
-            }
-        }
-
         return true;
     }
 
-    private function conflictState(): string
+    /**
+     * Whether the package pkg_appointments is installing this component right now. Its script
+     * reviewed the files of every bundled extension and handed its decisions to this installation.
+     */
+    private function installedByPackage(): bool
     {
-        return JPATH_ADMINISTRATOR . '/advans-installer-state/com_appointments';
+        return class_exists('Pkg_AppointmentsInstallerScript', false)
+            && is_callable(['Pkg_AppointmentsInstallerScript', 'installing'])
+            && \Pkg_AppointmentsInstallerScript::installing();
     }
 
-    private function reportConflictError(\Throwable $error): void
-    {
-        Log::add($error->getMessage(), Log::ERROR, 'advans-installer');
-        Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_ERROR'), 'error');
-    }
-
-    protected function reviewedOwnedFiles(): array
-    {
-        return array_column($this->conflictReview['rows'] ?? [], null, 'destination');
-    }
-
-    private function checkUnknownFiles(string $type, object $parent): bool
-    {
-        $source = (string) $parent->getParent()->getPath('source');
-        $manifest = $parent->getManifest();
-        $state = $this->conflictState();
-        $this->conflictReview = [];
-
-        try {
-            $manifestFile = (string) $parent->getParent()->getPath('manifest');
-            $files = Destinations::merge(
-                Destinations::files($manifest, $source, $manifestFile),
-                $this->guardedFiles($type, $parent)
-            );
-            $this->conflictFiles = $files;
-            $owned = Destinations::owned($manifest, $source);
-            foreach (self::BUNDLED_MODULES as $element) {
-                $owned = Destinations::mergeOwned($owned, [
-                    'prefixes' => [JPATH_ADMINISTRATOR . '/modules/' . $element],
-                    'files' => [],
-                    'languages' => [$element],
-                ]);
-            }
-            $conflicts = AppointmentsConflictGuard::inspect(
-                $files, $owned,
-                Knowledge::load($source . '/' . Knowledge::CATALOG, $state . '/' . Knowledge::RECORD)
-            );
-            $review = $conflicts === [] ? [] : AppointmentsConflictGuard::review(
-                $state, (string) $manifest->version, $conflicts, $files, (string) hash_file('sha256', $manifestFile)
-            );
-            $complete = $review !== [] && method_exists(InstallerScript::class, 'reviewedOwnedFiles');
-            foreach ($review['rows'] ?? [] as $id => $row) {
-                $complete = $complete && AppointmentsConflictGuard::validChoice($row, $review['choices'][$id] ?? null);
-            }
-            if ($complete) {
-                $this->conflictReview = $review;
-
-                return true;
-            }
-        } catch (\RuntimeException | \JsonException $error) {
-            $this->reportConflictError($error);
-
-            return false;
-        }
-
-        if ($conflicts === []) {
-            return true;
-        }
-
-        $escape = static fn(string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
-        $items = '';
-
-        foreach ($conflicts as $conflict) {
-            $items .= '<li><code>' . $escape(Knowledge::relative($conflict['destination'])) . '</code><br>'
-                . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_EXISTING') . ': <code>' . $escape($conflict['existing'])
-                . '</code><br>' . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_INCOMING') . ': <code>'
-                . $escape($conflict['incoming']) . '</code></li>';
-        }
-
-        Factory::getApplication()->enqueueMessage(
-            '<p><strong>' . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_TITLE') . '</strong></p><p>'
-            . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_EXPLANATION') . '</p><p>'
-            . Text::_('ADVANS_GUARD_BACKUP_RECOMMENDATION_BODY') . '</p><p><a href="index.php?option='
-            . self::RECOVERY_OPTION . '">' . Text::_('COM_APPOINTMENTS_INSTALL_CONFLICT_REVIEW') . '</a></p><ul>' . $items . '</ul>',
-            'error'
-        );
-
-        return false;
-    }
-
+    /**
+     * Destinations the component writes or removes outside its manifest's file lists. The package
+     * names the same destinations in its own review, so they arrive here already decided.
+     */
     protected function guardedFiles(string $type, object $parent): array
     {
         $root = JPATH_ADMINISTRATOR . '/components/com_appointments';
@@ -453,38 +273,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 = $parent->getParent()->getPath('source') . '/administrator/language/' . $tag . '/com_appointments.ini';
         }
 
-        $source = $parent->getParent()->getPath('source');
-        $files = Destinations::merge($files, $this->bundledModuleFiles($source, self::BUNDLED_MODULES));
-
         if ($type === 'install') {
             foreach (glob($root . '/data/epochs.php*') ?: [] as $file) {
                 $files[$file] = $this->removalCandidate($parent, 'Remove obsolete calendar epoch anchor on fresh installation');
-            }
-        }
-
-        return $files;
-    }
-
-    private function bundledModuleFiles(string $source, array $elements): array
-    {
-        if (!is_callable([Destinations::class, 'removedDeclarations'])) {
-            throw new \RuntimeException('The loaded installer runtime cannot inspect obsolete module declarations. Retry Appointments separately.');
-        }
-        require_once $source . '/administrator/components/com_appointments/src/Helper/BundledModuleGuard.php';
-        $files = \Advans\Component\Appointments\Administrator\Helper\BundledModuleGuard::destinations(
-            $source, JPATH_ADMINISTRATOR, $elements
-        );
-        foreach ($elements as $element) {
-            $moduleSource = $source . '/modules/' . $element;
-            $manifest = simplexml_load_file($moduleSource . '/' . $element . '.xml');
-            if (!$manifest instanceof \SimpleXMLElement || (string) $manifest['type'] !== 'module'
-                || (string) $manifest['client'] !== 'administrator' || strtolower((string) $manifest->name) !== $element) {
-                throw new \RuntimeException('The bundled Appointments module manifest is invalid.');
-            }
-            $root = JPATH_ADMINISTRATOR . '/modules/' . $element;
-            // Only module adapters with oldFiles pass prior declarations to Joomla's deletion phase.
-            if (property_exists(\Joomla\CMS\Installer\Adapter\ModuleAdapter::class, 'oldFiles')) {
-                Destinations::removedDeclarations($files, $manifest, $moduleSource, $root . '/' . $element . '.xml', $root);
             }
         }
 
@@ -509,7 +300,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
             $this->migrateLegacyEpochAnchor();
         }
 
-        $this->ensureUpdateSite();
         // Before the first read of booking rows below (migration of clear rows, templates).
         $this->ensureAttribution();
         $db = Factory::getContainer()->get(\Joomla\Database\DatabaseInterface::class);
@@ -537,8 +327,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
             . ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4')->execute();
         $this->ensureCopyRestoreTable();
         $this->seedMailTemplates($parent);
-        $this->installBundledPlugins($parent);
-        $this->installBundledModules($parent);
         $this->initialiseLegacyFeedSetting($type);
         $this->encryptExistingBookings($type);
         $this->convertLegacyFeedTokens();
@@ -551,12 +339,9 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $app  = Factory::getApplication();
         $lang = $app->getLanguage();
         $lang->load('com_appointments', JPATH_ADMINISTRATOR);
-        // The required reminder and retention tasks are created by the shared installer right
-        // after this method (ScheduledTasks, catalog key 'tasks'); here only the optional one.
-        $this->ensureCloseTask();
+        // The scheduled tasks of the task plugin are created by the package once the plugin is in place.
         $this->removeLegacyManifest();
         $this->ensureTeamGroups();
-        AppointmentsConflictGuard::verifyInstalled($this->conflictReview, $this->conflictState());
 
         // An update only gets a short confirmation; the first installation shows
         // where to find the component and how to begin.
@@ -711,32 +496,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
         $params = $this->componentParams($db, 'com_appointments') ?? [];
         $deleteData = ($params['uninstall_data_action'] ?? '') === 'delete';
 
-        foreach (self::BUNDLED_PLUGINS as [$group, $element]) {
-            $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
-                ->from($db->quoteName('#__extensions'))
-                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-                ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
-                ->where($db->quoteName('element') . ' = ' . $db->quote($element));
-            $id = (int) $db->setQuery($query)->loadResult();
-            if ($id > 0) {
-                foreach (['#__schemas', '#__extensions'] as $table) {
-                    $db->setQuery($this->createDbQuery($db)->delete($db->quoteName($table))
-                        ->where($db->quoteName('extension_id') . ' = ' . $id))->execute();
-                }
-            }
-            $folder = JPATH_PLUGINS . '/' . $group . '/' . $element;
-            if (is_dir($folder) && !Folder::delete($folder)) {
-                throw new \RuntimeException('The bundled appointments plugin could not be removed.');
-            }
-            foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
-                foreach (['ini', 'sys.ini'] as $suffix) {
-                    $file = JPATH_ADMINISTRATOR . '/language/' . $tag . '/plg_' . $group . '_' . $element . '.' . $suffix;
-                    if (is_file($file) && !File::delete($file)) {
-                        throw new \RuntimeException('The bundled appointments plugin language could not be removed.');
-                    }
-                }
-            }
-        }
+        // The module and the plugins are removed by the package. The tasks of the task plugin and
+        // the last visits the dashboard module stored belong to the data of the component.
         $query = $this->createDbQuery($db)
             ->select($db->quoteName('id'))
             ->from($db->quoteName('#__scheduler_tasks'))
@@ -754,7 +515,8 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 throw new \RuntimeException('The scheduled task could not be removed through the Scheduler table.');
             }
         }
-        $this->removeBundledModules($db);
+        $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__user_profiles'))
+            ->where($db->quoteName('profile_key') . ' = ' . $db->quote(self::MODULE_PROFILE_KEY)))->execute();
 
         if ($deleteData) {
             foreach (self::APPOINTMENT_TABLES as $table) {
@@ -963,218 +725,7 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
     }
 
-    private function installBundledPlugins($parent): void
-    {
-        $source = $parent->getParent()->getPath('source');
-        $manifest = $parent->getManifest();
-        $db = Factory::getContainer()->get(DatabaseInterface::class);
-        foreach ($manifest->plugins->plugin as $entry) {
-            $group = (string) $entry['group'];
-            $element = (string) $entry['element'];
-            $folder = (string) $entry['folder'];
-            $bundled = array_values(array_filter(self::BUNDLED_PLUGINS,
-                static fn (array $plugin): bool => $plugin[0] === $group && $plugin[1] === $element));
-            if ($bundled === [] || $folder !== 'plugins/' . $group . '/' . $element
-                || !is_file($source . '/' . $folder . '/' . $element . '.xml')) {
-                throw new \RuntimeException('The bundled appointments plugin package is invalid.');
-            }
-            $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
-                ->from($db->quoteName('#__extensions'))
-                ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-                ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
-                ->where($db->quoteName('element') . ' = ' . $db->quote($element));
-            $existed = (int) $db->setQuery($query)->loadResult() > 0;
-            $installer = new Installer();
-            $installer->setDatabase($db);
-            $this->verifyBundledBeforeInstall($source, $folder, $folder);
-
-            if (!$installer->install($source . '/' . $folder)) {
-                throw new \RuntimeException('The bundled appointments plugin could not be installed.');
-            }
-            if (!$existed && $bundled[0][2]) {
-                $db->setQuery($this->createDbQuery($db)->update($db->quoteName('#__extensions'))
-                    ->set($db->quoteName('enabled') . ' = 1')
-                    ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-                    ->where($db->quoteName('folder') . ' = ' . $db->quote($group))
-                    ->where($db->quoteName('element') . ' = ' . $db->quote($element)))->execute();
-            }
-        }
-    }
-
-    private function snapshotBundled(array $files): array
-    {
-        clearstatcache();
-        $comparison = \Advans\Installer\V3\FileGuard::compare($files);
-        foreach ($comparison['incoming'] as $path => $hash) {
-            $comparison['existing'][$path] = file_exists($path) ? ($comparison['differing'][$path]['existing'] ?? $hash) : null;
-        }
-        foreach (array_keys($comparison) as $key) {
-            ksort($comparison[$key]);
-        }
-
-        return $comparison;
-    }
-
-    private function verifyBundledBeforeInstall(string $source, string $folder, string $destination): void
-    {
-        if (str_starts_with($folder, 'modules/')) {
-            $files = $this->bundledModuleFiles($source, [basename($folder)]);
-        } else {
-            $manifestFile = $source . '/' . $folder . '/' . basename($folder) . '.xml';
-            $manifest = simplexml_load_file($manifestFile);
-            if (!$manifest instanceof \SimpleXMLElement || (string) $manifest['type'] !== 'plugin') {
-                throw new \RuntimeException('The bundled Appointments plugin manifest is invalid.');
-            }
-            $files = Destinations::files($manifest, $source . '/' . $folder, $manifestFile);
-        }
-        if (!isset($this->bundledSnapshots[$folder])
-            || $this->snapshotBundled($files) !== $this->bundledSnapshots[$folder]) {
-            throw new \RuntimeException('A bundled Appointments destination or candidate changed before its installation.');
-        }
-        foreach ($this->conflictReview['rows'] ?? [] as $row) {
-            if (str_starts_with(Knowledge::relative($row['destination']), $destination . '/')
-                && AppointmentsConflictGuard::liveHash($row) !== $row['existing']) {
-                throw new \RuntimeException('A bundled Appointments file no longer matches the reviewed bytes.');
-            }
-        }
-    }
-
     /**
-     * Installs (or updates) the bundled administrator modules. A module installed for the first
-     * time is published once at the position cpanel of the administrator dashboard, with a title
-     * in the language of the installing administrator; it shows nothing to users who may not see
-     * the bookings list. An update leaves position, title, state and settings as they are.
-     */
-    private function installBundledModules($parent): void
-    {
-        $source = $parent->getParent()->getPath('source');
-        $db = Factory::getContainer()->get(DatabaseInterface::class);
-
-        foreach (self::BUNDLED_MODULES as $element) {
-            $folder = $source . '/modules/' . $element;
-
-            if (!is_file($folder . '/' . $element . '.xml')) {
-                throw new \RuntimeException('The bundled appointments module package is invalid.');
-            }
-
-            $existed = $this->moduleExtensionId($db, $element) > 0;
-            $installer = new Installer();
-            $installer->setDatabase($db);
-            $this->verifyBundledBeforeInstall($source, 'modules/' . $element, 'administrator/modules/' . $element);
-
-            if (!$installer->install($folder)) {
-                throw new \RuntimeException('The bundled appointments module could not be installed.');
-            }
-
-            if (!$existed) {
-                $this->publishDashboardModule($db, $element);
-            }
-        }
-    }
-
-    private function moduleExtensionId(DatabaseInterface $db, string $element): int
-    {
-        $query = $this->createDbQuery($db)->select($db->quoteName('extension_id'))
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('module'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote($element))
-            ->where($db->quoteName('client_id') . ' = 1');
-
-        return (int) $db->setQuery($query)->loadResult();
-    }
-
-    /**
-     * The instance Joomla's installer created (unpublished, without position), or a new one when
-     * there is none, published at cpanel for every administrator page (#__modules_menu 0).
-     */
-    private function publishDashboardModule(DatabaseInterface $db, string $element): void
-    {
-        $query = $this->createDbQuery($db)->select($db->quoteName('id'))
-            ->from($db->quoteName('#__modules'))
-            ->where($db->quoteName('module') . ' = ' . $db->quote($element))
-            ->where($db->quoteName('client_id') . ' = 1')
-            ->order($db->quoteName('id'));
-        $id = (int) $db->setQuery($query)->loadResult();
-        $title = $this->text('COM_APPOINTMENTS_MODULE_DEFAULT_TITLE', 'Next appointments');
-
-        if ($id < 1) {
-            $db->setQuery($this->createDbQuery($db)->insert($db->quoteName('#__modules'))
-                ->columns($db->quoteName(['title', 'note', 'content', 'ordering', 'position', 'published', 'module', 'access',
-                    'showtitle', 'params', 'client_id', 'language']))
-                ->values(implode(',', [$db->quote($title), $db->quote(''), $db->quote(''), 0, $db->quote('cpanel'), 1,
-                    $db->quote($element), 1, 1, $db->quote('{"count":"5"}'), 1, $db->quote('*')])))->execute();
-            $id = (int) $db->insertid();
-        } else {
-            $db->setQuery($this->createDbQuery($db)->update($db->quoteName('#__modules'))
-                ->set($db->quoteName('title') . ' = ' . $db->quote($title))
-                ->set($db->quoteName('position') . ' = ' . $db->quote('cpanel'))
-                ->set($db->quoteName('published') . ' = 1')
-                ->set($db->quoteName('showtitle') . ' = 1')
-                ->where($db->quoteName('id') . ' = ' . $id))->execute();
-        }
-
-        $assigned = (int) $db->setQuery($this->createDbQuery($db)->select('COUNT(*)')->from($db->quoteName('#__modules_menu'))
-            ->where($db->quoteName('moduleid') . ' = ' . $id))->loadResult();
-
-        if ($assigned === 0) {
-            $db->setQuery($this->createDbQuery($db)->insert($db->quoteName('#__modules_menu'))
-                ->columns($db->quoteName(['moduleid', 'menuid']))->values($id . ', 0'))->execute();
-        }
-    }
-
-    /**
-     * Removes the bundled modules with their instances, their files and language files, and the
-     * last visits the dashboard module stored. Joomla does not remove them with the component.
-     */
-    private function removeBundledModules(DatabaseInterface $db): void
-    {
-        foreach (self::BUNDLED_MODULES as $element) {
-            $instances = $db->setQuery($this->createDbQuery($db)->select($db->quoteName('id'))->from($db->quoteName('#__modules'))
-                ->where($db->quoteName('module') . ' = ' . $db->quote($element)))->loadColumn() ?: [];
-            $instances = array_map('intval', $instances);
-
-            if ($instances !== []) {
-                $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__modules_menu'))
-                    ->whereIn($db->quoteName('moduleid'), $instances))->execute();
-                $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__assets'))
-                    ->whereIn($db->quoteName('name'), array_map(static fn (int $id): string => 'com_modules.module.' . $id, $instances),
-                        ParameterType::STRING))->execute();
-                $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__modules'))
-                    ->whereIn($db->quoteName('id'), $instances))->execute();
-            }
-
-            $id = $this->moduleExtensionId($db, $element);
-
-            if ($id > 0) {
-                foreach (['#__schemas', '#__extensions'] as $table) {
-                    $db->setQuery($this->createDbQuery($db)->delete($db->quoteName($table))
-                        ->where($db->quoteName('extension_id') . ' = ' . $id))->execute();
-                }
-            }
-
-            $folder = JPATH_ADMINISTRATOR . '/modules/' . $element;
-
-            if (is_dir($folder) && !Folder::delete($folder)) {
-                throw new \RuntimeException('The bundled appointments module could not be removed.');
-            }
-
-            foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
-                foreach (['ini', 'sys.ini'] as $suffix) {
-                    $file = JPATH_ADMINISTRATOR . '/language/' . $tag . '/' . $element . '.' . $suffix;
-
-                    if (is_file($file) && !File::delete($file)) {
-                        throw new \RuntimeException('The bundled appointments module language could not be removed.');
-                    }
-                }
-            }
-        }
-
-        $db->setQuery($this->createDbQuery($db)->delete($db->quoteName('#__user_profiles'))
-            ->where($db->quoteName('profile_key') . ' = ' . $db->quote(self::MODULE_PROFILE_KEY)))->execute();
-    }
-
-    /**
-
      * The token feeds are a secret address and are replaced by the team calendars
      * (removed in 2.0.0). A new installation starts with them switched off, an
      * existing installation keeps them on until the operator switches them off.
@@ -1582,66 +1133,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
     }
 
     /**
-     * Creates the optional Close delivery task of the bundled task plugin through the Scheduler's
-     * own task model, switched off by design (it is needed only once the transfer to Close is set
-     * up). It is created only when no task of its routine exists at all, in any state: a task the
-     * operator switched on, off or trashed is never changed or created again.
-     *
-     * The required tasks (reminders while reminders are configured, retention, team retention, and
-     * the internet calendar routines while internet calendars are switched on) are created switched on by the
-     * shared installer after this postflight, see shared/installer/tasks.php. A failure never
-     * fails the installation; it is reported, so the operator can create the task by hand.
-     */
-    private function ensureCloseTask(): void
-    {
-        $app = Factory::getApplication();
-        $db = Factory::getContainer()->get(DatabaseInterface::class);
-        $lang = $app->getLanguage();
-        $lang->load('plg_task_appointments', JPATH_ADMINISTRATOR)
-            || $lang->load('plg_task_appointments', JPATH_PLUGINS . '/task/appointments');
-        $routines = [
-            'plg_task_appointments.close' => ['PLG_TASK_APPOINTMENTS_CLOSE_TITLE', ['rule-type' => 'interval-minutes', 'interval-minutes' => 5]],
-        ];
-
-        foreach ($routines as $type => [$titleKey, $rules]) {
-            try {
-                $query = $this->createDbQuery($db)->select('COUNT(*)')->from($db->quoteName('#__scheduler_tasks'))
-                    ->where($db->quoteName('type') . ' = :type')->bind(':type', $type);
-
-                if ((int) $db->setQuery($query)->loadResult() > 0) {
-                    continue;
-                }
-
-                $model = $app->bootComponent('com_scheduler')->getMVCFactory()
-                    ->createModel('Task', 'Administrator', ['ignore_request' => true]);
-                // From the CLI there is no signed-in user: the task is then created by the guest
-                // user (id 0), set explicitly so the model and its table never have to guess.
-                $identity = $app->getIdentity()
-                    ?? Factory::getContainer()->get(UserFactoryInterface::class)->loadUserById(0);
-                if ($model instanceof CurrentUserInterface) {
-                    $model->setCurrentUser($identity);
-                }
-                $saved = $model && $model->save([
-                    'title' => Text::_($titleKey),
-                    'type' => $type,
-                    'execution_rules' => $rules + ['exec-day' => gmdate('d'), 'exec-time' => gmdate('H:i')],
-                    'state' => 0,
-                    'params' => ['batch_size' => 100],
-                    'created_by' => (int) $identity->id,
-                ]);
-
-                if (!$saved) {
-                    throw new \RuntimeException('The Scheduler task could not be saved.');
-                }
-
-                $app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_INSTALL_TASK_DISABLED', Text::_($titleKey)), 'notice');
-            } catch (\Throwable $e) {
-                $app->enqueueMessage(Text::sprintf('COM_APPOINTMENTS_INSTALL_TASK_FAILED', Text::_($titleKey)), 'warning');
-            }
-        }
-    }
-
-    /**
      * Earlier versions named the manifest com_appointments.xml. Joomla's database check
      * (System > Maintenance > Database) only reads appointments.xml and otherwise reports
      * the component as not up to date. An update leaves the old file behind, and Joomla
@@ -1664,63 +1155,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
                 'warning'
             );
         }
-    }
-
-    /**
-     * Register the update site of this component, so Joomla offers its updates
-     * without the administrator adding a URL by hand.
-     */
-    private function ensureUpdateSite(): void
-    {
-        $db        = Factory::getContainer()->get(DatabaseInterface::class);
-        $updateUrl = 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/com_appointments/updates/update.xml';
-        $element   = 'com_appointments';
-
-        $query = $this->createDbQuery($db)
-            ->select($db->quoteName('extension_id'))
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('element') . ' = :element')
-            ->where($db->quoteName('type') . ' = ' . $db->quote('component'))
-            ->bind(':element', $element);
-        $db->setQuery($query);
-        $extensionId = (int) $db->loadResult();
-
-        if (!$extensionId) {
-            return;
-        }
-
-        $query = $this->createDbQuery($db)
-            ->select($db->quoteName('update_site_id'))
-            ->from($db->quoteName('#__update_sites'))
-            ->where($db->quoteName('location') . ' = :url')
-            ->bind(':url', $updateUrl);
-        $db->setQuery($query);
-        $siteId = (int) $db->loadResult();
-
-        if ($siteId) {
-            $this->linkUpdateSite($db, $siteId, $extensionId);
-
-            return;
-        }
-
-        $name  = 'Appointments Updates';
-        $sType = 'extension';
-        $query = $this->createDbQuery($db)
-            ->insert($db->quoteName('#__update_sites'))
-            ->columns([
-                $db->quoteName('name'),
-                $db->quoteName('type'),
-                $db->quoteName('location'),
-                $db->quoteName('enabled'),
-            ])
-            ->values(':name, :type, :url, 1')
-            ->bind(':name', $name)
-            ->bind(':type', $sType)
-            ->bind(':url', $updateUrl);
-        $db->setQuery($query);
-        $db->execute();
-
-        $this->linkUpdateSite($db, (int) $db->insertid(), $extensionId);
     }
 
     private function seedMailTemplates($parent): void
@@ -1862,38 +1296,6 @@ class Com_appointmentsInstallerScript extends InstallerScript
         }
 
         Factory::getApplication()->enqueueMessage(Text::_('COM_APPOINTMENTS_POSTINSTALL_TEMPLATES_KEPT') . '<ul>' . $items . '</ul>', 'warning');
-    }
-
-    /**
-     * Connect an update site with the component's extension row once.
-     */
-    private function linkUpdateSite(DatabaseInterface $db, int $siteId, int $extensionId): void
-    {
-        if ($siteId <= 0) {
-            return;
-        }
-
-        $query = $this->createDbQuery($db)
-            ->select('COUNT(*)')
-            ->from($db->quoteName('#__update_sites_extensions'))
-            ->where($db->quoteName('update_site_id') . ' = :siteId')
-            ->where($db->quoteName('extension_id') . ' = :extId')
-            ->bind(':siteId', $siteId, ParameterType::INTEGER)
-            ->bind(':extId', $extensionId, ParameterType::INTEGER);
-        $db->setQuery($query);
-
-        if ((int) $db->loadResult() > 0) {
-            return;
-        }
-
-        $query = $this->createDbQuery($db)
-            ->insert($db->quoteName('#__update_sites_extensions'))
-            ->columns([$db->quoteName('update_site_id'), $db->quoteName('extension_id')])
-            ->values(':siteId, :extId')
-            ->bind(':siteId', $siteId, ParameterType::INTEGER)
-            ->bind(':extId', $extensionId, ParameterType::INTEGER);
-        $db->setQuery($query);
-        $db->execute();
     }
 
     /**

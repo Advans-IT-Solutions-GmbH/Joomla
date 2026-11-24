@@ -19,7 +19,7 @@ Joomla 5.4.x or 6.x, PHP 8.1+, the component with sodium and MySQL/MariaDB, and 
 
 ## Installation
 
-The component installs this plugin **disabled**. Enable **User - Appointments internet calendars** deliberately with the CalDAV system plugin after completing [internet-calendar setup](../../../README.md#internet-calendars).
+The package installs this plugin **disabled**. Enable **User - Appointments internet calendars** deliberately with the CalDAV system plugin after completing [internet-calendar setup](../../../README.md#internet-calendars).
 
 ## Updating
 
@@ -41,7 +41,7 @@ Logout clears key-session access. Password changes, blocking and account deletio
 
 ## Development
 
-Build with the [owning component](../../../README.md#development). The component ZIP is the distribution unit for this plugin.
+Build with the [owning component](../../../README.md#development). The Appointments package is the distribution unit for this plugin.
 
 ## Automated Testing
 

@@ -244,19 +244,25 @@ including the calendar UID, inside `.com-appointments-booking-details`.
 
 ## Installation
 
+Appointments ships as the Joomla package **`pkg_appointments`** ([`pkg_appointments/`](../pkg_appointments/README.md)):
+the component, the dashboard module and the six plugins below are archives inside it and are
+installed, updated and uninstalled together. They are not independent downloads, and the
+component refuses to be installed on its own.
+
 ### Currently: build from source
 
-Use a checkout of this repository and Bash (for example, WSL on Windows) with `rsync`, `zip` and
-`unzip` available. From the repository root:
+Use a checkout of this repository and Bash (for example, WSL on Windows) with `rsync`, `zip`,
+`unzip` and `perl` available. From the repository root:
 
 ```bash
-cd com_appointments
+cd pkg_appointments
 bash ./build.sh
 ```
 
-The shared packager reads `build.env` and creates `com_appointments_<version>.zip` in that
-directory. This is a locally built pre-release package, not a published release; do not change
-version files manually. Docker is needed for the integration tests, not for this package build.
+The package build runs the component's own build (`com_appointments/build.sh`), splits it into the
+child archives and creates `pkg_appointments_<version>.zip` in `pkg_appointments/`. This is a
+locally built pre-release package, not a published release; do not change version files manually.
+Docker is needed for the integration tests, not for this package build.
 
 1. Use the ZIP produced by the build.
 2. Install it in Joomla through **System → Install → Extensions**.
@@ -264,29 +270,39 @@ version files manually. Docker is needed for the integration tests, not for this
 
 ### Once a release is published
 
-Download `com_appointments_<version>.zip` from the repository's
+Download `pkg_appointments_<version>.zip` from the repository's
 [releases](https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases) under the matching
-`appointments-v<version>` tag, then follow the installation steps above. Only the newest release
-in the Appointments tag family is retained; releases of other extensions are not Appointments
-packages.
+`appointments-v<version>` tag (the tag prefix is the same as for the standalone component releases
+up to 1.6.0), then follow the installation steps above. Only the newest release in the Appointments
+tag family is retained; releases of other extensions are not Appointments packages.
+
+### From the standalone component (1.6.0 and earlier)
+
+Releases up to 1.6.0 shipped the component as `com_appointments_<version>.zip`, whose installer
+installed the plugins and the module itself. Such a site needs no manual step: the component's own
+update channel (`com_appointments/updates/update.xml`) announces the package, so **System → Update
+→ Extensions** installs it, and installing the package ZIP by hand does the same. The package takes
+over the installed component, module and plugins in place (same extension rows, so all data,
+options and enabled states stay), assigns them to the package, replaces their update sites by the
+package's own and creates nothing twice. The full-site backup recommendation and the file review
+(Appointments Recovery) apply to the whole package. A bundled extension that is installed in a newer
+version than the package brings stops the installation before anything changes.
 
 ### Bundled plugins
 
-The component ZIP manages the following plugins; they are not independent release downloads.
-Initial plugin enablement is separate from task publication, a Scheduler trigger, calendar
-activation and effective content access.
+The package installs the following plugins. Initial plugin enablement is separate from task
+publication, a Scheduler trigger, calendar activation and effective content access.
 
 | Plugin | Role | First installation |
 |---|---|---|
 | [`privacy/appointments`](plugins/privacy/appointments/README.md) | Native privacy export/removal and calendar privacy integration | Enabled |
 | [`content/appointmentsprivacy`](plugins/content/appointmentsprivacy/README.md) | Independent veto of native removal completion while Appointments reports incomplete | Enabled |
-| [`task/appointments`](plugins/task/appointments/README.md) | Booking reminders/retention and calendar-maintenance routines | Enabled; the installer creates the required tasks (see [Scheduled tasks](#scheduled-tasks)) |
+| [`task/appointments`](plugins/task/appointments/README.md) | Booking reminders/retention and calendar-maintenance routines | Enabled; the package creates the required tasks (see [Scheduled tasks](#scheduled-tasks)) |
 | [`system/appointmentsdav`](plugins/system/appointmentsdav/README.md) | Local CalDAV endpoint and pre-authentication sign-in guard | Disabled until deliberate setup |
 | [`system/appointmentsattribution`](plugins/system/appointmentsattribution/README.md) | Records the origin of a visit in the session for the [origin of bookings](#origin-of-bookings-campaign-attribution) | Enabled, also when an update introduces it |
 | [`user/appointments`](plugins/user/appointments/README.md) | Password/key sessions, lockout and account/device cleanup | Disabled until deliberate setup |
 
-The ZIP also installs one administrator module, [`modules/mod_appointments`](#dashboard-module).
-
+The package also installs one administrator module, [`modules/mod_appointments`](#dashboard-module).
 Updates preserve existing enabled/disabled states. Start with [Internet calendars](#internet-calendars)
 for server prerequisites and deliberate activation, then use [Roles](#roles),
 [Devices and app passwords](#devices-and-app-passwords) and
@@ -297,10 +313,10 @@ the key/grant requirements of the action being performed.
 ### Dashboard module
 
 The administrator module **Appointments - Next appointments** (`modules/mod_appointments`) is
-installed with the component. On its first installation the component publishes it once at the
+installed with the package. On its first installation the package publishes it once at the
 position `cpanel` of the Home Dashboard with the title «Next appointments» in the installing
 administrator's language; an update leaves position, title, state and settings as they are, and
-uninstalling the component removes it with its instances. It shows:
+uninstalling the package removes it with its instances. It shows:
 
 - the next pending or confirmed appointments (setting **Number of appointments**, 1 to 20, default 5),
   with date and time in the site time zone (Global Configuration), the event type and the name of
@@ -314,12 +330,12 @@ uninstalling the component removes it with its instances. It shows:
 It follows the bookings list exactly: «Access Administration Interface» on the component and «Edit»
 on the event type (the same scope as the list), and only the bookings of those event types.
 Everybody else gets no output at all, so the dashboard shows neither the module nor its title. Its
-own help is the «Help» tab of the module edit screen. Uninstalling the component also removes the
+own help is the «Help» tab of the module edit screen. Uninstalling the package also removes the
 stored visit times.
 
 ## Updating
 
-The component registers its own update site during installation. Once releases are published,
+The package registers its own update site (`pkg_appointments/updates/update.xml`) during installation and moves the component, the module and the plugins onto it. Once releases are published,
 later versions will appear under **System → Update → Extensions**. You can also install a newer
 ZIP over the existing installation. The update-site registration does not mean that a release is
 currently available.
@@ -811,8 +827,8 @@ reference merely because the source booking has been anonymised or deleted.
 
 ### Scheduler, reminders and retention
 
-The component installs and enables **Task - Appointments**. Updates preserve the plugin's
-enabled/disabled state; uninstalling the component removes the plugin and its Scheduler tasks.
+The package installs and enables **Task - Appointments**. Updates preserve the plugin's
+enabled/disabled state; uninstalling the package removes the plugin, and the component removes its Scheduler tasks.
 
 #### Scheduled tasks
 

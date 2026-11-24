@@ -19,11 +19,11 @@ Joomla 5.4.x or 6.x, PHP 8.1+, Appointments with sodium and MySQL/MariaDB, HTTPS
 
 ## Installation
 
-The component installs this plugin **disabled**. Enable **System - Appointments CalDAV** only after configuring internet calendars, the companion user plugin, HTTPS/routing and recovery. Enabling this plugin alone does not create a usable device or content grant.
+The package installs this plugin **disabled**. Enable **System - Appointments CalDAV** only after configuring internet calendars, the companion user plugin, HTTPS/routing and recovery. Enabling this plugin alone does not create a usable device or content grant.
 
 ## Updating
 
-Update through the component ZIP. Existing plugin state is preserved. There is no independent release or update channel.
+Update through the Appointments package. Existing plugin state is preserved. There is no independent release or update channel.
 
 ## Uninstall
 

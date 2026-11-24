@@ -20,11 +20,11 @@ Joomla 5.4.x or 6.x, PHP 8.1+ and Appointments.
 
 ## Installation
 
-Install the owning component ZIP. Its installer installs and enables **System - Appointments origin of bookings** when it is first introduced, also on an update. It records nothing until the component option **Origin of bookings** is switched on. No separate download is required.
+Install the Appointments package (`pkg_appointments_<version>.zip`). The package installs and enables **System - Appointments origin of bookings** when it is first introduced, also on an update. It records nothing until the component option **Origin of bookings** is switched on. No separate download is required.
 
 ## Updating
 
-Update through the component ZIP. Existing plugin enablement is preserved. The plugin has no release or update feed of its own.
+Update through the Appointments package. Existing plugin enablement is preserved. The plugin has no release or update feed of its own.
 
 ## Uninstall
 

@@ -54,6 +54,28 @@ function upgrade_archive_entry(string $package, string $entry): ?string
     return $contents === false ? null : $contents;
 }
 
+/**
+ * The component archive of a candidate: the candidate itself, or the component bundled in the
+ * package pkg_appointments (packages/com_appointments.zip), extracted next to it.
+ */
+function upgrade_component_archive(string $package): string
+{
+    $manifest = sh_read_package_manifest($package);
+
+    if (($manifest['type'] ?? '') !== 'package') {
+        return $package;
+    }
+
+    $component = sys_get_temp_dir() . '/appointments-upgrade-component-' . hash_file('sha256', $package) . '.zip';
+    $bytes = upgrade_archive_entry($package, 'packages/com_appointments.zip');
+
+    if ($bytes !== null && !is_file($component)) {
+        file_put_contents($component, $bytes);
+    }
+
+    return $component;
+}
+
 function upgrade_install_directory(array $manifest): string
 {
     return match ($manifest['type']) {
@@ -182,7 +204,7 @@ function upgrade_seed(): void
     upgrade_require($previousTag === 'appointments-v1.3.0', 'source tag is appointments-v1.3.0', $previousTag);
 
     $previousManifest = sh_read_package_manifest($previousPackage);
-    $candidateManifest = sh_read_package_manifest($candidatePackage);
+    $candidateManifest = sh_read_package_manifest(upgrade_component_archive($candidatePackage));
     upgrade_require($previousManifest !== null && $candidateManifest !== null, 'both package manifests can be read');
     upgrade_require($previousManifest['version'] === '1.3.0', 'previous package manifest is version 1.3.0', $previousManifest['version']);
     upgrade_require($previousManifest['type'] === 'component' && $previousManifest['element'] === 'com_appointments', 'previous package is com_appointments');
@@ -391,14 +413,16 @@ function upgrade_verify(): void
     $candidateHash = hash_file('sha256', $candidatePackage);
     upgrade_check('candidate package digest remains unchanged',
         $candidateHash !== false && hash_equals($expectedCandidateHash, $candidateHash));
-    $manifest = sh_read_package_manifest($candidatePackage);
+    // The candidate is the package; the component it bundles is what the update must have installed.
+    $candidateComponent = upgrade_component_archive($candidatePackage);
+    $manifest = sh_read_package_manifest($candidateComponent);
     upgrade_require($manifest !== null, 'candidate manifest can be read');
 
     $extensionId = sh_find_extension_id($manifest);
     upgrade_check('component keeps its installed extension ID', $extensionId === (int) $fixture['extension_id']);
     $installDirectory = upgrade_install_directory($manifest);
-    $manifestContents = upgrade_archive_entry($candidatePackage, $manifest['xmlfile']);
-    $scriptContents = upgrade_archive_entry($candidatePackage, 'script.php');
+    $manifestContents = upgrade_archive_entry($candidateComponent, $manifest['xmlfile']);
+    $scriptContents = upgrade_archive_entry($candidateComponent, 'script.php');
     $installedManifest = $installDirectory . '/' . basename($manifest['xmlfile']);
     upgrade_check('installed manifest matches the exact candidate ZIP',
         $manifestContents !== null && is_file($installedManifest)

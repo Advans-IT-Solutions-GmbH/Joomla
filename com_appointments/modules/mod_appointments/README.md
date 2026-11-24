@@ -18,15 +18,15 @@ Joomla 5.4.x or 6.x, PHP 8.1+ and the Appointments component.
 
 ## Installation
 
-Install the owning component ZIP. On its first installation the component publishes the module once at the position `cpanel` of the Home Dashboard with the title «Next appointments» in the installing administrator's language.
+Install the Appointments package (`pkg_appointments_<version>.zip`). On its first installation the package publishes the module once at the position `cpanel` of the Home Dashboard with the title «Next appointments» in the installing administrator's language.
 
 ## Updating
 
-Update through the component ZIP. An update leaves position, title, state and settings as they are. The module has no release or update feed of its own.
+Update through the Appointments package. An update leaves position, title, state and settings as they are. The module has no release or update feed of its own.
 
 ## Uninstall
 
-Uninstalling the component removes the module with its instances and the stored visit times.
+Uninstalling the package removes the module with its instances and the stored visit times.
 
 ## Configuration
 

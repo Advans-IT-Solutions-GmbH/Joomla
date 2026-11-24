@@ -19,11 +19,11 @@ Joomla 5.4.x or 6.x, PHP 8.1+, Appointments and its platform requirements, and J
 
 ## Installation
 
-Install the owning component ZIP. Its installer installs/enables **Content - Appointments privacy completion guard** when first introduced. No separate child download is required.
+Install the Appointments package (`pkg_appointments_<version>.zip`). The package installs/enables **Content - Appointments privacy completion guard** when first introduced. No separate child download is required.
 
 ## Updating
 
-Update through the component ZIP; existing plugin enablement is preserved. The child has no independent release/update feed. Verify the guard remains enabled before resuming native processing.
+Update through the Appointments package; existing plugin enablement is preserved. The child has no independent release/update feed. Verify the guard remains enabled before resuming native processing.
 
 ## Uninstall
 
@@ -43,7 +43,7 @@ The guard reads the component's persisted request outcome and rejects a native s
 
 ## Development
 
-Use the [component build](../../../README.md#development). The component ZIP distributes and versions this child; do not copy it separately into a running site.
+Use the [component build](../../../README.md#development). The Appointments package distributes and versions this child; do not copy it separately into a running site.
 
 ## Automated Testing
 

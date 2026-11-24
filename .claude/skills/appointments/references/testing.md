@@ -188,13 +188,14 @@ com_appointments/tests/scripts/
 └── upgrade-from-v1.3.0.php  # separate CI-only published v1.3.0 upgrade fixture
 ```
 
-Build the package once, then run either lane. `tests/test.env` names the Joomla 5 container, so the
-Joomla 6 lane gets its container name on the command line:
+Build the package once, then run either lane. The test sites install the package `pkg_appointments`
+(component, module and plugins), built in `pkg_appointments/`. `tests/test.env` names the Joomla 5
+container, so the Joomla 6 lane gets its container name on the command line:
 
 ```bash
-cd com_appointments
-./build.sh && mkdir -p tests && cp *.zip tests/extension.zip
-cd tests
+cd pkg_appointments
+./build.sh && mkdir -p ../com_appointments/tests && cp pkg_appointments_*.zip ../com_appointments/tests/extension.zip
+cd ../com_appointments/tests
 
 # Joomla 5.4 lane
 docker compose up -d

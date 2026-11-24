@@ -120,6 +120,14 @@ everything that is not booking-specific: directory layout, `build.sh`, `build.en
 `services/provider.php`, the three CI workflows, the test harness and the skill layout. Copy its
 shape, do not reinvent it.
 
+Delivery: the component, its dashboard module and its six plugins ship only inside the package
+`pkg_appointments` (asset `pkg_appointments_<version>.zip`, tag prefix `appointments-v` unchanged,
+one version for all parts). The package script (`pkg_appointments/script.php`) owns what spans the
+parts: the file review with Appointments Recovery, first enablement of plugins and publication of the
+module, the Close task, the update channel, the takeover of a standalone installation up to 1.6.0.
+`com_appointments/script.php` keeps only what the component needs and refuses to install outside the
+package. Details: `pkg_appointments/README.md` and skill `joomla-extensions`, conventions «Packaging».
+
 ## Navigation
 
 Every view must retain a usable route within its branch and back to its parent or overview, including

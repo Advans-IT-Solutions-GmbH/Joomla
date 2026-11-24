@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="package" method="upgrade">
+    <name>PKG_APPOINTMENTS</name>
+    <packagename>appointments</packagename>
+    <blockChildUninstall>true</blockChildUninstall>
+    <author>Advans IT Solutions GmbH</author>
+    <creationDate>2026-11</creationDate>
+    <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
+    <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
+    <authorEmail>info@advans.ch</authorEmail>
+    <authorUrl>https://advans.ch</authorUrl>
+    <version>1.6.0</version>
+    <description>PKG_APPOINTMENTS_XML_DESCRIPTION</description>
+
+    <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+    <php_minimum>8.1</php_minimum>
+
+    <scriptfile>script.php</scriptfile>
+
+    <packager>Advans IT Solutions GmbH</packager>
+    <packagerurl>https://advans.ch</packagerurl>
+
+    <!-- The component first: when it refuses (requirements, database), nothing else has changed yet. -->
+    <files folder="packages">
+        <file type="component" id="com_appointments">com_appointments.zip</file>
+        <file type="module" id="mod_appointments" client="administrator">mod_appointments.zip</file>
+        <file type="plugin" id="appointments" group="task">plg_task_appointments.zip</file>
+        <file type="plugin" id="appointments" group="privacy">plg_privacy_appointments.zip</file>
+        <file type="plugin" id="appointmentsprivacy" group="content">plg_content_appointmentsprivacy.zip</file>
+        <file type="plugin" id="appointmentsdav" group="system">plg_system_appointmentsdav.zip</file>
+        <file type="plugin" id="appointmentsattribution" group="system">plg_system_appointmentsattribution.zip</file>
+        <file type="plugin" id="appointments" group="user">plg_user_appointments.zip</file>
+    </files>
+
+    <languages folder="language">
+        <language tag="en-GB">en-GB/pkg_appointments.sys.ini</language>
+        <language tag="en-GB">en-GB/pkg_appointments.ini</language>
+        <language tag="de-DE">de-DE/pkg_appointments.sys.ini</language>
+        <language tag="de-DE">de-DE/pkg_appointments.ini</language>
+        <language tag="fr-FR">fr-FR/pkg_appointments.sys.ini</language>
+        <language tag="fr-FR">fr-FR/pkg_appointments.ini</language>
+    </languages>
+
+    <updateservers>
+        <server type="extension" name="Appointments Package Updates">https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/pkg_appointments/updates/update.xml</server>
+    </updateservers>
+</extension>

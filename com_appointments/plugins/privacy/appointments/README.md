@@ -20,7 +20,7 @@ Joomla 5.4.x or 6.x, PHP 8.1+, the owning Appointments component and its platfor
 
 ## Installation
 
-Install the component ZIP through Joomla's extension installer. The component installs and enables **Privacy - Appointments** on first introduction. Configure privacy policy and erasure behaviour before carrying out real requests.
+Install the Appointments package (`pkg_appointments_<version>.zip`) through Joomla's extension installer. The package installs and enables **Privacy - Appointments** on first introduction. Configure privacy policy and erasure behaviour before carrying out real requests.
 
 ## Updating
 

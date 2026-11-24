@@ -176,14 +176,39 @@ class InstallationTest
                 && file_exists('/var/www/html/media/com_appointments/css/appointments.css');
         });
 
-        $this->test('Update site registered', function () {
-            $result = $this->db->query(
-                "SELECT s.update_site_id FROM {$this->dbPrefix}update_sites AS s"
-                . " INNER JOIN {$this->dbPrefix}update_sites_extensions AS m ON m.update_site_id = s.update_site_id"
-                . " INNER JOIN {$this->dbPrefix}extensions AS e ON e.extension_id = m.extension_id"
-                . " WHERE e.element = 'com_appointments'"
-            );
-            return $result && $result->num_rows > 0;
+        $this->test('The package is installed and owns the component, its module and its plugins', function () {
+            $package = $this->db->query("SELECT extension_id FROM {$this->dbPrefix}extensions WHERE type = 'package' AND element = 'pkg_appointments'")->fetch_assoc();
+            $packageId = (int) ($package['extension_id'] ?? 0);
+            $children = $this->db->query(
+                "SELECT type, folder, element, package_id FROM {$this->dbPrefix}extensions WHERE (type = 'component' AND element = 'com_appointments')"
+                . " OR (type = 'module' AND element = 'mod_appointments')"
+                . " OR (type = 'plugin' AND ((folder IN ('task', 'privacy', 'user') AND element = 'appointments')"
+                . " OR (folder = 'content' AND element = 'appointmentsprivacy') OR (folder = 'system' AND element IN ('appointmentsdav', 'appointmentsattribution'))))"
+            )->fetch_all(MYSQLI_ASSOC);
+            $foreign = array_filter($children, static fn (array $row): bool => (int) $row['package_id'] !== $packageId);
+
+            if ($packageId < 1 || count($children) !== 8 || $foreign !== []) {
+                echo '    package ' . $packageId . ', children ' . json_encode($children) . "\n";
+            }
+
+            return $packageId > 0 && count($children) === 8 && $foreign === [];
+        });
+
+        $this->test('Update site registered for the package only', function () {
+            $sites = function (string $where): array {
+                $result = $this->db->query(
+                    "SELECT s.location FROM {$this->dbPrefix}update_sites AS s"
+                    . " INNER JOIN {$this->dbPrefix}update_sites_extensions AS m ON m.update_site_id = s.update_site_id"
+                    . " INNER JOIN {$this->dbPrefix}extensions AS e ON e.extension_id = m.extension_id"
+                    . " WHERE " . $where
+                );
+
+                return $result ? array_column($result->fetch_all(MYSQLI_ASSOC), 'location') : [];
+            };
+            $package = $sites("e.type = 'package' AND e.element = 'pkg_appointments'");
+            $children = $sites("e.element IN ('com_appointments', 'mod_appointments', 'appointments', 'appointmentsprivacy', 'appointmentsdav', 'appointmentsattribution')");
+
+            return count($package) === 1 && str_ends_with($package[0], '/pkg_appointments/updates/update.xml') && $children === [];
         });
 
         $this->test('Schema baseline registered for future migrations', function () {
@@ -218,6 +243,22 @@ class InstallationTest
             $zip = new \ZipArchive();
 
             if ($zip->open('/tmp/extension.zip') !== true) {
+                return false;
+            }
+
+            // The component is an archive inside the package.
+            $component = sys_get_temp_dir() . '/appointments-installation-component.zip';
+
+            if (file_put_contents($component, (string) $zip->getFromName('packages/com_appointments.zip')) === false) {
+                $zip->close();
+
+                return false;
+            }
+
+            $zip->close();
+            $zip = new \ZipArchive();
+
+            if ($zip->open($component) !== true) {
                 return false;
             }
 

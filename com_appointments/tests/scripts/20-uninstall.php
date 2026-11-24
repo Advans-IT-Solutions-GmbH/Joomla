@@ -82,6 +82,16 @@ class UninstallTest
             return $extensionId > 0;
         });
 
+        // The component belongs to the package: Joomla refuses to remove it on its own.
+        $output = [];
+        $exitCode = 0;
+        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $extensionId --no-interaction 2>&1", $output, $exitCode);
+        clearstatcache(true);
+        $this->test('The component cannot be removed without its package', function () use ($extensionId) {
+            return $this->packageId() > 0 && $this->extensionId() === $extensionId
+                && is_dir('/var/www/html/administrator/components/com_appointments');
+        });
+
         $this->setUninstallChoice(null);
         $now = gmdate('Y-m-d H:i:s');
         $marker = 'uninstall-retained-' . bin2hex(random_bytes(6));
@@ -112,14 +122,14 @@ class UninstallTest
 
         $output = [];
         $exitCode = 0;
-        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $extensionId --no-interaction 2>&1", $output, $exitCode);
+        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove {$this->packageId()} --no-interaction 2>&1", $output, $exitCode);
         clearstatcache(true);
         $this->test('Uninstall command executed', function () use ($exitCode) {
             return $exitCode === 0;
         });
 
-        $this->test('Component registration is removed before the preservation reinstall', function () {
-            return $this->extensionId() === 0;
+        $this->test('Package and component registration are removed before the preservation reinstall', function () {
+            return $this->extensionId() === 0 && $this->packageId() === 0;
         });
 
         $this->test('No uninstall choice keeps every Appointments table and its data', function () use ($marker) {
@@ -241,7 +251,7 @@ class UninstallTest
             . " SELECT id,'mod_appointments.lastvisit','2026-01-01 00:00:00',0 FROM {$this->dbPrefix}users ORDER BY id LIMIT 1");
         $output = [];
         $exitCode = 0;
-        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $deleteExtensionId --no-interaction 2>&1", $output, $exitCode);
+        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove {$this->packageId()} --no-interaction 2>&1", $output, $exitCode);
         clearstatcache(true);
         $this->test('Uninstall command with explicit delete choice executed', function () use ($exitCode) {
             return $exitCode === 0;
@@ -273,8 +283,10 @@ class UninstallTest
                 && $this->assetRow($aclFixture['asset_name']) === null;
         });
 
-        $this->test('Component registration is removed', function () {
-            return $this->extensionId() === 0;
+        $this->test('Package and component registration are removed', function () {
+            return $this->extensionId() === 0 && $this->packageId() === 0
+                && !is_dir('/var/www/html/administrator/manifests/packages/appointments')
+                && !is_file('/var/www/html/administrator/manifests/packages/pkg_appointments.xml');
         });
         $this->test('Administrator and site component files are removed', function () {
             return !is_dir('/var/www/html/administrator/components/com_appointments')
@@ -370,6 +382,16 @@ class UninstallTest
         return $this->failed === 0;
     }
 
+    private function packageId(): int
+    {
+        $result = $this->db->query(
+            "SELECT extension_id FROM {$this->dbPrefix}extensions WHERE element = 'pkg_appointments' AND type = 'package'"
+        );
+        $row = $result ? $result->fetch_assoc() : null;
+
+        return $row ? (int) $row['extension_id'] : 0;
+    }
+
     private function extensionId(): int
     {
         $result = $this->db->query(
@@ -397,13 +419,13 @@ class UninstallTest
         $extensions = $snapshot();
         $output = [];
         $exitCode = 0;
-        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove $extensionId --no-interaction 2>&1", $output, $exitCode);
+        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove {$this->packageId()} --no-interaction 2>&1", $output, $exitCode);
         clearstatcache(true);
         try {
-            $this->test('Conflicting retained ACL stops Joomla before removing registration, plugins, files, assets or anchors', function () use (
+            $this->test('Conflicting retained ACL stops the package before removing registration, plugins, files, assets or anchors', function () use (
                 $extensionId, $componentAsset, $anchorPath, $legacyAnchorPath, $stable, $legacy, $configHash, $extensions, $snapshot
             ) {
-                return $this->extensionId() === $extensionId
+                return $this->extensionId() === $extensionId && $this->packageId() > 0
                     && $snapshot() === $extensions
                     && $this->assetRow('com_appointments') === $componentAsset
                     && is_file('/var/www/html/administrator/components/com_appointments/config.xml')
@@ -414,7 +436,8 @@ class UninstallTest
             $this->test('Uninstall conflict displays translated permission recovery guidance', function () use ($output) {
                 $text = implode("\n", $output);
 
-                return str_contains($text, 'permission') && !str_contains($text, 'COM_APPOINTMENTS_UNINSTALL_RETAINED_ACL_CONFLICT');
+                return str_contains($text, 'permission') && !str_contains($text, 'COM_APPOINTMENTS_UNINSTALL_RETAINED_ACL_CONFLICT')
+                    && !str_contains($text, 'PKG_APPOINTMENTS_UNINSTALL_RETAINED_ACL_CONFLICT');
             });
         } finally {
             $this->removeConflictAsset($conflict);

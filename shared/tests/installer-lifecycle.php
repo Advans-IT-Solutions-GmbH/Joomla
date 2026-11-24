@@ -139,6 +139,36 @@ namespace Joomla\Database {
     final class ParameterType
     {
         public const STRING = 'string';
+        public const INTEGER = 'int';
+    }
+}
+
+namespace Joomla\Archive {
+    /** The fixtures keep each bundled archive of a package as a directory "<name>.zip.d". */
+    final class Archive
+    {
+        public function extract(string $archive, string $destination): bool
+        {
+            $copy = static function (string $from, string $to) use (&$copy): void {
+                mkdir($to, 0700, true);
+
+                foreach (new \DirectoryIterator($from) as $entry) {
+                    if (!$entry->isDot()) {
+                        $entry->isDir()
+                            ? $copy($entry->getPathname(), $to . '/' . $entry->getFilename())
+                            : copy($entry->getPathname(), $to . '/' . $entry->getFilename());
+                    }
+                }
+            };
+
+            if (!is_dir($archive . '.d')) {
+                return false;
+            }
+
+            $copy($archive . '.d', $destination);
+
+            return true;
+        }
     }
 }
 
@@ -254,8 +284,9 @@ namespace {
                 public function select($value): self { return $this; }
                 public function from($value): self { $this->from = (string) $value; return $this; }
                 public function where($value): self { $this->where[] = (string) $value; return $this; }
-                public function whereIn($column, $values, $type): self { return $this; }
+                public function whereIn($column, $values, $type = null): self { return $this; }
                 public function order($value): self { return $this; }
+                public function bind(...$arguments): self { return $this; }
             };
         }
 
@@ -295,6 +326,8 @@ namespace {
 
         public function loadResult(): ?string { return $this->extensions[$this->key()]['params'] ?? null; }
         public function loadAssocList(): array { return $this->tasks[$this->condition('type')] ?? []; }
+        /** Bundled extensions of a package fixture are not installed. */
+        public function loadAssoc(): ?array { return null; }
         public function getPrefix(): string { return 'test_'; }
         public function getTableList(): array { return ['test_j2commerce_orders', 'test_j2store_orders', 'test_scheduler_tasks']; }
     };    $assert = static function (bool $ok, string $message): void {
@@ -466,9 +499,6 @@ namespace {
         $componentFile = JPATH_ADMINISTRATOR . '/components/com_appointments/example.php';
         $pluginFile = JPATH_PLUGINS . '/task/appointments/example.php';
         mkdir($appointmentSource . '/plugins/task/appointments', 0700, true);
-        mkdir($appointmentSource . '/administrator/components/com_appointments/src/Helper', 0700, true);
-        copy(dirname(__DIR__, 2) . '/com_appointments/administrator/components/com_appointments/src/Helper/BundledModuleGuard.php',
-            $appointmentSource . '/administrator/components/com_appointments/src/Helper/BundledModuleGuard.php');
         mkdir($appointmentSource . '/modules/mod_appointments/src', 0700, true);
         file_put_contents($appointmentSource . '/modules/mod_appointments/mod_appointments.xml',
             '<extension type="module" client="administrator"><name>MOD_APPOINTMENTS</name>'
@@ -620,38 +650,14 @@ namespace {
             'The independently installed companion must honor a failed Joomla compatibility preflight.');
         \Joomla\CMS\Installer\InstallerScript::$acceptPreflight = true;
 
-        // Exercise the real component entry point: it must stop before shared installer processing,
-        // including when a bundled plugin is the only remaining conflict.
-        mkdir($appointmentSource . '/administrator/language/en-GB', 0700, true);
-        foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
-            $languageDirectory = $appointmentSource . '/administrator/language/' . $tag;
-            if (!is_dir($languageDirectory)) {
-                mkdir($languageDirectory, 0700, true);
-            }
-            file_put_contents($languageDirectory . '/com_appointments.ini', 'TEST="test"');
-        }
-        mkdir(JPATH_ADMINISTRATOR . '/language/en-GB', 0700, true);
-        copy(dirname(__DIR__, 2) . '/com_appointments/administrator/language/en-GB/com_appointments.ini',
-            JPATH_ADMINISTRATOR . '/language/en-GB/com_appointments.ini');
-        copy($appointmentFiles[$componentFile], $appointmentSource . '/administrator/example.php');
-        copy($appointmentFiles[$pluginFile], $appointmentSource . '/plugins/task/appointments/example.php');
-        file_put_contents($appointmentSource . '/plugins/task/appointments/appointments.xml',
-            '<extension type="plugin" group="task"><name>PLG_TASK_APPOINTMENTS</name><files><filename plugin="appointments">example.php</filename></files></extension>');
-        $appointmentXml = '<extension type="component"><name>COM_APPOINTMENTS</name><files/>'
-            . '<administration><files folder="administrator"><filename>example.php</filename></files></administration></extension>';
-        file_put_contents($appointmentSource . '/appointments.xml', $appointmentXml);
-        $appointmentParent = new class($appointmentSource, simplexml_load_string($appointmentXml)) {
-            public function __construct(private string $source, private \SimpleXMLElement $manifest) {}
-            public function getParent(): self { return $this; }
-            public function getManifest(): \SimpleXMLElement { return $this->manifest; }
-            public function getPath(string $key): string { return $key === 'manifest' ? $this->source . '/appointments.xml' : $this->source; }
-        };
-        require_once dirname(__DIR__, 2) . '/com_appointments/script.php';
-        $moduleInstaller = new \Com_appointmentsInstallerScript();
-        $moduleSource = $appointmentSource . '/modules/mod_appointments/src/late.php';
-        $moduleDestination = JPATH_ADMINISTRATOR . '/modules/mod_appointments/src/late.php';
-        file_put_contents($moduleSource, 'module release');
-        file_put_contents($moduleDestination, 'module local');
+        // A bundled module's obsolete declarations are guarded by the shared destinations of the
+        // package's children: a removed declared folder is a removal, a file Joomla keeps is not.
+        $moduleSource = $work . '/module-source';
+        mkdir($moduleSource . '/src', 0700, true);
+        file_put_contents($moduleSource . '/mod_appointments.php', '<?php');
+        $moduleXml = '<extension type="module" client="administrator"><name>MOD_APPOINTMENTS</name><files>'
+            . '<filename module="mod_appointments">mod_appointments.php</filename><folder>src</folder></files></extension>';
+        file_put_contents($moduleSource . '/mod_appointments.xml', $moduleXml);
         $moduleRoot = JPATH_ADMINISTRATOR . '/modules/mod_appointments';
         mkdir($moduleRoot . '/src/obsolete', 0700, true);
         file_put_contents($moduleRoot . '/src/obsolete/local.php', 'unknown obsolete module');
@@ -659,8 +665,7 @@ namespace {
         file_put_contents($moduleRoot . '/mod_appointments.xml',
             '<extension type="module" client="administrator"><name>MOD_APPOINTMENTS</name><files>'
             . '<folder>src/obsolete</folder><filename>src/retained.php</filename></files></extension>');
-        $moduleMethod = new \ReflectionMethod($moduleInstaller, 'bundledModuleFiles');
-        $moduleFiles = $moduleMethod->invoke($moduleInstaller, $appointmentSource, ['mod_appointments']);
+        $moduleFiles = \Advans\Installer\V3\Destinations::files(simplexml_load_string($moduleXml), $moduleSource, $moduleSource . '/mod_appointments.xml');
         $obsolete = str_replace('\\', '/', $moduleRoot . '/src/obsolete/local.php');
         $assert(isset($moduleFiles[$obsolete]) && str_contains($moduleFiles[$obsolete], '/.advans-operations/')
             && !isset($moduleFiles[str_replace('\\', '/', $moduleRoot . '/src/retained.php')]),
@@ -674,86 +679,89 @@ namespace {
         $assert(!is_dir($reviewState . '/recovery/backups')
             && !str_contains((string) file_get_contents($reviewState . '/recovery/review.php'), 'unknown obsolete module'),
             'A removal review must not write or persist old file bytes on the server.');
-        $snapshotMethod = new \ReflectionMethod($moduleInstaller, 'snapshotBundled');
-        (new \ReflectionProperty($moduleInstaller, 'conflictFiles'))->setValue($moduleInstaller, $moduleFiles);
-        (new \ReflectionProperty($moduleInstaller, 'bundledSnapshots'))->setValue($moduleInstaller, [
-            'modules/mod_appointments' => $snapshotMethod->invoke($moduleInstaller, $moduleFiles),
-        ]);
-        $verifyMethod = new \ReflectionMethod($moduleInstaller, 'verifyBundledBeforeInstall');
-        $verifyModule = static fn() => $verifyMethod->invoke($moduleInstaller, $appointmentSource,
-            'modules/mod_appointments', 'administrator/modules/mod_appointments');
-        $verifyModule();
-        file_put_contents($moduleDestination, 'late unreviewed module');
-        $refused($verifyModule);
-        file_put_contents($moduleDestination, 'module local');
-        file_put_contents($moduleSource, 'late candidate');
-        $refused($verifyModule);
-        $assert(file_get_contents($moduleDestination) === 'module local',
-            'Late module validation must not overwrite an installed file.');
-        file_put_contents($moduleSource, 'module release');
-        file_put_contents($appointmentSource . '/modules/mod_appointments/src/added.php', 'late new module candidate');
-        file_put_contents($moduleRoot . '/src/added.php', 'unknown late module destination');
-        $refused($verifyModule);
-        $assert(file_get_contents($moduleRoot . '/src/added.php') === 'unknown late module destination',
-            'A new recursive module input must not overwrite an unreviewed destination.');
-        unlink($appointmentSource . '/modules/mod_appointments/src/added.php');
-        unlink($moduleRoot . '/src/added.php');
-        file_put_contents($moduleRoot . '/src/obsolete/added.php', 'late obsolete file');
-        $refused($verifyModule);
-        unlink($moduleRoot . '/src/obsolete/added.php');
-        $verifyModule();
-        $pluginSource = $appointmentSource . '/plugins/task/appointments';
-        mkdir($pluginSource . '/src', 0700, true);
-        file_put_contents($pluginSource . '/appointments.xml',
-            '<extension type="plugin" group="task"><name>PLG_TASK_APPOINTMENTS</name>'
-            . '<files><filename plugin="appointments">example.php</filename><folder>src</folder></files></extension>');
-        $pluginFiles = \Advans\Installer\V3\Destinations::files(
-            simplexml_load_file($pluginSource . '/appointments.xml'), $pluginSource, $pluginSource . '/appointments.xml'
-        );
-        (new \ReflectionProperty($moduleInstaller, 'bundledSnapshots'))->setValue($moduleInstaller, [
-            'plugins/task/appointments' => $snapshotMethod->invoke($moduleInstaller, $pluginFiles),
-        ]);
-        $verifyPlugin = static fn() => $verifyMethod->invoke($moduleInstaller, $appointmentSource,
-            'plugins/task/appointments', 'plugins/task/appointments');
-        $verifyPlugin();
-        file_put_contents($pluginSource . '/src/added.php', 'late new plugin candidate');
-        file_put_contents(JPATH_PLUGINS . '/task/appointments/src/added.php', 'unknown late plugin destination');
-        $refused($verifyPlugin);
-        $assert(file_get_contents(JPATH_PLUGINS . '/task/appointments/src/added.php') === 'unknown late plugin destination',
-            'A new recursive plugin input must not overwrite an unreviewed destination.');
-        unlink($pluginSource . '/src/added.php');
-        unlink(JPATH_PLUGINS . '/task/appointments/src/added.php');
-        unlink($moduleDestination);
         unlink($obsolete);
         unlink($moduleRoot . '/src/retained.php');
         unlink($moduleRoot . '/mod_appointments.xml');
         rmdir($moduleRoot . '/src/obsolete');
 
-        $appointmentInstaller = new \Com_appointmentsInstallerScript();
-        $assert(!file_exists($reviewSource . '/.advans-recovery-staged.php'),
-            'Appointments must not stage file-content copies on the server between requests.');
+        // Exercise the real package entry point: its review of every bundled extension stops before
+        // the shared installer processing, also when a bundled plugin is the only remaining conflict.
+        $packageSource = $work . '/appointments-package';
+        $componentChild = $packageSource . '/packages/com_appointments.zip.d';
+        $pluginChild = $packageSource . '/packages/plg_task_appointments.zip.d';
+        foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+            mkdir($componentChild . '/administrator/language/' . $tag, 0700, true);
+            file_put_contents($componentChild . '/administrator/language/' . $tag . '/com_appointments.ini', 'TEST="test"');
+        }
+        mkdir($pluginChild, 0700, true);
+        mkdir($packageSource . '/advansinstaller', 0700, true);
+        mkdir($packageSource . '/language/en-GB', 0700, true);
+        is_dir(JPATH_SITE . '/language/en-GB') || mkdir(JPATH_SITE . '/language/en-GB', 0700, true);
+        is_dir(JPATH_ADMINISTRATOR . '/language/en-GB') || mkdir(JPATH_ADMINISTRATOR . '/language/en-GB', 0700, true);
+        copy(dirname(__DIR__, 2) . '/pkg_appointments/language/en-GB/pkg_appointments.ini', JPATH_SITE . '/language/en-GB/pkg_appointments.ini');
+        copy(dirname(__DIR__, 2) . '/pkg_appointments/language/en-GB/pkg_appointments.ini', $packageSource . '/language/en-GB/pkg_appointments.ini');
+        copy(dirname(__DIR__, 2) . '/com_appointments/administrator/language/en-GB/com_appointments.ini',
+            JPATH_ADMINISTRATOR . '/language/en-GB/com_appointments.ini');
+        file_put_contents($packageSource . '/advansinstaller/load.php', '<?php');
+        file_put_contents($packageSource . '/LICENSE.txt', 'GPL-3.0-or-later');
+        copy($appointmentFiles[$componentFile], $componentChild . '/administrator/example.php');
+        copy($appointmentFiles[$pluginFile], $pluginChild . '/example.php');
+        $componentXml = '<extension type="component"><name>COM_APPOINTMENTS</name><version>9.9.9</version><files/>'
+            . '<administration><files folder="administrator"><filename>example.php</filename></files></administration></extension>';
+        file_put_contents($componentChild . '/appointments.xml', $componentXml);
+        file_put_contents($pluginChild . '/appointments.xml',
+            '<extension type="plugin" group="task"><name>PLG_TASK_APPOINTMENTS</name><version>9.9.9</version><files><filename plugin="appointments">example.php</filename></files></extension>');
+        $packageXml = '<extension type="package"><name>PKG_APPOINTMENTS</name><packagename>appointments</packagename><version>9.9.9</version>'
+            . '<files folder="packages"><file type="component" id="com_appointments">com_appointments.zip</file>'
+            . '<file type="plugin" id="appointments" group="task">plg_task_appointments.zip</file></files></extension>';
+        file_put_contents($packageSource . '/pkg_appointments.xml', $packageXml);
+        $fixtureParent = static fn(string $source, string $xml, string $manifest) => new class($source, simplexml_load_string($xml), $manifest) {
+            public function __construct(private string $source, private \SimpleXMLElement $manifest, private string $file) {}
+            public function getParent(): self { return $this; }
+            public function getManifest(): \SimpleXMLElement { return $this->manifest; }
+            public function getPath(string $key): string { return $key === 'manifest' ? $this->source . '/' . $this->file : $this->source; }
+        };
+        $packageParent = $fixtureParent($packageSource, $packageXml, 'pkg_appointments.xml');
+        $packageState = JPATH_ADMINISTRATOR . '/advans-installer-state/pkg_appointments';
+        // The package knows the component file it installed; the bundled plugin's file is unknown.
+        \Advans\Installer\V3\State::write($packageState . '/installed.php', [
+            'version' => 'fixture',
+            'files' => ['administrator/components/com_appointments/example.php' => hash_file('sha256', $componentFile)],
+        ]);
+        require_once dirname(__DIR__, 2) . '/pkg_appointments/script.php';
+        require_once dirname(__DIR__, 2) . '/com_appointments/script.php';
+        $packageInstaller = new \Pkg_AppointmentsInstallerScript();
         $app->messages = [];
-        $assert($appointmentInstaller->preflight('update', $appointmentParent) === false
-            && str_contains($messageText(), 'COM_APPOINTMENTS_INSTALL_CONFLICT_TITLE'),
-            'The real installer must pause before Joomla copies files when local changes need review.');
+        $assert($packageInstaller->preflight('update', $packageParent) === false
+            && str_contains($messageText(), 'PKG_APPOINTMENTS_INSTALL_CONFLICT_TITLE'),
+            'The real package installer must pause before Joomla copies files when local changes need review: ' . $messageText());
+        $assert(!\Pkg_AppointmentsInstallerScript::installing(), 'A paused package must not let its component install.');
         $app->messages = [];
-        $assert($appointmentInstaller->preflight('update', $appointmentParent) === false,
-            'The Appointments installer must stop before Joomla copies files.');
+        $assert($packageInstaller->preflight('update', $packageParent) === false,
+            'The Appointments package must stop before Joomla copies files.');
         $assert(str_contains($messageText(), 'plugins/task/appointments/example.php')
-            && str_contains($messageText(), hash('sha256', 'unidentified 1')),
-            'The Appointments installer must display the unknown bundled plugin and its hash.');
-        $assert($appointmentInstaller->preflight('update', $appointmentParent) === false,
+            && str_contains($messageText(), hash('sha256', 'unidentified 1'))
+            && !str_contains($messageText(), 'components/com_appointments/example.php'),
+            'The Appointments package must display the unknown bundled plugin and its hash, and only that file.');
+        $assert($packageInstaller->preflight('update', $packageParent) === false,
             'Repeating an Appointments update must not approve unknown files.');
 
+        // The component alone is refused: only the package installs it, with the package's decisions.
+        $componentInstaller = new \Com_appointmentsInstallerScript();
+        $app->messages = [];
+        $assert($componentInstaller->preflight('update', $fixtureParent($componentChild, $componentXml, 'appointments.xml')) === false
+            && str_contains($messageText(), 'COM_APPOINTMENTS_INSTALL_PACKAGE_REQUIRED'),
+            'The component installed on its own must point to the package and change nothing: ' . $messageText());
+
         copy($appointmentFiles[$pluginFile], $pluginFile);
-        \Advans\Installer\V3\State::write($appointmentState . '/installed.php', [
+        \Advans\Installer\V3\State::write($packageState . '/installed.php', [
             'version' => 'fixture',
             'files' => [
                 'administrator/components/com_appointments/example.php' => hash_file('sha256', $componentFile),
                 'plugins/task/appointments/example.php' => hash_file('sha256', $pluginFile),
             ],
         ]);
-        $changingInstaller = new class($componentFile) extends \Com_appointmentsInstallerScript {
+        $changingInstaller = new class($componentFile) extends \Pkg_AppointmentsInstallerScript {
             private int $comparisons = 0;
             public function __construct(private string $file) {}
             protected function guardedFiles(string $type, object $parent): array
@@ -764,10 +772,12 @@ namespace {
                 return parent::guardedFiles($type, $parent);
             }
         };
-        $assert($changingInstaller->preflight('update', $appointmentParent) === false,
+        $assert($changingInstaller->preflight('update', $packageParent) === false,
             'A file becoming unknown during shared preflight must stop the installation.');
         $assert(file_get_contents($componentFile) === 'changed during shared preflight',
             'The second comparison must not replace the changed file.');
+        $assert(!\Pkg_AppointmentsInstallerScript::installing(), 'A stopped package must not let its component install.');
+        echo "PASS Appointments package: one review over every bundled extension, the component only through the package\n";
 
         // A pre-existing legacy copy is not read, changed, exported or pruned by the new runtime.
         \Advans\Installer\V3\State::directory($state . '/backups');
@@ -1080,7 +1090,7 @@ namespace {
 
         // A missing task uses its own cleanup defaults; only retention settings come from the parent.
         $reset();
-        $tasks::ensure('plg_privacy_j2commerce');
+        $tasks::ensure('pkg_privacy_j2commerce');
         $assert(count($app->saved) === 1 && $app->saved[0]['type'] === $routine && $app->saved[0]['state'] === 1, 'A missing required task must be created once, switched on.');
         $rules = $app->saved[0]['execution_rules'];
         $assert($rules['rule-type'] === 'interval-days' && $rules['interval-days'] === 1 && $rules['exec-time'] === '02:15' && $rules['exec-day'] === gmdate('d'), 'The anonymisation task must run every day at 02:15 UTC.');
@@ -1089,13 +1099,13 @@ namespace {
         $assert(count($app->messages) === 2 && $app->messages[0][1] === 'message', 'The created task and an unproven Lazy Scheduler trigger must be reported.');
         $assert(str_contains($text(), 'was missing. The installation created it and switched it on: it runs every day at 02:15 UTC. It anonymises shop orders')
             && str_contains($text(), 'Retention period: 7 years after the end of the fiscal year on 06-30'), 'The report must name the schedule, the purpose and the settings: ' . $text());
-        $passed = array_column(\Advans\Installer\V3\SystemCheck::results('plg_privacy_j2commerce')['passed'], 1);
+        $passed = array_column(\Advans\Installer\V3\SystemCheck::results('pkg_privacy_j2commerce')['passed'], 1);
         $assert(in_array($strings['ADVANS_CHECK_TASK_NOT_RUN'], $passed, true), 'The system check must list the switched-on task that has not run yet.');
 
         // Update with the task switched on: nothing saved, nothing said.
         $reset();
         $before = $db->tasks;
-        $tasks::ensure('plg_privacy_j2commerce');
+        $tasks::ensure('pkg_privacy_j2commerce');
         $assert($app->saved === [] && $db->tasks === $before && count($app->messages) === 1 && str_contains($text(), 'Lazy Scheduler'), 'An existing switched-on task must stay unchanged and the unproven trigger must be reported.');
 
         // Switched off or trashed on purpose: unchanged, reported with the way to switch it on, a blocker in the system check.
@@ -1103,23 +1113,23 @@ namespace {
             $db->tasks[$routine] = [['id' => 5, 'state' => $state, 'last_execution' => '2026-01-01 02:15:00', 'last_exit_code' => 0, 'times_executed' => 3]];
             $before = $db->tasks;
             $reset();
-            $tasks::ensure('plg_privacy_j2commerce');
+            $tasks::ensure('pkg_privacy_j2commerce');
             $assert($app->saved === [] && $db->tasks === $before, 'A task switched off on purpose must not be changed or duplicated.');
             $assert(count($app->messages) === 2 && str_contains($text(), 'is switched off or in the trash')
                 && str_contains($text(), 'System → Manage → Scheduled Tasks') && str_contains($text(), 'Lazy Scheduler'), 'A switched-off required task must be reported with the menu path and the trigger warning.');
-            $blockers = array_column(\Advans\Installer\V3\SystemCheck::results('plg_privacy_j2commerce')['blockers'], 1);
+            $blockers = array_column(\Advans\Installer\V3\SystemCheck::results('pkg_privacy_j2commerce')['blockers'], 1);
             $assert(in_array($strings['ADVANS_CHECK_TASK_OFF'], $blockers, true), 'The system check must report a switched-off required task as a blocker.');
         }
 
         // One report per request: the package and its children check the same routine.
         $reset();
-        $tasks::ensure('plg_privacy_j2commerce');
+        $tasks::ensure('pkg_privacy_j2commerce');
         $count = count($app->messages);
         $tasks::ensure('plg_task_j2commerceprivacy');
         $assert($count === 2 && count($app->messages) === 2, 'A routine and its trigger must be reported once per request.');
 
         // Extensions without required tasks: no message, nothing created.
-        foreach (['plg_ajax_joomlaajaxforms', 'plg_system_privacyrequests', 'com_j2store_cleanup'] as $id) {
+        foreach (['plg_ajax_joomlaajaxforms', 'plg_system_privacyrequests', 'com_j2store_cleanup', 'com_appointments', 'plg_privacy_j2commerce'] as $id) {
             $reset();
             $tasks::ensure($id);
             $assert($app->messages === [] && $app->saved === [], 'An extension without required tasks must say nothing: ' . $id);
@@ -1132,7 +1142,7 @@ namespace {
             $db->tasks = [];
             $db->extensions['component::com_appointments'] = ['enabled' => 1, 'params' => $params];
             $reset();
-            $tasks::ensure('com_appointments');
+            $tasks::ensure('pkg_appointments');
 
             return array_column($app->saved, 'type');
         };
@@ -1145,20 +1155,20 @@ namespace {
         $db->tasks = [$routine => [['id' => 5, 'state' => 1, 'last_execution' => gmdate('Y-m-d H:i:s', time() - 3600), 'last_exit_code' => 0, 'times_executed' => 9]]];
         $db->extensions['plugin:system:schedulerunner']['enabled'] = 0;
         $reset();
-        $tasks::ensure('plg_privacy_j2commerce');
+        $tasks::ensure('pkg_privacy_j2commerce');
         $assert($app->messages === [], 'A run within two days proves that the Scheduler starts tasks.');
         $db->tasks[$routine][0]['last_execution'] = '2026-01-01 02:15:00';
         $reset();
-        $tasks::ensure('plg_privacy_j2commerce');
+        $tasks::ensure('pkg_privacy_j2commerce');
         $assert(count($app->messages) === 1 && $app->messages[0][1] === 'warning' && str_contains($text(), 'System - Schedule Runner'), 'A Scheduler without trigger must be reported.');
         $db->extensions['plugin:system:schedulerunner']['enabled'] = 1;
         $db->extensions['component::com_scheduler']['params'] = '{"lazy_scheduler":{"enabled":0},"webcron":{"enabled":0}}';
         $reset();
-        $tasks::ensure('plg_privacy_j2commerce');
+        $tasks::ensure('pkg_privacy_j2commerce');
         $assert(str_contains($text(), 'Neither the Lazy Scheduler nor Web Cron'), 'A Scheduler started only by a server cron job must be reported.');
         $db->extensions['component::com_scheduler']['params'] = '{"lazy_scheduler":{"enabled":1},"webcron":{"enabled":0}}';
         $reset();
-        $tasks::ensure('plg_privacy_j2commerce');
+        $tasks::ensure('pkg_privacy_j2commerce');
         $assert(count($app->messages) === 1 && $app->messages[0][1] === 'message' && str_contains($text(), 'started by visits'), 'Configured Lazy Scheduler is informational until a real recent run proves it.');
 
         // Duplicate routines: report the task that actually ran, not the lowest-ID duplicate.
@@ -1166,7 +1176,7 @@ namespace {
             ['id' => 3, 'state' => 1, 'last_execution' => null, 'last_exit_code' => 0, 'times_executed' => 0],
             ['id' => 7, 'state' => 1, 'last_execution' => gmdate('Y-m-d H:i:s', time() - 3600), 'last_exit_code' => 0, 'times_executed' => 4],
         ];
-        $inspected = \Advans\Installer\V3\ScheduledTasks::inspect('plg_privacy_j2commerce');
+        $inspected = \Advans\Installer\V3\ScheduledTasks::inspect('pkg_privacy_j2commerce');
         $routineRow = array_values(array_filter($inspected, static fn(array $row): bool => $row['routine'] === $routine))[0] ?? null;
         $assert($routineRow !== null && (int) ($routineRow['task']['id'] ?? 0) === 7, 'Duplicate enabled tasks must prefer the task with the most recent execution.');
 
@@ -1174,7 +1184,7 @@ namespace {
         unset($db->extensions['plugin:task:j2commerceprivacy']);
         $db->tasks = [];
         $reset();
-        $tasks::ensure('plg_privacy_j2commerce');
+        $tasks::ensure('pkg_privacy_j2commerce');
         $assert($app->saved === [] && str_contains($text(), 'cannot be created, because its task plugin is not installed'), 'A missing task plugin must be reported.');
         $db->extensions = [];
         $db->tasks = [];
