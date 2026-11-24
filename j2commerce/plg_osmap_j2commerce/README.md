@@ -1,6 +1,6 @@
 # OSMap J2Commerce Plugin
 
-**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/osmap-j2commerce.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/osmap-j2commerce.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-osmap-j2commerce.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-osmap-j2commerce.yml)
@@ -70,7 +70,7 @@ New or re-enabled products are picked up on the next sitemap request.
 - Builds SEF URLs from the shop menu item path and article alias (with language prefix)
 - Configurable default priority and change frequency (plugin-wide)
 - Excludes products that are not publicly visible (see *Description*)
-- Patches OSMap ≤ 5.1.3 `Factory::getTable()` bug on install/update
+- Patches the OSMap `Factory::getTable()` bug automatically on install/update (known OSMap releases only)
 
 ## Requirements
 
@@ -79,10 +79,13 @@ New or re-enabled products are picked up on the next sitemap request.
 - J2Commerce (formerly J2Store) 4.x or later
 - [OSMap Free or Pro](https://extensions.joomla.org/extension/osmap/) 5.x or later
 
-> **OSMap ≤ 5.1.3 compatibility:** The installer script automatically patches a
-> bug in OSMap ≤ 5.1.3 where `Factory::getTable()` returns `false` instead of
-> `null`, causing a `TypeError` in PHP 8.1+. The patch is applied on install
-> and update and is idempotent — OSMap ≥ 5.1.4 already contains the fix.
+> **OSMap compatibility:** Some OSMap releases (verified: 5.1.6) have a bug where
+> `Factory::getTable()` returns `false` instead of `null`, causing a `TypeError` in PHP 8.1+. The
+> installer fixes it by itself, with no step for you: it changes the one line of OSMap's
+> `Factory.php` only when that file is exactly the unmodified file of a release the plugin knows
+> (checked by SHA-256). A file that already carries the fix needs nothing. A file of another
+> release, or one edited on your site, is never touched: the installation pauses before
+> changing anything and names `Factory.php` (see *Troubleshooting*).
 
 ## Installation
 
@@ -104,7 +107,7 @@ On every install and update, the installer script (`script.php`):
 - removes update sites of this plugin that still point to the repository's
   former path (`advansit/Joomla`), so Joomla only queries the current update
   server;
-- patches OSMap ≤ 5.1.3 (see above).
+- fixes the OSMap bug above when OSMap is a known release (see above).
 
 ### .htaccess Requirements
 
@@ -152,10 +155,19 @@ The manifest declares the update server
 New versions appear under **System → Update → Extensions**. Alternatively,
 install the newer ZIP over the existing installation.
 
+Before updating, take a current, complete site backup that can be restored
+independently; the installer cannot verify this. The first update attempt displays this
+recommendation and stops before changing files; start the update again afterwards. The
+installer decides by itself and keeps no file copies. If it reports a modified or unknown file
+that the update would replace or adjust (including an unrecognised OSMap compatibility
+target), it stops before copying anything and lists the path and the SHA-256 hashes: review
+the file, resolve it manually or defer the update, then retry. There is no approval
+command or bypass. Settings and the enabled state are kept. The plugin needs no Scheduler task.
+
 ## Uninstall
 
 Uninstall the plugin via **System → Manage → Extensions**. The plugin has no
-uninstall routine: the OSMap ≤ 5.1.3 patch and the disabled state of the legacy
+uninstall routine: the fix applied to OSMap's `Factory.php` and the disabled state of the legacy
 `plg_osmap_j2store` plugin are not reverted.
 
 ## Configuration
@@ -173,7 +185,7 @@ the plugin defaults.
 ### Help tab
 
 The plugin's edit screen (**System → Manage → Plugins → OSMap - J2Commerce**) has a **Help** tab, the
-first tab after Joomla's own **Plugin** tab. It explains, in de-DE, en-GB and fr-FR, what the plugin does and which products it lists, prerequisites and setup (OSMap, shop, menu item, sitemap, SEF URLs), which menu item views add which products, both settings with their defaults, and typical problems with what to do.
+first tab after Joomla's own **Plugin** tab. It explains, in de-DE, en-GB and fr-FR, what the plugin does and which products it lists, prerequisites and setup (OSMap, shop, menu item, sitemap, SEF URLs), installation, update and uninstall, which menu item views add which products, both settings with their defaults, permissions and data handling, and typical problems with what to do.
 A note at the top of the **Plugin** tab points to it.
 
 The page is described in the manifest (fieldset `help`, field type `helppage`) and rendered by
@@ -187,7 +199,7 @@ structure).
 
 The plugin emits catalogue URLs for guest-visible products, not customer/order records. Article access and publication windows and shop visibility are checked even when an administrator requests the sitemap. Restrict plugin/OSMap configuration to trusted administrators; public sitemap access remains governed by OSMap.
 
-The plugin creates no own data tables, sends no notification mail and installs no Scheduler routine. Catalogue URLs are read locally during sitemap generation; this is not an external indexing submission service. Joomla's update checks are separate. Uninstall does not remove shop data or reverse installer changes described above.
+The plugin ships no `access.xml` and no permissions of its own: only accounts that may edit plugins can change its two settings (give another account access under **System → Manage → Plugins**), and OSMap decides who may view or edit sitemaps. The plugin creates no own data tables, sends no notification mail and installs no Scheduler routine. Catalogue URLs are read locally during sitemap generation; this is not an external indexing submission service. Joomla's update checks are separate. Uninstall does not remove shop data or reverse installer changes described above.
 
 ### How It Works
 
@@ -427,9 +439,10 @@ and that the `.htaccess` / `web.config` rewrite rules are in place.
 
 **TypeError: Factory::getTable() must be of type ?Table, false returned**
 
-This is a bug in OSMap ≤ 5.1.3. The installer script patches it automatically
-on plugin install or update. If you see this error before installing the plugin,
-apply the fix manually:
+This is the OSMap bug described above. The plugin fixes it itself for known OSMap releases. If the
+installation paused on `Factory.php` (an OSMap release the plugin does not know, or a file edited on
+the site), nothing was changed: apply the fix by hand, then repeat the installation, or ask the
+maintainers to add your OSMap release:
 
 ```bash
 sed -i 's/return Table::getInstance($tableName, $prefix);/return Table::getInstance($tableName, $prefix) ?: null;/' \

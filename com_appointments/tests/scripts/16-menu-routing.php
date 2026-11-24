@@ -616,9 +616,16 @@ try {
         }
         $availableSlots = $slotValues($html);
         $check($mover->status === 200 && $availableSlots !== [], 'Choosing the booking day offers reschedule time buttons');
-        [$action, $fields] = $formData($html, '//form[contains(@class, "com-appointments-manage-form")]');
         $current = (string) $fixture->row((int) $booking['id'])['start_utc'];
         $other = array_values(array_filter($availableSlots, static fn (string $value): bool => $value !== $current));
+        // The reschedule page works like the booking page: the time is chosen first (a GET form), then the
+        // page of the chosen time asks for the confirmation.
+        [$timeAction, $timeFields] = $formData($html, '//form[@id="appointment-time-form"]');
+        $timeFields['start'] = $other[0] ?? '';
+        $timePath = preg_replace('#^https?://[^/]+#', '', (string) strtok($timeAction, '#'));
+        $html = $mover->request($timePath . (str_contains($timePath, '?') ? '&' : '?') . http_build_query($timeFields));
+        $check($mover->status === 200 && $other !== [], 'Choosing a time opens the confirmation of the reschedule');
+        [$action, $fields] = $formData($html, '//form[contains(@class, "com-appointments-manage-form")]');
         $fields['start'] = $other[0] ?? '';
         $fields[$mover->token($html)] = 1;
         $fields['confirm'] = 1;

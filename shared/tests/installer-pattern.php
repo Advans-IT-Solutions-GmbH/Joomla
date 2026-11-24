@@ -27,6 +27,8 @@ namespace {
     require_once $root . '/shared/installer/State.php';
     require_once $root . '/shared/installer/Destinations.php';
     require_once $root . '/shared/installer/FileGuard.php';
+    require_once $root . '/shared/installer/Knowledge.php';
+    require_once $root . '/shared/installer/Planner.php';
 
     $assert = static function (bool $ok, string $message): void {
         if (!$ok) {
@@ -151,10 +153,10 @@ namespace {
                     continue;
                 }
 
-                $definition = \Advans\Installer\V2\SystemCheck::definition(strtolower((string) $manifest->name));
-                $installed = \Advans\Installer\V2\SystemCheck::root($definition);
+                $definition = \Advans\Installer\V3\SystemCheck::definition(strtolower((string) $manifest->name));
+                $installed = \Advans\Installer\V3\SystemCheck::root($definition);
                 $source = dirname($manifestFile);
-                $files = \Advans\Installer\V2\Destinations::files($manifest, $source, $manifestFile);
+                $files = \Advans\Installer\V3\Destinations::files($manifest, $source, $manifestFile);
 
                 foreach ($files as $destination => $candidate) {
                     $assert(is_file($candidate), 'Missing candidate for ' . $destination . ': ' . $candidate);
@@ -165,10 +167,12 @@ namespace {
 
                 if (strtolower((string) $manifest->name) === 'com_appointments') {
                     $assert(is_file($stage . '/advansinstaller/AppointmentsConflict.php')
-                        && is_file($stage . '/advansinstaller/export-backup.php'),
-                        'Appointments package must contain the preflight guard and backup exporter.');
-                    $assert(isset($files[str_replace('\\', '/', $installed . '/advansinstaller/export-backup.php')]),
-                        'Appointments backup exporter must also be installed.');
+                        && !is_file($stage . '/advansinstaller/approve.php')
+                        && !is_file($stage . '/advansinstaller/export-backup.php'),
+                        'Appointments package must stage the preflight guard but no approval or server-copy export endpoints.');
+                    $assert(!isset($files[str_replace('\\', '/', $installed . '/advansinstaller/approve.php')])
+                        && !isset($files[str_replace('\\', '/', $installed . '/advansinstaller/export-backup.php')]),
+                        'Approval and server-copy export endpoints must not be installed.');
                     $companion = simplexml_load_file($stage . '/recovery/appointmentsrecovery.xml');
                     $assert($companion instanceof \SimpleXMLElement && (string) $companion->version === (string) $manifest->version
                         && is_file($stage . '/recovery/support/AppointmentsConflict.php')
@@ -188,7 +192,7 @@ namespace {
                 if ($definition['type'] === 'package') {
                     $manifestTarget = str_replace('\\', '/', dirname($installed) . '/' . basename($manifestFile));
                     $assert(isset($files[$manifestTarget]), 'Package manifest is not guarded in Joomla manifest storage.');
-                    $languageTarget = str_replace('\\', '/', JPATH_ROOT . '/language/en-GB/pkg_dmarcreports.ini');
+                    $languageTarget = str_replace('\\', '/', JPATH_ROOT . '/language/en-GB/' . strtolower((string) $manifest->name) . '.ini');
                     $assert(isset($files[$languageTarget]), 'Package site-client language destination is not guarded.');
                     continue;
                 }
@@ -263,11 +267,29 @@ namespace {
         $incoming = $work . '/incoming.php';
         file_put_contents($original, '<?php echo "original";');
         file_put_contents($incoming, '<?php echo "incoming";');
-        \Advans\Installer\V2\State::directory($work . '/state/fixture/backups');
-        $conflicts = \Advans\Installer\V2\FileGuard::inspect([$original => $incoming], $work . '/state/fixture/backups');
-        $plan = $work . '/state/fixture/plan.php';
-        \Advans\Installer\V2\State::write($plan, $conflicts);
-        $digest = hash_file('sha256', $plan);
+        $backupRoot = $work . '/state/fixture/backups';
+        \Advans\Installer\V3\State::directory($backupRoot);
+        $legacyCopy = $backupRoot . '/legacy.php';
+        file_put_contents($legacyCopy, 'pre-existing stored bytes');
+        $legacyHash = hash_file('sha256', $legacyCopy);
+        $comparison = \Advans\Installer\V3\FileGuard::compare([$original => $incoming]);
+        $assert(count($comparison['differing']) === 1, 'The changed destination must be identified.');
+        $assert(file_get_contents($original) === '<?php echo "original";', 'Comparison must not change the destination.');
+        $assert(hash_file('sha256', $legacyCopy) === $legacyHash, 'Comparison must leave legacy stored bytes untouched.');
+        $knowledge = \Advans\Installer\V3\Knowledge::load($work . '/missing-catalog.php', $work . '/missing-record.php');
+        $plan = \Advans\Installer\V3\Planner::plan(
+            $comparison['differing'],
+            [],
+            static fn(): bool => true,
+            static fn(): string => \Advans\Installer\V3\Planner::HALT,
+            $knowledge
+        );
+        $assert(count($plan['halts']) === 1 && $plan['changes'] === [],
+            'An unknown changed own file must pause before Joomla copies any files.');
+        $assert(!method_exists(\Advans\Installer\V3\FileGuard::class, 'backup')
+            && !method_exists(\Advans\Installer\V3\FileGuard::class, 'prune')
+            && !method_exists(\Advans\Installer\V3\FileGuard::class, 'restoreBytes'),
+            'The new runtime must not expose byte-copy, pruning or restore APIs.');
         $run = static function (array $command): array {
             $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
             $output = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
@@ -276,22 +298,12 @@ namespace {
 
             return [proc_close($process), $output];
         };
-        [$code, $output] = $run([PHP_BINARY, $root . '/shared/installer/approve.php', '--approve', $plan, $digest]);
-        $assert($code === 0, 'Exact-content approval failed: ' . $output);
-        $approved = \Advans\Installer\V2\State::read($work . '/state/approved.php');
-        $checked = \Advans\Installer\V2\FileGuard::inspect([$original => $incoming], $work . '/state/fixture/backups', $approved);
-        $assert($checked[0]['approved'] === true, 'Explicit CLI approval did not bind to the exact file bytes.');
-        $assert(file_get_contents($original) === '<?php echo "original";', 'Approval modified the original.');
-        [$code] = $run([PHP_BINARY, $root . '/shared/installer/approve.php', '--approve', $plan, str_repeat('0', 64)]);
-        $assert($code !== 0, 'Stale plan fingerprint was accepted.');
-        file_put_contents($original, '<?php echo "edited after review";');
-        [$code] = $run([PHP_BINARY, $root . '/shared/installer/approve.php', '--approve', $plan, $digest]);
-        $assert($code !== 0, 'Edited original was accepted by the approval command.');
-        [$code, $output] = $run([PHP_BINARY, $plan]);
-        $assert($output === '', 'Plan envelope disclosed its content when executed.');
-        [$code, $output] = $run([PHP_BINARY, $conflicts[0]['backup']]);
-        $assert($output === '', 'Backup envelope disclosed its content when executed.');
-        echo "PASS CLI approval binds plan and destination hashes; guarded state and backups disclose no bytes\n";
+        [$code, $output] = $run([PHP_BINARY, $root . '/shared/installer/approve.php', '--approve', 'legacy-plan', str_repeat('a', 64)]);
+        $assert($code !== 0 && str_contains($output, 'no longer supported'), 'The legacy approval CLI must refuse to approve conflicts.');
+        [$code, $output] = $run([PHP_BINARY, $root . '/shared/installer/export-backup.php', '--export', $legacyCopy, $original, $legacyHash, $work . '/exported.php']);
+        $assert($code !== 0 && !file_exists($work . '/exported.php'), 'The legacy export CLI must not export server-side file copies.');
+        $assert(hash_file('sha256', $legacyCopy) === $legacyHash, 'Legacy entry points must leave existing stored bytes untouched.');
+        echo "PASS conflicts halt without copies; legacy approval/export entry points refuse and preserve legacy copies\n";
     } finally {
         $remove($work);
     }

@@ -1,6 +1,6 @@
 # Joomla! AJAX Forms
 
-**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/joomla-ajax-forms.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/joomla-ajax-forms.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-joomla-ajax-forms.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-joomla-ajax-forms.yml)
@@ -94,6 +94,18 @@ The manifest declares the update server
 New versions appear under **System → Update → Extensions**. Alternatively,
 install the newer ZIP over the existing installation.
 
+Before updating, take a current, complete site backup that can be restored
+independently; the installer cannot verify this. The first update attempt displays this
+recommendation and stops before changing files; start the update again afterwards. The
+installer decides by itself and never asks an administrator a technical question. It
+keeps no file copies. If it reports a modified or unknown file that the update would
+replace, it stops before copying anything and lists the path and the SHA-256 hashes:
+review the file, resolve it manually or defer the update, then retry. There is no
+approval command or bypass. Settings and the enabled state are kept. At every installation
+and update the plugin also removes update-site entries of earlier plugin versions
+and checks the .htaccess (see [Installation](#installation)). The plugin needs
+no Scheduler task and creates none.
+
 ## Uninstall
 
 Uninstall the plugin via **System → Manage → Extensions**. The plugin has no
@@ -115,7 +127,7 @@ removed.
 ### Help tab
 
 The plugin's edit screen (**System → Manage → Plugins → Joomla! AJAX Forms**) has a **Help** tab, the
-first tab after Joomla's own **Plugin** tab. It explains, in de-DE, en-GB and fr-FR, what the plugin does and which forms it handles, prerequisites and setup (script in the template, form detection, `.htaccess` check), every setting with its default, security and privacy behaviour, and typical problems with what to do.
+first tab after Joomla's own **Plugin** tab. It explains, in de-DE, en-GB and fr-FR, what the plugin does and which forms it handles, prerequisites and setup (script in the template, form detection, `.htaccess` check), installation, update and uninstall, every setting with its default, security, permissions and privacy behaviour, the account mails, and typical problems with what to do.
 A note at the top of the **Plugin** tab points to it.
 
 The page is described in the manifest (fieldset `help`, field type `helppage`) and rendered by
@@ -158,7 +170,7 @@ With MFA the same target is passed as an absolute URL in the `return` parameter 
 
 ### Permissions and Data Handling
 
-The endpoints perform real Joomla account, authentication, session and active-shop cart operations. They are not a separate user database or an anonymisation service. Registration/reset rules come from Users options, while profile changes and logout require the applicable authenticated session. Every task except read-only `texts` requires the form token. Plugin configuration needs administrator access.
+The endpoints perform real Joomla account, authentication, session and active-shop cart operations. They are not a separate user database or an anonymisation service. Registration/reset rules come from Users options, while profile changes and logout require the applicable authenticated session. Every task except read-only `texts` requires the form token. The plugin ships no `access.xml` and no permissions of its own: visitors may call it without an account and Joomla's rules (form token, Users options, session) decide. Changing the plugin configuration needs access to **System → Manage → Plugins**; give another account access there.
 
 Mail uses Joomla's configured transport and templates as described under **Account Mails**. The plugin creates no own business tables or Scheduler/retention routine; operators remain responsible for Joomla account/session retention, shop records, mail logs and delivered messages. Debug output is for browser diagnostics, not a complete audit trail; avoid collecting credentials or personal form contents in support reports. Extension-update requests are separate from account mail and form processing.
 
@@ -478,8 +490,12 @@ strings or incomplete site strings. Exact-locale translations and language
 overrides take precedence; implicit English fallbacks do not count as translations
 of missing French or German keys. The plugin's older plain-text messages remain
 the last fallback when a core mail-template row is missing or sending the
-template fails; that deliberately unstyled fallback is still translated in all
-three shipped languages. No separate plugin HTML template is maintained: the
+template fails. That fallback is still translated in all three shipped languages
+and follows the site's Mail Templates settings: with "Mail style" set to HTML or
+both, it is sent in the enabled HTML layout (including template overrides) with
+the original text as the alternative part, and user data is escaped; with plain
+text it stays a text mail. Recipient, subject and send-failure logging are
+unchanged. No separate plugin HTML template is maintained: the
 core HTML body and layout render the translated core text.
 
 Mail language follows the recipient's account language when it is one of the

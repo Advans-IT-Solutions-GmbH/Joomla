@@ -7,8 +7,8 @@
 
 defined('_JEXEC') or die;
 
-use Advans\Installer\AppointmentsConflict\V1\Guard;
-use Advans\Installer\V2\Knowledge;
+use Advans\Installer\AppointmentsConflict\V2\Guard;
+use Advans\Installer\V3\Knowledge;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 
@@ -23,24 +23,25 @@ $esc = static fn(string $value): string => htmlspecialchars($value, ENT_QUOTES |
             <dl class="text-break">
                 <dt><?= Text::_('COM_APPOINTMENTSRECOVERY_EXISTING') ?></dt><dd><code><?= $esc($row['existing']) ?></code></dd>
                 <dt><?= Text::_('COM_APPOINTMENTSRECOVERY_INCOMING') ?></dt><dd><code><?= $esc($row['incoming']) ?></code></dd>
-                <dt><?= Text::_('COM_APPOINTMENTSRECOVERY_BACKUP_PATH') ?></dt><dd><code><?= $esc(Knowledge::relative($row['backup'])) ?></code></dd>
             </dl>
-            <form method="post" action="<?= $esc($page) ?>">
-                <input type="hidden" name="action" value="decide">
-                <input type="hidden" name="plan" value="<?= $esc($review['id']) ?>">
-                <input type="hidden" name="file" value="<?= $esc($id) ?>">
-                <label for="choice-<?= $esc($id) ?>"><?= Text::_('COM_APPOINTMENTSRECOVERY_CHOICE') ?></label>
-                <select id="choice-<?= $esc($id) ?>" name="choice" required>
-                    <option value=""><?= Text::_('COM_APPOINTMENTSRECOVERY_SELECT') ?></option>
-                    <?php if ($row['keep']) : ?>
-                        <option value="keep" <?= ($review['choices'][$id] ?? '') === 'keep' ? 'selected' : '' ?>><?= Text::_('COM_APPOINTMENTSRECOVERY_KEEP') ?></option>
-                    <?php endif; ?>
-                    <option value="replace" <?= ($review['choices'][$id] ?? '') === 'replace' ? 'selected' : '' ?>><?= Text::_($row['remove'] ? 'COM_APPOINTMENTSRECOVERY_REMOVE' : 'COM_APPOINTMENTSRECOVERY_REPLACE') ?></option>
-                </select>
-                <?= HTMLHelper::_('form.token') ?>
-                <button class="btn btn-primary" type="submit"><?= Text::_('JSAVE') ?></button>
+            <p><a class="btn btn-secondary" href="<?= $esc($page . '&view=download&plan=' . rawurlencode($review['id']) . '&file=' . rawurlencode($id)) ?>"><?= Text::_('COM_APPOINTMENTSRECOVERY_DOWNLOAD') ?></a></p>
+            <?php if (!empty($row['downloaded'])) : ?>
+                <form method="post" action="<?= $esc($page) ?>">
+                    <input type="hidden" name="action" value="decide">
+                    <input type="hidden" name="plan" value="<?= $esc($review['id']) ?>">
+                    <input type="hidden" name="file" value="<?= $esc($id) ?>">
+                    <input type="hidden" name="choice" value="apply">
+                    <label>
+                        <input type="checkbox" name="confirm" value="1" required>
+                        <?= Text::_($row['remove'] ? 'COM_APPOINTMENTSRECOVERY_CONFIRM_REMOVE' : 'COM_APPOINTMENTSRECOVERY_CONFIRM_REPLACE') ?>
+                    </label>
+                    <?= HTMLHelper::_('form.token') ?>
+                    <button class="btn btn-primary" type="submit"><?= Text::_('COM_APPOINTMENTSRECOVERY_APPROVE_OPERATION') ?></button>
+                </form>
                 <?php if (!$row['keep']) : ?><p><?= Text::_('COM_APPOINTMENTSRECOVERY_NO_KEEP') ?></p><?php endif; ?>
-            </form>
+            <?php else : ?>
+                <p><?= Text::_('COM_APPOINTMENTSRECOVERY_DOWNLOAD_FIRST') ?></p>
+            <?php endif; ?>
         </section>
     <?php endforeach; ?>
 <?php else : ?>
@@ -50,25 +51,28 @@ $esc = static fn(string $value): string => htmlspecialchars($value, ENT_QUOTES |
 <?php if (!empty($attempt['rows'])) : ?>
     <h2><?= Text::_('COM_APPOINTMENTSRECOVERY_RECOVER') ?>: <?= $esc($attempt['version']) ?></h2>
     <?php foreach ($attempt['rows'] as $id => $row) :
-        try {
-            $live = $row['keep'] ? Guard::liveHash($row) : '';
-        } catch (\RuntimeException $error) {
-            $live = '';
-        }
+        try { $live = Guard::liveHash(['destination' => $row['destination']]); }
+        catch (\RuntimeException $error) { $live = ''; }
         ?>
         <section class="card p-3 mb-2 text-break">
             <h3 class="h5"><?= $esc(Knowledge::relative($row['destination'])) ?></h3>
-            <p><?= Text::_('COM_APPOINTMENTSRECOVERY_BACKUP') ?>: <code><?= $esc($row['existing']) ?></code></p>
-            <?php if ($live === null || $live === $row['incoming']) : ?>
+            <p><?= Text::_('COM_APPOINTMENTSRECOVERY_EXISTING') ?>: <code><?= $esc($row['existing']) ?></code></p>
+            <?php if (!empty($row['keep']) && ($live === null || $live === $row['incoming'])) : ?>
                 <p><?= Text::_('COM_APPOINTMENTSRECOVERY_EXISTING') ?>: <code><?= $esc($live ?? Text::_('COM_APPOINTMENTSRECOVERY_MISSING')) ?></code></p>
-                <form method="post" action="<?= $esc($page) ?>">
+                <form method="post" enctype="multipart/form-data" action="<?= $esc($page) ?>">
                     <input type="hidden" name="action" value="restore">
                     <input type="hidden" name="plan" value="<?= $esc($attempt['id']) ?>">
                     <input type="hidden" name="file" value="<?= $esc($id) ?>">
                     <input type="hidden" name="expected" value="<?= $esc($live ?? '') ?>">
+                    <label for="restore-<?= $esc($id) ?>"><?= Text::_('COM_APPOINTMENTSRECOVERY_UPLOAD') ?></label>
+                    <input class="form-control" id="restore-<?= $esc($id) ?>" type="file" name="restore" required>
                     <?= HTMLHelper::_('form.token') ?>
                     <button class="btn btn-warning" type="submit"><?= Text::_('COM_APPOINTMENTSRECOVERY_RESTORE') ?></button>
                 </form>
+            <?php elseif (empty($attempt['installed'])) : ?>
+                <p><?= Text::_('COM_APPOINTMENTSRECOVERY_UPDATE_NOT_VERIFIED') ?></p>
+            <?php elseif (!$row['keep']) : ?>
+                <p><?= Text::_('COM_APPOINTMENTSRECOVERY_NO_KEEP') ?></p>
             <?php else : ?>
                 <p><?= Text::_('COM_APPOINTMENTSRECOVERY_NO_RESTORE') ?></p>
             <?php endif; ?>

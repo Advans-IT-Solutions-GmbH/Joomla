@@ -54,6 +54,15 @@
                             <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETUP_STEP6</li>
                         </ol>
                     </section>
+                    <section title="PLG_SYSTEM_PRIVACYREQUESTS_HELP_INSTALL_TITLE">
+                        <ul>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_INSTALL_LI1</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_INSTALL_LI2</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_INSTALL_LI3</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_INSTALL_LI4</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_INSTALL_LI5</li>
+                        </ul>
+                    </section>
                     <section title="PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETTING_TITLE">
                         <p>PLG_SYSTEM_PRIVACYREQUESTS_HELP_SETTING_P1</p>
                         <ul>
@@ -89,6 +98,21 @@
                             <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_LIMITS_LI8</li>
                         </ul>
                         <note>PLG_SYSTEM_PRIVACYREQUESTS_HELP_LIMITS_NOTE1</note>
+                    </section>
+                    <section title="PLG_SYSTEM_PRIVACYREQUESTS_HELP_PERMS_TITLE">
+                        <ul>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_PERMS_LI1</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_PERMS_LI2</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_PERMS_LI3</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_SYSTEM_PRIVACYREQUESTS_HELP_DATA_TITLE">
+                        <ul>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_DATA_LI1</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_DATA_LI2</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_DATA_LI3</li>
+                            <li>PLG_SYSTEM_PRIVACYREQUESTS_HELP_DATA_LI4</li>
+                        </ul>
                     </section>
                     <section title="PLG_SYSTEM_PRIVACYREQUESTS_HELP_OTHERS_TITLE">
                         <ul>

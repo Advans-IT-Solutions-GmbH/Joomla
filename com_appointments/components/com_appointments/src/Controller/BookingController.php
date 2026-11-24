@@ -227,6 +227,10 @@ class BookingController extends BaseController
                 $url .= '&day=' . urlencode($day);
             }
         }
+        $start = $this->input->post->getString('start', '');
+        if ($model->action() === 'reschedule' && UtcTimestamp::parse($start) !== null) {
+            $url .= '&start=' . urlencode($start);
+        }
         $this->setRedirect(Route::_($url, false));
         $focusKey = 'com_appointments.manage_focus_message.' . $this->input->getInt('id') . '.' . $model->action();
         $this->app->setUserState($focusKey, null);

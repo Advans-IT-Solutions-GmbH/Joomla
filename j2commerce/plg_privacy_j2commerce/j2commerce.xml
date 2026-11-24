@@ -97,6 +97,15 @@
                         </ol>
                         <note>PLG_PRIVACY_J2COMMERCE_HELP_SETUP_NOTE1</note>
                     </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_INSTALL_TITLE">
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_INSTALL_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_INSTALL_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_INSTALL_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_INSTALL_LI4</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_INSTALL_LI5</li>
+                        </ul>
+                    </section>
                     <section title="PLG_PRIVACY_J2COMMERCE_HELP_TASKS_TITLE">
                         <p>PLG_PRIVACY_J2COMMERCE_HELP_TASKS_P1</p>
                         <ul>
@@ -158,6 +167,30 @@
                             <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_NOTIFICATIONS_LI2</li>
                             <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_NOTIFICATIONS_LI3</li>
                             <li>PLG_PRIVACY_J2COMMERCE_HELP_SETTINGS_NOTIFICATIONS_LI4</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_MAIL_TITLE">
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_MAIL_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_MAIL_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_MAIL_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_MAIL_LI4</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_PERMS_TITLE">
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PERMS_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PERMS_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PERMS_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_PERMS_LI4</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_PRIVACY_J2COMMERCE_HELP_STORE_TITLE">
+                        <ul>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_STORE_LI1</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_STORE_LI2</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_STORE_LI3</li>
+                            <li>PLG_PRIVACY_J2COMMERCE_HELP_STORE_LI4</li>
                         </ul>
                     </section>
                     <section title="PLG_PRIVACY_J2COMMERCE_HELP_RETENTION_TITLE">
@@ -466,11 +499,7 @@
         </fields>
     </config>
 
-    <updateservers>
-        <server type="extension" priority="1" name="J2Commerce Privacy Plugin">
-            https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/plg_privacy_j2commerce/updates/update.xml
-        </server>
-    </updateservers>
+    <!-- No update server of its own: the package pkg_privacy_j2commerce is the update channel. -->
     <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
     <php_minimum>8.1</php_minimum>
 </extension>

@@ -122,6 +122,7 @@ fi
 # Supported pattern forms (all patterns used in this repository):
 #   exact/path/file.ext      exact file
 #   some/directory/**        everything below the directory
+#   */name.ext               one path segment per '*', same depth
 # Anything else fails loudly so that the evaluation can never silently drift
 # from the real trigger configuration.
 pattern_matches() {
@@ -142,9 +143,14 @@ pattern_matches() {
             [[ "$file" == "$prefix/"* ]]
             return
             ;;
-        *'*'*|*'?'*|*'['*)
+        *'**'*|*'?'*|*'['*)
             echo "::error::Unsupported path pattern: ${pattern}" >&2
             exit 2
+            ;;
+        *'*'*)
+            # One path segment per '*' (for example */build.sh): same depth, then a glob match.
+            [[ "${file//[^\/]/}" == "${pattern//[^\/]/}" && "$file" == $pattern ]]
+            return
             ;;
         *)
             [[ "$file" == "$pattern" ]]

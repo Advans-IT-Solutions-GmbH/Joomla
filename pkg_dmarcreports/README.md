@@ -1,6 +1,6 @@
 # DMARC Reports Package
 
-**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/pkg-dmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/pkg-dmarcreports.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-pkg-dmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-pkg-dmarcreports.yml)
@@ -31,7 +31,7 @@ Report parsing and storage run on your own server; report contents are not uploa
 - Installs the component, the dashboard module, the ingestion task plugin and the MTA-STS system plugin in a single step
 - Each bundled extension keeps its own installer script, tables and settings — package updates preserve collected report data and IMAP passwords
 - Sub-extensions remain individually buildable and releasable; the package bundles the built archives
-- Administrator-facing; the component also ships a site entry point for the MTA-STS/TLS-RPT well-known delivery, served by the system plugin
+- Administrator-facing; the only public part is the MTA-STS policy at `/.well-known/mta-sts.txt`, served by the system plugin (the component ships no site part)
 - Own tag prefix (`pkgdmarcreports-v*`) and update server, independent of the sub-extension versions
 
 ## Requirements
@@ -54,11 +54,14 @@ Every bundled extension selects the correct database and HTTP APIs at runtime an
 1. Use the generated `pkg_dmarcreports_<version>.zip`
 2. **System → Install → Extensions**
 3. Upload and install — Joomla installs the component, the module and both plugins in one step
-4. Enable the plugins under **System → Manage → Plugins** (`Task - DMARC Reports` and `System - DMARC Reports MTA-STS`) and publish the module on the `cpanel` position if you want the dashboard tile
+4. Both plugins (`Task - DMARC Reports Ingestion` and `System - DMARC MTA-STS Policy`) are enabled by a fresh installation; check them under **System → Manage → Plugins**. The module is not published by the installation: publish it on the `cpanel` position under **System → Manage → Administrator Modules** if you want the dashboard tile
+5. The installation creates the required scheduled task **DMARC Reports - Automatic ingestion** (every hour, switched on) when it is missing, and reports it. It needs a working Scheduler trigger
+
+**What the installer does.** It checks the platform (Joomla 5.4+, PHP 8.1+) and decides by itself, without questions. Before Joomla copies files it compares every file it would replace, remove or adjust with the installed-file record and the released hashes. A modified or unknown file stops the update before anything is copied; the notice lists the path, the current and incoming SHA-256 hashes and the reason. Resolve the conflict manually or defer the update, then retry. The installer keeps no copy of file contents and has no approval or bypass step. Before the first update attempt it stops once and recommends a current, complete full-site backup (files and database) that can be restored independently; it cannot verify that one exists, and the retry only acknowledges the note. The package and each bundled extension run this check separately, so the note can appear more than once during one package update. Each child also checks its own prerequisites (the component needs the PHP extensions `simplexml`, `libxml`, `mbstring` and `openssl` and a MySQL or MariaDB database). The package script also installs the license file and moves the children onto the package update channel.
 
 ## Updating
 
-The manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`). Published versions will appear under **System → Update → Extensions** once releases exist. Release retention is latest-only per extension/tag family; the monorepo's global latest release may belong to an unrelated extension. The package is the only update channel: the bundled extensions ship without their own update servers, and if one of them was installed on its own before, the package's installer script removes that extension's old update-site link (and the update site, once nothing else uses it) on install and on every update, so the extensions can no longer be updated apart from the package. You can also install a newer built ZIP over the existing installation. Because each bundled extension migrates its own tables, updating the package keeps all collected DMARC and TLS-RPT data and the stored IMAP credentials.
+The manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`). Published versions will appear under **System → Update → Extensions** once releases exist. Release retention is latest-only per extension/tag family; the monorepo's global latest release may belong to an unrelated extension. The package is intended to be the only update channel: the bundled extensions ship without their own update servers, and the installer attempts to remove any old standalone links when the package is installed or updated. If that cleanup fails, the installation continues with a localized warning; one or more children may still receive standalone updates and drift from the package until a later package update successfully retries the switch. Update sites still used by another extension are retained. The package's own update site is separate and is not changed by this cleanup. You can also install a newer built ZIP over the existing installation. Because each bundled extension migrates its own tables, updating the package keeps all collected DMARC and TLS-RPT data and the stored IMAP credentials.
 
 ## Uninstall
 
@@ -79,7 +82,7 @@ Installing the bundle does not prove that the configured mailbox, Scheduler trig
 
 ## Troubleshooting
 
-If installation stops for existing files, use the shared backup/approval procedure linked above; do not bypass the guard by copying child files manually. If an update is missing, check the **package** update site, not a child's standalone feed. If reports or policy delivery are missing, use the relevant child README's troubleshooting steps and component System Check. The package does not configure DNS, web-server rules or a cron trigger.
+If installation stops for a modified or unknown file, review the listed paths and hashes, resolve the conflict manually or defer the update, then retry. The installer does not create or retain file-content copies, and there is no approval bypass; do not copy child files manually to evade the stop. A package update may show the full-site backup recommendation separately for the package and its children. If an update is missing, check the **package** update site, not a child's standalone feed. If reports or policy delivery are missing, use the relevant child README's troubleshooting steps and component System Check. The package does not configure DNS, web-server rules or a cron trigger.
 
 ## Development
 
@@ -132,7 +135,7 @@ Order as in `tests/test.env`:
 1. **Installation** - The package and all four bundled extensions register; component tables are created
 2. **Structure** - The package manifest bundles the component, module, task plugin and system plugin; each archive is present and well-formed
 3. **Auto-Ingest** - A scheduler task of the bundled task plugin drives the component's IMAP polling end to end through Joomla's real scheduler
-4. **Update** - First installs each bundled extension on its own with its standalone update server (the state of a site that used the extensions before the package), then re-installs the package over it: the component tables, collected reports and the stored IMAP password are kept (no data loss), and only the package's update site remains, with no update-site link left on any bundled extension
+4. **Update** - First installs each bundled extension on its own with its standalone update server (the state of a site that used the extensions before the package), then re-installs the package over it: the component tables, collected reports and the stored IMAP password are kept (no data loss), child links are removed, the package's own update site is retained, and a standalone site shared with another extension is preserved
 5. **MTA-STS** - Requests the exact RFC 8461 URL `/.well-known/mta-sts.txt` on an `mta-sts.` host, with the Apache rewrite rule from the [system plugin README](../plg_system_dmarcmtasts/README.md#web-server-rule) in place, and checks the policy is served only for an enabled feature and a published monitored domain
 6. **Installer Messages** - shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
 7. **Uninstall** - The package and all bundled extensions are removed cleanly

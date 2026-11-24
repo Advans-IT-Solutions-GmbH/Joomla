@@ -13,7 +13,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     : dirname(__DIR__) . '/shared/installer/load.php';
 
 use Joomla\CMS\Factory;
-use Advans\Installer\V2\InstallerScript;
+use Advans\Installer\V3\InstallerScript;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -109,11 +109,17 @@ class Pkg_DmarcreportsInstallerScript extends InstallerScript
      * the pending update rows of those streams. The package's own update site
      * is linked to the package, not to a child, so it is never touched.
      *
-     * A failure here must not fail the installation; the stale link only
-     * affects update notifications and is retried on the next package update.
+     * A failure here must not fail the installation. The package installation
+     * or update queues a localized warning because a child may retain its
+     * standalone update channel and drift from the package; the next package
+     * update retries it. The link and orphan cleanup runs in one transaction
+     * so a failed site deletion leaves the child links available for that retry.
      */
     private function removeChildUpdateSites(): void
     {
+        $db                 = null;
+        $transactionStarted = false;
+
         try {
             $db  = Factory::getContainer()->get(DatabaseInterface::class);
             $ids = [];
@@ -141,6 +147,9 @@ class Pkg_DmarcreportsInstallerScript extends InstallerScript
             if ($ids === []) {
                 return;
             }
+
+            $db->transactionStart();
+            $transactionStarted = true;
 
             $query = $this->newQuery($db)
                 ->select('DISTINCT ' . $db->quoteName('update_site_id'))
@@ -181,8 +190,28 @@ class Pkg_DmarcreportsInstallerScript extends InstallerScript
                     )->execute();
                 }
             }
-        } catch (\Throwable $e) {
-            // Not fatal: see the method description.
+
+            $db->transactionCommit();
+            $transactionStarted = false;
+        } catch (\Throwable) {
+            $rollbackFailed = false;
+
+            if ($transactionStarted && $db instanceof DatabaseInterface) {
+                try {
+                    $db->transactionRollback();
+                } catch (\Throwable) {
+                    $rollbackFailed = true;
+                }
+            }
+
+            Factory::getApplication()->enqueueMessage(
+                Text::_(
+                    $rollbackFailed
+                        ? 'PKG_DMARCREPORTS_UPDATE_CHANNEL_ROLLBACK_WARNING'
+                        : 'PKG_DMARCREPORTS_UPDATE_CHANNEL_WARNING'
+                ),
+                'warning'
+            );
         }
     }
 

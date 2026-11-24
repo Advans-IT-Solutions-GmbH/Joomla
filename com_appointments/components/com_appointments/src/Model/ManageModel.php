@@ -10,6 +10,7 @@ namespace Advans\Component\Appointments\Site\Model;
 
 use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Advans\Component\Appointments\Administrator\Helper\SignedLink;
+use Advans\Component\Appointments\Administrator\Helper\SlotRules;
 use Advans\Component\Appointments\Administrator\Helper\UtcTimestamp;
 use Advans\Component\Appointments\Administrator\Service\AvailabilityService;
 use Advans\Component\Appointments\Administrator\Service\BookingStore;
@@ -157,6 +158,18 @@ class ManageModel extends BaseDatabaseModel
             'delete' => true,
             default => throw new \RuntimeException(Text::_('COM_APPOINTMENTS_MANAGE_ERROR_CONFIGURATION')),
         };
+    }
+
+    /** Minutes the event type of the booking lasts now: what a reschedule saves, not the old booking's length. */
+    public function currentDurationMinutes(object $booking): int
+    {
+        $db = $this->getDatabase();
+        $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+        $query->select('e.*')->from($db->quoteName('#__appointments_eventtypes', 'e'))
+            ->where($db->quoteName('e.id') . ' = ' . (int) $booking->eventtype_id);
+        $event = $db->setQuery($query)->loadAssoc();
+
+        return $event ? max(1, intdiv(SlotRules::fromEventType($event)->getDurationSeconds(), 60)) : 0;
     }
 
     public function getSlots(object $booking, string $month, string $timezone, \DateTimeImmutable $now): array

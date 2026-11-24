@@ -131,6 +131,15 @@
                             <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_SETUP_STEP5</li>
                         </ol>
                     </section>
+                    <section title="PLG_AJAX_JOOMLAAJAXFORMS_HELP_INSTALL_TITLE">
+                        <ul>
+                            <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_INSTALL_LI1</li>
+                            <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_INSTALL_LI2</li>
+                            <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_INSTALL_LI3</li>
+                            <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_INSTALL_LI4</li>
+                            <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_INSTALL_LI5</li>
+                        </ul>
+                    </section>
                     <section title="PLG_AJAX_JOOMLAAJAXFORMS_HELP_SETTINGS_TITLE">
                         <p>PLG_AJAX_JOOMLAAJAXFORMS_HELP_SETTINGS_P1</p>
                         <ul>
@@ -152,6 +161,16 @@
                             <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_SECURITY_LI4</li>
                             <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_SECURITY_LI5</li>
                             <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_SECURITY_LI6</li>
+                            <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_SECURITY_LI7</li>
+                        </ul>
+                    </section>
+                    <section title="PLG_AJAX_JOOMLAAJAXFORMS_HELP_MAIL_TITLE">
+                        <ul>
+                            <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_MAIL_LI1</li>
+                            <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_MAIL_LI2</li>
+                            <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_MAIL_LI3</li>
+                            <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_MAIL_LI4</li>
+                            <li>PLG_AJAX_JOOMLAAJAXFORMS_HELP_MAIL_LI5</li>
                         </ul>
                     </section>
                     <section title="PLG_AJAX_JOOMLAAJAXFORMS_HELP_PROBLEMS_TITLE">

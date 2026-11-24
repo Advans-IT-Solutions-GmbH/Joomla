@@ -21,6 +21,10 @@ $copyTree = static function (string $source, string $target) use (&$copyTree): v
             continue;
         }
 
+        if (in_array($entry->getFilename(), ['approve.php', 'export-backup.php'], true)) {
+            continue;
+        }
+
         $destination = $target . '/' . $entry->getFilename();
 
         if ($entry->isDir()) {
@@ -143,11 +147,15 @@ $stageManifest = static function (string $path) use ($shared, $copyTree, &$stage
     $field->addAttribute('label', 'ADVANS_CHECK_TITLE');
     $field->addAttribute('filter', 'unset');
 
-    if ($id === 'com_dmarcreports') {
+    // The main extension of a package also shows the package's check (its scheduled tasks and
+    // bundled extensions), once the package is installed.
+    $packages = ['com_dmarcreports' => 'pkg_dmarcreports', 'com_appointments' => 'pkg_appointments', 'plg_privacy_j2commerce' => 'pkg_privacy_j2commerce'];
+
+    if (isset($packages[$id])) {
         $packageCheck = $fieldset->addChild('field');
         $packageCheck->addAttribute('name', 'advans_packagecheck');
         $packageCheck->addAttribute('type', 'advanssystemcheck');
-        $packageCheck->addAttribute('extension', 'pkg_dmarcreports');
+        $packageCheck->addAttribute('extension', $packages[$id]);
         $packageCheck->addAttribute('installedonly', '1');
         $packageCheck->addAttribute('label', 'ADVANS_CHECK_PACKAGE');
         $packageCheck->addAttribute('filter', 'unset');

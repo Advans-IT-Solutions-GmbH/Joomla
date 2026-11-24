@@ -13,7 +13,7 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
     : dirname(__DIR__, 2) . '/shared/installer/load.php';
 
 use Joomla\CMS\Factory;
-use Advans\Installer\V2\InstallerScript;
+use Advans\Installer\V3\InstallerScript;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -48,16 +48,48 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
     }
 
     /**
-     * The OSMap compatibility patch changes one line of OSMap's own Factory.php and keeps every
-     * other byte of the current file, including changes made on this site. It is applied after a
-     * verified backup, which restores the file completely, and reported. Any other foreign file
-     * follows the shared rule.
+     * SHA-256 of the unmodified Factory.php of every OSMap release the patch was verified against
+     * (taken from the file of a fresh installation of that release). The patch changes one line, so
+     * it is only applied to bytes recognised here; any other content (a release not listed, or a
+     * file edited on the site) pauses the installation before anything is changed.
+     */
+    private const STOCK_FACTORY = [
+        '97886dd05ddf036beedf34d4f2289347cdde37d25c181425523a3f5283ff26e5' => 'OSMap 5.1.6',
+    ];
+
+    /** @return array<string, string> SHA-256 => release of the stock Factory.php files the patch accepts. */
+    protected function stockFactoryHashes(): array
+    {
+        return self::STOCK_FACTORY;
+    }
+
+    private static function factoryPath(): string
+    {
+        return \Advans\Installer\V3\FileGuard::normalize(JPATH_ADMINISTRATOR . '/components/com_osmap/library/Alledia/OSMap/Factory.php');
+    }
+
+    /**
+     * The OSMap compatibility patch changes one line of OSMap's own Factory.php. The software decides
+     * by itself when the file is exactly a known stock release: it is adjusted, no step for the site
+     * owner. A file already carrying the fix needs nothing (guardedFiles() reports no operation),
+     * and any other content pauses the installation. Any other foreign file follows the shared rule.
      */
     protected function foreignDecision(string $destination, string $existing, bool $known): string
     {
-        $factory = \Advans\Installer\V2\FileGuard::normalize(JPATH_ADMINISTRATOR . '/components/com_osmap/library/Alledia/OSMap/Factory.php');
+        if ($destination !== self::factoryPath()) {
+            return parent::foreignDecision($destination, $existing, $known);
+        }
 
-        return $destination === $factory ? \Advans\Installer\V2\Planner::ADJUST : parent::foreignDecision($destination, $existing, $known);
+        return isset($this->stockFactoryHashes()[$existing])
+            ? \Advans\Installer\V3\Planner::ADJUST
+            : \Advans\Installer\V3\Planner::HALT;
+    }
+
+    protected function pauseReason(string $destination): string
+    {
+        return \Advans\Installer\V3\FileGuard::normalize($destination) === self::factoryPath()
+            ? Text::_('PLG_OSMAP_J2COMMERCE_PAUSE_OSMAP_FACTORY')
+            : parent::pauseReason($destination);
     }
 
     protected function extensionPostflight(string $type, object $parent): void
@@ -275,10 +307,10 @@ class PlgosmapJ2commerceInstallerScript extends InstallerScript
     /**
      * Patches OSMap Factory.php for Joomla 5 / PHP 8.1+ compatibility.
      *
-     * OSMap ≤ 5.1.3: Factory::getTable() returns false instead of null,
+     * Some OSMap releases: Factory::getTable() returns false instead of null,
      * causing a TypeError (return type declared as ?Table).
      * Fix: append ?: null so false is coerced to null.
-     * Idempotent — OSMap ≥ 5.1.4 already contains the fix.
+     * Idempotent. Reached only for a file the preflight accepted (a known stock release) or one that already has the fix.
      */
     private function patchOsmapFactory(): void
     {

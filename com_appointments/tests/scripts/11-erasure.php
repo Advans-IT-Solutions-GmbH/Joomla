@@ -108,6 +108,48 @@ try {
     $audit = $db->query("SELECT * FROM {$prefix}appointments_audit WHERE booking_id={$id}")->fetch_assoc();
     $check($audit && $audit['path'] === 'admin' && (int) $audit['actor_user_id'] === $fixture->host, 'Administrator erasure records only the acting operator identity');
 
+    // Administrator deletion removes the row, records the operator and still sends the cancellation mail.
+    $created = $fixture->booking($event, $day . ' 14:00:00');
+    $deleteId = (int) $created['booking']['id'];
+    $erasedIds[] = $deleteId;
+    $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
+    $admin->request('/administrator/index.php?option=com_appointments&task=bookings.delete', ['cid' => [$deleteId], $token => 1]);
+    $check($fixture->row($deleteId) === null, 'Administrator deletion removes the appointment row');
+    $deleteAudit = $db->query("SELECT * FROM {$prefix}appointments_audit WHERE booking_id={$deleteId}")->fetch_assoc();
+    $check($deleteAudit && $deleteAudit['path'] === 'admin' && (int) $deleteAudit['actor_user_id'] === $fixture->host,
+        'Administrator deletion records only the acting operator identity');
+
+    // An already anonymised booking is deleted too.
+    $created = $fixture->booking($event, $day . ' 15:00:00');
+    $anonId = (int) $created['booking']['id'];
+    $erasedIds[] = $anonId;
+    $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
+    $admin->request('/administrator/index.php?option=com_appointments&task=bookings.erase', ['cid' => [$anonId], $token => 1]);
+    $anonymised = $fixture->row($anonId);
+    $check($anonymised !== null && $anonymised['anonymised_utc'] !== null, 'The administrator erasure anonymises the appointment first');
+    $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
+    $deleteResponse = $admin->request('/administrator/index.php?option=com_appointments&task=bookings.delete', ['cid' => [$anonId], $token => 1]);
+    $check($fixture->row($anonId) === null, 'Administrator deletion also removes an already anonymised appointment');
+    if ($fixture->row($anonId) !== null) {
+        // The text of the error page without its stylesheet, scripts and head.
+        $errorPage = new DOMDocument();
+        @$errorPage->loadHTML($deleteResponse);
+        foreach (['style', 'script', 'head'] as $tagName) {
+            while (($node = $errorPage->getElementsByTagName($tagName)->item(0)) !== null) {
+                $node->parentNode->removeChild($node);
+            }
+        }
+        echo '    HTTP ' . $admin->status . ': ' . substr(trim(preg_replace('/\s+/', ' ', $errorPage->textContent)), 0, 900) . "\n";
+    }
+    // A batch with an ID that no longer exists deletes the others and is not refused as a whole.
+    $created = $fixture->booking($event, $day . ' 16:00:00');
+    $batchId = (int) $created['booking']['id'];
+    $erasedIds[] = $batchId;
+    $staleId = $batchId + 100000;
+    $token = $admin->token($admin->request('/administrator/index.php?option=com_appointments&view=bookings'));
+    $admin->request('/administrator/index.php?option=com_appointments&task=bookings.delete', ['cid' => [$staleId, $batchId], $token => 1]);
+    $check($fixture->row($batchId) === null, 'Administrator deletion skips a vanished appointment and still deletes the others');
+
     // Guest self-removal: the signed link of one guest removes only that guest's address.
     $created = $fixture->booking($event, $day . ' 13:00:00', ['guests' => 'keep@example.test, Leave@example.test']);
     $guestBooking = $created['booking'];
@@ -197,6 +239,8 @@ try {
     // with a conference room, and runs the retention routine of the Scheduler for an old booking
     // with a room. None may throw after the commit; the room is released (the fixed provider has
     // nothing to tear down) or the failure is reported, never thrown.
+    // The booking form allows 10 bookings per hour and address; this suite has made 8 by now and books 3 more.
+    $db->query("DELETE FROM {$prefix}appointments_ratelimit");
     $consoleEvent = $fixture->event();
     // The host already has 10:00 to 13:00 booked above.
     $plain = $fixture->booking($consoleEvent, $day . ' 14:00:00')['booking'];

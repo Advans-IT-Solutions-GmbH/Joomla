@@ -195,6 +195,41 @@ function hp_plugins(string $package, array $manifest): array
         }
     }
 
+    // A package bundles its plugins as archives (packages/*.zip); each one is read with its own
+    // language files.
+    if ($manifest['type'] === 'package') {
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $name = (string) $zip->getNameIndex($i);
+
+            if (!preg_match('#^packages/[^/]+\.zip$#', $name)) {
+                continue;
+            }
+
+            $archive = sys_get_temp_dir() . '/help-pages-' . hash('sha256', $package . "\0" . $name) . '.zip';
+            file_put_contents($archive, (string) $zip->getFromIndex($i));
+            $child = sh_read_package_manifest($archive);
+            $childZip = new ZipArchive();
+
+            if ($child === null || $child['type'] !== 'plugin' || $childZip->open($archive) !== true) {
+                continue;
+            }
+
+            $xml = @simplexml_load_string((string) $childZip->getFromName($child['xmlfile']));
+            $childZip->close();
+
+            if ($xml instanceof SimpleXMLElement) {
+                $plugins[] = [
+                    'label'   => "plg_{$child['folder']}_{$child['element']}",
+                    'folder'  => $child['folder'],
+                    'element' => $child['element'],
+                    'xml'     => $xml,
+                    'root'    => false,
+                    'archive' => $archive,
+                ];
+            }
+        }
+    }
+
     foreach ($manifest['nested'] as $nested) {
         $content = $zip->getFromName("plugins/{$nested['folder']}/{$nested['element']}/{$nested['element']}.xml");
         $xml     = $content === false ? false : @simplexml_load_string($content);
@@ -248,7 +283,7 @@ foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
 
     try {
         // Joomla only copies the language files of tags that exist.
-        [$code, $output] = sh_cli_install(JOOMLA_ROOT, $package);
+        [$code, $output] = sh_cli_install_checked(JOOMLA_ROOT, $package);
 
         if ($code !== 0) {
             hp_fail("$tag: cannot install language files: " . sh_strip_ansi($output));
@@ -264,6 +299,9 @@ foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
 
         foreach ($plugins as $plugin) {
             $label = "$tag: {$plugin['label']}";
+            // A plugin bundled in a package carries its own language files.
+            $strings = sh_read_package_language($plugin['archive'] ?? $package, $tag);
+            $englishStrings = sh_read_package_language($plugin['archive'] ?? $package, 'en-GB');
             $id    = $plugin['root'] ? sh_find_extension_id($manifest) : sh_find_extension_id($manifest, $plugin['folder'], $plugin['element']);
 
             echo "\n--- $label ---\n";

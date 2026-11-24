@@ -21,14 +21,16 @@ Joomla/
 ├── plg_task_dmarcreports/    # DMARC Reports Scheduler Task Plugin
 ├── plg_system_dmarcmtasts/   # DMARC Reports MTA-STS Policy System Plugin
 ├── pkg_dmarcreports/         # DMARC Reports Package (bundles the four extensions above)
-├── com_appointments/         # Appointments Component
+├── com_appointments/         # Appointments Component (with its dashboard module and plugins)
+├── pkg_appointments/         # Appointments Package (bundles the component, module and plugins)
 ├── plg_system_privacyrequests/ # Account-free native Core privacy request adapter
 ├── j2commerce/               # J2Commerce Extensions
 │   ├── com_j2commerce_importexport/
 │   ├── com_j2store_cleanup/
 │   ├── plg_osmap_j2commerce/
 │   ├── plg_j2commerce_productcompare/
-│   └── plg_privacy_j2commerce/
+│   ├── plg_privacy_j2commerce/   # Privacy plugin (with its system and task plugins)
+│   └── pkg_privacy_j2commerce/   # Privacy Package (bundles the three plugins)
 ├── shared/                   # Shared installer support, build and test scripts
 └── .github/                  # CI/CD workflows
 ```
@@ -45,7 +47,7 @@ Joomla/
 | [DMARC Reports Scheduler Task](plg_task_dmarcreports/) | Joomla scheduler task plugin that automatically fetches, parses and stores DMARC and TLS-RPT reports from every active IMAP source on a configurable interval, reusing the component's ingestion and locking so automatic and on-demand runs stay parallel-safe | 5.4 – 6.x |
 | [DMARC Reports MTA-STS Policy](plg_system_dmarcmtasts/) | System plugin that serves the generated MTA-STS policy (RFC 8461) at `/.well-known/mta-sts.txt` for each configured domain, so the policy stays in sync with the component options without a hand-maintained static file | 5.4 – 6.x |
 | [DMARC Reports Package](pkg_dmarcreports/) | Joomla package that bundles the DMARC Reports component, dashboard module, scheduler task plugin and MTA-STS system plugin into one install, update and uninstall for the administrator | 5.4 – 6.x |
-| [Appointments](com_appointments/) | **Pre-release.** Self-hosted scheduling, no-JavaScript booking, approval, signed management links, invitations, reminders/retention and opt-in conferencing; encrypted internet calendars with CalDAV, device credentials and grants; Joomla privacy integration. See the component README for setup and limitations | 5.4 – 6.x |
+| [Appointments](pkg_appointments/) | **Pre-release.** Delivered as the package `pkg_appointments` (component, dashboard module and six plugins). Self-hosted scheduling, no-JavaScript booking, approval, signed management links, invitations, reminders/retention and opt-in conferencing; encrypted internet calendars with CalDAV, device credentials and grants; Joomla privacy integration. See the component README for setup and limitations | 5.4 – 6.x |
 | [Core privacy requests](plg_system_privacyrequests/) | **Pre-release.** Standalone, opt-in no-account removal request and email confirmation through the native Core privacy lifecycle; administrators and active privacy plugins retain authorization, legal blocking and separate completion responsibility | 5.4 – 6.x |
 
 ### J2Commerce Extensions
@@ -56,11 +58,11 @@ Joomla/
 | [J2Store Cleanup](j2commerce/com_j2store_cleanup/) | Detect incompatible extensions after J2Store-to-J2Commerce migration |
 | [OSMap J2Commerce](j2commerce/plg_osmap_j2commerce/) | Adds enabled, visible J2Commerce products whose article is published and accessible to guests to the OSMap sitemap automatically |
 | [Product Compare](j2commerce/plg_j2commerce_productcompare/) | Compare products side-by-side |
-| [Privacy](j2commerce/plg_privacy_j2commerce/) | GDPR compliance for J2Commerce |
+| [Privacy](j2commerce/pkg_privacy_j2commerce/) | GDPR compliance for J2Commerce, delivered as the package `pkg_privacy_j2commerce` (privacy plugin, consent system plugin, cleanup task plugin) |
 
 ### Bundled Plugin Inventory
 
-The tables above list the **13 independently built extensions** on this branch. Their production manifests also declare these **seven bundled plugins**. Each child has its own manifest/languages and is installed, updated and removed through its parent; do not treat it as a separate release download. A package's four DMARC children are already listed above, not four additional extensions. Product Compare's Joomla 5 `j2store` mirror is a deployment variant of that plugin, not another source extension.
+The tables above list the **13 independently built extensions** on this branch. Multi-part extensions ship as real Joomla packages (`pkg_dmarcreports`, `pkg_appointments`, `pkg_privacy_j2commerce`): the package ZIP is the release asset, its parts are archives inside it. The two newer packages bundle these **seven plugins** next to their main extension. Each child has its own manifest/languages and is installed, updated and removed through its package; do not treat it as a separate release download. A package's four DMARC children are already listed above, not four additional extensions. Product Compare's Joomla 5 `j2store` mirror is a deployment variant of that plugin, not another source extension.
 
 | Bundled plugin | Parent and role | Initial state |
 |---|---|---|
@@ -91,7 +93,7 @@ The **System check** tab is read-only and can be reopened and refreshed without 
 | Component | **System → Setup → Global Configuration → extension → System check** (also through **Options** where the component offers it, or the configuration link in the installation report) |
 | Plugin, including bundled plugins | **System → Manage → Plugins → plugin → System check** |
 | Administrator module | **System → Manage → Administrator Modules → module → System check** |
-| DMARC package | **Components → DMARC Reports → Options → System check**, which also repeats the installed package's child checks; open the children's individual tabs for details |
+| Package | The main extension's tab repeats the installed package's check (scheduled tasks, bundled extensions): **Components → DMARC Reports → Options**, **Components → Appointments → Options**, the **Privacy - J2Commerce** plugin; open the children's individual tabs for details |
 
 These are local checks of the running platform, required PHP extensions, database driver where
 applicable, installed/enabled dependencies, enabled shop tables and writable extension directory.
@@ -106,78 +108,44 @@ Keep using DMARC Reports' existing
 **System Check** view for its deeper IMAP/DNS/MTA-STS diagnostics; the common tab does not contact
 external systems or replace that view.
 
-**Updates decide by themselves.** Before Joomla copies anything, the installer compares every
-declared destination (media, languages, bundled plugins, package children, the Joomla 5 Product
-Compare mirror and the known installer-managed changes to other extensions' files) with the
-incoming file. Identical and absent destinations need no decision. For every other one the
-installer decides without asking, and an administrator who does not know the topic is never asked a
-technical question:
+**Updates stop safely on conflicts.** Before Joomla copies files, the installer compares each
+destination with the installed-file record and the catalog of released hashes. Identical files and
+files that match a known release can proceed. A modified or unknown file that an operation would
+replace, remove or adjust stops the update before Joomla copies anything. The notice lists each
+path, its current and incoming SHA-256 hashes, why it is affected, and how to resolve the conflict.
+Unknown provenance is not proof of a local edit; review the file and operation, resolve it manually
+or defer the update, then retry. There is no approval command or retry-based bypass.
 
-| Destination | Its current bytes | Decision |
-|---|---|---|
-| Own territory: the extension's folders, its media folder, its manifest storage, its language files by name | written or shipped by this extension (untouched) | replaced |
-| Own territory | not known from the record or catalog | normally backed up, then replaced or removed; listed in the report. Appointments instead stops before copying, as described below |
-| Foreign territory (other extensions, site templates) | per operation, see below | backed up first in every case |
+Before the first update attempt for each extension, the installer also stops once with a clear
+recommendation to take a current, complete site backup and ensure it can be restored independently.
+It cannot verify that a backup exists or is restorable. Retrying acknowledges the reminder only; it
+does not prove that the notice was read or record backup status. A package shows this notice once
+for the whole package, also when it is installed over the standalone extensions it replaces; the
+acknowledgement covers its child extensions for the versions it brings.
 
-"Untouched" means the bytes equal the file this installer wrote during the last successful
-installation on this site (the record `installed.php`) or a file of any earlier release of the
-extension (the catalog `advans-known-hashes.php` at the root of the package, which Joomla never installs). The build creates the
-catalog by rebuilding every earlier release from its merged release commit (`release: <prefix>
-vX.Y.Z`; the publish workflow deletes older tags, the release commits remain) with that commit's own
-build scripts, and hashing the built files, so the manifests and language files the build stamps
-match what sites installed. The CI of every extension proves this against the latest published
-release asset (`.github/scripts/verify-known-hashes.py`). An installation made before this
-mechanism has no record; the catalog can recognise its files when their hashes are present.
+The shared installer never creates, reads for reuse, exports, restores or automatically deletes
+file-content copies. Any copies made by earlier installer versions are left untouched. Its state
+under **`administrator/advans-installer-state/EXTENSION/`** contains only non-sensitive path/hash
+metadata, release records, reminder state and conflict plans. The V3 installer lock serializes
+concurrent V3 installs; it does not coordinate unrelated filesystem writers or older runtime
+versions, so avoid overlapping updates and deployments.
 
-Appointments additionally stops on unknown component, bundled-plugin and bundled-module files,
-including when the record or catalog is missing or incomplete. It displays each path and both hashes and saves a
-verified file backup. Unknown provenance is not proof of an edit. The Appointments Recovery
-companion records explicit decisions for the exact hashes and can restore eligible backups.
-Retrying or approving the shared installer plan does not override this stop. See
+Appointments additionally pauses on unknown component, plugin and module files of its package.
+Its Recovery companion can stream an affected existing file to the administrator's computer;
+after the file has been downloaded, the administrator can explicitly apply the package operation.
+To recover later, upload that local file in a separate request. The companion validates the plan,
+path, hashes and current destination before writing it. File bytes are not retained on the server
+between requests, and recovery does not roll back database or extension metadata. See
 [Update conflicts and recovery](com_appointments/README.md#update-conflicts-and-recovery).
 
-The installer changes files of other extensions only in these operations:
+Special operations remain guarded: an unknown OSMap compatibility target pauses for manual review;
+Product Compare leaves another extension's mirror untouched and skips it, while a changed or
+unknown mirror pauses; Privacy does not rename or delete copied checkout overrides during updates.
+Review and resolve a conflict without relying on an installer-created file copy. Customisations
+belong in template overrides, which updates do not replace.
 
-| Operation | Automatic decision |
-|---|---|
-| Product Compare mirror under `plugins/j2store/productcompare` (Joomla 5, J2Store's plugin group) | Holds only this plugin's files: backed up and replaced, a file changed by hand is reported. Belongs to another extension (another manifest there, or a link elsewhere): left byte-identical and the mirror is skipped; the plugin is registered in its own `j2commerce` group, stays inactive under J2Store and the installation says why and how to resolve it (Joomla offers no updates for that registration on Joomla 5, because one feed cannot serve both groups there) |
-| OSMap compatibility patch of `administrator/components/com_osmap/library/Alledia/OSMap/Factory.php` (OSMap 5.1.3 and older) | Backed up, then the one faulty line is changed and every other byte kept (changes on the site included); reported. Applied only while the faulty line is present |
-| J2Commerce Privacy: retirement of an unchanged checkout override that an earlier version copied into a site template | Backed up, then renamed with `.plg_privacy_j2commerce-disabled` (the file stays) and reported. A changed copy is left in place with a warning |
-| J2Commerce Privacy: template overrides for MyProfile and the J2Store checkout | Created only where no file exists, never replaced |
-
-Any other destination outside the extension's own territory whose bytes are not known is a case
-without a safe automatic choice. The installation then **pauses before anything changes** and
-explains in plain language (in the site's language) which file would be affected and why. Each
-such file is already backed up. A Super User approves by repeating the same installation within
-one hour: **Approve** opens **System → Update → Extensions** (or **System → Install → Extensions**
-when the package was uploaded), and updating (or installing the same package) once more approves
-exactly the reviewed old and new hashes and completes the installation (Joomla renders messages without forms, so the button cannot submit by itself). Other administrators see that a
-Super User has to approve. Server administrators can approve on the command line instead:
-
-```text
-php /path/to/unpacked/advansinstaller/approve.php --approve /path/to/site/administrator/advans-installer-state/EXTENSION/plan.php REVIEWED_PLAN_SHA256
-```
-
-Run it as the filesystem user that performs the Joomla install, then repeat the installation.
-Changed bytes need a new pause and approval; an approval never covers other files.
-
-**A backup that cannot be written or verified stops the installation before any file changes**,
-with a message that names the file and the directory the server administrator has to make
-writable. An unreadable destination or a symbolic link stops it the same way. All backups are
-written and verified during preflight, before Joomla copies the first file.
-
-**Report.** After the installation a short notice lists the files that had been changed on this
-site and were replaced or removed, and the adjusted files of other extensions, each with the backup
-location. Customisations belong in template overrides, which updates do not replace.
-
-**Where state and backups live.** Backups, the record and a paused plan
-are stored in **`administrator/advans-installer-state/EXTENSION/`**, outside Joomla's disposable
-cache and extension directories. Backup containers are non-executable PHP envelopes with the
-original bytes as base64, their hash and destination binding; opening one over HTTP discloses
-nothing. **Retention:** the next successful installation of the same extension removes backups
-that are older than 180 days and were not used again; Appointments Recovery also protects backups
-referenced by its pending review or latest recovery attempt. Half a year leaves room to notice a lost
-change long after the update without letting backups pile up. Do not run concurrent installs.
+**Report.** After a successful installation, the installer reports completed checks and operations.
+It does not claim that a site backup exists or list a server-side file backup.
 
 **Checksum.** Every `updates/update.xml` carries the `<sha256>` of its release asset, so Joomla
 verifies the download. Package builds are reproducible (`shared/build/deterministic-zip.sh`: fixed
@@ -195,7 +163,7 @@ extension under `tasks` in `catalog.php`, logic in `ScheduledTasks.php`):
 | `plg_task_appointments.reminders` | Appointments | **Required** while reminder offsets are set, otherwise not needed; every five minutes |
 | `plg_task_appointments.teamcleanup`, `.teamlog`, `.teaminvitations` | Appointments | **Required** while the internet calendars are switched on, otherwise not needed; every 24 hours |
 | `plg_task_appointments.teamretention` | Appointments | **Required** (calendar-copy repair and booking upkeep), every 24 hours |
-| `plg_task_appointments.close` | Appointments | **Optional**: created switched off by the component, switched on once the transfer to Close is set up |
+| `plg_task_appointments.close` | Appointments | **Optional**: created switched off by the package, switched on once the transfer to Close is set up |
 | `plg_task_dmarcreports.ingest` | DMARC Reports Task Plugin and Package | **Required** for automatic ingestion (does nothing without a report source); every hour |
 
 - A **missing required** task is created through the Scheduler's own task model, switched on, with
@@ -228,19 +196,19 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 | `system-dmarcmtasts.yml` | DMARC Reports MTA-STS Policy | `plg_system_dmarcmtasts/**`, the shared files below, own workflow file |
 | `system-privacyrequests.yml` | Core Privacy Requests | `plg_system_privacyrequests/**`, consumed shared files, own build/release/publish workflows |
 | `pkg-dmarcreports.yml` | DMARC Reports Package | `pkg_dmarcreports/**`, the shared files below, own workflow file |
-| `appointments.yml` | Appointments | `com_appointments/**`, the shared files below, own workflow file |
+| `appointments.yml` | Appointments package | `pkg_appointments/**`, `com_appointments/**`, the shared files below, own workflow file |
 | `j2commerce-import-export.yml` | Import/Export | `j2commerce/com_j2commerce_importexport/**`, the shared files below, own workflow file |
 | `j2store-cleanup.yml` | J2Store Cleanup | `j2commerce/com_j2store_cleanup/**`, the shared files below, own workflow file |
 | `osmap-j2commerce.yml` | OSMap J2Commerce | `j2commerce/plg_osmap_j2commerce/**`, the shared files below, own workflow file |
 | `j2commerce-product-compare.yml` | Product Compare | `j2commerce/plg_j2commerce_productcompare/**`, the shared files below, own workflow file |
-| `j2commerce-privacy.yml` | Privacy | `j2commerce/plg_privacy_j2commerce/**`, the shared files below, own workflow file |
+| `j2commerce-privacy.yml` | Privacy package | `j2commerce/pkg_privacy_j2commerce/**`, `j2commerce/plg_privacy_j2commerce/**`, the shared files below, own workflow file |
 
 **Shared trigger paths.** No `Build & Test` workflow watches `shared/**` as a whole; each one lists the files it really uses, so a change to a shared file starts only the extensions that consume it. The guard below is the one workflow that still watches `shared/**`, because it has to see every change there.
 
 | File under `shared/` | Starts |
 |---|---|
 | `build/**`, `installer/**` | every extension workflow (the DMARC package also stages the support and verifies its assembled bundle) |
-| `tests/installer-*.php` | Infrastructure Tests: offline ownership, automatic decisions, record and catalog, pause and approval, backup-failure stop, retention and translation regressions |
+| `tests/installer-*.php` | Infrastructure Tests: offline ownership, release records and catalog, hash-only conflict pauses, installer locking, no-copy behavior, legacy-copy preservation and translation regressions |
 | `tests/run-tests.sh` | every extension workflow (the local runners delegate here) |
 | `tests/lang-lint.php`, `tests/help-lint.php`, `tests/requirements-check.php`, `tests/deprecated-api-scan.php` | every extension workflow (job `Language Files`); `help-lint.php` also runs over the whole repository in Shared Path Coverage |
 | `tests/scripts/shared-test-helpers.php` | every extension workflow (loaded by the shared suites) |
@@ -248,7 +216,7 @@ Each extension has automated tests that run via GitHub Actions on pushes and pul
 | `tests/scripts/shared-backend-views.php` | Appointments, DMARC Reports component, Import/Export, Cleanup |
 | `tests/scripts/shared-help-pages.php` | Appointments (its bundled plugins), AJAX Forms, OSMap, Product Compare, Privacy, Privacy Requests |
 | `tests/scripts/shared-update-from-previous.php` | AJAX Forms, OSMap, Privacy (job `Update from previous release (J6)`: CLI update from the previous release commit, recognised without a record) |
-| `tests/scripts/shared-backend-update.php` | Appointments, DMARC Reports Package, DMARC Reports Task Plugin (job `Backend update from the published release (J6)`: Check for Updates and Update in the backend from the published release, a file changed by hand, a backup that cannot be written, a pause with Approve), Product Compare (job `Backend update with foreign files (J5)`), OSMap and Privacy (foreign operations in `Update from previous release (J6)`) |
+| `tests/scripts/shared-backend-update.php` | Appointments (including local download/upload recovery), DMARC Reports Package and Task Plugin (job `Backend update from the published release (J6)`), Product Compare (job `Backend update with foreign files (J5)`), OSMap and Privacy (manual conflict-resolution scenarios) |
 | `tests/scripts/shared-deprecations.php`, `tests/scripts/shared-deprecation-tracer.php` | AJAX Forms, OSMap, Privacy (production-like lane) |
 | `tests/Dockerfile.template`, `tests/scripts/docker-entrypoint.sh`, `tests/scripts/install-extension.php` | nothing: templates that every extension has copied into its own `tests/` tree, read by no lane |
 
@@ -367,12 +335,14 @@ Only `fix`, `feat` and `!`/`BREAKING CHANGE` trigger a bump; all other types (`d
 | `release-system-dmarcmtasts.yml` | `system-dmarcmtasts-v*` |
 | `release-system-privacyrequests.yml` | `system-privacyrequests-v*` |
 | `release-pkg-dmarcreports.yml` | `pkgdmarcreports-v*` |
-| `release-appointments.yml` | `appointments-v*` |
+| `release-appointments.yml` | `appointments-v*` (asset `pkg_appointments_<version>.zip`) |
 | `release-importexport.yml` | `importexport-v*` |
 | `release-cleanup.yml` | `cleanup-v*` |
 | `release-productcompare.yml` | `productcompare-v*` |
-| `release-privacy.yml` | `privacy-v*` |
+| `release-privacy.yml` | `privacy-v*` (asset `pkg_privacy_j2commerce_<version>.zip`) |
 | `release-osmap-j2commerce.yml` | `osmap-j2commerce-v*` |
+
+**Packages.** Appointments and J2Commerce Privacy are released as the packages `pkg_appointments` and `pkg_privacy_j2commerce`; their package ZIP is the only release asset and keeps the tag prefix of the former standalone releases (`appointments-v`, `privacy-v`). The package, its main extension and every child carry the same version. The release workflow also rewrites the update.xml of the former standalone extension (`com_appointments/updates/update.xml`, `j2commerce/plg_privacy_j2commerce/updates/update.xml`) so that it announces the package: a site that still runs the standalone extension receives the package through Joomla Update, and the package takes the installed parts over in place (same extension rows, data, options and enabled states; package update site instead of the standalone ones). See [`pkg_appointments`](pkg_appointments/README.md) and [`pkg_privacy_j2commerce`](j2commerce/pkg_privacy_j2commerce/README.md).
 
 Only the newest release per extension is kept, intentionally. The shared publish helper checks numeric version order against remote tags and releases before any writes, rejects obsolete reruns and refuses an existing version tag that points anywhere except the actual built checkout commit. Retrying the same version from the same commit is supported without deleting its working release or overwriting existing assets. New releases are staged as drafts, downloaded and verified before publication; only then are strictly older releases and tags of that same prefix deleted. Failures are reported rather than silently skipping cleanup. Extension update URLs continue to use their explicit version tags, never the repository-wide `/releases/latest` endpoint, which cannot represent independent extension releases.
 

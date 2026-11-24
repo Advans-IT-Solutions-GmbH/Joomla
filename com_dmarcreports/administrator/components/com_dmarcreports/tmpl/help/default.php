@@ -20,6 +20,8 @@ $contents = [
     'actions'  => 'COM_DMARCREPORTS_HELP_ACTIONS_TITLE',
     'tasks'    => 'COM_DMARCREPORTS_HELP_TASKS_TITLE',
     'settings' => 'COM_DMARCREPORTS_HELP_SETTINGS_TITLE',
+    'install'  => 'COM_DMARCREPORTS_HELP_INSTALL_TITLE',
+    'trouble'  => 'COM_DMARCREPORTS_HELP_TROUBLE_TITLE',
 ];
 
 // The protocol names are the same in every language.
@@ -41,6 +43,7 @@ $how = [
     ['COM_DMARCREPORTS_HELP_HOW_MODULE_TITLE', 'COM_DMARCREPORTS_HELP_HOW_MODULE_TEXT'],
     ['COM_DMARCREPORTS_HELP_HOW_PLUGIN_TITLE', 'COM_DMARCREPORTS_HELP_HOW_PLUGIN_TEXT'],
     ['COM_DMARCREPORTS_HELP_HOW_PRIVACY_TITLE', 'COM_DMARCREPORTS_HELP_HOW_PRIVACY_TEXT'],
+    ['COM_DMARCREPORTS_HELP_HOW_RETENTION_TITLE', 'COM_DMARCREPORTS_HELP_HOW_RETENTION_TEXT'],
 ];
 
 $severities = [
@@ -75,11 +78,64 @@ $tasks = [
 
 // Headings reuse the labels of the Options tabs and the domain form, so the help
 // names exactly what the administrator sees there.
+// Every option of config.xml: [label key, help text key]. The text names the default.
+$optionGroups = [
+    ['COM_DMARCREPORTS_CONFIG_BASIC_FIELDSET', 'COM_DMARCREPORTS_HELP_SETTINGS_BASIC', [
+        ['COM_DMARCREPORTS_CONFIG_POLICY_TARGET_LABEL', 'COM_DMARCREPORTS_HELP_OPT_POLICY_TARGET'],
+        ['COM_DMARCREPORTS_CONFIG_QUARANTINE_THRESHOLD_LABEL', 'COM_DMARCREPORTS_HELP_OPT_QUARANTINE'],
+        ['COM_DMARCREPORTS_CONFIG_REJECT_THRESHOLD_LABEL', 'COM_DMARCREPORTS_HELP_OPT_REJECT'],
+        ['COM_DMARCREPORTS_CONFIG_IMAP_TIMEOUT_LABEL', 'COM_DMARCREPORTS_HELP_OPT_IMAP_TIMEOUT'],
+        ['COM_DMARCREPORTS_CONFIG_MAX_MESSAGES_LABEL', 'COM_DMARCREPORTS_HELP_OPT_MAX_MESSAGES'],
+        ['COM_DMARCREPORTS_CONFIG_MAX_RUN_REPORTS_LABEL', 'COM_DMARCREPORTS_HELP_OPT_MAX_RUN_REPORTS'],
+        ['COM_DMARCREPORTS_CONFIG_MAX_RUN_UNPACKED_LABEL', 'COM_DMARCREPORTS_HELP_OPT_MAX_RUN_UNPACKED'],
+        ['COM_DMARCREPORTS_CONFIG_MAX_MESSAGE_ATTACHMENTS_LABEL', 'COM_DMARCREPORTS_HELP_OPT_MAX_ATTACHMENTS'],
+        ['COM_DMARCREPORTS_CONFIG_MAX_MESSAGE_REPORTS_LABEL', 'COM_DMARCREPORTS_HELP_OPT_MAX_MESSAGE_REPORTS'],
+        ['COM_DMARCREPORTS_CONFIG_MAX_MESSAGE_UNPACKED_LABEL', 'COM_DMARCREPORTS_HELP_OPT_MAX_MESSAGE_UNPACKED'],
+        ['COM_DMARCREPORTS_CONFIG_CSV_DELIMITER_LABEL', 'COM_DMARCREPORTS_HELP_OPT_CSV'],
+        ['COM_DMARCREPORTS_CONFIG_DNS_DIAGNOSTICS_LABEL', 'COM_DMARCREPORTS_HELP_OPT_DNS'],
+        ['COM_DMARCREPORTS_CONFIG_AUTO_CREATE_LABEL', 'COM_DMARCREPORTS_HELP_OPT_AUTO_CREATE'],
+        ['COM_DMARCREPORTS_CONFIG_TASK_AUTO_CREATE_LABEL', 'COM_DMARCREPORTS_HELP_OPT_TASK_AUTO_CREATE'],
+    ]],
+    ['COM_DMARCREPORTS_CONFIG_MTASTS_FIELDSET', 'COM_DMARCREPORTS_HELP_SETTINGS_MTASTS', [
+        ['COM_DMARCREPORTS_CONFIG_MTASTS_ENABLE_LABEL', 'COM_DMARCREPORTS_HELP_OPT_MTASTS_ENABLE'],
+        ['COM_DMARCREPORTS_CONFIG_MTASTS_MODE_LABEL', 'COM_DMARCREPORTS_HELP_OPT_MTASTS_MODE'],
+        ['COM_DMARCREPORTS_CONFIG_MTASTS_MX_LABEL', 'COM_DMARCREPORTS_HELP_OPT_MTASTS_MX'],
+        ['COM_DMARCREPORTS_CONFIG_MTASTS_MAX_AGE_LABEL', 'COM_DMARCREPORTS_HELP_OPT_MTASTS_MAX_AGE'],
+        ['COM_DMARCREPORTS_CONFIG_TLSRPT_ENABLE_LABEL', 'COM_DMARCREPORTS_HELP_OPT_TLSRPT_ENABLE'],
+        ['COM_DMARCREPORTS_CONFIG_TLSRPT_RUA_LABEL', 'COM_DMARCREPORTS_HELP_OPT_TLSRPT_RUA'],
+    ]],
+];
+
+// The Joomla permissions of access.xml are the same in every language.
+$permissions = [
+    'core.manage'     => 'COM_DMARCREPORTS_HELP_PERM_MANAGE',
+    'dmarc.ingest'    => 'COM_DMARCREPORTS_HELP_PERM_INGEST',
+    'core.create'     => 'COM_DMARCREPORTS_HELP_PERM_CREATE',
+    'core.edit'       => 'COM_DMARCREPORTS_HELP_PERM_EDIT',
+    'core.edit.state' => 'COM_DMARCREPORTS_HELP_PERM_EDIT_STATE',
+    'core.delete'     => 'COM_DMARCREPORTS_HELP_PERM_DELETE',
+    'core.options'    => 'COM_DMARCREPORTS_HELP_PERM_ADMIN',
+];
+
 $settings = [
-    ['COM_DMARCREPORTS_CONFIG_BASIC_FIELDSET', 'COM_DMARCREPORTS_HELP_SETTINGS_BASIC'],
-    ['COM_DMARCREPORTS_CONFIG_MTASTS_FIELDSET', 'COM_DMARCREPORTS_HELP_SETTINGS_MTASTS'],
-    ['COM_DMARCREPORTS_HELP_SETTINGS_PERMISSIONS_TITLE', 'COM_DMARCREPORTS_HELP_SETTINGS_PERMISSIONS'],
-    ['COM_DMARCREPORTS_FIELD_EXPECTED_POLICY_LABEL', 'COM_DMARCREPORTS_HELP_SETTINGS_DOMAIN'],
+    ['COM_DMARCREPORTS_TOOLBAR_DOMAINS', 'COM_DMARCREPORTS_HELP_SETTINGS_DOMAIN'],
+    ['COM_DMARCREPORTS_TOOLBAR_SOURCES', 'COM_DMARCREPORTS_HELP_SETTINGS_SOURCE'],
+];
+
+$install = [
+    ['COM_DMARCREPORTS_HELP_INSTALL_REQUIREMENTS_TITLE', 'COM_DMARCREPORTS_HELP_INSTALL_REQUIREMENTS_TEXT'],
+    ['COM_DMARCREPORTS_HELP_INSTALL_BEHAVIOUR_TITLE', 'COM_DMARCREPORTS_HELP_INSTALL_BEHAVIOUR_TEXT'],
+    ['COM_DMARCREPORTS_HELP_INSTALL_PACKAGE_TITLE', 'COM_DMARCREPORTS_HELP_INSTALL_PACKAGE_TEXT'],
+    ['COM_DMARCREPORTS_HELP_INSTALL_UPDATE_TITLE', 'COM_DMARCREPORTS_HELP_INSTALL_UPDATE_TEXT'],
+    ['COM_DMARCREPORTS_HELP_INSTALL_UNINSTALL_TITLE', 'COM_DMARCREPORTS_HELP_INSTALL_UNINSTALL_TEXT'],
+];
+
+$trouble = [
+    ['COM_DMARCREPORTS_HELP_TROUBLE_IMAP_TITLE', 'COM_DMARCREPORTS_HELP_TROUBLE_IMAP_TEXT'],
+    ['COM_DMARCREPORTS_HELP_TROUBLE_UPLOAD_TITLE', 'COM_DMARCREPORTS_HELP_TROUBLE_UPLOAD_TEXT'],
+    ['COM_DMARCREPORTS_HELP_TROUBLE_HELD_TITLE', 'COM_DMARCREPORTS_HELP_TROUBLE_HELD_TEXT'],
+    ['COM_DMARCREPORTS_HELP_TROUBLE_ACCESS_TITLE', 'COM_DMARCREPORTS_HELP_TROUBLE_ACCESS_TEXT'],
+    ['COM_DMARCREPORTS_HELP_TROUBLE_MTASTS_TITLE', 'COM_DMARCREPORTS_HELP_TROUBLE_MTASTS_TEXT'],
 ];
 
 $links = [
@@ -168,6 +224,25 @@ $links = [
         <div class="card-body">
             <h2 class="h4" id="help-settings-heading"><?php echo Text::_('COM_DMARCREPORTS_HELP_SETTINGS_TITLE'); ?></h2>
             <p><?php echo Text::_('COM_DMARCREPORTS_HELP_SETTINGS_INTRO'); ?></p>
+            <?php foreach ($optionGroups as [$title, $lead, $options]) : ?>
+                <h3 class="h5"><?php echo Text::_($title); ?></h3>
+                <p><?php echo Text::_($lead); ?></p>
+                <dl>
+                    <?php foreach ($options as [$label, $text]) : ?>
+                        <dt><?php echo Text::_($label); ?></dt>
+                        <dd><?php echo Text::_($text); ?></dd>
+                    <?php endforeach; ?>
+                </dl>
+            <?php endforeach; ?>
+            <h3 class="h5"><?php echo Text::_('COM_DMARCREPORTS_HELP_SETTINGS_PERMISSIONS_TITLE'); ?></h3>
+            <p><?php echo Text::_('COM_DMARCREPORTS_HELP_SETTINGS_PERMISSIONS'); ?></p>
+            <dl>
+                <?php foreach ($permissions as $action => $text) : ?>
+                    <dt><code><?php echo $action; ?></code></dt>
+                    <dd><?php echo Text::_($text); ?></dd>
+                <?php endforeach; ?>
+            </dl>
+            <p><?php echo Text::_('COM_DMARCREPORTS_HELP_PERM_HOWTO'); ?></p>
             <?php foreach ($settings as [$title, $text]) : ?>
                 <h3 class="h5"><?php echo Text::_($title); ?></h3>
                 <p><?php echo Text::_($text); ?></p>
@@ -175,6 +250,26 @@ $links = [
             <?php if ($this->canOptions) : ?>
                 <a class="btn btn-primary btn-sm" href="<?php echo Route::_('index.php?option=com_config&view=component&component=com_dmarcreports'); ?>"><?php echo Text::_('COM_DMARCREPORTS_HELP_OPEN_OPTIONS'); ?></a>
             <?php endif; ?>
+        </div>
+    </section>
+
+    <section class="card mb-4" id="help-install" aria-labelledby="help-install-heading">
+        <div class="card-body">
+            <h2 class="h4" id="help-install-heading"><?php echo Text::_('COM_DMARCREPORTS_HELP_INSTALL_TITLE'); ?></h2>
+            <?php foreach ($install as [$title, $text]) : ?>
+                <h3 class="h5"><?php echo Text::_($title); ?></h3>
+                <p><?php echo Text::_($text); ?></p>
+            <?php endforeach; ?>
+        </div>
+    </section>
+
+    <section class="card mb-4" id="help-trouble" aria-labelledby="help-trouble-heading">
+        <div class="card-body">
+            <h2 class="h4" id="help-trouble-heading"><?php echo Text::_('COM_DMARCREPORTS_HELP_TROUBLE_TITLE'); ?></h2>
+            <?php foreach ($trouble as [$title, $text]) : ?>
+                <h3 class="h5"><?php echo Text::_($title); ?></h3>
+                <p><?php echo Text::_($text); ?></p>
+            <?php endforeach; ?>
         </div>
     </section>
 </div>

@@ -1,6 +1,6 @@
 # Appointments (com_appointments)
 
-**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/appointments.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/appointments.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-appointments.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-appointments.yml)
@@ -183,54 +183,38 @@ installation/database; no Joomla files or server ports need remapping.
 
 When an existing Appointments component, bundled-plugin or bundled-module file differs from the package and its
 origin cannot be established from the installed-file record or the release hash catalog, the
-installer stops before copying files. It lists the paths and hashes and creates verified file
-backups. Unknown origin does not imply a local edit. Repeating the installation or approving a
-shared installer plan does not override this protection.
+installer stops before copying files and lists each affected path and its existing and incoming
+SHA-256 hashes. Unknown origin does not imply a local edit. Review the operation and file before
+proceeding; otherwise, defer the update. The installer does not create, reuse, export, restore or
+automatically delete server-side file copies. Copies left by older versions are not changed.
 
-1. As a Super User, install `appointments-recovery.zip` (inside the Appointments release ZIP) using
-   Joomla's extension installer. This companion can be installed before updating Appointments and
-   does not change the existing component, bundled plugins or booking data.
-2. Before updating or restoring, take a complete site backup and stop other writers (deployments,
-   background jobs and other installers). After the guarded update stops, open **Components →
-   Appointments Recovery**. Review the existing and incoming SHA-256 values and save a choice for
-   each file. Installer metadata, shared sources, removals and other files that cannot safely
-   use substitute copy inputs do not offer **Keep local**. Accept the release operation only
-   after reviewing the backup and impact; otherwise the update stays paused.
-3. Retry by uploading the same unmodified release ZIP, which Joomla extracts afresh. An installation
-   directory used to stage **Keep local** choices cannot be reused, even after an interrupted
-   attempt: its copy inputs contain local bytes, not pristine release files.
-   A changed candidate or destination invalidates the plan. Kept files
-   still belong to the Joomla manifest but are not recorded as release bytes; a future update
-   may ask about them again. Keeping old code can be incompatible with the new release.
-4. The companion shows verified backups from the last reviewed installation attempt. For eligible
-   files it can restore a missing file or replace the exact incoming bytes displayed on the form.
-   It refuses other current bytes and never rolls back the database or extension metadata.
-   Restore stages bytes in a private per-operation directory outside the web root on the same
-   filesystem. On Windows, restrict the parent temporary directory's ACLs to the service account.
+Before any update, take a current, complete site backup and ensure it can be restored independently.
+The installer cannot verify that such a backup exists or is restorable. The first update attempt for
+each extension displays this recommendation and stops before changing files; repeat the same update
+after reviewing it. A package can display the recommendation separately for the package and its
+child extensions.
 
-The recovery lock serializes this feature's own requests, not independent filesystem writers.
-Joomla's copy phase and in-place recovery do not provide an atomic compare-and-swap against
-external writers. Use an exclusive maintenance window. Installer-controlled files that are not
-eligible for direct recovery can still be exported. A file recovery is not a full site rollback.
-Obsolete bundled-module declarations are reviewed only when the installed Joomla module adapter
-actually deletes them. Joomla 5.4 retains these files; the tested Joomla 6.2 adapter removes them
-after an explicit release-operation decision. Removed paths never offer **Keep local**.
-After a successful installation, recovery backups older than 180 days are pruned unless the
-pending review or latest recovery attempt still references them.
+For the Appointments local-transfer option, install `appointments-recovery.zip` (included in the
+Appointments release ZIP) before updating. This companion does not change the component, bundled
+plugins or booking data. After an update stops, open **Components → Appointments Recovery** and
+review the current and incoming hashes for each conflict. For an existing file, download its current
+bytes to the administrator's own computer before choosing **Apply update**. The download is a
+direct attachment; the plan persists only paths, hashes and review metadata. Removed paths have no
+existing bytes to download. A changed destination invalidates its review, and every operation must
+be explicitly confirmed.
 
-To inspect or recover the bytes of a verified file backup without changing the installed file, a
-server administrator can extract the same Appointments package outside the web root and run its
-`advansinstaller/export-backup.php` from the command line:
+After the update, an administrator can upload a locally retained file through the Recovery page.
+The companion authenticates and authorizes the request, checks the plan, destination, expected hash
+and upload, then restores only when the live file is still the exact incoming version or remains
+absent. It writes atomically while holding the recovery lock. Uploaded bytes are used for that
+request only; no file content is kept on the server between requests. Recovery changes one file and
+does not roll back database data or Joomla extension metadata.
 
-```text
-php advansinstaller/export-backup.php --export ABSOLUTE_BACKUP_PATH ABSOLUTE_DESTINATION_PATH EXISTING_SHA256 NEW_OUTPUT_PATH
-```
-
-Use the backup path and existing hash displayed by the installer, and the absolute site path of
-the listed destination. The output must be a new path in a private directory outside the web root.
-The command verifies the backup's destination and hash and verifies the exported bytes; it never
-overwrites the output or the installed file. It exports one file, not a complete site backup, and
-does not approve or resume the update.
+The recovery lock protects these operations and the shared V3 installer lock serializes V3
+preflight and Joomla's file-copy phase. Neither lock covers unrelated filesystem writers or older
+installer runtimes, so avoid overlapping updates and deployments. Review and resolve files manually
+when the Recovery option cannot safely act; do not rely on a server-side backup or an approval
+bypass.
 
 ## Joomla 6 Compatibility
 
@@ -260,19 +244,25 @@ including the calendar UID, inside `.com-appointments-booking-details`.
 
 ## Installation
 
+Appointments ships as the Joomla package **`pkg_appointments`** ([`pkg_appointments/`](../pkg_appointments/README.md)):
+the component, the dashboard module and the six plugins below are archives inside it and are
+installed, updated and uninstalled together. They are not independent downloads, and the
+component refuses to be installed on its own.
+
 ### Currently: build from source
 
-Use a checkout of this repository and Bash (for example, WSL on Windows) with `rsync`, `zip` and
-`unzip` available. From the repository root:
+Use a checkout of this repository and Bash (for example, WSL on Windows) with `rsync`, `zip`,
+`unzip` and `perl` available. From the repository root:
 
 ```bash
-cd com_appointments
+cd pkg_appointments
 bash ./build.sh
 ```
 
-The shared packager reads `build.env` and creates `com_appointments_<version>.zip` in that
-directory. This is a locally built pre-release package, not a published release; do not change
-version files manually. Docker is needed for the integration tests, not for this package build.
+The package build runs the component's own build (`com_appointments/build.sh`), splits it into the
+child archives and creates `pkg_appointments_<version>.zip` in `pkg_appointments/`. This is a
+locally built pre-release package, not a published release; do not change version files manually.
+Docker is needed for the integration tests, not for this package build.
 
 1. Use the ZIP produced by the build.
 2. Install it in Joomla through **System → Install → Extensions**.
@@ -280,29 +270,39 @@ version files manually. Docker is needed for the integration tests, not for this
 
 ### Once a release is published
 
-Download `com_appointments_<version>.zip` from the repository's
+Download `pkg_appointments_<version>.zip` from the repository's
 [releases](https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases) under the matching
-`appointments-v<version>` tag, then follow the installation steps above. Only the newest release
-in the Appointments tag family is retained; releases of other extensions are not Appointments
-packages.
+`appointments-v<version>` tag (the tag prefix is the same as for the standalone component releases
+up to 1.6.0), then follow the installation steps above. Only the newest release in the Appointments
+tag family is retained; releases of other extensions are not Appointments packages.
+
+### From the standalone component (1.6.0 and earlier)
+
+Releases up to 1.6.0 shipped the component as `com_appointments_<version>.zip`, whose installer
+installed the plugins and the module itself. Such a site needs no manual step: the component's own
+update channel (`com_appointments/updates/update.xml`) announces the package, so **System → Update
+→ Extensions** installs it, and installing the package ZIP by hand does the same. The package takes
+over the installed component, module and plugins in place (same extension rows, so all data,
+options and enabled states stay), assigns them to the package, replaces their update sites by the
+package's own and creates nothing twice. The full-site backup recommendation and the file review
+(Appointments Recovery) apply to the whole package. A bundled extension that is installed in a newer
+version than the package brings stops the installation before anything changes.
 
 ### Bundled plugins
 
-The component ZIP manages the following plugins; they are not independent release downloads.
-Initial plugin enablement is separate from task publication, a Scheduler trigger, calendar
-activation and effective content access.
+The package installs the following plugins. Initial plugin enablement is separate from task
+publication, a Scheduler trigger, calendar activation and effective content access.
 
 | Plugin | Role | First installation |
 |---|---|---|
 | [`privacy/appointments`](plugins/privacy/appointments/README.md) | Native privacy export/removal and calendar privacy integration | Enabled |
 | [`content/appointmentsprivacy`](plugins/content/appointmentsprivacy/README.md) | Independent veto of native removal completion while Appointments reports incomplete | Enabled |
-| [`task/appointments`](plugins/task/appointments/README.md) | Booking reminders/retention and calendar-maintenance routines | Enabled; the installer creates the required tasks (see [Scheduled tasks](#scheduled-tasks)) |
+| [`task/appointments`](plugins/task/appointments/README.md) | Booking reminders/retention and calendar-maintenance routines | Enabled; the package creates the required tasks (see [Scheduled tasks](#scheduled-tasks)) |
 | [`system/appointmentsdav`](plugins/system/appointmentsdav/README.md) | Local CalDAV endpoint and pre-authentication sign-in guard | Disabled until deliberate setup |
 | [`system/appointmentsattribution`](plugins/system/appointmentsattribution/README.md) | Records the origin of a visit in the session for the [origin of bookings](#origin-of-bookings-campaign-attribution) | Enabled, also when an update introduces it |
 | [`user/appointments`](plugins/user/appointments/README.md) | Password/key sessions, lockout and account/device cleanup | Disabled until deliberate setup |
 
-The ZIP also installs one administrator module, [`modules/mod_appointments`](#dashboard-module).
-
+The package also installs one administrator module, [`modules/mod_appointments`](#dashboard-module).
 Updates preserve existing enabled/disabled states. Start with [Internet calendars](#internet-calendars)
 for server prerequisites and deliberate activation, then use [Roles](#roles),
 [Devices and app passwords](#devices-and-app-passwords) and
@@ -313,10 +313,10 @@ the key/grant requirements of the action being performed.
 ### Dashboard module
 
 The administrator module **Appointments - Next appointments** (`modules/mod_appointments`) is
-installed with the component. On its first installation the component publishes it once at the
+installed with the package. On its first installation the package publishes it once at the
 position `cpanel` of the Home Dashboard with the title «Next appointments» in the installing
 administrator's language; an update leaves position, title, state and settings as they are, and
-uninstalling the component removes it with its instances. It shows:
+uninstalling the package removes it with its instances. It shows:
 
 - the next pending or confirmed appointments (setting **Number of appointments**, 1 to 20, default 5),
   with date and time in the site time zone (Global Configuration), the event type and the name of
@@ -330,12 +330,12 @@ uninstalling the component removes it with its instances. It shows:
 It follows the bookings list exactly: «Access Administration Interface» on the component and «Edit»
 on the event type (the same scope as the list), and only the bookings of those event types.
 Everybody else gets no output at all, so the dashboard shows neither the module nor its title. Its
-own help is the «Help» tab of the module edit screen. Uninstalling the component also removes the
+own help is the «Help» tab of the module edit screen. Uninstalling the package also removes the
 stored visit times.
 
 ## Updating
 
-The component registers its own update site during installation. Once releases are published,
+The package registers its own update site (`pkg_appointments/updates/update.xml`) during installation and moves the component, the module and the plugins onto it. Once releases are published,
 later versions will appear under **System → Update → Extensions**. You can also install a newer
 ZIP over the existing installation. The update-site registration does not mean that a release is
 currently available.
@@ -344,6 +344,18 @@ currently available.
 (or Joomla's `live_site`). An installation without one sends no more e-mails and takes no more
 bookings after the update, until the setting is made (see section "Scheduler, reminders and retention").
 
+**How an update proceeds.** The installer decides by itself and asks for no approval. Before
+Joomla copies anything it compares every existing file with the installed-file record and the
+released hashes: unchanged files and known release files are replaced, and a modified or
+unknown-origin file that the update would replace or remove stops the update before any file is
+copied (see [Update conflicts and recovery](#update-conflicts-and-recovery)). The installer keeps
+no file backups. Before every update take a current, complete backup of the website (files and
+database) that can be restored independently; the first update attempt of each extension stops
+once with this recommendation, and the same update is then repeated. An update keeps the
+enabled/disabled state of the bundled plugins and the settings of the dashboard module. After
+every installation and update it also checks the scheduled tasks the component needs and creates
+a missing required task switched on, without ever changing an existing one (see
+[Scheduled tasks](#scheduled-tasks)).
 ## Features
 
 ### What is implemented so far
@@ -430,6 +442,8 @@ bookings after the update, until the setting is made (see section "Scheduler, re
   On a site with plain-text mails the HTML alternative is the same text as escaped paragraphs without
   a layout, because PHPMailer writes the invitation only into a message with an HTML alternative. For
   the same reason these mails do not embed the logo of the mail layout as an inline part.
+  If the layout is switched off or cannot be rendered, the HTML part is still the text as escaped
+  paragraphs (never bare text) and the plain-text alternative is kept.
 
 - **Signed appointment management and erasure.** Only the primary invitee receives the no-login
   reschedule, cancellation and erasure capabilities, including in reminders. The host receives
@@ -469,6 +483,65 @@ bookings after the update, until the setting is made (see section "Scheduler, re
 
 Open **Components → Appointments → Options → Permissions** to configure the component's Joomla
 ACL. Event types, custom fields, schedules and blocked periods are configured from the dashboard.
+
+### Options reference
+
+**Components → Appointments → Options** has the tabs General, Close booking transfer, Video
+conferencing, Internet calendars, Help, Permissions and Before uninstalling, and a read-only
+**System check** tab (installation checks, required scheduled tasks, Scheduler trigger). The same
+list, in the same words, is on the component's help page, section «All options». Event types,
+schedules and fields have their own settings in their edit screens, each with a field help.
+
+**General**
+
+| Option | What it does | Default |
+|---|---|---|
+| Privacy notice on the booking form | Notice only (no checkbox), confirm acknowledgement (checkbox, nothing stored) or ask for consent (checkbox, stores time and wording version with the booking) | Notice only |
+| Booking data information | Text that explains which personal data is collected and why; stands with the privacy notice and does not replace it | Empty |
+| Privacy notice menu item, Section anchor of the menu item, Privacy notice URL | Where the privacy notice links to. The menu item takes precedence over the URL; the anchor (without `#`) is used only with a menu item; the URL may be relative | None, empty, empty |
+| Preselected calling code | Calling code preselected in telephone fields, digits only | Empty (the visitor chooses) |
+| Calling code choice | The visitor chooses the calling code, or only numbers with the preselected code are accepted (only with a valid code above) | The visitor chooses |
+| Maximum number of additional guests | Additional e-mail addresses a booking person may enter, 0 to 50; 0 removes the guest field | 10 |
+| On erasure | Keep an anonymised slot, or delete the booking entirely; both remove linked calendar copies | Keep an anonymised slot |
+| Origin of bookings | Stores with each booking how the visitor reached the site (see [Origin of bookings](#origin-of-bookings-campaign-attribution)); switch on only after the privacy notice names it | Off |
+| Reminder offsets (minutes) | Comma-separated minutes before a confirmed appointment, each 1 to 525600; empty switches reminders off; needs the task *Appointments: reminders* | `1440,60` |
+| Public site URL | Canonical site root used for every link in e-mails; required, without it (and without `live_site`) no e-mail is sent and no booking is taken | Empty |
+| Organiser of the host's calendar entries | Address named as organiser in the invitation to the host; must not belong to any host | Empty (Joomla's From email) |
+| Booking retention (days) | Whole days 0 to 65535 after the end of an appointment before the retention task erases the booking; an event type can override it; 0 means at the next run, not unlimited | 365 |
+| Erasure-audit retention (years) | Whole years 1 to 100 before the retention task deletes erasure records | 3 |
+| Legal reason to block formal removal | Plain text; a non-empty reason blocks matching Joomla privacy removal requests and does not change self-service erasure or retention | Empty |
+
+**Close booking transfer** (details: [Optional direct Close transfer](#optional-direct-close-transfer))
+
+| Option | What it does | Default |
+|---|---|---|
+| Enabled | Switches the transfer on; needs a profile and the enabled scheduled task | Off |
+| Close profiles (up to 20) | Per profile: Profile key, Event types (each event type belongs to at most one profile), Approved HTTPS API origin (no path), Server environment variable containing the API key (optional, only its name is stored), Expected organisation ID (optional) | No profile |
+| Per profile: booking record | Booking record in Close (note on the lead, or custom activity with its type ID, JSON field mapping and JSON answers mapping), Answers in the booking note (local form field IDs) | Note |
+| Per profile: campaign and lead | Campaign, Source (empty means Joomla appointments), Lead name from field, Contact title from field, Lead fields from answers (JSON), Fixed lead fields (JSON); the lead fields are set on new leads only | Empty |
+
+**Video conferencing** (details: [Video conferencing](#video-conferencing))
+
+| Option | What it does | Default |
+|---|---|---|
+| Conference provider | None, Jitsi, a room URL template or one permanent meeting URL; an event type can override it | None |
+| Jitsi | Base URL, Room name pattern (`{prefix}`, `{alias}` and the mandatory `{random}`), Room prefix, Random room characters (16 to 64), Jitsi authentication (none or JWT) with signing secret, application ID, audience, issuer, subject, Moderator access before start (0 to 1440 minutes) and Token grace period after end (0 to 1440 minutes) | Pattern `{prefix}-{alias}-{random}`, prefix `appointment`, 24 characters, no authentication, audience `jitsi`, 30 and 60 minutes |
+| Room URL template, Permanent meeting URL | Absolute HTTPS address containing `{room}` (no remote request), or one room reused for every meeting (closely timed appointments can collide) | Empty |
+| Allow installed outbound adapters | Lets a separately installed third-party adapter contact its server; it may send a room seed, title, duration and UTC times, never invitee details | Off |
+
+**Internet calendars** (details: [Internet calendars](#internet-calendars))
+
+| Option | What it does | Default |
+|---|---|---|
+| Internet calendars | Switches the CalDAV calendars on; needs the plugins *System - Appointments CalDAV* and *User - Appointments internet calendars* | Off |
+| Team groups, Group of external users | User groups of the team, and the group in which invited external users are created | Set by the installation when *Create user groups* is on, otherwise empty |
+| Create user groups | On installation and update creates the team and external user groups and the access level «Internet calendars» if missing and adds both groups to the enforced multi-factor authentication | Yes |
+| Access level of «My calendars» | Access level of the menu item; the page and its device actions refuse accounts outside it | Set by the installation when *Create user groups* is on, otherwise empty |
+| Days per clean-up phase | A blocked device set to *Clean up* has its calendars emptied, then no longer delivered; each phase ends when the device has synchronised, at the latest after 1 to 90 days | 14 |
+| Subscription feeds with token | The previous secret-address feeds, removed in version 2.0.0 | Off |
+
+**Before uninstalling**: *Appointments data* chooses whether all data is kept or deleted when the
+component is uninstalled (see [Uninstall](#uninstall)). Default: no choice yet, which keeps the data.
 
 ### Links and web-server rules
 
@@ -754,8 +827,8 @@ reference merely because the source booking has been anonymised or deleted.
 
 ### Scheduler, reminders and retention
 
-The component installs and enables **Task - Appointments**. Updates preserve the plugin's
-enabled/disabled state; uninstalling the component removes the plugin and its Scheduler tasks.
+The package installs and enables **Task - Appointments**. Updates preserve the plugin's
+enabled/disabled state; uninstalling the package removes the plugin, and the component removes its Scheduler tasks.
 
 #### Scheduled tasks
 
@@ -1041,7 +1114,7 @@ Cancel so their checkout is released. Authorisation and deliberate privacy-prese
 responses take precedence over navigation; public links never grant access to another person's
 booking. Component options retain Joomla's native Close action.
 
-The button **Back to appointments** (on a form **Cancel**) leads to the list of all event types,
+The button **Back** (on a form **Cancel**) leads to the list of all event types,
 through its *Event types* menu item; without such a menu item it leads to the home page. On
 a *Book an appointment* menu item, which publishes one event type, it is hidden by default, so the
 list does not show that item's visitors the other event types. The menu item's **Navigation** tab
@@ -1947,7 +2020,7 @@ copies, because the booking script and the server rely on them.
 | Part | Structure and classes |
 |---|---|
 | Page | `.com-appointments` plus the view (`-eventtypes`, `-eventtype`, `-confirmation`, `-manage`), inside it `.com-appointments-container` (centred column, `max-width: var(--appointments-max-width)`, on the other views `--appointments-narrow-width`); on the booking page `[data-appointments-view]` with `data-step="time"` or `"details"`, the part the script replaces |
-| Way back | `a.btn.com-appointments-return`, the button **Back to appointments** (on a form **Cancel**) at the top of the booking page and below the confirmation, manage and guest pages; left out on a *Book an appointment* menu item unless its **Navigation** options show it |
+| Way back | `a.btn.com-appointments-return`, the button **Back** (on a form **Cancel**) at the top of the booking page and below the confirmation, manage and guest pages; left out on a *Book an appointment* menu item unless its **Navigation** options show it |
 | Card | `#appointment-booking.com-appointments-layout` with `.com-appointments-layout-time` or `-details`, `.com-appointments-layout-day` while the times of a day are shown and `.com-appointments-info-logo` or `-person`; inside it `header.com-appointments-info.com-appointments-header` and `.com-appointments-main` |
 | Information column | On step 2 first `a.btn.btn-outline-secondary.com-appointments-back[data-appointments-step]`; the logo `.com-appointments-info-media.com-appointments-info-logo > img.com-appointments-logo`, or the person `.com-appointments-info-media.com-appointments-host` with `img.com-appointments-host-photo` and `p.com-appointments-host-text` (`.com-appointments-host-name`, `.com-appointments-host-role`); then `h1.com-appointments-heading`, `ul.com-appointments-meta` (`li.com-appointments-duration`, `li.com-appointments-location-type`, on step 2 `li.com-appointments-selected` with `.com-appointments-selected-date` and `.com-appointments-selected-time`, and `li.com-appointments-selected-zone`, each with an inline `svg.com-appointments-icon`), `.com-appointments-description` and `p.com-appointments-location` |
 | Step title | `h2#appointment-step-title.com-appointments-step-title` (`tabindex="-1"`, receives the focus after a step change) with a visually hidden "Step 1 of 3:" |
@@ -2168,7 +2241,7 @@ deliberately excludes that domain. The system check reports the oldest retained 
 ### Booking administration and system checks
 
 The booking list and CSV use the same per-event edit permission. The toolbar of the list shows
-**Approve** and **Cancel appointment** only with «Edit State», **Erase personal data** only with
+**Approve** and **Cancel appointment** only with «Edit State», **Delete appointment** and **Erase personal data** only with
 «Delete» on at least one listed event type, so no button ends in a refusal. Whoever may see the
 bookings of an event type («Edit») may also change them; there is no separate reading permission in
 the administrator. The help page, section «Permissions», explains every permission and how to give
@@ -2548,6 +2621,26 @@ schedules before retrying the update. The installer refuses the upgrade rather t
 silently remapping data; the registered SQL migration then enforces the same reference as a fresh
 installation.
 
+**An update stops before copying files:** an existing file differs from the package and its origin
+is unknown. See [Update conflicts and recovery](#update-conflicts-and-recovery): review the listed
+paths and hashes, resolve the conflict, then repeat the same update. Make a complete site backup
+first.
+
+**No e-mail is sent and no booking is taken:** **Public site URL** (or Joomla's live_site) is
+empty. Set it, see [Scheduler, reminders and retention](#scheduler-reminders-and-retention).
+
+**No reminders, or personal data stays stored beyond the retention period:** the scheduled tasks
+*Appointments: reminders* and *Appointments: retention* are missing, switched off or never
+triggered. Check **System → Scheduled Tasks**, the **System check** tab of the options and the
+Scheduler trigger (see [Scheduled tasks](#scheduled-tasks)).
+
+**Nothing reaches Close:** the transfer is switched off, the profile is incomplete, or the task
+*Appointments: deliver approved bookings to Close* is switched off (it is created switched off).
+The administrator overview shows the delivery status.
+
+**Internet calendars do not answer:** the plugins *System - Appointments CalDAV* and *User -
+Appointments internet calendars* are installed disabled and must be enabled deliberately; see
+[Internet calendars](#internet-calendars).
 **A blocked time is rejected:** verify the start precedes the end and neither bound falls in a
 skipped or repeated local hour during a clock change.
 
@@ -2586,3 +2679,9 @@ Copyright (C) 2026 Advans IT Solutions GmbH
 GNU General Public License version 3 or later; see [LICENSE.txt](LICENSE.txt).
 
 SPDX-License-Identifier: `GPL-3.0-or-later`
+
+### Rescheduling page and administrator deletion
+
+The reschedule page of an e-mail link reuses the layout, calendar, time list and time-zone field of the booking page; it adds only the event type title and the invitee e-mail address, and shows the current appointment. Choosing a time leads to a confirmation step with the checkbox.
+
+**Delete appointment** in the booking list (permission «Delete» on the event type) removes the appointment row and writes an audit entry with the operator only. For an upcoming appointment that is not yet cancelled, the invitee and the host receive the usual cancellation e-mail with the calendar cancellation and without management links; guests of the deleted appointment are not mailed. An appointment that no longer exists when the deletion runs (stale list) is skipped and reported, the others are still deleted.

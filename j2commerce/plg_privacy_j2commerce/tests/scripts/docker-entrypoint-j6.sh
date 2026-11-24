@@ -152,7 +152,7 @@ else
     exit 1
 fi
 
-# Install the privacy plugin through the Joomla web installer (Installer
+# Install the privacy package through the Joomla web installer (Installer
 # singleton, as in the backend). The administrator password is set to a known
 # value first because the site may come from the CLI/manual fallback above.
 # Extensions installed through the CLI run as root and leave a root-owned
@@ -160,15 +160,16 @@ fi
 # www-data and could then not rebuild the map, so newly installed namespaces would
 # stay unknown to later CLI runs. On real sites the cache belongs to the web server.
 chown -R www-data:www-data /var/www/html/administrator/cache 2>/dev/null || true
-echo "Installing privacy plugin extension via the Joomla web installer..."
+echo "Installing the J2Commerce Privacy package via the Joomla web installer..."
 mkdir -p /tmp/test-state
 TEST_ADMIN_PASSWORD="${JOOMLA_ADMIN_PASSWORD:-Admin123456789!@#}"
 ADMIN_HASH=$(TEST_ADMIN_PASSWORD="$TEST_ADMIN_PASSWORD" php -r 'echo password_hash(getenv("TEST_ADMIN_PASSWORD"), PASSWORD_BCRYPT);')
 mysql -h mysql -u joomla -pjoomla_pass --skip-ssl joomla_db \
     -e "UPDATE ${DB_PREFIX}users SET password='${ADMIN_HASH}', block=0, requireReset=0 WHERE username='admin';"
 if [ "${PRIVACY_INSTALL_METHOD:-web}" = "cli" ]; then
-    # Used by the update-from-previous job: older releases install the bundled task
-    # plugin through the Installer singleton and fail in the web installer.
+    # Used by the migration and update job: the standalone releases before the package
+    # installed the bundled task plugin through the Installer singleton and fail in the
+    # web installer.
     cp /tmp/extension.zip /var/www/html/tmp/extension.zip
     HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=/var/www/html/tmp/extension.zip || { echo "ERROR: Extension installation FAILED"; exit 1; }
     echo "cli" > /tmp/test-state/privacy-install-method

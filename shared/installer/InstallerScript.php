@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-namespace Advans\Installer\V2;
+namespace Advans\Installer\V3;
 
 defined('_JEXEC') or die;
 
@@ -15,21 +15,16 @@ use Joomla\CMS\Log\Log;
 
 abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
 {
-    /**
-     * Backups older than this are removed by the next successful installation of the same
-     * extension. A changed file that an update replaced is noticed within weeks; half a year
-     * leaves room for seasonal checks without letting backups pile up forever.
-     */
-    public const BACKUP_RETENTION_DAYS = 180;
-
-    /** A Super User approves a pause by repeating the installation within this period. */
-    private const APPROVAL_SECONDS = 3600;
-
     /** A package's decisions for its children are valid for this long. */
     private const HANDOFF_SECONDS = 3600;
 
+    /** A full-site backup recommendation is acknowledged for one hour per extension version. */
+    private const BACKUP_RECOMMENDATION_SECONDS = 3600;
+
     /** @var array<string, mixed>|null State of the current installation between preflight and postflight. */
     private ?array $guard = null;
+    /** @var resource|null Shared lock held while Joomla copies files. */
+    private $installerLock = null;
 
     public function preflight($type, $parent)
     {
@@ -51,11 +46,21 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
         $isPackage = (string) $manifest['type'] === 'package';
 
         try {
+            $this->installerLock = InstallerLock::acquire($stateRoot);
+
+            if (!is_resource($this->installerLock)) {
+                Factory::getApplication()->enqueueMessage(Text::_('ADVANS_GUARD_LOCKED'), 'error');
+
+                return false;
+            }
+
             $owned = Destinations::owned($manifest, $source);
             $files = Destinations::merge(
                 Destinations::files($manifest, $source, $manifestFile),
                 $this->guardedFiles($type, $parent)
             );
+            // Bundled extension id => version it brings: one backup recommendation covers the package.
+            $bundled = [];
 
             if ($isPackage) {
                 foreach ($manifest->files->children() as $archive) {
@@ -79,6 +84,7 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
                         if ($child instanceof \SimpleXMLElement && $child->getName() === 'extension') {
                             $files = Destinations::merge($files, Destinations::files($child, $directory, $childManifest));
                             $owned = Destinations::mergeOwned($owned, Destinations::owned($child, $directory));
+                            $bundled[strtolower((string) $child->name)] = (string) $child->version;
                             $found = true;
                         }
                     }
@@ -99,11 +105,16 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
                 }
             }
 
-            State::directory($state . '/backups');
-            $approved = is_file($stateRoot . '/approved.php') ? State::read($stateRoot . '/approved.php') : [];
-            $approved = $this->approveRepeatedInstallation($state, $approved);
             $knowledge = Knowledge::load($source . '/' . Knowledge::CATALOG, $state . '/' . Knowledge::RECORD);
             $comparison = FileGuard::compare($files);
+            // A package installed over extensions that are already in place (the standalone
+            // extensions it replaces) changes an existing installation just like an update.
+            $remind = $type === 'update' || $this->migratesExistingInstallation($type, $parent);
+            if ($remind && !$this->recommendFullSiteBackup($state, (string) $manifest->version)) {
+                $this->releaseInstallerLock();
+
+                return false;
+            }
             $reviewed = $this->reviewedOwnedFiles();
             $plan = Planner::plan(
                 $comparison['differing'],
@@ -111,31 +122,32 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
                 static fn(string $destination): bool => Destinations::isOwned($destination, $owned),
                 fn(string $destination, string $existing, bool $known): string => $this->foreignDecision($destination, $existing, $known),
                 $knowledge,
-                $approved,
                 $reviewed + self::readHandoff($stateRoot)
             );
 
             if ($plan['halts'] !== []) {
-                return $this->pause($plan['halts'], $state);
-            }
-
-            // Every backup is written and verified before Joomla changes a single file.
-            $kept = [];
-
-            foreach ($plan['changes'] as $index => $change) {
-                if ($change['backup']) {
-                    $kept[] = $plan['changes'][$index]['backupPath'] = FileGuard::backup($change['destination'], $change['existing'], $state . '/backups');
-                }
+                return $this->pause($plan['halts']);
             }
 
             if ($isPackage) {
-                $decided = [];
-
-                foreach ($plan['changes'] as $change) {
-                    $decided[$change['destination']] = ['existing' => $change['existing'], 'incoming' => $change['incoming']];
-                }
+                // Keep what an earlier attempt of this package already decided: the planner skips those
+                // destinations now, and a handoff rewritten without them would leave the bundled
+                // extensions to judge the same files again without the package's catalog.
+                // Files the package's own review approved are decisions for the bundled extensions too:
+                // the planner skips them here, so they are not among the changes of this plan.
+                $decided = self::decisions($reviewed + self::readHandoff($stateRoot), $plan['changes']);
 
                 State::write($stateRoot . '/decided.php', ['expires' => time() + self::HANDOFF_SECONDS, 'files' => $decided]);
+
+                // The operator acknowledged the backup recommendation for the whole package: the
+                // bundled extensions do not stop the same installation once more for themselves.
+                if ($remind) {
+                    foreach ($bundled as $childId => $childVersion) {
+                        if (preg_match('/^[a-z0-9_]+$/D', $childId) === 1 && $childVersion !== '') {
+                            $this->acknowledgeBackupRecommendation($stateRoot . '/' . $childId, $childVersion);
+                        }
+                    }
+                }
             }
 
             $this->guard = [
@@ -145,22 +157,9 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
                 'version'        => (string) $manifest->version,
                 'package'        => $isPackage,
                 'incoming'       => $comparison['incoming'],
-                'changes'        => $plan['changes'],
-                'kept'           => $kept,
             ];
-        } catch (BackupFailure $failure) {
-            Log::add($failure->getMessage(), Log::ERROR, 'advans-installer');
-            Factory::getApplication()->enqueueMessage(
-                Text::sprintf(
-                    'ADVANS_GUARD_BACKUP_FAILED',
-                    htmlspecialchars(Knowledge::relative($failure->destination), ENT_QUOTES, 'UTF-8'),
-                    htmlspecialchars(Knowledge::relative($state . '/backups'), ENT_QUOTES, 'UTF-8')
-                ),
-                'error'
-            );
-
-            return false;
         } catch (\RuntimeException | \JsonException $error) {
+            $this->releaseInstallerLock();
             Log::add($error->getMessage(), Log::ERROR, 'advans-installer');
             Factory::getApplication()->enqueueMessage(Text::_('ADVANS_CHECK_GUARD_ERROR'), 'error');
 
@@ -171,8 +170,18 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
     }
 
     /**
-     * Own writes separately reviewed and backed up by this installer script. Planner still
-     * requires both hashes to match, and the ledger still uses the original package hashes.
+     * Whether an installation of type "install" replaces extensions that are already in place, so
+     * that it shows the backup recommendation like an update. A package that adopts the standalone
+     * extensions it bundles answers true when one of them is installed.
+     */
+    protected function migratesExistingInstallation(string $type, object $parent): bool
+    {
+        return false;
+    }
+
+    /**
+     * Own writes separately reviewed by this installer script. Planner still requires both
+     * hashes to match, and the ledger still uses the original package hashes.
      *
      * @return array<string,array{existing:string,incoming:string}>
      */
@@ -183,7 +192,7 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
 
     /**
      * Destinations outside the manifest's own file lists that this extension creates, replaces
-     * or removes during installation (foreign operations and retirement of obsolete files).
+     * or removes during installation (foreign operations and obsolete files).
      *
      * @return array<string, string> Absolute destination => absolute candidate source.
      */
@@ -235,35 +244,36 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
 
     public function postflight($type, $parent)
     {
-        $result = $this->extensionPostflight($type, $parent);
+        try {
+            $result = $this->extensionPostflight($type, $parent);
 
-        if ($result === false || !in_array($type, ['install', 'update'], true)) {
-            return $result;
-        }
-
-        $id = strtolower((string) $parent->getManifest()->name);
-
-        if ((string) $parent->getManifest()['type'] === 'package') {
-            $root = SystemCheck::root(SystemCheck::definition($id)) . '/advansinstaller';
-            $source = $parent->getParent()->getPath('source') . '/advansinstaller';
-
-            if (!\Joomla\Filesystem\Folder::copy($source, $root, '', true)) {
-                throw new \RuntimeException('Cannot install package system-check support.');
+            if ($result === false || !in_array($type, ['install', 'update'], true)) {
+                return $result;
             }
+
+            $id = strtolower((string) $parent->getManifest()->name);
+
+            if ((string) $parent->getManifest()['type'] === 'package') {
+                $root = SystemCheck::root(SystemCheck::definition($id)) . '/advansinstaller';
+                $source = $parent->getParent()->getPath('source') . '/advansinstaller';
+
+                if (!\Joomla\Filesystem\Folder::copy($source, $root, '', true)) {
+                    throw new \RuntimeException('Cannot install package system-check support.');
+                }
+            }
+
+            $this->finishGuard();
+            // Required scheduled tasks: create what is missing, report what is switched off.
+            ScheduledTasks::ensure($id);
+            Factory::getApplication()->enqueueMessage(SystemCheck::render($id), 'message');
+
+            return $result;
+        } finally {
+            $this->releaseInstallerLock();
         }
-
-        $this->finishGuard();
-        // Required scheduled tasks: create what is missing, report what is switched off.
-        ScheduledTasks::ensure($id);
-        Factory::getApplication()->enqueueMessage(SystemCheck::render($id), 'message');
-
-        return $result;
     }
 
-    /**
-     * Remember what this installation wrote, report what it backed up and apply the retention rule.
-     * The files are already installed: a failure here is logged and never fails the installation.
-     */
+    /** Remember the release bytes actually present after installation. */
     private function finishGuard(): void
     {
         $guard = $this->guard;
@@ -279,73 +289,49 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
             Log::add('Cannot record installed files: ' . $error->getMessage(), Log::WARNING, 'advans-installer');
         }
 
-        $this->report($guard['changes'], $guard['state'] . '/backups');
-
-        try {
-            FileGuard::prune($guard['state'] . '/backups', self::BACKUP_RETENTION_DAYS * 86400, $guard['kept']);
-
-            foreach (['/plan.php', '/pending.php'] as $stale) {
-                if (is_file($guard['state'] . $stale)) {
-                    unlink($guard['state'] . $stale);
-                }
-            }
-
-            if ($guard['package'] && is_file($guard['stateRoot'] . '/decided.php')) {
-                unlink($guard['stateRoot'] . '/decided.php');
-            }
-        } catch (\RuntimeException $error) {
-            Log::add('Cannot apply the backup retention: ' . $error->getMessage(), Log::WARNING, 'advans-installer');
+        if ($guard['package'] && is_file($guard['stateRoot'] . '/decided.php')) {
+            unlink($guard['stateRoot'] . '/decided.php');
         }
-    }
-
-    /** @param list<array<string, mixed>> $changes */
-    private function report(array $changes, string $backups): void
-    {
-        $lists = [Planner::REPORT_REPLACED => [], Planner::REPORT_REMOVED => [], Planner::REPORT_FOREIGN => []];
-
-        foreach ($changes as $change) {
-            if ($change['report'] !== null) {
-                $lists[$change['report']][] = Knowledge::relative($change['destination']);
-            }
-        }
-
-        $location = htmlspecialchars(Knowledge::relative($backups), ENT_QUOTES, 'UTF-8');
-        $app = Factory::getApplication();
-
-        if ($lists[Planner::REPORT_REPLACED] !== []) {
-            $app->enqueueMessage(Text::sprintf('ADVANS_GUARD_REPORT_REPLACED', self::fileList($lists[Planner::REPORT_REPLACED]), $location), 'notice');
-        }
-
-        if ($lists[Planner::REPORT_REMOVED] !== []) {
-            $app->enqueueMessage(Text::sprintf('ADVANS_GUARD_REPORT_REMOVED', self::fileList($lists[Planner::REPORT_REMOVED]), $location), 'notice');
-        }
-
-        if ($lists[Planner::REPORT_FOREIGN] !== []) {
-            $app->enqueueMessage(Text::sprintf('ADVANS_GUARD_REPORT_FOREIGN', self::fileList($lists[Planner::REPORT_FOREIGN]), $location), 'notice');
-        }
-    }
-
-    /** @param list<string> $paths */
-    private static function fileList(array $paths): string
-    {
-        sort($paths, SORT_STRING);
-        $shown = array_slice($paths, 0, 10);
-        $text = implode(', ', array_map(static fn(string $path): string => htmlspecialchars($path, ENT_QUOTES, 'UTF-8'), $shown));
-
-        if (count($paths) > count($shown)) {
-            $text .= ' ' . Text::sprintf('ADVANS_GUARD_REPORT_MORE', count($paths) - count($shown));
-        }
-
-        return $text;
     }
 
     /**
-     * No safe automatic choice exists: keep verified backups, explain in plain language and let a
-     * Super User approve in the backend (or the server administrator on the command line).
+     * Stop the first update attempt for this extension version so Joomla can show the full-site
+     * backup recommendation before it changes files. Repeating it acknowledges the notice; this
+     * records no backup status and does not claim that a backup exists or is restorable.
+     */
+    private function recommendFullSiteBackup(string $state, string $version): bool
+    {
+        $path = $state . '/backup-recommendation.php';
+        $previous = is_file($path) ? State::read($path) : [];
+
+        if (($previous['version'] ?? '') === $version && (int) ($previous['expires'] ?? 0) >= time()) {
+            return true;
+        }
+
+        $this->acknowledgeBackupRecommendation($state, $version);
+        Factory::getApplication()->enqueueMessage(
+            '<p><strong>' . Text::_('ADVANS_GUARD_BACKUP_RECOMMENDATION_TITLE') . '</strong></p>'
+                . '<p>' . Text::_('ADVANS_GUARD_BACKUP_RECOMMENDATION_BODY') . '</p>'
+                . '<p>' . Text::_('ADVANS_GUARD_BACKUP_RECOMMENDATION_RETRY') . '</p>',
+            'warning'
+        );
+
+        return false;
+    }
+
+    /** Record that the recommendation for $version of the extension at $state was shown. */
+    private function acknowledgeBackupRecommendation(string $state, string $version): void
+    {
+        State::write($state . '/backup-recommendation.php', ['version' => $version, 'expires' => time() + self::BACKUP_RECOMMENDATION_SECONDS]);
+    }
+
+    /**
+     * No safe automatic choice exists. Persist only the destination and file hashes so a later
+     * review can identify the conflict without retaining file contents or approving a bypass.
      *
      * @param list<array<string, mixed>> $halts
      */
-    private function pause(array $halts, string $state): bool
+    private function pause(array $halts): bool
     {
         $entries = [];
 
@@ -354,85 +340,53 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
                 'destination' => $halt['destination'],
                 'existing'    => $halt['existing'],
                 'incoming'    => $halt['incoming'],
-                'backup'      => FileGuard::backup($halt['destination'], $halt['existing'], $state . '/backups'),
                 'operation'   => $halt['operation'],
             ];
         }
 
-        $planPath = $state . '/plan.php';
-        State::write($planPath, $entries);
-        $digest = (string) hash_file('sha256', $planPath);
         $app = Factory::getApplication();
         $escape = static fn(string $text): string => htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
         $items = '';
 
         foreach ($entries as $entry) {
             $items .= '<li><code>' . $escape(Knowledge::relative($entry['destination'])) . '</code>: '
-                . $this->pauseReason($entry['destination']) . '</li>';
+                . $this->pauseReason($entry['destination'])
+                . '<br>' . Text::_('ADVANS_GUARD_PAUSED_EXISTING') . ': <code>' . $escape($entry['existing'])
+                . '</code><br>' . Text::_('ADVANS_GUARD_PAUSED_INCOMING') . ': <code>'
+                . $escape($entry['incoming']) . '</code></li>';
         }
 
         $message = '<p><strong>' . Text::_('ADVANS_GUARD_PAUSED_TITLE') . '</strong></p>'
-            . '<p>' . Text::_('ADVANS_GUARD_PAUSED_WHY') . '</p><ul>' . $items . '</ul>';
-
-        if (!self::isCli()) {
-            // Joomla renders messages without forms, so the approval is the Super User's repetition
-            // of this installation (Joomla's own CSRF-protected request) within the approval period.
-            State::write($state . '/pending.php', ['plan' => $digest, 'expires' => time() + self::APPROVAL_SECONDS]);
-            // Extensions: Update posts to view=update (task update.update, which Joomla's dispatcher splits).
-            $input = $app->getInput();
-            $fromUpdate = $input->getCmd('view') === 'update' || in_array($input->getCmd('task'), ['update', 'update.update'], true);
-
-            if (self::isSuperUser()) {
-                $message .= '<p>' . Text::sprintf(
-                    $fromUpdate ? 'ADVANS_GUARD_PAUSED_APPROVE_UPDATE' : 'ADVANS_GUARD_PAUSED_APPROVE_INSTALL',
-                    $escape(Knowledge::relative($state . '/backups'))
-                ) . '</p><p><a class="btn btn-primary" href="index.php?option=com_installer&amp;view='
-                    . ($fromUpdate ? 'update' : 'install') . '">' . Text::_('ADVANS_GUARD_PAUSED_BUTTON') . '</a></p>';
-            } else {
-                $message .= '<p>' . Text::_('ADVANS_GUARD_PAUSED_SUPERUSER') . '</p>';
-            }
-        }
-
-        $message .= '<p>' . Text::sprintf('ADVANS_GUARD_PAUSED_CLI', $escape($planPath . ' (SHA-256: ' . $digest . ')')) . '</p>';
+            . '<p>' . Text::_('ADVANS_GUARD_PAUSED_WHY') . '</p><ul>' . $items . '</ul>'
+            . '<p>' . Text::_('ADVANS_GUARD_PAUSED_NEXT_STEPS') . '</p>'
+            . '<p>' . Text::_('ADVANS_GUARD_BACKUP_RECOMMENDATION_BODY') . '</p>';
         $app->enqueueMessage($message, 'error');
+        $this->releaseInstallerLock();
 
         return false;
     }
 
+    private function releaseInstallerLock(): void
+    {
+        InstallerLock::release($this->installerLock);
+        $this->installerLock = null;
+    }
+
     /**
-     * After a pause, a Super User approves by repeating the same installation in the backend within
-     * the approval period, as the pause explains. That request (Joomla checks its form token) is the
-     * approval of exactly the reviewed old and new hashes: changed bytes on the site or in the
-     * package produce a new plan and a new pause.
+     * The decisions handed to the bundled extensions: those of earlier attempts plus the new ones.
      *
-     * @param array<string, mixed> $approved
+     * @param array<string, mixed>            $previous Destination => existing and incoming hash.
+     * @param list<array<string, mixed>>      $changes  Changes the plan of this attempt decided.
+     *
      * @return array<string, mixed>
      */
-    private function approveRepeatedInstallation(string $state, array $approved): array
+    public static function decisions(array $previous, array $changes): array
     {
-        $marker = $state . '/pending.php';
-
-        // Joomla's install and update controllers have already checked the form token of this request.
-        if (!is_file($marker) || !is_file($state . '/plan.php') || self::isCli() || !self::isSuperUser()) {
-            return $approved;
+        foreach ($changes as $change) {
+            $previous[$change['destination']] = ['existing' => $change['existing'], 'incoming' => $change['incoming']];
         }
 
-        $paused = State::read($marker);
-        unlink($marker);
-
-        if ((int) ($paused['expires'] ?? 0) < time() || !is_string($paused['plan'] ?? null)
-            || !hash_equals($paused['plan'], (string) hash_file('sha256', $state . '/plan.php'))) {
-            return $approved;
-        }
-
-        try {
-            return Approval::approve($state . '/plan.php');
-        } catch (\RuntimeException $stale) {
-            // The site changed since the pause: plan again, which pauses again with current bytes.
-            Log::add($stale->getMessage(), Log::WARNING, 'advans-installer');
-
-            return $approved;
-        }
+        return $previous;
     }
 
     /** @return array<string, mixed> */
@@ -447,21 +401,6 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
         $handoff = State::read($path);
 
         return (int) ($handoff['expires'] ?? 0) >= time() && is_array($handoff['files'] ?? null) ? $handoff['files'] : [];
-    }
-
-    private static function isCli(): bool
-    {
-        $app = Factory::getApplication();
-
-        return $app instanceof \Joomla\CMS\Application\ConsoleApplication || $app->isClient('cli');
-    }
-
-    private static function isSuperUser(): bool
-    {
-        $app = Factory::getApplication();
-        $user = method_exists($app, 'getIdentity') ? $app->getIdentity() : null;
-
-        return $user !== null && $user->authorise('core.admin') === true;
     }
 
 }

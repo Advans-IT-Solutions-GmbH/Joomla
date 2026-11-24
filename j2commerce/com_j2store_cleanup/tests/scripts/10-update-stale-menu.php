@@ -41,15 +41,23 @@ $items = static function () use ($db, $query): array {
 };
 $update = static function (): string {
     // Joomla removes the package it installed: update from a copy of the built package.
-    $package = JPATH_BASE . '/tmp/update-stale-menu-' . bin2hex(random_bytes(4)) . '.zip';
+    // The first update attempt of a version stops at the full-site backup recommendation: repeat it
+    // once, as the notice asks, and judge the attempt that ran. Every attempt installs its own copy.
+    for ($attempt = 0; $attempt < 2; $attempt++) {
+        $package = JPATH_BASE . '/tmp/update-stale-menu-' . bin2hex(random_bytes(4)) . '.zip';
 
-    if (!copy('/tmp/extension.zip', $package)) {
-        throw new RuntimeException('The package could not be copied.');
+        if (!copy('/tmp/extension.zip', $package)) {
+            throw new RuntimeException('The package could not be copied.');
+        }
+
+        $output = [];
+        exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=' . escapeshellarg($package) . ' --no-interaction 2>&1',
+            $output, $exitCode);
+
+        if ($exitCode === 0 || !str_contains(implode("\n", $output), 'Before you update')) {
+            break;
+        }
     }
-
-    $output = [];
-    exec('HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:install --path=' . escapeshellarg($package) . ' --no-interaction 2>&1',
-        $output, $exitCode);
 
     return $exitCode . "\n" . implode("\n", $output);
 };

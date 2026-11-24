@@ -1,6 +1,6 @@
 # J2Commerce Privacy Cleanup Task Plugin
 
-**Installation and updates:** see the [shared backup/approval policy](../../../../../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../../../../../README.md#installation-safety-and-repeatable-system-checks).
 
 ## Description
 
@@ -20,19 +20,19 @@ Joomla 5.4.x or 6.x, PHP 8.1+, the installed parent with its helpers, relevant s
 
 ## Installation
 
-The parent installer installs/enables **Task - J2Commerce Privacy Cleanup** when first introduced. The parent migrates the former routine ID `plg_privacy_j2commerce.autocleanup` to the current task ID.
+The package `pkg_privacy_j2commerce_<version>.zip` ([package README](../../../../pkg_privacy_j2commerce/README.md)) installs **Task - J2Commerce Privacy Cleanup** after the parent privacy plugin and enables it when it was not installed before. This plugin cannot be installed or uninstalled on its own. The parent migrates the former routine ID `plg_privacy_j2commerce.autocleanup` to the current task ID.
 
 ### Scheduled tasks
 
-The routine is **required** (it performs the legally required anonymisation). After every installation and update of the parent, the shared installer checks it: a missing task **J2Commerce - Automatic data cleanup** is created and switched on (every day at 02:15 UTC, task form defaults, retention years and fiscal year end taken from the parent's stored options) and reported; an existing task is never changed or duplicated; a task that is switched off or trashed stays so and is reported with the menu path to switch it on. Check it under **System → Manage → Scheduled Tasks** or in the **System check** tab of the parent or of this plugin, which also shows whether Joomla's Scheduler is started. Details: [parent `Scheduled tasks`](../../../README.md#scheduled-tasks).
+The routine is **required** (it performs the legally required anonymisation). After every installation and update of the package, once this plugin is in place, the shared installer checks it: a missing task **J2Commerce - Automatic data cleanup** is created and switched on (every day at 02:15 UTC, task form defaults, retention years and fiscal year end taken from the parent's stored options) and reported; an existing task is never changed or duplicated; a task that is switched off or trashed stays so and is reported with the menu path to switch it on. Check it under **System → Manage → Scheduled Tasks** or in the **System check** tab of the parent or of this plugin, which also shows whether Joomla's Scheduler is started. Details: [parent `Scheduled tasks`](../../../README.md#scheduled-tasks).
 
 ## Updating
 
-Update the parent privacy ZIP. Existing child plugin state is preserved; there is no independent release/update channel. Check the task's own parameters after a policy change.
+Update the package. Existing child plugin state is preserved; there is no independent release/update channel. A site that still runs the standalone parent plugin of an earlier version receives the package through the parent's update channel, and the package takes this plugin over with its settings and enabled state. Before updating, take a current, complete site backup that can be restored independently; the installer cannot verify this. The first update attempt displays this recommendation and stops before changing files; start the update again afterwards. The installer keeps no file copies; a modified or unknown file that the update would replace stops it before anything is copied, with the path and SHA-256 hashes listed, until you resolve it manually or defer the update. There is no approval command or bypass. Check the task's own parameters after a policy change.
 
 ## Uninstall
 
-Parent uninstall removes this plugin and its Scheduler tasks. It does not reverse anonymisation or remove shop/consent/action-log records as a blanket cleanup. Follow the [parent uninstall contract](../../../README.md#uninstall). Disable the task if retention must pause; removing the parent also removes the helpers.
+Uninstalling the package removes this plugin together with the parent; the parent's uninstall deletes the Scheduler tasks of the routine. It does not reverse anonymisation or remove shop/consent/action-log records as a blanket cleanup. Follow the [parent uninstall contract](../../../README.md#uninstall). Disable the task if retention must pause; removing the package also removes the helpers.
 
 ## Configuration
 
@@ -55,7 +55,7 @@ The installer-created task runs daily at 02:15 UTC; Joomla still needs a working
 
 ## Usage, Permissions and Data Handling
 
-Restrict Scheduler configuration to trusted administrators and test on isolated synthetic data before enabling destructive retention. Cleanup examines **all existing shop data sets**, not only the active shop, so migration copies do not retain personal data unnoticed. With order anonymisation off, stale consent evidence can still be removed.
+The plugin ships no `access.xml` and no permissions of its own; Joomla's Scheduler permissions decide who may change, run or delete the task, and the task sends no mail and writes no table of its own. Restrict Scheduler configuration to trusted administrators and test on isolated synthetic data before enabling destructive retention. Cleanup examines **all existing shop data sets**, not only the active shop, so migration copies do not retain personal data unnoticed. With order anonymisation off, stale consent evidence can still be removed.
 
 The task writes execution logs and modifies the parent's/shop's records, not a separate cleanup database. It is not a substitute for confirmed privacy requests, a website-wide erasure guarantee or backup retention. Refer to the [parent retention logic](../../../README.md#retention-logic) for the account/guest/lifetime distinctions.
 

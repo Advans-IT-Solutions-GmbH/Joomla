@@ -1,6 +1,6 @@
 # J2Store Extension Cleanup Component
 
-**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2store-cleanup.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/j2store-cleanup.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-cleanup.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-cleanup.yml)
@@ -46,6 +46,8 @@ On Joomla 6, `Factory::getContainer()->get('DatabaseDriver')` was removed. The c
 
 The manifest registers this repository's `updates/update.xml` as update server (`<updateservers>`), and the install script makes sure the update site is present after every install or update. New versions appear under **System → Update → Extensions**. You can also install a newer ZIP over the existing installation.
 
+Before updating, take a current, complete site backup that can be restored independently; the installer cannot verify this. The first update attempt displays this recommendation and stops before changing files; start the update again afterwards. The installer decides by itself and keeps no file copies. If it reports a modified or unknown file that the update would replace, it stops before copying anything and lists the path and the SHA-256 hashes: review the file, resolve it manually or defer the update, then retry. There is no approval command or bypass. Permissions are kept. Every installation and update also ensures the component's administrator menu entry and removes outdated menu entries of the component. The component needs no Scheduler task.
+
 ## Uninstall
 
 Uninstall via **System → Manage → Extensions**. The component has no uninstall routine of its own and creates no database tables; Joomla removes the component files and its language files. Extensions that were removed with this tool are not restored, and J2Store/J2Commerce data is not touched.
@@ -67,7 +69,7 @@ URL: `administrator/index.php?option=com_j2store_cleanup`
 
 ### Help
 
-The component has a help page in the administrator (en-GB, de-DE, fr-FR). The **Help** button in the toolbar opens it in Joomla's help popup, and the link below the page heading opens it in the same window; the address is `administrator/index.php?option=com_j2store_cleanup&view=help`. It explains when to use the component and when not, the permissions, which extensions are listed, how the scan classifies them, what a removal does and never does, what cannot be undone, the Options and typical problems. Every user who can open the page (`core.manage`) can read it; the help view runs no scan and needs no further permission. `j2store_cleanup.php` renders `tmpl/help/default.php` for `view=help` after its access check.
+The component has a help page in the administrator (en-GB, de-DE, fr-FR). The **Help** button in the toolbar opens it in Joomla's help popup, and the link below the page heading opens it in the same window; the address is `administrator/index.php?option=com_j2store_cleanup&view=help`. It explains when to use the component and when not, installation, update and uninstall, the permissions, which extensions are listed, how the scan classifies them, what a removal does and never does, what cannot be undone, the Options and typical problems. Every user who can open the page (`core.manage`) can read it; the help view runs no scan and needs no further permission. `j2store_cleanup.php` renders `tmpl/help/default.php` for `view=help` after its access check.
 
 ### Interface Overview
 The component displays:

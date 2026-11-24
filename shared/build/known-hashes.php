@@ -112,8 +112,29 @@ $hashArchive = static function (string $zipFile, array &$hashes) use (&$hashArch
         $zip->close();
     }
 };
-$hashBytes = static function (string $name, string $bytes, array &$hashes) use ($hashArchive, $isCatalog): void {
+// Bundled catalogs that were incomplete (their extension's history could not be rebuilt).
+$incompleteBundled = [];
+$hashBytes = static function (string $name, string $bytes, array &$hashes) use ($hashArchive, $isCatalog, &$incompleteBundled): void {
     if ($isCatalog($name)) {
+        // The catalog itself is never hashed. The catalog of a bundled extension lists the files of
+        // that extension's earlier releases, also those released before it was bundled (a component
+        // whose standalone releases a package replaces): files a site installed from them are known
+        // to the package as well.
+        $envelope = "<?php exit; ?>\n";
+        $nested = str_starts_with($bytes, $envelope) ? json_decode(substr($bytes, strlen($envelope)), true) : null;
+
+        if (is_array($nested) && is_array($nested['hashes'] ?? null)) {
+            foreach ($nested['hashes'] as $hash) {
+                if (is_string($hash) && preg_match('/^[a-f0-9]{64}$/D', $hash) === 1) {
+                    $hashes[$hash] = true;
+                }
+            }
+
+            if (($nested['complete'] ?? false) !== true) {
+                $incompleteBundled[] = (string) ($nested['extension'] ?? $name);
+            }
+        }
+
         return;
     }
 
@@ -169,6 +190,14 @@ foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($buildDire
     $relative = substr(str_replace('\\', '/', $file->getPathname()), strlen(str_replace('\\', '/', $buildDirectory)) + 1);
     $hashBytes($relative, (string) file_get_contents($file->getPathname()), $hashes);
 }
+
+// Only the bundled catalogs of the build in progress decide completeness; rebuilds of earlier
+// releases run without their history on purpose.
+$bundledNotes = array_map(
+    static fn(string $extension): string => "the bundled catalog of $extension is incomplete",
+    array_values(array_unique($incompleteBundled))
+);
+$catalog['unreproducible'] = $bundledNotes;
 
 $finish = static function (array $catalog, array $hashes) use ($write): void {
     $catalog['hashes'] = array_keys($hashes);

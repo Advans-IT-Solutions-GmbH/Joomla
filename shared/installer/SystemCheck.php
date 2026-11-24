@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-namespace Advans\Installer\V2;
+namespace Advans\Installer\V3;
 
 defined('_JEXEC') or die;
 
@@ -222,7 +222,8 @@ final class SystemCheck
         $definition = self::definition($id);
 
         if ($definition['type'] === 'package') {
-            return self::url('com_dmarcreports');
+            // A package has no settings of its own: its checks link to the bundled extension it is about.
+            return self::url($definition['home'] ?? 'com_dmarcreports');
         }
 
         if ($definition['type'] === 'component') {

@@ -1080,10 +1080,21 @@ class StructureTest
                 if ($legacyZip->open($legacyPackage) !== true) {
                     throw new \RuntimeException('Cannot open the legacy-template package fixture.');
                 }
+                // The component is an archive inside the package.
+                $componentArchive = $fixtureDirectory . '/com_appointments.zip';
+                $componentZip = new \ZipArchive();
+                if (file_put_contents($componentArchive, (string) $legacyZip->getFromName('packages/com_appointments.zip')) === false
+                    || $componentZip->open($componentArchive) !== true) {
+                    throw new \RuntimeException('Cannot open the component of the legacy-template package fixture.');
+                }
                 foreach ($saved as $tag => $ini) {
-                    if (!$legacyZip->addFromString('administrator/language/' . $tag . '/com_appointments.ini', $old($ini))) {
+                    if (!$componentZip->addFromString('administrator/language/' . $tag . '/com_appointments.ini', $old($ini))) {
                         throw new \RuntimeException('Cannot stage the legacy-template language fixture.');
                     }
+                }
+                if (!$componentZip->close()
+                    || !$legacyZip->addFromString('packages/com_appointments.zip', (string) file_get_contents($componentArchive))) {
+                    throw new \RuntimeException('Cannot stage the component of the legacy-template package fixture.');
                 }
                 if (!$legacyZip->close()) {
                     throw new \RuntimeException('Cannot save the legacy-template package fixture.');
@@ -1132,6 +1143,9 @@ class StructureTest
             } finally {
                 if (is_file($legacyPackage)) {
                     unlink($legacyPackage);
+                }
+                if (is_file($fixtureDirectory . '/com_appointments.zip')) {
+                    unlink($fixtureDirectory . '/com_appointments.zip');
                 }
                 if (is_dir($fixtureDirectory)) {
                     rmdir($fixtureDirectory);

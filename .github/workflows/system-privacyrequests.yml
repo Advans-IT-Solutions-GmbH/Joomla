@@ -22,7 +22,9 @@ on:
       - 'shared/tests/scripts/shared-installer-module-url.php'
       - 'shared/tests/browser/package.json'
       - 'shared/tests/browser/package-lock.json'
+      - 'pkg_appointments/**'
       - 'com_appointments/**'
+      - 'j2commerce/pkg_privacy_j2commerce/**'
       - 'j2commerce/plg_privacy_j2commerce/**'
       - '.github/workflows/system-privacyrequests.yml'
       - '.github/workflows/release-system-privacyrequests.yml'
@@ -45,7 +47,9 @@ on:
       - 'shared/tests/scripts/shared-installer-module-url.php'
       - 'shared/tests/browser/package.json'
       - 'shared/tests/browser/package-lock.json'
+      - 'pkg_appointments/**'
       - 'com_appointments/**'
+      - 'j2commerce/pkg_privacy_j2commerce/**'
       - 'j2commerce/plg_privacy_j2commerce/**'
       - '.github/workflows/system-privacyrequests.yml'
       - '.github/workflows/release-system-privacyrequests.yml'
@@ -220,10 +224,11 @@ jobs:
       - name: Build coupled packages and synthetic probes of this commit
         run: |
           mkdir -p "$PRIVACY_PACKAGES" "$PRIVACY_CAPTURE_ROOT" "$PRIVACY_RESULTS"
-          (cd com_appointments && bash build.sh)
-          (cd j2commerce/plg_privacy_j2commerce && bash build.sh)
-          cp com_appointments/com_appointments_*.zip "$PRIVACY_PACKAGES/appointments.zip"
-          cp j2commerce/plg_privacy_j2commerce/plg_privacy_j2commerce_*.zip "$PRIVACY_PACKAGES/j2commerce-privacy.zip"
+          # Both coupled extensions ship as packages: their release assets are what sites install.
+          (cd pkg_appointments && bash build.sh)
+          (cd j2commerce/pkg_privacy_j2commerce && bash build.sh)
+          cp pkg_appointments/pkg_appointments_*.zip "$PRIVACY_PACKAGES/appointments.zip"
+          cp j2commerce/pkg_privacy_j2commerce/pkg_privacy_j2commerce_*.zip "$PRIVACY_PACKAGES/j2commerce-privacy.zip"
           (cd plg_system_privacyrequests/tests/fixtures/probe && zip -qr "$PRIVACY_PACKAGES/probe.zip" .)
           (cd plg_system_privacyrequests/tests/fixtures/mailprobe && zip -qr "$PRIVACY_PACKAGES/mailprobe.zip" .)
       - name: Start isolated synthetic site

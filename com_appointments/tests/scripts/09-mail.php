@@ -357,6 +357,91 @@ try {
         throw new RuntimeException('Cannot restore the test mail transport.');
     }
 
+    // A layout override that prints and then throws must not lose the mail, leak its output or close
+    // the buffers of the caller.
+    $layoutDir = '/var/www/html/templates/zz-mailtest/html/layouts/joomla/mail';
+    $layoutFile = $layoutDir . '/boom.php';
+    $layoutScript = sys_get_temp_dir() . '/mail-layout-' . bin2hex(random_bytes(4)) . '.php';
+    $stickyLayoutFile = $layoutDir . '/sticky.php';
+    $stickyLayoutScript = sys_get_temp_dir() . '/mail-layout-sticky-' . bin2hex(random_bytes(4)) . '.php';
+    $layoutOutput = [];
+    $stickyLayoutOutput = [];
+    try {
+        if (!is_dir($layoutDir) && !@mkdir($layoutDir, 0777, true) && !is_dir($layoutDir)) {
+            throw new RuntimeException('Cannot create the throwing mail-layout directory.');
+        }
+
+        $layoutSource = "<?php defined('_JEXEC') or die; \$GLOBALS['appointments_mail_layout_executed'] = true; "
+            . "echo 'LEAKED-LAYOUT-OUTPUT'; ob_start(); echo 'MORE'; throw new RuntimeException('layout failed');";
+
+        if (file_put_contents($layoutFile, $layoutSource) === false || !is_file($layoutFile)) {
+            throw new RuntimeException('Cannot create the throwing mail-layout fixture.');
+        }
+
+        $scriptSource = '<?php
+            require "/var/www/html/tests/scripts/appointments-joomla.php";
+            $GLOBALS["appointments_mail_layout_executed"] = false;
+            ob_start();
+            echo "OUTER";
+            $level = ob_get_level();
+            $html = \Advans\Component\Appointments\Administrator\Helper\MailHtml::render("Hi <b>Eve</b>", "en-GB", "Site", ["mail_style" => "both", "disable_htmllayout" => "1", "mail_htmllayout" => "zz-mailtest:boom"]);
+            $outer = ob_get_level() === $level ? ob_get_clean() : "level-changed";
+            echo "\n@@LAYOUT@@" . json_encode(["html" => $html, "outer" => $outer, "executed" => $GLOBALS["appointments_mail_layout_executed"]]);';
+
+        if (file_put_contents($layoutScript, $scriptSource) === false || !is_file($layoutScript)) {
+            throw new RuntimeException('Cannot create the throwing mail-layout subprocess.');
+        }
+
+        exec('cd /var/www/html && php ' . escapeshellarg($layoutScript) . ' 2>&1', $layoutOutput);
+
+        $stickyLayoutSource = "<?php defined('_JEXEC') or die; \$GLOBALS['appointments_mail_layout_executed'] = true; "
+            . "ob_start(null, 0, PHP_OUTPUT_HANDLER_CLEANABLE | PHP_OUTPUT_HANDLER_FLUSHABLE); "
+            . "echo 'STICKY-LAYOUT-OUTPUT'; throw new RuntimeException('sticky layout failed');";
+
+        if (file_put_contents($stickyLayoutFile, $stickyLayoutSource) === false || !is_file($stickyLayoutFile)) {
+            throw new RuntimeException('Cannot create the non-removable mail-layout fixture.');
+        }
+
+        $stickyScriptSource = '<?php
+            require "/var/www/html/tests/scripts/appointments-joomla.php";
+            $GLOBALS["appointments_mail_layout_executed"] = false;
+            $html = \Advans\Component\Appointments\Administrator\Helper\MailHtml::render("Hi <b>Eve</b>", "en-GB", "Site", ["mail_style" => "both", "disable_htmllayout" => "1", "mail_htmllayout" => "zz-mailtest:sticky"]);
+            echo "\n@@STICKY@@" . json_encode(["html" => $html, "executed" => $GLOBALS["appointments_mail_layout_executed"]]);';
+
+        if (file_put_contents($stickyLayoutScript, $stickyScriptSource) === false || !is_file($stickyLayoutScript)) {
+            throw new RuntimeException('Cannot create the non-removable mail-layout subprocess.');
+        }
+
+        exec('cd /var/www/html && php ' . escapeshellarg($stickyLayoutScript) . ' 2>&1', $stickyLayoutOutput);
+    } finally {
+        foreach ([$layoutScript, $stickyLayoutScript, $layoutFile, $stickyLayoutFile] as $path) {
+            if (is_file($path)) {
+                unlink($path);
+            }
+        }
+        @rmdir($layoutDir);
+        @rmdir(dirname($layoutDir));
+        @rmdir(dirname($layoutDir, 2));
+        @rmdir(dirname($layoutDir, 3));
+    }
+
+    $layoutText = implode("\n", $layoutOutput);
+    $layoutResult = json_decode(substr($layoutText, (int) strrpos($layoutText, '@@LAYOUT@@') + 10), true) ?: [];
+    $check(($layoutResult['executed'] ?? false) === true && isset($layoutResult['html']) && str_contains($layoutResult['html'], '&lt;b&gt;Eve&lt;/b&gt;')
+        && !str_contains($layoutResult['html'], 'LEAKED-LAYOUT-OUTPUT') && !str_contains($layoutResult['html'], 'MORE'),
+        'The throwing override ran and gives escaped paragraphs, not its partial output');
+    $check(($layoutResult['outer'] ?? '') === 'OUTER', 'A throwing layout leaves the buffer of the caller untouched');
+
+    $stickyText = implode("\n", $stickyLayoutOutput);
+    $stickyResult = json_decode(
+        substr($stickyText, (int) strrpos($stickyText, '@@STICKY@@') + 10),
+        true
+    ) ?: [];
+    $check(($stickyResult['executed'] ?? false) === true
+        && isset($stickyResult['html']) && str_contains($stickyResult['html'], '&lt;b&gt;Eve&lt;/b&gt;')
+        && !str_contains($stickyText, 'STICKY-LAYOUT-OUTPUT'),
+        'A non-removable throwing layout buffer is cleaned without leaking partial output');
+
     // Fail closed on the public site URL: mails take their links only from the configured address,
     // never from the Host header of the request, and without one no mail is sent and no booking taken.
     $componentParams = (string) $db->query("SELECT params FROM {$prefix}extensions WHERE element='com_appointments' AND type='component'")->fetch_row()[0];

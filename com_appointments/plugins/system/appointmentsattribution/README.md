@@ -1,6 +1,6 @@
 # Appointments Origin of Bookings
 
-**Installation and updates:** see the [shared backup/approval policy](../../../../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../../../../README.md#installation-safety-and-repeatable-system-checks).
 
 ## Description
 
@@ -20,11 +20,11 @@ Joomla 5.4.x or 6.x, PHP 8.1+ and Appointments.
 
 ## Installation
 
-Install the owning component ZIP. Its installer installs and enables **System - Appointments origin of bookings** when it is first introduced, also on an update. It records nothing until the component option **Origin of bookings** is switched on. No separate download is required.
+Install the Appointments package (`pkg_appointments_<version>.zip`). The package installs and enables **System - Appointments origin of bookings** when it is first introduced, also on an update. It records nothing until the component option **Origin of bookings** is switched on. No separate download is required.
 
 ## Updating
 
-Update through the component ZIP. Existing plugin enablement is preserved. The plugin has no release or update feed of its own.
+Update through the Appointments package. Existing plugin enablement is preserved. The plugin has no release or update feed of its own.
 
 ## Uninstall
 
@@ -33,6 +33,10 @@ Component uninstall removes the plugin. Disabling the plugin stops recording on 
 ## Configuration
 
 No own parameters. The component option **Origin of bookings** (`attribution_capture`, off by default) decides: while it is off the plugin records nothing.
+
+## Permissions
+
+The plugin has no permissions of its own and adds no administrator screen. Who sees the stored origin of a booking is decided by the permissions on the event type (see the help page of the component, section «Permissions»).
 
 ## Privacy and Data Handling
 

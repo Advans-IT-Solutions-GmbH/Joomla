@@ -16,7 +16,7 @@ use Joomla\Database\DatabaseInterface;
 defined('_JEXEC') or die;
 
 /**
- * The way back of the public pages: the button «Back to appointments» (on a form «Cancel»).
+ * The way back of the public pages: the button «Back» (on a form «Cancel»).
  *
  * By default it leads to the list of all event types (its menu item, or the home page when the site
  * has no list menu item, see overview()). A "Book an appointment" menu item points at

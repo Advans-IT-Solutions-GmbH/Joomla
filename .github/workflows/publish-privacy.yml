@@ -14,6 +14,7 @@ on:
     branches:
       - main
     paths:
+      - 'j2commerce/pkg_privacy_j2commerce/**'
       - 'j2commerce/plg_privacy_j2commerce/**'
 
 concurrency:
@@ -48,6 +49,7 @@ jobs:
           # trees of every bundled path with it. Runs a copy: the checkout replaces the files.
           cp .github/scripts/release-source.py "$RUNNER_TEMP/release-source.py"
           python3 "$RUNNER_TEMP/release-source.py" --prefix "privacy" \
+            --path j2commerce/pkg_privacy_j2commerce \
             --path j2commerce/plg_privacy_j2commerce \
             --path shared/build \
             --path .github/scripts \
@@ -56,7 +58,7 @@ jobs:
       - name: Read version from manifest
         id: version
         run: |
-          XML_FILE="j2commerce/plg_privacy_j2commerce/j2commerce.xml"
+          XML_FILE="j2commerce/pkg_privacy_j2commerce/pkg_privacy_j2commerce.xml"
           VERSION=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
           echo "new=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
@@ -80,25 +82,26 @@ jobs:
             exit 1
           fi
 
-      - name: Build extension
+      - name: Build package
         env:
           ADVANS_KNOWN_HASHES_STRICT: '1'
         run: |
-          cd j2commerce/plg_privacy_j2commerce
+          cd j2commerce/pkg_privacy_j2commerce
           chmod +x build.sh
           ./build.sh
 
       - name: Find package file
         id: package
         run: |
-          cd j2commerce/plg_privacy_j2commerce
-          PACKAGE=$(ls -1 plg_privacy_j2commerce_*.zip | head -1)
+          cd j2commerce/pkg_privacy_j2commerce
+          PACKAGE=$(ls -1 pkg_privacy_j2commerce_*.zip | head -1)
           echo "file=$PACKAGE" >> $GITHUB_OUTPUT
 
       - name: Check the package against the SHA-256 in update.xml
         env:
-          PACKAGE: j2commerce/plg_privacy_j2commerce/${{ steps.package.outputs.file }}
-          FEED: j2commerce/plg_privacy_j2commerce/updates/update.xml
+          PACKAGE: j2commerce/pkg_privacy_j2commerce/${{ steps.package.outputs.file }}
+          FEED: j2commerce/pkg_privacy_j2commerce/updates/update.xml
+          LEGACY_FEED: j2commerce/plg_privacy_j2commerce/updates/update.xml
         run: |
           # The release PR announced the SHA-256 of its reproducible build in update.xml, and Joomla
           # rejects a download whose hash differs. Publish only exactly those bytes.
@@ -112,6 +115,13 @@ jobs:
             echo "::error::The rebuilt package differs from the SHA-256 in update.xml. Run the release workflow again so that the release PR carries the hash of this build."
             exit 1
           fi
+          # The legacy channel of the standalone plugin announces the same package bytes, so sites
+          # that still run the standalone plugin receive exactly this package.
+          LEGACY=$(grep -oP '(?<=<sha256>)[0-9a-f]{64}(?=</sha256>)' "$LEGACY_FEED" | sort -u)
+          if [ -n "$EXPECTED" ] && [ "$LEGACY" != "$ACTUAL" ]; then
+            echo "::error::The legacy update.xml of the standalone plugin does not announce the SHA-256 of this package."
+            exit 1
+          fi
 
       - name: Generate changelog
         id: changelog
@@ -120,7 +130,7 @@ jobs:
           if [ -z "$PREV_TAG" ]; then
             echo "changelog=Initial release" >> $GITHUB_OUTPUT
           else
-            CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges -- j2commerce/plg_privacy_j2commerce/ | awk '!/\[skip ci\]/ && !/^- release:/ { if (count++ < 20) print }')
+            CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges -- j2commerce/pkg_privacy_j2commerce/ j2commerce/plg_privacy_j2commerce/ | awk '!/\[skip ci\]/ && !/^- release:/ { if (count++ < 20) print }')
             if [ -z "$CHANGELOG" ]; then
               CHANGELOG="- Bug fixes and improvements"
             fi
@@ -135,9 +145,9 @@ jobs:
           BUILT_SHA: ${{ steps.preflight.outputs.sha }}
           TAG: privacy-v${{ steps.version.outputs.new }}
           NOTES: |
-            ## J2Commerce Privacy Plugin v${{ steps.version.outputs.new }}
+            ## J2Commerce Privacy v${{ steps.version.outputs.new }}
 
-            Privacy plugin for J2Commerce GDPR compliance.
+            GDPR compliance for J2Commerce, delivered as the package pkg_privacy_j2commerce: the privacy plugin, the checkout consent system plugin and the cleanup task plugin.
 
             ### Changes
             ${{ steps.changelog.outputs.changelog }}
@@ -146,9 +156,9 @@ jobs:
             Built from the release commit ${{ steps.source.outputs.sha }}.
 
             ### Installation
-            1. Download `${{ steps.package.outputs.file }}`
-            2. Install via Joomla Extension Manager
-            3. Enable plugin in System → Plugins
+            1. Download `${{ steps.package.outputs.file }}` (the package with all three plugins)
+            2. Install it via Joomla Extension Manager. Installed over the standalone plugin of an earlier version, the package takes it over with all data and settings; such sites also receive it through System → Update → Extensions
+            3. Enable the plugin Privacy - J2Commerce in System → Plugins
 
             ### Requirements
             - Joomla 5.4 or later (5.4.x, 6.x)
@@ -162,14 +172,14 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           python3 .github/scripts/publish-release.py publish \
             --prefix "privacy-v" --version "${{ steps.version.outputs.new }}" \
-            --package "j2commerce/plg_privacy_j2commerce/${{ steps.package.outputs.file }}" \
+            --package "j2commerce/pkg_privacy_j2commerce/${{ steps.package.outputs.file }}" \
             --title "J2Commerce Privacy v${{ steps.version.outputs.new }}"
 
       - name: Attest build provenance
         if: github.event_name == 'push'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
-          subject-path: j2commerce/plg_privacy_j2commerce/${{ steps.package.outputs.file }}
+          subject-path: j2commerce/pkg_privacy_j2commerce/${{ steps.package.outputs.file }}
 
       - name: Attest the provenance of the recovered release commit
         # A manual run starts from the current main, so GitHub's derived provenance would
@@ -177,6 +187,6 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
-          subject-path: j2commerce/plg_privacy_j2commerce/${{ steps.package.outputs.file }}
+          subject-path: j2commerce/pkg_privacy_j2commerce/${{ steps.package.outputs.file }}
           predicate-type: https://slsa.dev/provenance/v1
           predicate-path: ${{ runner.temp }}/provenance.json

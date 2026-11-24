@@ -36,8 +36,14 @@ jobs:
           VERSION_BUMP: ${{ inputs.bump }}
         run: |
           TAG_PREFIX="appointments-v"
-          XML_FILE="com_appointments/appointments.xml"
+          XML_FILE="pkg_appointments/pkg_appointments.xml"
+          # The package pkg_appointments is the release asset; the component, its module and its
+          # plugins keep their sources in com_appointments. Both directories are named as EXT_PATH,
+          # so shared/tests/requirements-check.php finds this workflow for each.
+          EXT_PATH="pkg_appointments/"
+          EXT_PATHS=("$EXT_PATH")
           EXT_PATH="com_appointments/"
+          EXT_PATHS+=("$EXT_PATH")
 
           CURRENT=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
@@ -50,11 +56,11 @@ jobs:
             LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -1)
 
             if [ -n "$LAST_TAG" ]; then
-              SUBJECTS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s" --no-merges -- "$EXT_PATH")
-              BODIES=$(git log "$LAST_TAG"..HEAD --pretty=format:"%b" --no-merges -- "$EXT_PATH")
+              SUBJECTS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s" --no-merges -- "${EXT_PATHS[@]}")
+              BODIES=$(git log "$LAST_TAG"..HEAD --pretty=format:"%b" --no-merges -- "${EXT_PATHS[@]}")
             else
-              SUBJECTS=$(git log --pretty=format:"%s" --no-merges -20 -- "$EXT_PATH")
-              BODIES=$(git log --pretty=format:"%b" --no-merges -20 -- "$EXT_PATH")
+              SUBJECTS=$(git log --pretty=format:"%s" --no-merges -20 -- "${EXT_PATHS[@]}")
+              BODIES=$(git log --pretty=format:"%b" --no-merges -20 -- "${EXT_PATHS[@]}")
             fi
 
             if [ -z "$SUBJECTS" ]; then
@@ -92,25 +98,37 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.new }}"
           DATE=$(date +%Y-%m)
+          stamp() {
+            sed -i \
+              -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
+              -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
+              "$1"
+          }
+          # The package, the component, the module and the plugins carry the same version (the
+          # package build refuses a package and component of different versions).
+          for dir in pkg_appointments com_appointments; do
+            echo "$VERSION" > "$dir/VERSION"
+            sed -i "s/VERSION=\".*\"/VERSION=\"$VERSION\"/" "$dir/build.env"
+          done
+          stamp pkg_appointments/pkg_appointments.xml
           cd com_appointments
-          echo "$VERSION" > VERSION
-          sed -i "s/VERSION=\".*\"/VERSION=\"$VERSION\"/" build.env
-          sed -i \
-            -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
-            -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
-            appointments.xml
+          stamp appointments.xml
+          stamp modules/mod_appointments/mod_appointments.xml
+          for manifest in plugins/*/*/*.xml; do
+            stamp "$manifest"
+          done
           # The asset version is the cache buster of the component's own CSS and
           # JavaScript. Without this, a browser keeps serving the stylesheet of
           # the previous release after an update.
           sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/g" \
             media/com_appointments/joomla.asset.json
 
-      - name: Build extension
+      - name: Build package
         if: steps.version.outputs.bump != 'none'
         env:
           ADVANS_KNOWN_HASHES_STRICT: '1'
         run: |
-          cd com_appointments
+          cd pkg_appointments
           chmod +x build.sh
           ./build.sh
 
@@ -118,8 +136,8 @@ jobs:
         if: steps.version.outputs.bump != 'none'
         id: package
         run: |
-          cd com_appointments
-          PACKAGE=$(ls -1 com_appointments_*.zip | head -1)
+          cd pkg_appointments
+          PACKAGE=$(ls -1 pkg_appointments_*.zip | head -1)
           echo "file=$PACKAGE" >> $GITHUB_OUTPUT
 
       - name: Update update.xml
@@ -129,20 +147,51 @@ jobs:
           PACKAGE="${{ steps.package.outputs.file }}"
           # Joomla verifies the download against this hash. The package build is reproducible,
           # so the publish workflow rebuilds exactly these bytes and checks them before uploading.
-          SHA256=$(sha256sum "com_appointments/$PACKAGE" | cut -d ' ' -f 1)
-          sed -i -E 's#<version>[^<]+</version>#<version>'"$VERSION"'</version>#' com_appointments/updates/changelog.xml
-          sed -i -E 's#<item>Release notes: https://[^<]+</item>#<item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/appointments-v'"$VERSION"'</item>#' com_appointments/updates/changelog.xml
+          SHA256=$(sha256sum "pkg_appointments/$PACKAGE" | cut -d ' ' -f 1)
+          for changelog in pkg_appointments/updates/changelog.xml com_appointments/updates/changelog.xml; do
+            sed -i -E 's#<version>[^<]+</version>#<version>'"$VERSION"'</version>#' "$changelog"
+            sed -i -E 's#<item>Release notes: https://[^<]+</item>#<item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/appointments-v'"$VERSION"'</item>#' "$changelog"
+          done
+          # The update channel of the package.
+          cat > pkg_appointments/updates/update.xml << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <updates>
+              <update>
+                  <name>Appointments Package</name>
+                  <description>Self-hosted appointment scheduling for Joomla: component, dashboard module and plugins</description>
+                  <element>pkg_appointments</element>
+                  <type>package</type>
+                  <client>site</client>
+                  <version>$VERSION</version>
+                  <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/pkg_appointments</infourl>
+                  <changelogurl>https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/pkg_appointments/updates/changelog.xml</changelogurl>
+                  <downloads>
+                      <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/appointments-v$VERSION/$PACKAGE</downloadurl>
+                  </downloads>
+                  <sha256>$SHA256</sha256>
+                  <tags>
+                      <tag>stable</tag>
+                  </tags>
+                  <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+                  <php_minimum>8.1</php_minimum>
+              </update>
+          </updates>
+          EOF
+          # The legacy channel of the standalone component (sites installed before the package
+          # existed still query it): it announces the package as an update of the component, so
+          # Joomla Update installs the package over the component and the package takes over the
+          # component, its module and its plugins.
           cat > com_appointments/updates/update.xml << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <updates>
               <update>
                   <name>Appointments</name>
-                  <description>Self-hosted appointment scheduling for Joomla</description>
+                  <description>Self-hosted appointment scheduling for Joomla, now delivered as the package pkg_appointments</description>
                   <element>com_appointments</element>
                   <type>component</type>
                   <version>$VERSION</version>
-                  <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/com_appointments</infourl>
-                  <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/appointments-v$VERSION/changelog.xml</changelogurl>
+                  <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/pkg_appointments</infourl>
+                  <changelogurl>https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/com_appointments/updates/changelog.xml</changelogurl>
                   <downloads>
                       <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/appointments-v$VERSION/$PACKAGE</downloadurl>
                   </downloads>
@@ -166,6 +215,7 @@ jobs:
           TITLE="release: appointments v${VERSION}"
           git fetch origin main 2>/dev/null || true
           git switch -C "$BRANCH" origin/main
+          git add pkg_appointments/
           git add com_appointments/
           if git diff --staged --quiet; then
             echo "::notice::No version file changes detected; no release PR was opened."
@@ -174,7 +224,7 @@ jobs:
           # Commit through the GitHub API instead of a local commit and push: GitHub signs
           # the version commit (Verified), as the ruleset requires for every PR commit.
           python3 .github/scripts/create-verified-commit.py --branch "$BRANCH" --message "$TITLE" --base origin/main
-          PR_BODY=$'Automated release version bump for `appointments`.\n\nThis PR updates the extension version metadata and update manifest. After a human reviews and merges it into `main`, the matching publish workflow will tag the merge commit and create the GitHub release using the built-in `GITHUB_TOKEN`.'
+          PR_BODY=$'Automated release version bump for `appointments` (package `pkg_appointments`).\n\nThis PR updates the version metadata of the package, the component, its module and its plugins, the package update manifest and the legacy update manifest of the standalone component. After a human reviews and merges it into `main`, the matching publish workflow will tag the merge commit and create the GitHub release using the built-in `GITHUB_TOKEN`.'
           echo "::notice::Release PR CI created by GITHUB_TOKEN requires a writer to select 'Approve workflows to run' before review and merge."
           gh label create release --color 0E8A16 --description "Automated release PRs" 2>/dev/null || true
           EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')

@@ -1,9 +1,10 @@
 <?php
 /**
- * Uninstall Tests for J2Commerce Privacy Plugin
+ * Uninstall Tests for the J2Commerce Privacy package
  *
- * Uses Joomla CLI (extension:remove) so the full Joomla installer
- * pipeline runs — including script.php uninstall() and all events.
+ * Uses Joomla CLI (extension:remove) so the full Joomla installer pipeline runs, including the
+ * uninstall() of the privacy plugin and all events. The plugins are removed with the package; the
+ * privacy plugin alone cannot be removed (blockChildUninstall).
  */
 define('_JEXEC', 1);
 define('JPATH_BASE', '/var/www/html');
@@ -36,37 +37,66 @@ class UninstallTest
         }
     }
 
+    private function extensionId(string $type, string $element, string $folder = ''): int
+    {
+        $query = $this->db->getQuery(true)
+            ->select('extension_id')
+            ->from('#__extensions')
+            ->where('type = '    . $this->db->quote($type))
+            ->where('element = ' . $this->db->quote($element))
+            ->where('folder = '  . $this->db->quote($folder));
+
+        return (int) $this->db->setQuery($query)->loadResult();
+    }
+
+    /** @return array{0: int, 1: string} */
+    private function remove(int $extensionId): array
+    {
+        $output   = [];
+        $exitCode = 0;
+        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove {$extensionId} --no-interaction 2>&1", $output, $exitCode);
+
+        return [$exitCode, implode("\n", $output)];
+    }
+
     public function run(): bool
     {
         echo "=== Uninstall Tests ===\n\n";
 
-        $query = $this->db->getQuery(true)
-            ->select('extension_id')
-            ->from('#__extensions')
-            ->where('element = ' . $this->db->quote('j2commerce'))
-            ->where('folder = '  . $this->db->quote('privacy'))
-            ->where('type = '    . $this->db->quote('plugin'));
-        $extensionId = (int) $this->db->setQuery($query)->loadResult();
+        $pluginId  = $this->extensionId('plugin', 'j2commerce', 'privacy');
+        $packageId = $this->extensionId('package', 'pkg_privacy_j2commerce');
 
-        $this->test('Extension ID found before uninstall', function () use ($extensionId) {
-            return $extensionId > 0;
-        });
+        $this->test('Plugin found before uninstall', fn () => $pluginId > 0);
+        $this->test('Package found before uninstall', fn () => $packageId > 0);
 
-        if (!$extensionId) {
-            echo "Cannot proceed — plugin not found in #__extensions\n";
+        if (!$pluginId || !$packageId) {
+            echo "Cannot proceed — plugin or package not found in #__extensions\n";
             echo "\n=== Uninstall Test Summary ===\n";
             echo "Passed: {$this->passed}, Failed: {$this->failed}\n";
             return false;
         }
 
-        $output   = [];
-        $exitCode = 0;
-        exec("HTTP_HOST=localhost php /var/www/html/cli/joomla.php extension:remove {$extensionId} --no-interaction 2>&1", $output, $exitCode);
-        $outputStr = implode("\n", $output);
+        // The package blocks the uninstallation of a bundled plugin on its own (blockChildUninstall):
+        // removing only the privacy plugin would leave the consent and task plugins behind.
+        [, $outputStr] = $this->remove($pluginId);
+        $this->test('Uninstalling the privacy plugin alone is refused', function () use ($pluginId, $outputStr) {
+            echo "  Output: {$outputStr}\n";
+            return $this->extensionId('plugin', 'j2commerce', 'privacy') === $pluginId
+                && file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/src/Extension/J2Commerce.php');
+        });
 
-        $this->test('Uninstall command executed', function () use ($exitCode, $outputStr) {
+        [$exitCode, $outputStr] = $this->remove($packageId);
+
+        $this->test('Package uninstall command executed', function () use ($exitCode, $outputStr) {
             echo "  Output: {$outputStr}\n";
             return $exitCode === 0;
+        });
+
+        $this->test('Package removed from #__extensions', fn () => $this->extensionId('package', 'pkg_privacy_j2commerce') === 0);
+
+        $this->test('Package manifest folder removed', function () {
+            return !is_file(JPATH_ADMINISTRATOR . '/manifests/packages/pkg_privacy_j2commerce.xml')
+                && !is_dir(JPATH_ADMINISTRATOR . '/manifests/packages/privacy_j2commerce');
         });
 
         $this->test('Plugin removed from #__extensions', function () {
@@ -86,27 +116,13 @@ class UninstallTest
             return !is_dir(JPATH_BASE . '/plugins/privacy/j2commerce/overrides');
         });
 
-        $this->test('Bundled task plugin removed from #__extensions', function () {
-            $query = $this->db->getQuery(true)
-                ->select('COUNT(*)')
-                ->from('#__extensions')
-                ->where('element = ' . $this->db->quote('j2commerceprivacy'))
-                ->where('folder = '  . $this->db->quote('task'));
-            return (int) $this->db->setQuery($query)->loadResult() === 0;
-        });
+        $this->test('Bundled task plugin removed from #__extensions', fn () => $this->extensionId('plugin', 'j2commerceprivacy', 'task') === 0);
 
         $this->test('Bundled task plugin files removed', function () {
             return !is_dir(JPATH_BASE . '/plugins/task/j2commerceprivacy');
         });
 
-        $this->test('Bundled consent system plugin removed from #__extensions', function () {
-            $query = $this->db->getQuery(true)
-                ->select('COUNT(*)')
-                ->from('#__extensions')
-                ->where('element = ' . $this->db->quote('j2commerceprivacy'))
-                ->where('folder = '  . $this->db->quote('system'));
-            return (int) $this->db->setQuery($query)->loadResult() === 0;
-        });
+        $this->test('Bundled consent system plugin removed from #__extensions', fn () => $this->extensionId('plugin', 'j2commerceprivacy', 'system') === 0);
 
         $this->test('Bundled consent system plugin files removed', function () {
             return !is_dir(JPATH_BASE . '/plugins/system/j2commerceprivacy');

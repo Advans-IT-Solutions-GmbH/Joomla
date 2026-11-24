@@ -294,10 +294,24 @@ final class BookingStore
             if ($links !== null && (!$booking || !$links->verify($bookingId, 'erase', $booking['modified_utc'], $signature))) {
                 throw new InvalidBookingLinkException();
             }
-            if (!$booking || $booking['anonymised_utc'] !== null) {
+            if (!$booking || ($booking['anonymised_utc'] !== null && !($delete && $path === 'admin'))) {
                 $db->transactionCommit();
 
                 return ['changed' => false, 'notification' => null];
+            }
+            if ($booking['anonymised_utc'] !== null) {
+                // An administrator's delete also removes the row of an already anonymised booking:
+                // nothing personal is left, so there is no mail and no further cleanup.
+                $query = method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+                $db->setQuery($query->delete($db->quoteName('#__appointments_bookings'))
+                    ->where($db->quoteName('id') . ' = ' . $bookingId))->execute();
+                // insertObject() takes the object by reference: it needs a variable, not an expression.
+                $audit = (object) ['booking_id' => $bookingId, 'action' => 'delete',
+                    'path' => $path, 'actor_user_id' => $actor, 'occurred_utc' => $now->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')];
+                $db->insertObject('#__appointments_audit', $audit);
+                $db->transactionCommit();
+
+                return ['changed' => true, 'notification' => null, 'booking' => $booking];
             }
             if ($path === 'retention') {
                 $event = $this->lockedEvent((int) $booking['eventtype_id']);
@@ -372,7 +386,8 @@ final class BookingStore
             $privacyCleanup->forget($bookingId, $cleanupKey);
         }
 
-        return ['changed' => true, 'notification' => $notification,
+        // 'booking': the row as it was erased, read under the lock (the admin delete mails from it).
+        return ['changed' => true, 'notification' => $notification, 'booking' => $booking,
             '_close_missed' => !empty($closeMissed),
             '_calendar_cleanup_error' => !$mirrored,
             '_conference_cleanup_error' => $conferenceFailed];

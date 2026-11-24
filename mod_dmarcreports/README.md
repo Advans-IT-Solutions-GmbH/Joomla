@@ -1,6 +1,6 @@
 # DMARC Reports Dashboard Module
 
-**Installation and updates:** see the [shared file-backup/approval policy and repeatable System check](../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../README.md#installation-safety-and-repeatable-system-checks).
 
 [![Build & Test](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/moddmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/moddmarcreports.yml)
 [![Release](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-moddmarcreports.yml/badge.svg)](https://github.com/Advans-IT-Solutions-GmbH/Joomla/actions/workflows/release-moddmarcreports.yml)
@@ -47,7 +47,9 @@ The module contains no direct database access — it reads everything through th
 1. Use the released or generated `mod_dmarcreports_<version>.zip` for a standalone installation
 2. **System → Install → Extensions**
 3. Upload and install
-4. Publish the module under **System → Manage → Administrator Modules**, set its position to `cpanel` and status to published
+4. Publish the module under **System → Manage → Administrator Modules**, set its position to `cpanel` and status to published; the installation does not publish it
+
+**What the installer does.** It checks the platform (Joomla 5.4+, PHP 8.1+) and decides by itself, without questions. Before Joomla copies files it compares every file it would replace, remove or adjust with the installed-file record and the released hashes. A modified or unknown file stops the update before anything is copied; the notice lists the path, the current and incoming SHA-256 hashes and the reason. Resolve the conflict manually or defer the update, then retry. The installer keeps no copy of file contents and has no approval or bypass step. Before the first update attempt it stops once and recommends a current, complete full-site backup (files and database); it cannot verify that one exists, and the retry only acknowledges the note. The module needs no scheduled task and creates none. After installation and update a short confirmation is shown.
 
 ## Updating
 
@@ -68,7 +70,11 @@ Edit the module instance (**System → Manage → Administrator Modules → DMAR
 | Show summary | `Yes` | Show the multi-domain summary (domains, messages, pass rate, would-be-rejected). Turn off to show only the Action Center items |
 | Action items | `5` | Maximum number of top Action Center items listed (0–20; `0` hides the list) |
 
-The **Advanced** fieldset offers the standard Joomla module layout and module-class-suffix fields.
+The **Advanced** fieldset offers the standard Joomla module layout and module-class-suffix fields. Position, status, access level, publishing dates, language and note are Joomla's standard module fields. Installed builds add a read-only **System check** tab with the installation's platform check.
+
+**Permissions.** The module has no `access.xml` and no permission of its own. Whoever may see the administrator module (its access level) also needs `core.manage` on `com_dmarcreports`; without it the module shows a notice instead of figures. To give another account the tile, grant that account's group `core.manage` under the component's **Options → Permissions** and make sure the module's access level includes the group.
+
+**Data and privacy.** The module stores nothing, sends no data and no e-mail, and makes no network request. It reads the component's data with the permissions of the signed-in account. It has no scheduled task.
 
 The summary switcher uses Joomla's standard radio-field implementation and layout, with an
 extension field subclass loading editor-only layout CSS. This prevents competing smooth
@@ -199,6 +205,10 @@ The helper distinguishes a component/model error from an absent component or a p
 ### The module shows "You are not authorised"
 **Problem:** The notice states the component may not be managed  
 **Solution:** The signed-in administrator lacks the `com_dmarcreports` **core.manage** permission. Grant it under **System → Global Configuration → Permissions** (or on the component's own Options → Permissions).
+
+### The module says there is no DMARC data yet
+**Problem:** The module shows «No DMARC data yet»  
+**Solution:** No report has been stored. Add a domain and a report source in the component and run an import (or let the scheduled task run); see the component's **Help & tips** page.
 
 ### The summary cards are missing but actions are shown
 **Problem:** Only the Action Center list appears  

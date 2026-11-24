@@ -30,6 +30,8 @@ services:
   mysql:
     image: mysql:8.0
     container_name: pkg_dmarcreports_j6_test_mysql
+    # Allow the schema-scoped Joomla test user to create the failure-injection trigger.
+    command: --log-bin-trust-function-creators=1
     environment:
       MYSQL_ROOT_PASSWORD: root_pass
       MYSQL_DATABASE: joomla_db

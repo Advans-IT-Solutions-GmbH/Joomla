@@ -19,7 +19,7 @@ try {
     $cancel = $fixture->link($booking, 'cancel');
     $html = $client->request($reschedule);
     $check($client->status === 200 && str_contains($html, 'com-appointments-calendar-grid')
-        && str_contains($html, 'com-appointments-day-available') && str_contains($html, 'Current appointment')
+        && str_contains($html, 'com-appointments-day-available')
         && !str_contains($html, 'type="month"') && !str_contains($html, 'id="new-start"'),
         'Signed reschedule page uses the booking calendar without a raw month field or slot dropdown');
     $calendarDocument = new DOMDocument();
@@ -38,7 +38,8 @@ try {
     )->item(0);
     $check($cancelExit instanceof DOMElement && trim($cancelExit->textContent) === 'Cancel',
         'A signed management form has a non-mutating Cancel exit to the public overview');
-    $token = $client->token($html);
+    $firstTime = (new DOMXPath($dayDocument))->query('//input[@type="radio"][@name="start"]')->item(0);
+    $token = $client->token($client->request($reschedule . '&start=' . urlencode($firstTime instanceof DOMElement ? $firstTime->getAttribute('value') : '')));
     $client->request('/index.php?option=com_appointments&task=booking.manage', [
         'id' => $booking['id'], 'action' => 'erase', 'signature' => str_repeat('0', 64), 'confirm' => 1, $token => 1,
     ]);
@@ -198,9 +199,14 @@ try {
         }
     }
     $slotForm = $slotLink !== '' ? $client->request($slotLink) : '';
-    $token = $client->token($slotForm);
     $check($client->status === 200 && str_contains($slotForm, 'value="' . $day . ' 12:00:00"'),
         'Reschedule calendar offers the slot before the competing booking after choosing its day');
+    $slotBase = preg_replace('/#.*$/', '', $slotLink);
+    $confirmPage = $slotLink !== '' ? $client->request($slotBase . '&start=' . urlencode($day . ' 12:00:00')) : '';
+    $token = $client->token($confirmPage);
+    $check($client->status === 200 && str_contains($confirmPage, 'id="manage-confirm"') && $token !== ''
+        && str_contains($confirmPage, 'name="start" value="' . $day . ' 12:00:00"'),
+        'Choosing a time leads to the confirmation step of the reschedule form');
     $check(preg_match('#<title>\s*Reschedule your appointment\s*</title>#', $form) === 1,
         'The manage page sets its own title without a menu item of its own');
     // Release test 22.10.: the manage pages show the appointment in the invitee's zone and
@@ -208,10 +214,10 @@ try {
     $zurich = new DateTimeZone('Europe/Zurich');
     $localStart = (new DateTimeImmutable($moved['start_utc'], new DateTimeZone('UTC')))->setTimezone($zurich);
     $localEnd = (new DateTimeImmutable($moved['end_utc'], new DateTimeZone('UTC')))->setTimezone($zurich);
-    $check(str_contains($form, $localStart->format('l, j F Y'))
-        && str_contains($form, $localStart->format('H:i') . ' – ' . $localEnd->format('H:i'))
+    $check(str_contains($confirmPage, $localStart->format('l, j F Y'))
+        && str_contains($confirmPage, $localStart->format('H:i') . ' – ' . $localEnd->format('H:i'))
         && str_contains($form, 'All times are shown in the Europe/Zurich time zone.')
-        && !str_contains($form, $moved['start_utc'] . ' UTC'),
+        && !str_contains($confirmPage, $moved['start_utc'] . ' UTC'),
         'Manage page shows the appointment date and times in the invitee time zone, not in UTC');
     $slotOption = (new DateTimeImmutable($day . ' 12:00:00', new DateTimeZone('UTC')))->setTimezone($zurich);
     $slotDocument = new DOMDocument();
@@ -225,6 +231,9 @@ try {
     $check($legend instanceof DOMElement && str_contains($legend->textContent, $slotOption->format('l, j F Y'))
         && $slotLabel instanceof DOMElement && str_contains($slotLabel->textContent, $slotOption->format('H:i')),
         'Reschedule options name the weekday, date and time in the selected zone');
+    $check(str_contains($form, 'data-appointments-booking') && str_contains($form, 'id="appointment-time-form"')
+        && str_contains($form, 'com-appointments-invitee-email') && str_contains($form, htmlspecialchars((string) $fixture->row((int) $booking['id'])['invitee_email'], ENT_QUOTES)),
+        'The reschedule form uses the booking layout and adds the event type title and the invitee e-mail');
     // Night test 23.10.: rescheduling without the confirmation checkbox shows the message
     // at the checkbox, also after the visitor reloads the page, and changes nothing.
     parse_str(parse_url($fresh, PHP_URL_QUERY), $rescheduleQuery);
@@ -245,10 +254,9 @@ try {
     $check($confirmError($refused) && $fixture->row((int) $booking['id'])['start_utc'] === $day . ' 11:00:00',
         'Rescheduling without the confirmation checkbox shows the message at the checkbox and changes nothing');
     $check($client->landedAt($refused, null) && preg_match('#<input[^>]*id="manage-confirm"[^>]*autofocus#', $refused) === 1
-        && !str_contains($refused, 'com_appointments.focusSystemMessage')
-        && preg_match('#/media/com_appointments/js/booking(\.min)?\.js#', $refused) !== 1,
+        && !str_contains($refused, 'com_appointments.focusSystemMessage'),
         'A refused reschedule has no result fragment or region and the invalid checkbox keeps the focus');
-    $reloadedReschedule = $client->request($fresh . '&month=' . substr($day, 0, 7) . '&day=' . $day . '&timezone=Europe%2FZurich');
+    $reloadedReschedule = $client->request($fresh . '&month=' . substr($day, 0, 7) . '&day=' . $day . '&timezone=Europe%2FZurich&start=' . urlencode($day . ' 12:00:00'));
     $check($confirmError($reloadedReschedule), 'The confirmation message is still at the checkbox after a reload');
     foreach (['', substr($day, 0, 7)] as $invalidZoneMonth) {
         $refused = $client->request('/index.php?option=com_appointments&task=booking.manage', array_replace($rescheduleQuery, [
@@ -270,9 +278,8 @@ try {
             && $fixture->row((int) $booking['id'])['start_utc'] === $day . ' 11:00:00',
             'An invalid manage timezone returns a usable form with a one-shot native-message focus request, month=' . $invalidZoneMonth);
         $reload = $client->request($fresh);
-        $check(!str_contains($reload, 'com_appointments.focusSystemMessage')
-            && preg_match('#/media/com_appointments/js/booking(\.min)?\.js#', $reload) !== 1,
-            'The manage refusal focus option is consumed and an ordinary form remains script-free');
+        $check(!str_contains($reload, 'com_appointments.focusSystemMessage'),
+            'The manage refusal focus option is consumed');
     }
     $otherEvent = $fixture->event();
     $fixture->booking($otherEvent, $day . ' 12:00:00');

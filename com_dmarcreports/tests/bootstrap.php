@@ -25,6 +25,7 @@ require_once $helperDir . '/IngestLimits.php';
 require_once $helperDir . '/DnsResolverInterface.php';
 require_once $helperDir . '/DnsDiagnostics.php';
 require_once $helperDir . '/SourceClassifier.php';
+require_once $helperDir . '/FlaggedSourceLimit.php';
 require_once $helperDir . '/ActionCenter.php';
 require_once $helperDir . '/ReverseDnsResolverInterface.php';
 require_once $helperDir . '/HostNameStoreInterface.php';

@@ -95,6 +95,73 @@ function sh_read_package_manifest(string $package): ?array
 }
 
 /**
+ * The extensions a package bundles (packages/*.zip), each written to a file in the system temporary
+ * directory: archive path => its manifest (sh_read_package_manifest()). Empty when $package is not
+ * a package, so a suite can treat a package and a single extension the same way.
+ *
+ * @return array<string, array>
+ */
+function sh_package_children(string $package): array
+{
+    $manifest = sh_read_package_manifest($package);
+
+    if (($manifest['type'] ?? '') !== 'package') {
+        return [];
+    }
+
+    $zip = new ZipArchive();
+
+    if ($zip->open($package) !== true) {
+        return [];
+    }
+
+    $children = [];
+    $packageHash = (string) hash_file('sha256', $package);
+
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $name = (string) $zip->getNameIndex($i);
+
+        if (!preg_match('#^packages/([^/]+\.zip)$#', $name, $match)) {
+            continue;
+        }
+
+        $archive = sys_get_temp_dir() . '/sh-child-' . substr(hash('sha256', $packageHash . "\0" . $name), 0, 16) . '-' . $match[1];
+
+        if (!is_file($archive)) {
+            file_put_contents($archive, (string) $zip->getFromIndex($i));
+        }
+
+        $child = sh_read_package_manifest($archive);
+
+        if ($child !== null) {
+            $children[$archive] = $child;
+        }
+    }
+
+    $zip->close();
+
+    return $children;
+}
+
+/**
+ * The archive of the component in $package: the package itself for a component ZIP, the bundled
+ * component's archive for a package, null when there is none.
+ */
+function sh_package_component(string $package): ?string
+{
+    if ((sh_read_package_manifest($package)['type'] ?? '') === 'component') {
+        return $package;
+    }
+
+    foreach (sh_package_children($package) as $archive => $child) {
+        if ($child['type'] === 'component') {
+            return $archive;
+        }
+    }
+
+    return null;
+}
+/**
  * The next version above $version for test packages: the last numeric part is
  * raised by one, a pre-release suffix is dropped (1.2.3 -> 1.2.4,
  * 1.2.3-rc1 -> 1.2.4).
@@ -231,30 +298,46 @@ function sh_cli_install(string $root, string $package): array
 
 /**
  * Install or update through the CLI and require that the shared installer decided by itself.
- * Updates of the extension's own files never pause; a pause (a fresh review plan) fails the
- * call with an explanation instead of being approved behind the test's back.
+ * A first-attempt full-site-backup recommendation is retried for the same package only when the
+ * installer wrote fresh reminder metadata (a package stops once for itself and once for each bundled
+ * extension). Other failed updates are never retried automatically. The returned output is the one of
+ * the last attempt.
  *
  * @return array{0:int, 1:string}
  */
 function sh_cli_install_checked(string $root, string $package): array
 {
-    $started = time();
-    [$code, $output] = sh_cli_install($root, $package);
+    $stopped = 0;
 
-    if ($code === 0) {
-        return [$code, $output];
-    }
-
-    $plans = glob($root . '/administrator/advans-installer-state/*/plan.php') ?: [];
-    clearstatcache();
-
-    foreach ($plans as $plan) {
-        if (filemtime($plan) >= $started) {
-            return [$code, $output . "\nThe shared installer paused for an approval ($plan); updates of own files must decide by themselves."];
+    for ($attempt = 0; $attempt < 16; $attempt++) {
+        $before = [];
+        foreach (glob($root . '/administrator/advans-installer-state/*/backup-recommendation.php') ?: [] as $path) {
+            $before[$path] = hash_file('sha256', $path);
         }
+        [$code, $output] = sh_cli_install($root, $package);
+        if ($code === 0) {
+            return [$code, $stopped === 0 ? $output : $output . "\n(" . $stopped . ' earlier attempt(s) stopped at the backup recommendation before file changes.)'];
+        }
+
+        clearstatcache();
+        $newRecommendations = [];
+        foreach (glob($root . '/administrator/advans-installer-state/*/backup-recommendation.php') ?: [] as $path) {
+            $hash = hash_file('sha256', $path);
+            if ($hash !== false && ($before[$path] ?? null) !== $hash) {
+                $newRecommendations[] = $path;
+            }
+        }
+
+        if ($newRecommendations === []) {
+            return [$code, $output];
+        }
+
+        // Only the outcome of the last attempt counts: the output of an attempt that stopped at the
+        // recommendation is expected to carry an error and must not be mistaken for the result.
+        $stopped++;
     }
 
-    return [$code, $output];
+    return [1, $output . "\nThe package update exceeded the bounded reminder retry count."];
 }
 
 /**

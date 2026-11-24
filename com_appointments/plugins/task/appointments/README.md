@@ -1,6 +1,6 @@
 # Appointments Scheduler Plugin
 
-**Installation and updates:** see the [shared backup/approval policy](../../../../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../../../../README.md#installation-safety-and-repeatable-system-checks).
 
 ## Description
 
@@ -26,7 +26,7 @@ Joomla 5.4.x or 6.x, PHP 8.1+, the component with sodium and MySQL/MariaDB, and 
 
 ## Installation
 
-The component installs/enables **Task - Appointments**.
+The package installs/enables **Task - Appointments**.
 
 ### Scheduled tasks
 
@@ -34,7 +34,7 @@ After every installation and update the shared installer checks the routines and
 
 ## Updating
 
-Update through the component ZIP. Existing plugin/task states are preserved; the child has no independent feed. Review missing-task notices after updates rather than assuming retention started.
+Update through the Appointments package. Existing plugin/task states are preserved; the child has no independent feed. Review missing-task notices after updates rather than assuming retention started.
 
 ## Uninstall
 

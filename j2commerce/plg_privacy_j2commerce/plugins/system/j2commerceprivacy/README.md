@@ -1,6 +1,6 @@
 # J2Commerce Privacy System Plugin
 
-**Installation and updates:** see the [shared backup/approval policy](../../../../../README.md#installation-safety-and-repeatable-system-checks).
+**Installation and updates:** see the [shared installer conflict and recovery policy](../../../../../README.md#installation-safety-and-repeatable-system-checks).
 
 ## Description
 
@@ -19,27 +19,29 @@ Joomla 5.4.x or 6.x, PHP 8.1+, and the installed/enabled parent privacy plugin. 
 
 ## Installation
 
-Install the parent privacy ZIP. Its installer installs/enables **System - J2Commerce Privacy** when first introduced. No separate child download is required. Review the parent's [checkout setup and limits](../../../README.md#checkout-consent-checkbox) before activation.
+Install the package `pkg_privacy_j2commerce_<version>.zip` ([package README](../../../../pkg_privacy_j2commerce/README.md)). It installs this plugin after the parent privacy plugin and enables it when it was not installed before. No separate child download is required, and this plugin cannot be installed or uninstalled on its own. Review the parent's [checkout setup and limits](../../../README.md#checkout-consent-checkbox) before activation.
 
 ## Updating
 
-Update the parent ZIP; the child has no independent release/update feed. Existing enabled/disabled state is preserved. Custom shop template overrides remain operator-maintained and can prevent the required checkout event from firing.
+Update the package; the child has no independent release/update feed. A site that still runs the standalone parent plugin of an earlier version receives the package through the parent's update channel, and the package takes this plugin over with its settings and enabled state. Before updating, take a current, complete site backup that can be restored independently; the installer cannot verify this. The first update attempt displays this recommendation and stops before changing files; start the update again afterwards. The installer keeps no file copies; a modified or unknown file that the update would replace stops it before anything is copied, with the path and SHA-256 hashes listed, until you resolve it manually or defer the update. There is no approval command or bypass. Existing enabled/disabled state is preserved. Custom shop template overrides remain operator-maintained and can prevent the required checkout event from firing.
 
 ## Uninstall
 
-The parent's uninstall removes the bundled child and its extension registration. Existing shop data, consent evidence, action logs and deployed template overrides follow the parent's [uninstall contract](../../../README.md#uninstall), not a blanket child-data purge. Disabling the child does not anonymise previously recorded data.
+Uninstalling the package removes this plugin and its extension registration together with the parent. Existing shop data, consent evidence, action logs and deployed template overrides follow the parent's [uninstall contract](../../../README.md#uninstall), not a blanket child-data purge. Disabling the child does not anonymise previously recorded data.
 
 ## Configuration
 
 ### Help
 
-The plugin's edit screen has a **Help** tab (de-DE, en-GB, fr-FR): what the plugin does, the parent settings it uses, installation, update and disabling, and typical problems. The note on the **Plugin** tab points to it and to the parent's **Help** tab, which explains the whole function.
+The plugin's edit screen has a **Help** tab (de-DE, en-GB, fr-FR): what the plugin does, the parent settings it uses, installation, update, permissions, data and disabling, and typical problems. The note on the **Plugin** tab points to it and to the parent's **Help** tab, which explains the whole function.
 
 ### Settings
 
 No own parameters are declared; the edit screen carries only the help. The enabled parent's **Show Consent Checkbox**, **Consent Required**, policy article/text and **Guest Request Confirmation** options control behaviour. With required consent, a missing/invalid cart cannot establish accepted consent.
 
 ## Usage and Permissions
+
+The plugin ships no `access.xml` and no permissions of its own; it needs no Scheduler task and checks none. Only accounts that may edit plugins can change its enabled state.
 
 Customers use the normal J2Commerce checkout. Joomla administrators create and process privacy requests through Core. Only `com_privacy.notification.admin.export` and `.admin.remove` have their links rewritten; the mail subjects/bodies remain Joomla-owned. Follow [guest confirmation](../../../README.md#process-for-a-guest-customer) for token expiry, exact address matching and rate limits enforced by the parent.
 
@@ -51,7 +53,7 @@ This child adds no own tables, Scheduler routine or mail transport. Disabling it
 
 ## Development
 
-Use the [parent build](../../../README.md#development), which includes both children. No separate child release/version bump is required.
+Use the [package build](../../../README.md#development), which builds the parent with both children and packs each child as its own archive. No separate child release/version bump is required: the release workflow sets the same version on the package, the parent and both children.
 
 ## Automated Testing
 
