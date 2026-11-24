@@ -4,7 +4,7 @@
     <author>Advans IT Solutions GmbH</author>
     <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
     <license>GPL-3.0-or-later</license>
-    <version>1.0.0</version>
+    <version>1.7.0</version>
     <description>PLG_SYSTEM_APPOINTMENTSATTRIBUTION_DESC</description>
     <namespace path="src">Advans\Plugin\System\AppointmentsAttribution</namespace>
     <help url="PLG_SYSTEM_APPOINTMENTSATTRIBUTION_HELP_URL"/>
