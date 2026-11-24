@@ -59,6 +59,8 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
                 Destinations::files($manifest, $source, $manifestFile),
                 $this->guardedFiles($type, $parent)
             );
+            // Bundled extension id => version it brings: one backup recommendation covers the package.
+            $bundled = [];
 
             if ($isPackage) {
                 foreach ($manifest->files->children() as $archive) {
@@ -82,6 +84,7 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
                         if ($child instanceof \SimpleXMLElement && $child->getName() === 'extension') {
                             $files = Destinations::merge($files, Destinations::files($child, $directory, $childManifest));
                             $owned = Destinations::mergeOwned($owned, Destinations::owned($child, $directory));
+                            $bundled[strtolower((string) $child->name)] = (string) $child->version;
                             $found = true;
                         }
                     }
@@ -104,7 +107,10 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
 
             $knowledge = Knowledge::load($source . '/' . Knowledge::CATALOG, $state . '/' . Knowledge::RECORD);
             $comparison = FileGuard::compare($files);
-            if ($type === 'update' && !$this->recommendFullSiteBackup($state, (string) $manifest->version)) {
+            // A package installed over extensions that are already in place (the standalone
+            // extensions it replaces) changes an existing installation just like an update.
+            $remind = $type === 'update' || $this->migratesExistingInstallation($type, $parent);
+            if ($remind && !$this->recommendFullSiteBackup($state, (string) $manifest->version)) {
                 $this->releaseInstallerLock();
 
                 return false;
@@ -127,9 +133,21 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
                 // Keep what an earlier attempt of this package already decided: the planner skips those
                 // destinations now, and a handoff rewritten without them would leave the bundled
                 // extensions to judge the same files again without the package's catalog.
-                $decided = self::decisions(self::readHandoff($stateRoot), $plan['changes']);
+                // Files the package's own review approved are decisions for the bundled extensions too:
+                // the planner skips them here, so they are not among the changes of this plan.
+                $decided = self::decisions($reviewed + self::readHandoff($stateRoot), $plan['changes']);
 
                 State::write($stateRoot . '/decided.php', ['expires' => time() + self::HANDOFF_SECONDS, 'files' => $decided]);
+
+                // The operator acknowledged the backup recommendation for the whole package: the
+                // bundled extensions do not stop the same installation once more for themselves.
+                if ($remind) {
+                    foreach ($bundled as $childId => $childVersion) {
+                        if (preg_match('/^[a-z0-9_]+$/D', $childId) === 1 && $childVersion !== '') {
+                            $this->acknowledgeBackupRecommendation($stateRoot . '/' . $childId, $childVersion);
+                        }
+                    }
+                }
             }
 
             $this->guard = [
@@ -149,6 +167,16 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
         }
 
         return true;
+    }
+
+    /**
+     * Whether an installation of type "install" replaces extensions that are already in place, so
+     * that it shows the backup recommendation like an update. A package that adopts the standalone
+     * extensions it bundles answers true when one of them is installed.
+     */
+    protected function migratesExistingInstallation(string $type, object $parent): bool
+    {
+        return false;
     }
 
     /**
@@ -280,7 +308,7 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
             return true;
         }
 
-        State::write($path, ['version' => $version, 'expires' => time() + self::BACKUP_RECOMMENDATION_SECONDS]);
+        $this->acknowledgeBackupRecommendation($state, $version);
         Factory::getApplication()->enqueueMessage(
             '<p><strong>' . Text::_('ADVANS_GUARD_BACKUP_RECOMMENDATION_TITLE') . '</strong></p>'
                 . '<p>' . Text::_('ADVANS_GUARD_BACKUP_RECOMMENDATION_BODY') . '</p>'
@@ -289,6 +317,12 @@ abstract class InstallerScript extends \Joomla\CMS\Installer\InstallerScript
         );
 
         return false;
+    }
+
+    /** Record that the recommendation for $version of the extension at $state was shown. */
+    private function acknowledgeBackupRecommendation(string $state, string $version): void
+    {
+        State::write($state . '/backup-recommendation.php', ['version' => $version, 'expires' => time() + self::BACKUP_RECOMMENDATION_SECONDS]);
     }
 
     /**

@@ -10,7 +10,7 @@ namespace Advans\Installer\V3;
 defined('_JEXEC') or die;
 
 (static function (): void {
-    foreach (['RoutingCheck', 'SystemCheck', 'ScheduledTasks', 'Destinations', 'FileGuard', 'State', 'Knowledge', 'Planner', 'InstallerLock', 'InstallerScript'] as $class) {
+    foreach (['RoutingCheck', 'SystemCheck', 'ScheduledTasks', 'Destinations', 'FileGuard', 'State', 'Knowledge', 'Planner', 'InstallerLock', 'InstallerScript', 'PackageChildren'] as $class) {
         if (!class_exists(__NAMESPACE__ . '\\' . $class, false)) {
             require_once __DIR__ . '/' . $class . '.php';
         }

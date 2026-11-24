@@ -329,7 +329,8 @@ final class Guard
         $relative = Knowledge::relative($destination);
 
         return preg_match(
-            '#^(?:administrator/components/com_appointments|components/com_appointments|media/com_appointments|administrator/modules/mod_appointments|plugins/[^/]+/appointments[^/]*)(?:/|$)|^(?:administrator/)?language/[a-z]{2}-[A-Z]{2}/(?:com_appointments|plg_(?:task_appointments|privacy_appointments|content_appointmentsprivacy|system_appointments(?:dav|attribution)|user_appointments))\.ini$#D',
+            // The component, its module and plugins, and the package that installs them.
+            '#^(?:administrator/components/com_appointments|components/com_appointments|media/com_appointments|administrator/modules/mod_appointments|plugins/[^/]+/appointments[^/]*|administrator/manifests/packages/appointments)(?:/|$)|^administrator/manifests/packages/pkg_appointments\.xml$|^(?:administrator/)?language/[a-z]{2}-[A-Z]{2}/(?:com_appointments|mod_appointments|pkg_appointments|plg_(?:task_appointments|privacy_appointments|content_appointmentsprivacy|system_appointments(?:dav|attribution)|user_appointments))(?:\.sys)?\.ini$#D',
             $relative
         ) === 1;
     }

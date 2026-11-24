@@ -8,13 +8,13 @@
 defined('_JEXEC') or die;
 
 return [
-    'com_appointments' => ['type' => 'component', 'element' => 'com_appointments', 'php' => ['sodium'], 'functions' => ['sodium_crypto_aead_xchacha20poly1305_ietf_encrypt', 'sodium_crypto_box_seal'], 'mysql' => true, 'scheduler' => true, 'mail' => true, 'tasks' => ['plg_task_appointments.reminders', 'plg_task_appointments.retention', 'plg_task_appointments.close', 'plg_task_appointments.teamcleanup', 'plg_task_appointments.teamlog', 'plg_task_appointments.teaminvitations', 'plg_task_appointments.teamretention']],
+    'com_appointments' => ['type' => 'component', 'element' => 'com_appointments', 'php' => ['sodium'], 'functions' => ['sodium_crypto_aead_xchacha20poly1305_ietf_encrypt', 'sodium_crypto_box_seal'], 'mysql' => true, 'scheduler' => true, 'mail' => true],
     'com_dmarcreports' => ['type' => 'component', 'element' => 'com_dmarcreports', 'php' => ['simplexml', 'libxml', 'mbstring', 'openssl'], 'mysql' => true, 'optional' => ['zip', 'zlib']],
     'com_j2commerce_importexport' => ['type' => 'component', 'element' => 'com_j2commerce_importexport', 'shop' => true],
     'com_j2store_cleanup' => ['type' => 'component', 'element' => 'com_j2store_cleanup', 'shop' => true],
     'plg_ajax_joomlaajaxforms' => ['type' => 'plugin', 'element' => 'joomlaajaxforms', 'group' => 'ajax'],
     'plg_osmap_j2commerce' => ['type' => 'plugin', 'element' => 'j2commerce', 'group' => 'osmap', 'shop' => true, 'dependencies' => ['com_osmap'], 'routes' => [['com_osmap']]],
-    'plg_privacy_j2commerce' => ['type' => 'plugin', 'element' => 'j2commerce', 'group' => 'privacy', 'shop' => true, 'dependencies' => ['com_privacy'], 'scheduler' => true, 'tasks' => ['plg_task_j2commerceprivacy.autocleanup'], 'routes' => [
+    'plg_privacy_j2commerce' => ['type' => 'plugin', 'element' => 'j2commerce', 'group' => 'privacy', 'shop' => true, 'dependencies' => ['com_privacy'], 'scheduler' => true, 'routes' => [
         ['com_ajax', 'plugin=j2commercePrivacy&group=privacy&format=html&task=confirmRequest'],
         ['com_ajax', 'plugin=j2commercePrivacy&group=privacy&format=json&task=deleteAddress'],
         ['com_privacy'],
@@ -27,7 +27,14 @@ return [
         ['com_ajax', 'plugin=privacyrequests&group=system&format=html'],
         ['com_ajax', 'plugin=privacyrequests&group=system&format=json&task=capabilities'],
     ]],
-    'pkg_dmarcreports' => ['type' => 'package', 'element' => 'pkg_dmarcreports', 'dependencies' => ['com_dmarcreports', 'mod_dmarcreports', 'plg_task_dmarcreports', 'plg_system_dmarcmtasts'], 'tasks' => ['plg_task_dmarcreports.ingest'], 'routes' => [['com_dmarcreports']]],
+    'pkg_dmarcreports' => ['type' => 'package', 'element' => 'pkg_dmarcreports', 'home' => 'com_dmarcreports', 'dependencies' => ['com_dmarcreports', 'mod_dmarcreports', 'plg_task_dmarcreports', 'plg_system_dmarcmtasts'], 'tasks' => ['plg_task_dmarcreports.ingest'], 'routes' => [['com_dmarcreports']]],
+    // The packages own the scheduled tasks of their task plugins: they create them after every bundled
+    // extension is in place (the component or the privacy plugin alone runs before its task plugin).
+    // Dependencies name the children that run from the first installation on; the team calendar
+    // plugins and the privacy plugin itself are enabled by the operator.
+    'pkg_appointments' => ['type' => 'package', 'element' => 'pkg_appointments', 'home' => 'com_appointments', 'dependencies' => ['com_appointments', 'mod_appointments', 'plg_task_appointments', 'plg_privacy_appointments', 'plg_content_appointmentsprivacy', 'plg_system_appointmentsattribution'], 'scheduler' => true, 'tasks' => ['plg_task_appointments.reminders', 'plg_task_appointments.retention', 'plg_task_appointments.close', 'plg_task_appointments.teamcleanup', 'plg_task_appointments.teamlog', 'plg_task_appointments.teaminvitations', 'plg_task_appointments.teamretention'], 'routes' => [['com_appointments']]],
+    'pkg_privacy_j2commerce' => ['type' => 'package', 'element' => 'pkg_privacy_j2commerce', 'home' => 'plg_privacy_j2commerce', 'shop' => true, 'dependencies' => ['com_privacy', 'plg_system_j2commerceprivacy', 'plg_task_j2commerceprivacy'], 'scheduler' => true, 'tasks' => ['plg_task_j2commerceprivacy.autocleanup']],
+    'mod_appointments' => ['type' => 'module', 'element' => 'mod_appointments', 'dependencies' => ['com_appointments'], 'routes' => [['com_appointments']]],
     'plg_task_appointments' => ['type' => 'plugin', 'element' => 'appointments', 'group' => 'task', 'dependencies' => ['com_appointments'], 'scheduler' => true, 'tasks' => ['plg_task_appointments.reminders', 'plg_task_appointments.retention', 'plg_task_appointments.close', 'plg_task_appointments.teamcleanup', 'plg_task_appointments.teamlog', 'plg_task_appointments.teaminvitations', 'plg_task_appointments.teamretention'], 'routes' => [['com_appointments']]],
     'plg_privacy_appointments' => ['type' => 'plugin', 'element' => 'appointments', 'group' => 'privacy', 'dependencies' => ['com_appointments', 'com_privacy'], 'routes' => [['com_appointments']]],
     'plg_content_appointmentsprivacy' => ['type' => 'plugin', 'element' => 'appointmentsprivacy', 'group' => 'content', 'dependencies' => ['com_appointments', 'com_privacy'], 'routes' => [['com_privacy']]],
