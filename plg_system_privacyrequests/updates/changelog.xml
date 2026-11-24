@@ -4,9 +4,9 @@
         <element>privacyrequests</element>
         <type>plugin</type>
         <folder>system</folder>
-        <version>0.3.0</version>
+        <version>0.4.0</version>
         <change>
-            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/system-privacyrequests-v0.3.0</item>
+            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/system-privacyrequests-v0.4.0</item>
         </change>
     </changelog>
 </changelogs>
