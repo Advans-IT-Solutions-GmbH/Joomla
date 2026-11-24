@@ -3,9 +3,9 @@
     <changelog>
         <element>pkg_privacy_j2commerce</element>
         <type>package</type>
-        <version>1.9.0</version>
+        <version>1.9.1</version>
         <change>
-            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/privacy-v1.9.0</item>
+            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/privacy-v1.9.1</item>
         </change>
     </changelog>
 </changelogs>
