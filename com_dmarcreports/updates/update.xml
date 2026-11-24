@@ -5,13 +5,13 @@
         <description>DMARC aggregate report analysis for Joomla</description>
         <element>com_dmarcreports</element>
         <type>component</type>
-        <version>1.3.0</version>
+        <version>1.4.0</version>
         <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/com_dmarcreports</infourl>
-        <changelogurl>https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/com_dmarcreports/updates/changelog.xml</changelogurl>
+        <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/dmarcreports-v1.4.0/changelog.xml</changelogurl>
         <downloads>
-            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/dmarcreports-v1.3.0/com_dmarcreports_1.3.0.zip</downloadurl>
+            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/dmarcreports-v1.4.0/com_dmarcreports_1.4.0.zip</downloadurl>
         </downloads>
-        <sha256>09839b211e28869b9bf9238712111d42e5723f4e33400148913376b82a14176c</sha256>
+        <sha256>1c69287db01851361bd31e9abe495ab9690d3fba9a7dbd849b4ec2c3d29d51ea</sha256>
         <tags>
             <tag>stable</tag>
         </tags>
