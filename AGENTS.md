@@ -92,7 +92,7 @@
 - **Logo:** nur die unveränderte offizielle Vorlage, farbig oder schwarzweiss. Auf GitHub zusätzlich die Fassung mit weissem Rand für das dunkle Theme (Logopixel 1:1, nicht skaliert), weil der Verein keine Negativfassung anbietet. Das Logo verlinkt auf die Landingpage von swiss made software. Auf GitHub öffnet der Link im selben Fenster, weil GitHub `target` entfernt.
 - **Herkunftsangaben** («Swiss Made», Labelname) nur, wie das Label es erlaubt, also für die Extensions dieses Repos.
 - **Regel des Hauses, getrennt von den Label-Kriterien:** Kein ausländischer Dienst fest im Laufzeitcode und keiner als Vorgabewert. Alles Externe ist konfigurierbar und hat keine ausländische Vorgabe.
-- **Bekannter Punkt:** Die Manifeste nennen GitHub (`raw.githubusercontent.com`) als Update-Server, die `script.php` mehrerer Extensions tragen dieselbe Adresse fest ein und registrieren sie bei Installation und Update neu, wenn sie fehlt (z.B. `com_appointments/script.php`, `j2commerce/com_j2commerce_importexport/script.php`). Die `updates/update.xml` verweisen auf Pakete in GitHub Releases, und Release-Workflows erzeugen diese Download-Adressen. Inhaltlich laufen darüber nur Versionsdaten und Pakete, keine Kunden- oder Rechnungsdaten. GitHub sieht dabei wie bei jedem Abruf die öffentliche IP-Adresse und die HTTP-Metadaten des abrufenden Joomla-Servers.
+- **Bekannter Punkt:** Die Manifeste nennen GitHub (`raw.githubusercontent.com`) als Update-Server, die `script.php` mehrerer Extensions tragen dieselbe Adresse fest ein und registrieren sie bei Installation und Update neu, wenn sie fehlt (z.B. `j2commerce/com_j2commerce_importexport/script.php`). Die `updates/update.xml` verweisen auf Pakete in GitHub Releases, und Release-Workflows erzeugen diese Download-Adressen. Inhaltlich laufen darüber nur Versionsdaten und Pakete, keine Kunden- oder Rechnungsdaten. GitHub sieht dabei wie bei jedem Abruf die öffentliche IP-Adresse und die HTTP-Metadaten des abrufenden Joomla-Servers.
 - **Prüfpunkte bei jeder Änderung:** keine neue externe Adresse im Laufzeitcode und kein neuer externer Vorgabewert ohne Entscheid des Maintainers. Logo und Link wie oben.
 - Massgeblich ist die intern gepflegte SSOT (Handbuch, Abschnitt «Swiss Label Conformity»). Kurzfassung für die Skills: `.claude/skills/joomla-extensions/SKILL.md`, Abschnitt «swiss made software label».
 
@@ -102,6 +102,9 @@ Mehrteilige Erweiterungen (mehr als eine installierbare Erweiterung) werden imme
 Joomla-Paket `pkg_*` ausgeliefert, einteilige als eigenes ZIP. Das Paket ist das Release-Asset, die
 ZIPs der Teile liegen nur darin. `shared/tests/package-structure-check.php` (Job «Infrastructure
 Tests») erzwingt das; Einzelheiten: Skill `joomla-extensions`, `references/conventions.md`, «Packaging».
+Pakete: `pkg_dmarcreports`, `pkg_appointments`, `pkg_privacy_j2commerce`. Wird eine eigenständige Erweiterung
+zum Paket, behält das Paket ihren Tag-Präfix, übernimmt bestehende Installationen selbst (gleiche
+Zeilen in `#__extensions`, kein manueller Schritt) und ihr bisheriger Update-Kanal kündigt das Paket an.
 
 ## Skills
 Detailwissen liegt in `.claude/skills/`. Vor repo-spezifischen Aufgaben den passenden Skill lesen.
@@ -125,8 +128,9 @@ Generische Extensions in diesem Repository:
 - `plg_system_dmarcmtasts`
 - `plg_system_privacyrequests`
 - `pkg_dmarcreports`
-- `com_appointments`
-- J2Commerce-Extensions
+- `com_appointments` (ausgeliefert als `pkg_appointments`)
+- `pkg_appointments`
+- J2Commerce-Extensions (`plg_privacy_j2commerce` ausgeliefert als `pkg_privacy_j2commerce`)
 
 Release-CI leitet die Version aus Conventional Commits ab (`fix(...)` = Patch, `feat(...)` = Minor, `feat!`/`BREAKING CHANGE` = Major).
 Nicht erkannte Präfixe (z. B. `docs:` oder `chore:`) lösen keinen Release aus. Nur wenn ein Versionssprung gewollt ist, wird die Änderung als `fix(...)` oder `feat(...)` mit passendem Scope formuliert.

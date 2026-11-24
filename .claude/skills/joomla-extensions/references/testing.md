@@ -94,9 +94,17 @@ cp *.zip tests/extension.zip
 
 `cp *.zip` expects exactly one ZIP in the extension directory; delete ZIPs from earlier builds first.
 
+**Packages that replaced a standalone extension** are built in the package directory, and the package
+is the `extension.zip` of the former extension's test harness (each line from the repository root):
+
+```bash
+cd pkg_appointments && ./build.sh && cp pkg_appointments_*.zip ../com_appointments/tests/extension.zip
+cd j2commerce/pkg_privacy_j2commerce && ./build.sh && cp pkg_privacy_j2commerce_*.zip ../plg_privacy_j2commerce/tests/extension.zip
+```
+
 The extensions outside `j2commerce/` that ship no shop dependency (`com_dmarcreports`,
 `mod_dmarcreports`, `plg_task_dmarcreports`, `plg_system_dmarcmtasts`, `pkg_dmarcreports`,
-`com_appointments`) use no shop, so the same commands run from their own directory and no
+`pkg_appointments`) use no shop, so the same commands run from their own directory and no
 `j2commerce6.zip` is needed for either lane.
 
 **AJAX Forms** uses three test directories. Run from the repository root (the `tests-j2c4/` and

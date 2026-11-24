@@ -21,6 +21,15 @@
  *   privacy-override an old checkout override pauses without being renamed or deleted
  *   mirror-changed   (Product Compare, Joomla 5) a changed mirror pauses until manually resolved
  *   mirror-occupied  (Product Compare, Joomla 5) another extension's mirror remains untouched
+ *
+ * Migration to a package: when the package under test is not installed yet and LEGACY_EXTENSION
+ * names the standalone extension the package replaces ("type:folder:element", for example
+ * "component::com_appointments" or "plugin:privacy:j2commerce"), the first round finds and
+ * installs the package through that extension's own update channel (UPDATE_XML, its legacy
+ * update.xml that announces the package), exactly as a site that still runs the standalone
+ * extension receives it. That round must leave the package installed with the standalone
+ * extension adopted; every later round updates the package through PACKAGE_UPDATE_XML.
+ * MODIFY_FILE (relative to the site root) names the installed file the "modified" scenario edits.
  */
 
 define('JOOMLA_ROOT', '/var/www/html');
@@ -68,6 +77,22 @@ $installRoot = match ($manifest['type']) {
 };
 $extensionId = sh_find_extension_id($manifest);
 $db = sh_db();
+$packageTemplate = (string) (getenv('PACKAGE_UPDATE_XML') ?: '');
+$legacy = null;
+
+if ($extensionId < 1 && $manifest['type'] === 'package' && getenv('LEGACY_EXTENSION')) {
+    [$legacyType, $legacyFolder, $legacyElement] = array_pad(explode(':', (string) getenv('LEGACY_EXTENSION'), 3), 3, '');
+    $legacyId = sh_find_extension_id(['type' => $legacyType, 'element' => $legacyElement, 'folder' => $legacyFolder]);
+
+    if (!bu_check("the standalone $legacyElement the package replaces is installed", $legacyId > 0)
+        || !bu_check('the update.xml of the package is available', is_file($packageTemplate), $packageTemplate)) {
+        exit(1);
+    }
+
+    $legacy = ['id' => $legacyId, 'type' => $legacyType, 'element' => $legacyElement, 'folder' => $legacyFolder];
+    $extensionId = $legacyId;
+    echo "Migration: $id replaces the installed standalone $legacyElement (extension $legacyId)\n";
+}
 
 if (!bu_check("$id is installed", $extensionId > 0)) {
     exit(1);
@@ -98,7 +123,9 @@ function bu_backups(): array
 
     clearstatcache();
 
-    return array_merge(glob($state . '/backups/*.php') ?: [], glob($state . '/recovery/backups/*.php') ?: []);
+    // The Appointments package keeps the file review of Appointments below com_appointments.
+    return array_merge(glob($state . '/backups/*.php') ?: [], glob($state . '/recovery/backups/*.php') ?: [],
+        glob(dirname($state) . '/com_appointments/recovery/backups/*.php') ?: []);
 }
 
 function bu_state(string $path): array
@@ -290,7 +317,40 @@ function bu_update(BuBrowser $browser, string $source, string $newVersion): arra
         echo "  [{$message['type']}] " . mb_substr($message['text'], 0, 500) . "\n";
     }
 
+    bu_follow_migration();
+
     return ['updated' => bu_installed_version() === $newVersion, 'messages' => $messages, 'html' => $html];
+}
+
+/**
+ * Once Joomla installed the package over the standalone extension, the rounds continue with the
+ * package: its extension row, its update site and its update.xml. The standalone extension must
+ * have been adopted (same row, now a child of the package) with its own update site removed.
+ */
+function bu_follow_migration(): void
+{
+    global $legacy, $manifest, $extensionId, $template, $packageTemplate, $db;
+
+    if ($legacy === null) {
+        return;
+    }
+
+    $packageId = sh_find_extension_id($manifest);
+
+    if ($packageId < 1) {
+        return;
+    }
+
+    $row = $db->query('SELECT extension_id, package_id FROM ' . sh_table('extensions') . ' WHERE extension_id = ' . (int) $legacy['id'])->fetch_assoc();
+    $sameType = $db->query('SELECT COUNT(*) FROM ' . sh_table('extensions') . " WHERE type = '" . $db->real_escape_string($legacy['type'])
+        . "' AND element = '" . $db->real_escape_string($legacy['element']) . "' AND folder = '" . $db->real_escape_string($legacy['folder']) . "'")->fetch_row();
+    $links = $db->query('SELECT COUNT(*) FROM ' . sh_table('update_sites_extensions') . ' WHERE extension_id = ' . (int) $legacy['id'])->fetch_row();
+    bu_check('migration: the standalone ' . $legacy['element'] . ' was adopted in place, not duplicated',
+        (int) ($row['package_id'] ?? 0) === $packageId && (int) ($sameType[0] ?? 0) === 1, json_encode([$row, $sameType]));
+    bu_check('migration: the standalone update channel was replaced by the package\'s', (int) ($links[0] ?? -1) === 0);
+    $extensionId = $packageId;
+    $template = $packageTemplate;
+    $legacy = null;
 }
 
 function bu_text(array $result, array $types = []): string
@@ -360,8 +420,10 @@ foreach ($scenarios as $scenario) {
             bu_check('the changed file remains byte-identical and no server copy is created',
                 file_get_contents($modifyFile) === $changed && bu_backups() === $backupsBefore);
 
-            if ($id === 'com_appointments') {
-                $reviewFile = $state . '/recovery/review.php';
+            if (in_array($id, ['com_appointments', 'pkg_appointments'], true)) {
+                // The file review of Appointments keeps its state below com_appointments, also when the package installs.
+                $reviewState = JOOMLA_ROOT . '/administrator/advans-installer-state/com_appointments';
+                $reviewFile = $reviewState . '/recovery/review.php';
                 $review = bu_state($reviewFile);
                 $componentId = null;
                 foreach ($review['rows'] ?? [] as $rowId => $row) {
@@ -388,7 +450,7 @@ foreach ($scenarios as $scenario) {
                     file_put_contents($localCopy, $downloaded);
                     bu_check('review metadata stores no file bytes',
                         !str_contains((string) file_get_contents($reviewFile), $changed)
-                        && !is_dir($state . '/recovery/backups'));
+                        && !is_dir($reviewState . '/recovery/backups'));
                     bu_review($browser, 'decide', $review, $componentId, ['choice' => 'apply', 'confirm' => '1'], false);
                     bu_check('a request without a CSRF token cannot authorize the operation',
                         !isset(bu_state($reviewFile)['choices'][$componentId]));
@@ -408,7 +470,7 @@ foreach ($scenarios as $scenario) {
                     }
                     $releaseBytes = (string) file_get_contents($modifyFile);
                     $releaseHash = hash('sha256', $releaseBytes);
-                    $attemptFile = $state . '/recovery/attempt.php';
+                    $attemptFile = $reviewState . '/recovery/attempt.php';
                     bu_check('the reviewed package update completed', $retry['updated'] && $releaseHash !== hash('sha256', $changed), bu_text($retry));
                     bu_check('the recovery attempt contains metadata only',
                         is_file($attemptFile) && !str_contains((string) file_get_contents($attemptFile), $changed));

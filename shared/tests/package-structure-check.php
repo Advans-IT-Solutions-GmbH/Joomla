@@ -13,6 +13,9 @@
  * Roots that still have to be converted are named in PENDING with the package that will replace them.
  * They are reported but do not fail; an entry whose package exists fails, so the list only shrinks.
  *
+ * COMPANIONS names manifests that a package ships next to its children on purpose, to be installed
+ * on their own: they are not children of the package and are not counted.
+ *
  * Usage: php shared/tests/package-structure-check.php [repository root]
  *
  * @copyright (C) 2026 Advans IT Solutions GmbH <https://advans.ch>
@@ -20,9 +23,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-const PENDING = [
-    'com_appointments' => 'pkg_appointments',
-    'j2commerce/plg_privacy_j2commerce' => 'pkg_privacy_j2commerce',
+const PENDING = [];
+
+const COMPANIONS = [
+    // Appointments Recovery reviews a paused installation of the package, so it is installed on its
+    // own and must stay installable while the package itself cannot be installed.
+    'com_appointments/recovery/appointmentsrecovery.xml',
 ];
 
 $root = rtrim(str_replace('\\', '/', $argv[1] ?? dirname(__DIR__, 2)), '/');
@@ -70,6 +76,10 @@ foreach (files($root) as $path) {
 
     $type = (string) $xml['type'];
     $base = extensionRoot($path);
+
+    if (in_array($path, COMPANIONS, true)) {
+        continue;
+    }
 
     if ($type === 'package') {
         $element = 'pkg_' . strtolower((string) $xml->packagename);
@@ -176,6 +186,25 @@ foreach ($packages as $element => $package) {
     preg_match_all('#"\.\./([A-Za-z0-9_./-]+):[A-Za-z0-9_.-]+\.zip"#', (string) file_get_contents($build), $matches);
 
     foreach ($matches[1] as $directory) {
+        // The entries are relative to the package folder (j2commerce/pkg_x/../plg_y = j2commerce/plg_y).
+        $parts = [];
+
+        foreach (explode('/', dirname($package['path']) . '/../' . $directory) as $part) {
+            if ($part === '..') {
+                array_pop($parts);
+            } elseif ($part !== '' && $part !== '.') {
+                $parts[] = $part;
+            }
+        }
+
+        $directory = implode('/', $parts);
+
+        if (!is_dir($root . '/' . $directory)) {
+            $errors[] = "$element stages $directory, which does not exist.";
+
+            continue;
+        }
+
         $directoryRoot = extensionRoot($directory);
 
         foreach ($manifests[$directoryRoot] ?? [] as $item) {

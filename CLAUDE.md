@@ -42,9 +42,11 @@ Joomla/
 ├── plg_system_dmarcmtasts/     # System-Plugin: liefert die MTA-STS-Policy unter /.well-known aus
 ├── plg_system_privacyrequests/ # System-Plugin: kontolose Löschanfragen im Core-Datenschutzablauf
 ├── pkg_dmarcreports/           # Paket: bündelt Komponente + Modul + Task-Plugin + System-Plugin
-├── com_appointments/           # Komponente: selbstgehostete Terminbuchung (Admin + Website)
+├── com_appointments/           # Komponente: selbstgehostete Terminbuchung (Admin + Website), mit Modul und Plugins
+├── pkg_appointments/           # Paket: bündelt Komponente + Dashboard-Modul + sechs Plugins (Release-Asset)
 ├── j2commerce/                 # J2Commerce-bezogene Extensions
-│   ├── plg_privacy_j2commerce/         # Privacy-Plugin (Gruppe: privacy) — größte Extension
+│   ├── plg_privacy_j2commerce/         # Privacy-Plugin (Gruppe: privacy) — größte Extension, mit System- und Task-Plugin
+│   ├── pkg_privacy_j2commerce/         # Paket: bündelt die drei Privacy-Plugins (Release-Asset)
 │   ├── plg_osmap_j2commerce/           # OSMap-Sitemap-Plugin (Gruppe: osmap)
 │   ├── plg_j2commerce_productcompare/  # Produktvergleich (Gruppe: j2commerce; auf Joomla 5 zusätzlich als `j2store` gespiegelt)
 │   ├── com_j2commerce_importexport/    # Komponente: Bulk-Import/Export
@@ -82,7 +84,7 @@ cd j2commerce/plg_privacy_j2commerce
 
 **Voraussetzungen für lokale Tests** (vollständig mit allen Befehlen: `.claude/skills/joomla-extensions/references/testing.md`, Abschnitt „Local Prerequisites“). Die Test-Images kopieren die Pakete beim Build hinein; ohne diese Dateien schlägt `docker compose up -d` fehl:
 
-- Paket bauen und als `tests/extension.zip` ablegen (wie der CI-Job `Build Package`): im Extension-Verzeichnis `./build.sh`, `mkdir -p tests`, `cp *.zip tests/extension.zip`. AJAX Forms zusätzlich nach `tests-j2c4/` bzw. `tests-j2c6/` kopieren und die Images mit den `docker build`-Befehlen aus `joomla-ajax-forms.yml` vom Repo-Root aus bauen.
+- Paket bauen und als `tests/extension.zip` ablegen (wie der CI-Job `Build Package`): im Extension-Verzeichnis `./build.sh`, `mkdir -p tests`, `cp *.zip tests/extension.zip`. Appointments und Privacy sind Pakete: im Paketverzeichnis (`pkg_appointments/` bzw. `j2commerce/pkg_privacy_j2commerce/`) `./build.sh` und das `pkg_*.zip` als `tests/extension.zip` der Komponente bzw. des Plugins ablegen. AJAX Forms zusätzlich nach `tests-j2c4/` bzw. `tests-j2c6/` kopieren und die Images mit den `docker build`-Befehlen aus `joomla-ajax-forms.yml` vom Repo-Root aus bauen.
 - Joomla-6-Stacks brauchen zusätzlich `tests/j2commerce6.zip` (AJAX Forms: `tests-j2c6/j2commerce6.zip`), gebaut aus dem neuesten abgeglichenen J2Commerce-6-Commit, den die CI je Lauf ermittelt (`J2C6_REF`, Zusammenfassung „Shop releases under test“ des Jobs „Resolve Shop Releases“).
 
 **Integrations-Tests einer Extension** (Docker hochfahren, dann Suite laufen lassen):

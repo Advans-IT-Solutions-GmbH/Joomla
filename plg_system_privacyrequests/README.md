@@ -77,7 +77,7 @@ installation/UI acceptance.
 The coupled candidate is an **upgrade of an existing Appointments/shop test
 installation**, not a requirement to install either product for this adapter.
 The installed acceptance sequence is the generic plugin ZIP, the Appointments
-component ZIP, then the existing J2Commerce privacy ZIP. Use Joomla's normal
+package (`pkg_appointments`), then the J2Commerce privacy package (`pkg_privacy_j2commerce`). Use Joomla's normal
 installer and its conflict handling (see the installer policy above), not manual Core/plugin copies.
 
 1. Save a matching files/database/encryption-key backup and record plugin, mail and

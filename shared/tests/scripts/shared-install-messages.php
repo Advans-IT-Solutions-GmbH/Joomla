@@ -117,10 +117,31 @@ $checkOutput = static function (string $label, int $exitCode, string $output, ar
 $englishStrings = sh_read_package_language($package, 'en-GB');
 $uninstallWarnings = [];
 
-foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
-    foreach (sh_read_package_language($package, $tag) as $key => $value) {
-        if (str_ends_with($key, '_UNINSTALL_DATA_RETAINED')) {
-            $uninstallWarnings[] = sh_plain_text($value);
+// Removing a package removes its bundled extensions, which announce the data they keep in their
+// own language: the archives of a package (packages/*.zip) are read too.
+$warningSources = [$package];
+$packageZip = new ZipArchive();
+
+if ($manifest['type'] === 'package' && $packageZip->open($package) === true) {
+    for ($i = 0; $i < $packageZip->numFiles; $i++) {
+        $name = (string) $packageZip->getNameIndex($i);
+
+        if (preg_match('#^packages/[^/]+\.zip$#', $name)) {
+            $child = sys_get_temp_dir() . '/install-messages-' . hash('sha256', $package . "\0" . $name) . '.zip';
+            file_put_contents($child, (string) $packageZip->getFromIndex($i));
+            $warningSources[] = $child;
+        }
+    }
+
+    $packageZip->close();
+}
+
+foreach ($warningSources as $source) {
+    foreach (['en-GB', 'de-DE', 'fr-FR'] as $tag) {
+        foreach (sh_read_package_language($source, $tag) as $key => $value) {
+            if (str_ends_with($key, '_UNINSTALL_DATA_RETAINED')) {
+                $uninstallWarnings[] = sh_plain_text($value);
+            }
         }
     }
 }

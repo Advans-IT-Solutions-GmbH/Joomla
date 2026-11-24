@@ -56,15 +56,42 @@ bodies.
 
 A multi-part extension (more than one installable extension: component, module, plugin, template,
 library) is always shipped as a real Joomla package `pkg_<name>`. The package is the release asset
-(`pkg_<name>.zip`); the ZIPs of its parts exist only inside it. A single-part extension is shipped as
-its own ZIP. `php shared/tests/package-structure-check.php` (job «Infrastructure Tests») fails when an
-extension root holds several installable extensions without a package listing every one of them, or
-when a package manifest lists a child that does not exist or misses a child its `build.sh` stages.
-Roots still to be converted are named in `PENDING` in that script; the list only shrinks.
+(`pkg_<name>_<version>.zip`); the ZIPs of its parts exist only inside it (`packages/`). A single-part
+extension is shipped as its own ZIP. `php shared/tests/package-structure-check.php` (job
+«Infrastructure Tests») fails when an extension root holds several installable extensions without a
+package listing every one of them, or when a package manifest lists a child that does not exist or
+misses a child its `build.sh` stages (`"../dir:archive.zip"` entries, relative to the package
+folder). `PENDING` in that script names roots still to be converted (empty now, the list only
+shrinks); `COMPANIONS` names manifests a package ships beside its children on purpose
+(Appointments Recovery, installed on its own when an update needs a file review).
+
+Packages: `pkg_dmarcreports`, `pkg_appointments` (sources stay in `com_appointments/`, its
+`modules/` and `plugins/`), `pkg_privacy_j2commerce` (sources stay in
+`j2commerce/plg_privacy_j2commerce/`). The build of the two newer packages runs the main
+extension's own build and splits it into the child archives.
 
 A package adopts the parts that are already installed (also standalone, or installed by an older
 script) without a manual step: no data or parameters are lost, no extension row is duplicated, the
 old update sites give way to the package's, and uninstalling the package removes all its parts.
+How this is done (`shared/installer/PackageChildren.php`, used by the package scripts):
+
+- Joomla updates an installed child in place (same row). The package script snapshots the children
+  in preflight, refuses when one is installed in a newer version than it brings, then assigns all of
+  them to itself (`package_id`), removes their update sites and enables or publishes only children
+  that were not installed before (kept in `enable-pending.php` for a retry after an interruption).
+- The package shows the backup recommendation once (also on the first takeover, hook
+  `migratesExistingInstallation()`), and its preflight acknowledges it for every child and hands its
+  file decisions (including reviewed files) to the children.
+- The main extension refuses to be installed outside its package (`Pkg_…InstallerScript::installing()`).
+- When an extension becomes a package, the package keeps its release tag prefix and version line,
+  the package, the main extension and every child carry the same version, and the release workflow
+  rewrites the former extension's `updates/update.xml` to announce the package under the former
+  element (same version and sha256), so sites that still run it migrate through Joomla Update.
+- The package catalog of released hashes includes the catalogs of its children
+  (`shared/build/known-hashes.php`), so files of the former standalone releases are known.
+- The scheduled tasks of a bundled task plugin belong to the package entry in
+  `shared/installer/catalog.php` (`tasks`), because the main extension is installed before its task
+  plugin.
 
 ## Frontend Forms
 
