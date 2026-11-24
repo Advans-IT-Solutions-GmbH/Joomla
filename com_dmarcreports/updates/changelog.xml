@@ -3,9 +3,9 @@
     <changelog>
         <element>com_dmarcreports</element>
         <type>component</type>
-        <version>1.3.0</version>
+        <version>1.4.0</version>
         <change>
-            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/dmarcreports-v1.3.0</item>
+            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/dmarcreports-v1.4.0</item>
         </change>
     </changelog>
 </changelogs>
