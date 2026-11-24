@@ -3,9 +3,9 @@
     <changelog>
         <element>pkg_appointments</element>
         <type>package</type>
-        <version>1.6.0</version>
+        <version>1.7.0</version>
         <change>
-            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/appointments-v1.6.0</item>
+            <item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/appointments-v1.7.0</item>
         </change>
     </changelog>
 </changelogs>
