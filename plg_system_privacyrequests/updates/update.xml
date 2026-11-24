@@ -7,13 +7,13 @@
         <type>plugin</type>
         <folder>system</folder>
         <client>site</client>
-        <version>0.3.0</version>
+        <version>0.4.0</version>
         <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/plg_system_privacyrequests</infourl>
-        <changelogurl>https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/plg_system_privacyrequests/updates/changelog.xml</changelogurl>
+        <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/system-privacyrequests-v0.4.0/changelog.xml</changelogurl>
         <downloads>
-            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/system-privacyrequests-v0.3.0/plg_system_privacyrequests_0.3.0.zip</downloadurl>
+            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/system-privacyrequests-v0.4.0/plg_system_privacyrequests_0.4.0.zip</downloadurl>
         </downloads>
-        <sha256>fa8d16ce86c76282f3c5577206e912b7708c76503960a1354943bd5b05daf893</sha256>
+        <sha256>05677ca090540820d03336d6412b3c8611a695031df04b5abad634639b927960</sha256>
         <tags>
             <tag>stable</tag>
         </tags>
