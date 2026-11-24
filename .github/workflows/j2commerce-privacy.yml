@@ -7,6 +7,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'j2commerce/pkg_privacy_j2commerce/**'
       - 'j2commerce/plg_privacy_j2commerce/**'
       - 'shared/build/**'
       - 'shared/installer/**'
@@ -29,6 +30,7 @@ on:
   pull_request:
     branches: [main, advansit-superuser-calendar-administration, advansit-guest-privacy-requests]
     paths:
+      - 'j2commerce/pkg_privacy_j2commerce/**'
       - 'j2commerce/plg_privacy_j2commerce/**'
       - 'shared/build/**'
       - 'shared/installer/**'
@@ -99,15 +101,17 @@ jobs:
           persist-credentials: false
           # The build rebuilds every earlier release from its release commit (advans-known-hashes.php).
           fetch-depth: 0
+      # The release asset is the package pkg_privacy_j2commerce (privacy plugin, consent system
+      # plugin, cleanup task plugin); the test environments install it as tests/extension.zip.
       - name: Build
         env:
           ADVANS_KNOWN_HASHES_STRICT: '1'
         run: |
-          cd j2commerce/plg_privacy_j2commerce
+          cd j2commerce/pkg_privacy_j2commerce
           chmod +x build.sh
           ./build.sh
-          mkdir -p tests
-          cp *.zip tests/extension.zip
+          mkdir -p ../plg_privacy_j2commerce/tests
+          cp pkg_privacy_j2commerce_*.zip ../plg_privacy_j2commerce/tests/extension.zip
       - name: Verify that the package recognises every file of the published release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -136,7 +140,7 @@ jobs:
       - name: Check PHP syntax
         run: |
           # xargs exits non-zero as soon as one file fails; `find -exec \;` would not.
-          find j2commerce/plg_privacy_j2commerce -name '*.php' -not -path '*/vendor/*' -print0 | xargs -0 -n1 php -l
+          find j2commerce/plg_privacy_j2commerce j2commerce/pkg_privacy_j2commerce -name '*.php' -not -path '*/vendor/*' -print0 | xargs -0 -n1 php -l
       - name: Run existing standalone unit tests
         working-directory: j2commerce/plg_privacy_j2commerce
         run: |
@@ -158,13 +162,21 @@ jobs:
         with:
           php-version: '8.3'
       - name: Lint language files
-        run: php shared/tests/lang-lint.php j2commerce/plg_privacy_j2commerce
+        run: |
+          php shared/tests/lang-lint.php j2commerce/plg_privacy_j2commerce
+          php shared/tests/lang-lint.php j2commerce/pkg_privacy_j2commerce
       - name: Check that the extension has reachable help
-        run: php shared/tests/help-lint.php j2commerce/plg_privacy_j2commerce
+        run: |
+          php shared/tests/help-lint.php j2commerce/plg_privacy_j2commerce
+          php shared/tests/help-lint.php j2commerce/pkg_privacy_j2commerce
       - name: Check compatibility requirements (Joomla 5.4+, PHP 8.1+)
-        run: php shared/tests/requirements-check.php j2commerce/plg_privacy_j2commerce
+        run: |
+          php shared/tests/requirements-check.php j2commerce/plg_privacy_j2commerce
+          php shared/tests/requirements-check.php j2commerce/pkg_privacy_j2commerce
       - name: Scan for deprecated Joomla APIs
-        run: php shared/tests/deprecated-api-scan.php j2commerce/plg_privacy_j2commerce
+        run: |
+          php shared/tests/deprecated-api-scan.php j2commerce/plg_privacy_j2commerce
+          php shared/tests/deprecated-api-scan.php j2commerce/pkg_privacy_j2commerce
 
   js-tests:
     name: Consent Validator (JS)
@@ -545,8 +557,12 @@ jobs:
           cd j2commerce/plg_privacy_j2commerce/tests
           docker compose -f docker-compose.production.yml down -v
 
+  # Sites of the standalone privacy plugin (the latest release before the package) move to the
+  # package through Joomla Update: the legacy update channel of the plugin announces the package.
+  # The first backend round installs the package over the standalone plugin and its two bundled
+  # plugins (migration), the following rounds update the package through its own channel.
   test-update:
-    name: Update from previous release (J6)
+    name: Migration from the standalone release and updates through the backend (J6)
     runs-on: ubuntu-latest
     needs: [build, resolve-shops]
     permissions:
@@ -574,8 +590,17 @@ jobs:
           fi
           echo "Previous release commit: $PREVIOUS ($(git log -1 --format=%s "$PREVIOUS"))"
           git worktree add /tmp/previous "$PREVIOUS"
-          (cd /tmp/previous/j2commerce/plg_privacy_j2commerce && chmod +x build.sh && ./build.sh)
-          cp /tmp/previous/j2commerce/plg_privacy_j2commerce/plg_privacy_j2commerce_*.zip j2commerce/plg_privacy_j2commerce/tests/extension.zip
+          # The package exists from the release after the last standalone one: until then the
+          # previous release is the standalone plugin, afterwards the package.
+          if [ -f /tmp/previous/j2commerce/pkg_privacy_j2commerce/build.sh ]; then
+            (cd /tmp/previous/j2commerce/pkg_privacy_j2commerce && chmod +x build.sh && ./build.sh)
+            cp /tmp/previous/j2commerce/pkg_privacy_j2commerce/pkg_privacy_j2commerce_*.zip j2commerce/plg_privacy_j2commerce/tests/extension.zip
+            echo "PREVIOUS_KIND=package" >> "$GITHUB_ENV"
+          else
+            (cd /tmp/previous/j2commerce/plg_privacy_j2commerce && chmod +x build.sh && ./build.sh)
+            cp /tmp/previous/j2commerce/plg_privacy_j2commerce/plg_privacy_j2commerce_*.zip j2commerce/plg_privacy_j2commerce/tests/extension.zip
+            echo "PREVIOUS_KIND=standalone" >> "$GITHUB_ENV"
+          fi
       - name: Setup PHP for J2Commerce build
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
         with:
@@ -612,26 +637,41 @@ jobs:
             sleep 20
           done
           timeout 600 bash -c 'until docker exec plg_privacy_j2commerce_j6_test test -f /var/www/html/health.txt 2>/dev/null; do sleep 5; done'
-      - name: Update to the package under test
-        run: |
-          C=plg_privacy_j2commerce_j6_test
-          docker cp /tmp/new-package/extension.zip "$C:/tmp/extension-new.zip"
-          docker exec "$C" mkdir -p /var/www/html/tests/scripts
-          docker cp shared/tests/scripts/shared-test-helpers.php "$C:/var/www/html/tests/scripts/"
-          docker cp shared/tests/scripts/shared-update-from-previous.php "$C:/var/www/html/tests/scripts/"
-          docker exec -e TEST_STRICT_SKIP=1 "$C" php /var/www/html/tests/scripts/shared-update-from-previous.php
-      # Foreign territory: an unchanged checkout override of an earlier release (1.5.4/1.5.5) in
-      # the site template is retired through the backend update after a backup and reported.
-      - name: Retire an earlier checkout override through the backend update
+      # Round 1 (clean): Check for Updates finds the package in the legacy channel of the
+      # standalone plugin and installs it over the plugin. Round 2 (modified): an unknown change of
+      # a bundled file pauses the package update. Round 3 (privacy-override): an unchanged
+      # checkout override of an earlier release (1.5.4/1.5.5) in the site template pauses the
+      # update without being renamed or deleted.
+      - name: Migrate and update with Check for Updates and Update in the backend
         env:
           C: plg_privacy_j2commerce_j6_test
         run: |
           git show 4f2dab56b:j2commerce/plg_privacy_j2commerce/overrides/com_j2commerce/checkout/default_shipping_payment.php > /tmp/bundled-override.php
           docker cp /tmp/bundled-override.php "$C:/tmp/bundled-override.php"
+          docker cp /tmp/new-package/extension.zip "$C:/tmp/extension-new.zip"
           docker cp j2commerce/plg_privacy_j2commerce/updates/update.xml "$C:/tmp/update.xml"
+          docker cp j2commerce/pkg_privacy_j2commerce/updates/update.xml "$C:/tmp/package-update.xml"
+          docker exec "$C" mkdir -p /var/www/html/tests/scripts
+          docker cp shared/tests/scripts/shared-test-helpers.php "$C:/var/www/html/tests/scripts/"
           docker cp shared/tests/scripts/shared-backend-update.php "$C:/var/www/html/tests/scripts/"
-          docker exec -e SCENARIOS=privacy-override -e PRIVACY_OVERRIDE=/tmp/bundled-override.php "$C" \
-            php /var/www/html/tests/scripts/shared-backend-update.php
+          if [ "$PREVIOUS_KIND" = "standalone" ]; then
+            # The standalone plugin is installed: the first round migrates through its legacy feed.
+            docker exec \
+              -e LEGACY_EXTENSION=plugin:privacy:j2commerce \
+              -e UPDATE_XML=/tmp/update.xml \
+              -e PACKAGE_UPDATE_XML=/tmp/package-update.xml \
+              -e MODIFY_FILE=plugins/privacy/j2commerce/script.php \
+              -e SCENARIOS=clean,modified,privacy-override \
+              -e PRIVACY_OVERRIDE=/tmp/bundled-override.php \
+              "$C" php /var/www/html/tests/scripts/shared-backend-update.php
+          else
+            docker exec \
+              -e UPDATE_XML=/tmp/package-update.xml \
+              -e MODIFY_FILE=plugins/privacy/j2commerce/script.php \
+              -e SCENARIOS=clean,modified,privacy-override \
+              -e PRIVACY_OVERRIDE=/tmp/bundled-override.php \
+              "$C" php /var/www/html/tests/scripts/shared-backend-update.php
+          fi
       - name: Show container logs
         if: always()
         run: |

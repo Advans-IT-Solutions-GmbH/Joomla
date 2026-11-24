@@ -63,29 +63,35 @@ Organizations with subscription-based business models should contact Advans IT S
 
 ### Install Steps
 
-1. Download `plg_privacy_j2commerce_<version>.zip` from the latest release
+The plugin ships only inside the Joomla package **`pkg_privacy_j2commerce`** ([package README](../pkg_privacy_j2commerce/README.md)), which installs, updates and removes it together with its two bundled plugins. The plugin refuses to be installed on its own (the package would be missing its two other plugins).
+
+1. Download `pkg_privacy_j2commerce_<version>.zip` from the latest release (tag `privacy-v<version>`)
 2. **System → Install → Extensions**
 3. Upload and install
 4. **Enable via System → Manage → Plugins → Privacy - J2Commerce**
 
-The installer also installs the bundled task plugin **Task - J2Commerce Privacy Cleanup** (`plugins/task/j2commerceprivacy`) and enables it on the first installation. Updates install the new version of the task plugin but leave its enabled/disabled state unchanged. On install and on every update the installer also migrates scheduled tasks created with the old routine ID `plg_privacy_j2commerce.autocleanup` to `plg_task_j2commerceprivacy.autocleanup` and removes update sites of this plugin that still point to the repository's former path (`advansit/Joomla`), so Joomla only queries the current update server.
+The package installs this plugin first, then **System - J2Commerce Privacy Consent** (`plugins/system/j2commerceprivacy`) and **Task - J2Commerce Privacy Cleanup** (`plugins/task/j2commerceprivacy`), and enables those two only when they were not installed before. This plugin keeps the state Joomla gives it (disabled on the first installation) until you enable it. On install and on every update this plugin migrates scheduled tasks created with the old routine ID `plg_privacy_j2commerce.autocleanup` to `plg_task_j2commerceprivacy.autocleanup`; the package then checks the required cleanup task (see [Scheduled tasks](#scheduled-tasks)).
+
+### Migration from the standalone plugin
+
+Releases up to 1.9.0 shipped this plugin as a standalone ZIP (`plg_privacy_j2commerce_<version>.zip`) whose installer installed the two bundled plugins itself. Such a site needs no manual step:
+
+- **Through Joomla Update:** the update channel of the standalone plugin (`updates/update.xml` in this directory) announces the package as the next version of the plugin. **System → Update → Extensions** installs the package over the plugin.
+- **By hand:** installing `pkg_privacy_j2commerce_<version>.zip` over the standalone plugin has the same result.
+
+The package takes over the installed plugins as they are: Joomla updates each one in place, so their rows, settings, data and enabled states stay and no duplicate arises. A bundled plugin that is missing is installed and enabled. The package then assigns the three plugins to itself, removes every update site of the three plugins (also those that still point to the repository's former path `advansit/Joomla`) and registers its own. The migration follows the same rules as an update: the backup recommendation is shown once for the package, the file guard covers the files of all three plugins, and a bundled plugin that is installed in a newer version than the package brings stops the installation before anything is changed. An interrupted attempt can be repeated, it continues where the previous one stopped.
 
 ### Updating
 
-The bundle includes [System - J2Commerce Privacy](plugins/system/j2commerceprivacy/README.md) for checkout consent and guest-confirmation mail links, and [Task - J2Commerce Privacy Cleanup](plugins/task/j2commerceprivacy/README.md) for scheduled retention. Both are installed/enabled when first introduced and updated with this parent; later updates preserve their existing enabled/disabled states. They have no independent release/update channel. The task plugin being enabled is not the same as a published task with a working trigger.
+The package bundles [System - J2Commerce Privacy](plugins/system/j2commerceprivacy/README.md) for checkout consent and guest-confirmation mail links, and [Task - J2Commerce Privacy Cleanup](plugins/task/j2commerceprivacy/README.md) for scheduled retention. Updates of the package update all three plugins and preserve their enabled/disabled states. The plugins have no update channel of their own. The task plugin being enabled is not the same as a published task with a working trigger.
 
-The manifest registers an update server (`updates/update.xml` in this repository). New versions appear under **System → Update → Extensions**.
+The package manifest registers the update server (`../pkg_privacy_j2commerce/updates/update.xml` in this repository). New versions appear under **System → Update → Extensions** as **J2Commerce Privacy package**.
 
 Before updating, take a current, complete site backup that can be restored independently; the installer cannot verify this. The first update attempt displays this recommendation and stops before changing files; start the update again afterwards. The installer decides by itself and keeps no file copies. If it reports a modified or unknown file that the update would replace or adjust, it stops before copying anything and lists the path and the SHA-256 hashes: review the file, resolve it manually or defer the update, then retry. There is no approval command or bypass. Settings and the enabled state of the bundled plugins are kept. After an update, check the scheduled task (see [Scheduled tasks](#scheduled-tasks)) and the template overrides. On update, template overrides that were already deployed are not touched (see [Updating overrides after plugin updates](#updating-overrides-after-plugin-updates)).
 
 ### Uninstall
 
-Uninstall via **System → Manage → Extensions**. In addition to Joomla's standard removal of the privacy plugin, `script.php` (`uninstall()`):
-
-- deletes all scheduled tasks of type `plg_task_j2commerceprivacy.autocleanup` from `#__scheduler_tasks`
-- removes the bundled task plugin (its `#__extensions`, `#__schemas` and `#__update_sites_extensions` rows and the folder `plugins/task/j2commerceprivacy`)
-- removes the bundled consent system plugin (same rows and the folder `plugins/system/j2commerceprivacy`)
-- drops the table `#__privacy_j2commerce_attempts` (failed attempts of the confirmation page)
+Uninstall the package **J2Commerce Privacy package** via **System → Manage → Extensions**; it removes all three plugins. A single bundled plugin cannot be uninstalled on its own. Joomla's standard removal of the privacy plugin also drops the table `#__privacy_j2commerce_attempts` (failed attempts of the confirmation page, through the manifest's uninstall SQL). In addition, `script.php` (`uninstall()`) deletes all scheduled tasks of type `plg_task_j2commerceprivacy.autocleanup` from `#__scheduler_tasks`.
 
 Not removed:
 
@@ -204,7 +210,7 @@ The same page also works for customers with an account, so the request mail can 
 
 **Mail template:** no change is needed. The plugin replaces the link values while Joomla renders the mail (`onMailBeforeRendering`), the template text under **System → Templates → Mail Templates** stays as it is. If you rewrote these templates, keep `{TOKENURL}` or `{FORMURL}` and `{TOKEN}` in them. With **Guest Request Confirmation** off, the mail keeps Joomla's links and the confirmation page answers that it is not available; customers without account can then not confirm requests (Joomla's page requires a login).
 
-**Requirement:** the bundled system plugin **System - J2Commerce Privacy Consent** must be enabled (the installer enables it on the first installation), otherwise the mail keeps Joomla's links.
+**Requirement:** the bundled system plugin **System - J2Commerce Privacy Consent** must be enabled (the package enables it on its first installation), otherwise the mail keeps Joomla's links.
 
 ### Coexistence with the standalone Core privacy adapter
 
@@ -213,7 +219,7 @@ adds public account-free removal-request creation without replacing this shop
 plugin or its guest confirmation. Its
 [three-package upgrade and rollback procedure](../../plg_system_privacyrequests/#existing-site-three-package-upgrade-and-rollback-boundary)
 applies when upgrading an existing coupled test installation: generic plugin ZIP,
-Appointments component ZIP, then this existing shop plugin ZIP; keep the generic
+Appointments component ZIP, then the shop package ZIP (`pkg_privacy_j2commerce`, which takes over an existing standalone shop plugin); keep the generic
 adapter disabled until its operator contact route and captured test delivery are
 verified. Do not install a shop solely to use the standalone adapter.
 
@@ -226,7 +232,7 @@ requests, legal blockers, anonymization and retention responsibilities remain in
 place. No request statuses or accounts are manufactured during the handover.
 
 The coupled upgrade checks preserved disabled task/mail states; that is not a
-claim about a fresh shop installation, whose existing installer enables its
+claim about a fresh shop installation, whose package installer enables its
 bundled task plugin. Do not activate real mail or Scheduler work as part of this
 handover. While the generic adapter is disabled, hold processing of its managed
 requests rather than bypassing its additional completion guard.
@@ -239,7 +245,7 @@ requests rather than bypassing its additional completion guard.
 
 The plugin adds a privacy consent checkbox to the J2Commerce checkout (step 4: Shipping & Payment).
 
-- **J2Commerce 6:** the bundled system plugin **System - J2Commerce Privacy Consent** (`plg_system_j2commerceprivacy`, installed together with this plugin and enabled on first installation) renders the checkbox through the J2Commerce event `AfterDisplayShippingPayment`, which the J2Commerce 6 core templates (bootstrap5 and uikit, J2Commerce 6.3.4 or later) fire directly before the Continue button. The checkbox therefore appears with the J2Commerce core templates and with any template override that keeps this event call. No J2Commerce 6 checkout override is shipped or deployed; for your own override, copy the J2Commerce core template (`components/com_j2commerce/tmpl/checkout/bootstrap5/default_shipping_payment.php`) and keep the event call.
+- **J2Commerce 6:** the bundled system plugin **System - J2Commerce Privacy Consent** (`plg_system_j2commerceprivacy`, installed by the package together with this plugin and enabled on its first installation) renders the checkbox through the J2Commerce event `AfterDisplayShippingPayment`, which the J2Commerce 6 core templates (bootstrap5 and uikit, J2Commerce 6.3.4 or later) fire directly before the Continue button. The checkbox therefore appears with the J2Commerce core templates and with any template override that keeps this event call. No J2Commerce 6 checkout override is shipped or deployed; for your own override, copy the J2Commerce core template (`components/com_j2commerce/tmpl/checkout/bootstrap5/default_shipping_payment.php`) and keep the event call.
 - **Checkout overrides of earlier plugin versions (J2Commerce 6):** versions up to 1.5.5 copied `html/com_j2commerce/checkout/default_shipping_payment.php` into the site templates. That copy replaces both core templates and lacks newer J2Commerce features (payment-step custom fields, payment method descriptions, image URL handling, uikit markup). When J2Commerce 6.3.4 or later is installed, an unchanged copy from an earlier plugin version causes the installer to pause and list its path. Compare it with the current shop template and resolve the conflict manually before retrying; the installer never renames or deletes the file. A **changed** copy may contain your own changes: it is left in place and the installer warns about it. With an older or unknown J2Commerce version the installer does not retire or alter the copy, because it may still be needed to render the checkbox.
 - **J2Commerce 4 / J2Store:** the checkbox is rendered by the template override `default_shipping_payment.php`. See [Template Integration](#template-integration). The override carries the hidden `task`/`option`/`view` inputs, the button id `button-payment-method` that J2Store's own checkout script binds to, and the Joomla form token: J2Store 4.1.8 (security release of 2026-09-15) checks the token on `shipping_payment_method_validate` and answers "Invalid Token" without it. A copy deployed by an earlier plugin version has neither the token nor those inputs, and its Continue button is still a plain `type="submit"`. After updating J2Store to 4.1.8, replace such a copy with `overrides/com_j2store/checkout/default_shipping_payment.php` (the simplest and recommended path). If you merge by hand instead, take over **all** of these changes, not only the end block: (1) add `use Joomla\CMS\HTML\HTMLHelper;` next to the other `use` statements, otherwise the `HTMLHelper::_('form.token')` call fails with an undefined class; (2) change the Continue button from `<button type="submit" …>` to `<button type="button" id="button-payment-method" …>`, so J2Store's own checkout script posts the step (a plain submit button no longer does), and — while the consent checkbox is shown and required — render it `disabled` so the consent validator can re-enable it only after the box is ticked; and (3) add the hidden-field and token block (the three hidden inputs `task`, `option`, `view` plus `HTMLHelper::_('form.token')`) **inside the same wrapper as the Continue button**, directly after it, not behind that wrapper's closing tag. While the consent checkbox is shown and required the override renders that button `disabled`; the guard in `media/plg_privacy_j2commerce/js/consent-validator.js` re-enables it only once the checkbox is ticked and disables it again when it is cleared. If that deferred script is blocked or fails to load the button stays disabled, so the step fails closed — necessary because J2Store 4 has no server-side consent check and `type="button"` no longer triggers the browser's native required-field validation. (With the checkbox hidden the validator never loads, so the button is not disabled and checkout is not blocked.)
 
@@ -1319,20 +1325,22 @@ AND metakey = 'is_lifetime_license';
 ### Building
 
 ```bash
+# the release asset: the package with all three plugins
+cd ../pkg_privacy_j2commerce
 ./build.sh
 ```
 
-Creates: `plg_privacy_j2commerce_<version>.zip`
+Creates: `pkg_privacy_j2commerce_<version>.zip` (the release asset, tag prefix `privacy-v` unchanged). The package build runs this directory's `./build.sh` (which creates `plg_privacy_j2commerce_<version>.zip` with the bundled plugins below `plugins/`) and splits it into the three child archives. The plugin ZIP on its own is no longer installable: the plugin refuses an installation that does not come from the package. Package, plugin and both bundled plugins always carry the same version.
 
 ## Automated Testing
 
-This plugin has automated tests that run via GitHub Actions (`j2commerce-privacy.yml`) when this directory, shared files consumed by the workflow or the workflow itself change. Besides the Joomla 5 and Joomla 6 suites, CI runs a PHP syntax check, the language file lint, an update from the previous release and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, latest J2Commerce 6). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
+This plugin has automated tests that run via GitHub Actions (`j2commerce-privacy.yml`) when this directory, shared files consumed by the workflow or the workflow itself change. Besides the Joomla 5 and Joomla 6 suites, CI runs a PHP syntax check, the language file lint (plugin and package), the migration from the previous standalone release to the package and further updates through the backend, and a production-like lane (newest Joomla 6.x, PHP 8.4, MariaDB 10.6, latest J2Commerce 6). CI always tests the newest Joomla 5.4.x and 6.x releases (no pinned patch version) and prints them in each job log (`Tested versions: …`); a red run can therefore be caused by a new Joomla release. Details: [testing.md](../../.claude/skills/joomla-extensions/references/testing.md).
 
 ### Test Suites
 
 Order as in `tests/test.env`:
 
-1. **Installation** — the test environment installs the plugin through the Joomla web installer; plugin registration in DB, file deployment, template overrides; installer effects are checked against the plugin states recorded before the test setup enables all plugins
+1. **Installation** — the test environment installs the package through the Joomla web installer; package and plugin registration in DB (each plugin assigned to the package), file deployment, template overrides, the package as the only update channel (no update site on a plugin); installer effects are checked against the plugin states recorded before the test setup enables all plugins (consent and task plugin enabled, privacy plugin left disabled)
 2. **Configuration** — plugin params, language files, XML manifest
 3. **Privacy Plugin Base** — method existence and class structure
 4. **Data Integration** — test data setup and CRUD operations
@@ -1346,19 +1354,21 @@ Order as in `tests/test.env`:
 12. **AutoCleanup Task** — scheduled task registration; executes the cleanup routine through `php cli/joomla.php scheduler:run --id=<id>`, including the removal of IP address and user agent from the consent record of the anonymized order, an expired guest order (anonymized, consent evidence removed) and a guest order of 1 January ten years ago (kept); a lifetime-license order keeps its e-mail while the same user's other expired order loses it (J2Commerce 6); the copy of the expired order in the `#__j2store_*` tables of a migrated site is anonymized too; the consent of a deleted order loses IP address and user agent; an invalid fiscal year end is logged and a failing guest order ends the run with an error status
 13. **AcyMailing Integration** — detects AcyMailing via a minimal AcyMailing table structure created by the test environment (no AcyMailing installation), checks the export queries against a test subscriber, and triggers the plugin's own AcyMailing removal path against that structure to confirm that the subscriber and all related rows are deleted, also when Joomla's privacy user plugin pseudonymised the account first (lookup through the request e-mail); placeholder contacts of pseudonymised accounts deleted by the removal request and the cleanup step, while placeholders with list rows, placeholder-like addresses of accounts that are not pseudonymised, the placeholder address of another account ID, longer addresses and real contacts are kept; also checks that detection does not fail when AcyMailing is absent
 14. **Installer Messages** — shared suite: removes and reinstalls the package through the Joomla CLI in en-GB, de-DE and fr-FR, then updates once; fails on untranslated language keys, `[ERROR]`/`[WARNING]`/`[CAUTION]` output, PHP warnings or a non-zero exit code
-15. **Uninstall** — clean removal from database and filesystem
+15. **Uninstall** — the privacy plugin alone cannot be removed (the package blocks it); uninstalling the package removes the package and all three plugins from database and filesystem and deletes the cleanup tasks
 
 Besides the two Joomla lanes (both on MySQL), the job **Attempt Limiter** runs `tests/scripts/limiter-db.php` outside Joomla against PostgreSQL and MySQL with `joomla/database` 3 (Joomla 5) and 4 (Joomla 6): the install, update and uninstall SQL of `#__privacy_j2commerce_attempts` and the attempt limiter of the confirmation page (limits per address and per IP address, windows, given-back successes, a release after a window rollover, purge) including genuinely parallel requests from separate processes.
 
 ### Running Tests Locally
 
-Prerequisites: the package as `tests/extension.zip`; for Joomla 6 also `tests/j2commerce6.zip`, built from the newest aligned J2Commerce 6 commit the CI resolves (listed in the summary of the job `Resolve Shop Releases`). Full commands: [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
+Prerequisites: the package `pkg_privacy_j2commerce` as `tests/extension.zip`; for Joomla 6 also `tests/j2commerce6.zip`, built from the newest aligned J2Commerce 6 commit the CI resolves (listed in the summary of the job `Resolve Shop Releases`). Full commands: [Local Prerequisites](../../.claude/skills/joomla-extensions/references/testing.md#local-prerequisites).
 
 ```bash
-# in j2commerce/plg_privacy_j2commerce
+# in j2commerce/pkg_privacy_j2commerce
 ./build.sh
-mkdir -p tests
-cp *.zip tests/extension.zip
+mkdir -p ../plg_privacy_j2commerce/tests
+cp pkg_privacy_j2commerce_*.zip ../plg_privacy_j2commerce/tests/extension.zip
+
+# in j2commerce/plg_privacy_j2commerce
 
 cd tests
 docker compose up -d

@@ -499,11 +499,7 @@
         </fields>
     </config>
 
-    <updateservers>
-        <server type="extension" priority="1" name="J2Commerce Privacy Plugin">
-            https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/plg_privacy_j2commerce/updates/update.xml
-        </server>
-    </updateservers>
+    <!-- No update server of its own: the package pkg_privacy_j2commerce is the update channel. -->
     <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
     <php_minimum>8.1</php_minimum>
 </extension>

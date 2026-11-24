@@ -1,8 +1,9 @@
 <?php
 /**
- * Installation Tests for the Privacy - J2Commerce plugin.
+ * Installation Tests for the J2Commerce Privacy package (privacy plugin, consent system plugin and
+ * cleanup task plugin).
  *
- * The test environment installs the plugin through the Joomla web installer
+ * The test environment installs the package through the Joomla web installer
  * (the Installer singleton used by the backend) and afterwards enables all
  * plugins by SQL. The plugin states before that SQL step are recorded in
  * /tmp/test-state/plugins-before-activation.tsv, so the checks below can tell
@@ -20,7 +21,8 @@ class InstallationTest
 {
     private const STATE_FILE  = '/tmp/test-state/plugins-before-activation.tsv';
     private const METHOD_FILE = '/tmp/test-state/privacy-install-method';
-    private const UPDATE_URL  = 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/plg_privacy_j2commerce/updates/update.xml';
+    private const UPDATE_URL  = 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/pkg_privacy_j2commerce/updates/update.xml';
+    private const LEGACY_URL  = 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/plg_privacy_j2commerce/updates/update.xml';
 
     private $db;
     private $passed = 0;
@@ -45,7 +47,7 @@ class InstallationTest
     private function extensionRow(string $folder, string $element): ?object
     {
         $query = $this->db->getQuery(true)
-            ->select('extension_id, enabled')
+            ->select('extension_id, enabled, package_id')
             ->from('#__extensions')
             ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('plugin'))
             ->where($this->db->quoteName('element') . ' = ' . $this->db->quote($element))
@@ -112,11 +114,24 @@ class InstallationTest
         }
 
         $method = is_file(self::METHOD_FILE) ? trim((string) file_get_contents(self::METHOD_FILE)) : '';
-        $this->test('Plugin was installed through the Joomla web installer', $method === 'web',
+        $this->test('Package was installed through the Joomla web installer', $method === 'web',
             'recorded install method: ' . ($method === '' ? 'none' : $method));
 
-        // The bundled plugins are installed from postflight(); they must not replace the state
-        // of the running privacy plugin installation (message, manifest, extension row).
+        $query = $this->db->getQuery(true)
+            ->select('extension_id')
+            ->from('#__extensions')
+            ->where($this->db->quoteName('type') . ' = ' . $this->db->quote('package'))
+            ->where($this->db->quoteName('element') . ' = ' . $this->db->quote('pkg_privacy_j2commerce'));
+        $packageId = (int) $this->db->setQuery($query)->loadResult();
+        $this->test('Package pkg_privacy_j2commerce is installed', $packageId > 0);
+
+        if ($plugin) {
+            $this->test('The privacy plugin belongs to the package', $packageId > 0 && (int) $plugin->package_id === $packageId,
+                'package_id ' . $plugin->package_id);
+        }
+
+        // Each bundled plugin is installed by its own adapter; the messages of one must not
+        // replace those of another (message, manifest, extension row).
         if ($method === 'web') {
             $messagesFile = '/tmp/test-state/install-messages.json';
             $messages     = is_file($messagesFile) ? json_decode((string) file_get_contents($messagesFile), true) : null;
@@ -149,11 +164,22 @@ class InstallationTest
         $taskPlugin = $this->extensionRow('task', 'j2commerceprivacy');
         $this->test('Bundled task plugin is installed', $taskPlugin !== null, 'Task plugin not found in database');
 
+        if ($taskPlugin) {
+            $this->test('The task plugin belongs to the package', $packageId > 0 && (int) $taskPlugin->package_id === $packageId);
+        }
+
         $state = $this->stateBeforeActivation();
 
         if ($state === null) {
             $this->test('Plugin state before test setup was recorded', false, self::STATE_FILE . ' missing');
         } else {
+            // The package enables only the consent and task plugins; the operator enables the
+            // privacy plugin after configuring it.
+            $this->test(
+                'Installer left the privacy plugin disabled (state before test setup)',
+                ($state['privacy/j2commerce'] ?? null) === 0,
+                'recorded: ' . var_export($state['privacy/j2commerce'] ?? null, true)
+            );
             $this->test(
                 'Installer enabled the bundled task plugin (state before test setup)',
                 ($state['task/j2commerceprivacy'] ?? null) === 1,
@@ -166,6 +192,10 @@ class InstallationTest
 
         $systemPlugin = $this->extensionRow('system', 'j2commerceprivacy');
         $this->test('Bundled consent system plugin is installed', $systemPlugin !== null, 'System plugin not found in database');
+
+        if ($systemPlugin) {
+            $this->test('The consent system plugin belongs to the package', $packageId > 0 && (int) $systemPlugin->package_id === $packageId);
+        }
 
         if ($state !== null) {
             $this->test(
@@ -182,19 +212,28 @@ class InstallationTest
         $this->test('Privacy tab layout exists',
             file_exists(JPATH_BASE . '/plugins/privacy/j2commerce/layouts/privacy_tab.php'));
 
-        // Test 3: Update server registered for the privacy plugin itself
-        if ($plugin) {
-            $sites = $this->linkedUpdateSites((int) $plugin->extension_id);
-            $this->test('Exactly one update site is linked to the privacy plugin', count($sites) === 1,
+        // Test 3: The package is the only update channel: one update site linked to the package,
+        // none to a bundled plugin (also not the legacy channel of the standalone plugin).
+        if ($packageId > 0) {
+            $sites = $this->linkedUpdateSites($packageId);
+            $this->test('Exactly one update site is linked to the package', count($sites) === 1,
                 count($sites) . ' linked: ' . implode(', ', $sites));
-            $this->test('The linked update site is the current update server',
+            $this->test('The linked update site is the package update server',
                 count($sites) === 1 && $sites[0] === self::UPDATE_URL);
         }
 
-        if ($taskPlugin) {
-            $this->test('No update site of the privacy plugin is attached to the task plugin',
-                !in_array(self::UPDATE_URL, $this->linkedUpdateSites((int) $taskPlugin->extension_id), true));
+        foreach (['privacy plugin' => $plugin, 'task plugin' => $taskPlugin, 'consent system plugin' => $systemPlugin] as $label => $row) {
+            if ($row) {
+                $sites = $this->linkedUpdateSites((int) $row->extension_id);
+                $this->test("No update site is linked to the $label", $sites === [], implode(', ', $sites));
+            }
         }
+
+        $query = $this->db->getQuery(true)
+            ->select('COUNT(*)')
+            ->from('#__update_sites')
+            ->where($this->db->quoteName('location') . ' = ' . $this->db->quote(self::LEGACY_URL));
+        $this->test('The legacy update channel of the standalone plugin is not registered', (int) $this->db->setQuery($query)->loadResult() === 0);
 
         // Test 4: All extensions ship the same three languages.
         foreach (['de-DE', 'en-GB', 'fr-FR'] as $tag) {

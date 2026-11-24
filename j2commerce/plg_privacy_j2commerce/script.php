@@ -14,7 +14,6 @@ require_once is_file(__DIR__ . '/advansinstaller/load.php')
 
 use Joomla\CMS\Factory;
 use Advans\Installer\V3\InstallerScript;
-use Joomla\CMS\Installer\Installer;
 use Joomla\CMS\Language\Text;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Database\ParameterType;
@@ -32,9 +31,6 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
 
     /** @var string[] Files that could not be copied */
     private array $_overridesFailed = [];
-
-    /** Whether the bundled task plugin was installed in this run (enabled on first installation) */
-    private bool $taskPluginReady = false;
 
     /**
      * First J2Commerce 6 version whose core checkout templates (bootstrap5 and uikit) fire
@@ -67,6 +63,35 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     private function dbQuery(\Joomla\Database\DatabaseInterface $db): \Joomla\Database\QueryInterface
     {
         return method_exists($db, 'createQuery') ? $db->createQuery() : $db->getQuery(true);
+    }
+
+    /**
+     * The plugin ships only inside the package pkg_privacy_j2commerce, which installs it together
+     * with the consent system plugin and the cleanup task plugin and owns the update channel. An
+     * installation of the plugin on its own would leave the two other plugins behind, so it is
+     * refused. The package also takes over an installation of the standalone plugin of earlier
+     * versions.
+     */
+    public function preflight($type, $parent)
+    {
+        if (in_array($type, ['install', 'update'], true) && !$this->installedByPackage()) {
+            $language = Factory::getApplication()->getLanguage();
+            $language->load('plg_privacy_j2commerce', (string) $parent->getParent()->getPath('source'))
+                || $language->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');
+            Factory::getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_INSTALL_PACKAGE_REQUIRED'), 'error');
+
+            return false;
+        }
+
+        return parent::preflight($type, $parent);
+    }
+
+    /** Whether the package pkg_privacy_j2commerce is installing this plugin right now. */
+    private function installedByPackage(): bool
+    {
+        return class_exists('Pkg_Privacy_j2commerceInstallerScript', false)
+            && is_callable(['Pkg_Privacy_j2commerceInstallerScript', 'installing'])
+            && \Pkg_Privacy_j2commerceInstallerScript::installing();
     }
 
     protected function guardedFiles(string $type, object $parent): array
@@ -152,8 +177,7 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         if ($type === 'install' || $type === 'update') {
             $packageSource = $parent->getParent()->getPath('source');
 
-            // Load the language first: every message below, including warnings
-            // raised while installing the bundled task plugin, is translated.
+            // Load the language first: every message below is translated.
             $app = Factory::getApplication();
             $lang = $app->getLanguage();
             $lang->load('plg_privacy_j2commerce', JPATH_ADMINISTRATOR);
@@ -165,7 +189,6 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                 @unlink($oldManifest);
             }
 
-            $this->ensureUpdateSite();
             $this->ensureAttemptsTable();
             $this->removeLegacyAutoCleanupTaskFile();
             $this->warnIfJ2CommerceMissing();
@@ -184,8 +207,6 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
             $this->warnOutdatedCheckoutOverrides();
             $this->warnOutdatedJ2StoreCheckoutOverrides();
 
-            $this->installTaskPlugin($packageSource, $type);
-            $this->installConsentSystemPlugin($packageSource);
             $this->anonymizeLegacyConsents();
             $this->migrateLegacySchedulerTasks();
 
@@ -245,11 +266,9 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                 $message .= '<div style="' . $sInfo . '">';
                 $message .= '<div style="' . $sStep . '">' . Text::sprintf('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP_LABEL', ++$step) . '</div>';
                 $message .= '<h3 style="margin-top:0">' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_TITLE') . '</h3>';
-                $message .= '<p>' . Text::_(
-                    $this->taskPluginReady
-                        ? 'PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_DESC'
-                        : 'PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_DESC_TASK_FAILED'
-                ) . '</p>';
+                // The package installs the two bundled plugins after this one; when one of them
+                // fails, Joomla stops the whole package installation with an error.
+                $message .= '<p>' . Text::_('PLG_PRIVACY_J2COMMERCE_POSTINSTALL_STEP1_DESC') . '</p>';
                 $message .= '</div>';
             }
 
@@ -415,8 +434,9 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     {
         Factory::getApplication()->getLanguage()->load('plg_privacy_j2commerce', JPATH_PLUGINS . '/privacy/j2commerce');
 
-        $this->uninstallTaskPlugin();
-        $this->uninstallConsentSystemPlugin();
+        // The package removes the consent system plugin and the task plugin; the scheduled tasks of
+        // the cleanup routine are data of this plugin and go with it.
+        $this->removeSchedulerTasks();
     }
 
     /**
@@ -488,94 +508,6 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
                 'warning'
             );
         }
-    }
-
-    /**
-     * Install or update the bundled consent system plugin.
-     *
-     * The privacy plugin group is not imported during the J2Commerce checkout, so checkout
-     * consent is validated and recorded by this system plugin. It is enabled on first
-     * installation only; an administrator's later choice to disable it survives updates.
-     */
-    private function installConsentSystemPlugin(string $packageSource): void
-    {
-        $source = $packageSource . '/plugins/system/j2commerceprivacy';
-
-        if (!is_dir($source) || !is_file($source . '/j2commerceprivacy.xml')) {
-            Factory::getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_WARN_CONSENT_PLUGIN_MISSING'), 'warning');
-
-            return;
-        }
-
-        $isNew = $this->getConsentSystemPluginExtensionId() === 0;
-
-        // Dedicated Installer instance, as for the task plugin: the singleton still holds the
-        // manifest and state of the privacy plugin installation that is running postflight().
-        $installer = new Installer();
-
-        if (method_exists($installer, 'setDatabase')) {
-            $installer->setDatabase(Factory::getContainer()->get(DatabaseInterface::class));
-        }
-
-        if (!$installer->install($source)) {
-            Factory::getApplication()->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_WARN_CONSENT_PLUGIN_INSTALL_FAILED'), 'warning');
-
-            return;
-        }
-
-        $extensionId = $this->getConsentSystemPluginExtensionId();
-
-        if ($isNew && $extensionId) {
-            $db    = Factory::getContainer()->get(DatabaseInterface::class);
-            $query = $this->dbQuery($db)
-                ->update($db->quoteName('#__extensions'))
-                ->set($db->quoteName('enabled') . ' = 1')
-                ->where($db->quoteName('extension_id') . ' = :extensionId')
-                ->bind(':extensionId', $extensionId, ParameterType::INTEGER);
-            $db->setQuery($query);
-            $db->execute();
-        }
-    }
-
-    /**
-     * Remove the bundled consent system plugin when the privacy plugin is uninstalled.
-     * Recorded consents in #__privacy_consents are Joomla core data and are kept.
-     */
-    private function uninstallConsentSystemPlugin(): void
-    {
-        $db          = Factory::getContainer()->get(DatabaseInterface::class);
-        $extensionId = $this->getConsentSystemPluginExtensionId();
-
-        if ($extensionId) {
-            foreach (['#__schemas', '#__update_sites_extensions', '#__extensions'] as $table) {
-                $query = $this->dbQuery($db)
-                    ->delete($db->quoteName($table))
-                    ->where($db->quoteName('extension_id') . ' = :extensionId')
-                    ->bind(':extensionId', $extensionId, ParameterType::INTEGER);
-                $db->setQuery($query);
-                $db->execute();
-            }
-        }
-
-        $this->deleteDirectory(JPATH_PLUGINS . '/system/j2commerceprivacy');
-    }
-
-    /**
-     * Return the bundled consent system plugin extension ID (0 if not installed).
-     */
-    private function getConsentSystemPluginExtensionId(): int
-    {
-        $db = Factory::getContainer()->get(DatabaseInterface::class);
-
-        $query = $this->dbQuery($db)
-            ->select($db->quoteName('extension_id'))
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-            ->where($db->quoteName('folder') . ' = ' . $db->quote('system'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('j2commerceprivacy'));
-        $db->setQuery($query);
-
-        return (int) $db->loadResult();
     }
 
     /**
@@ -1538,308 +1470,53 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
     }
 
     /**
-     * Register the update site if not already present.
+     * Delete the scheduled tasks of the cleanup routine when the privacy plugin is uninstalled
+     * (data cleanup). The package removes the task plugin itself.
      */
-    private function ensureUpdateSite(): void
+    private function removeSchedulerTasks(): void
     {
-        $db = Factory::getContainer()->get(DatabaseInterface::class);
-        $updateUrl = 'https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/plg_privacy_j2commerce/updates/update.xml';
-
-        $element = 'j2commerce';
-        $folder = 'privacy';
-        $query = $this->dbQuery($db)
-            ->select($db->quoteName('extension_id'))
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('element') . ' = :element')
-            ->where($db->quoteName('folder') . ' = :folder')
-            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-            ->bind(':element', $element)
-            ->bind(':folder', $folder);
-        $db->setQuery($query);
-        $extensionId = (int) $db->loadResult();
-
-        if (!$extensionId) {
-            return;
-        }
-
-        $this->removeLegacyUpdateSites($db, $extensionId);
-
-        $query = $this->dbQuery($db)
-            ->select($db->quoteName('update_site_id'))
-            ->from($db->quoteName('#__update_sites'))
-            ->where($db->quoteName('location') . ' = :url')
-            ->bind(':url', $updateUrl);
-        $db->setQuery($query);
-        $siteId = (int) $db->loadResult();
-
-        if ($siteId) {
-            $query = $this->dbQuery($db)
-                ->select('COUNT(*)')
-                ->from($db->quoteName('#__update_sites_extensions'))
-                ->where($db->quoteName('update_site_id') . ' = :siteId')
-                ->where($db->quoteName('extension_id') . ' = :extId')
-                ->bind(':siteId', $siteId, ParameterType::INTEGER)
-                ->bind(':extId', $extensionId, ParameterType::INTEGER);
-            $db->setQuery($query);
-
-            if (!(int) $db->loadResult()) {
-                $query = $this->dbQuery($db)
-                    ->insert($db->quoteName('#__update_sites_extensions'))
-                    ->columns([$db->quoteName('update_site_id'), $db->quoteName('extension_id')])
-                    ->values(':siteId, :extId')
-                    ->bind(':siteId', $siteId, ParameterType::INTEGER)
-                    ->bind(':extId', $extensionId, ParameterType::INTEGER);
-                $db->setQuery($query);
-                $db->execute();
-            }
-            return;
-        }
-
-        $query = $this->dbQuery($db)
-            ->insert($db->quoteName('#__update_sites'))
-            ->columns([
-                $db->quoteName('name'),
-                $db->quoteName('type'),
-                $db->quoteName('location'),
-                $db->quoteName('enabled'),
-            ])
-            ->values(':name, :type, :url, 1');
-        $name = 'J2Commerce Privacy Plugin';
-        $type = 'extension';
-        $query->bind(':name', $name)
-            ->bind(':type', $type)
-            ->bind(':url', $updateUrl);
-        $db->setQuery($query);
-        $db->execute();
-        $siteId = (int) $db->insertid();
-
-        $query = $this->dbQuery($db)
-            ->insert($db->quoteName('#__update_sites_extensions'))
-            ->columns([$db->quoteName('update_site_id'), $db->quoteName('extension_id')])
-            ->values(':siteId, :extId')
-            ->bind(':siteId', $siteId, ParameterType::INTEGER)
-            ->bind(':extId', $extensionId, ParameterType::INTEGER);
-        $db->setQuery($query);
-        $db->execute();
-    }
-
-    /**
-     * Remove update sites of this plugin that still point to the repository's
-     * former organisation name. Joomla would otherwise keep querying both the
-     * old and the new update URL.
-     */
-    private function removeLegacyUpdateSites(DatabaseInterface $db, int $extensionId): void
-    {
-        $legacyPattern = '%/advansit/Joomla/%';
-
-        $query = $this->dbQuery($db)
-            ->select($db->quoteName('s.update_site_id'))
-            ->from($db->quoteName('#__update_sites', 's'))
-            ->join(
-                'INNER',
-                $db->quoteName('#__update_sites_extensions', 'map'),
-                $db->quoteName('map.update_site_id') . ' = ' . $db->quoteName('s.update_site_id')
-            )
-            ->where($db->quoteName('map.extension_id') . ' = :extId')
-            ->where($db->quoteName('s.location') . ' LIKE :legacy')
-            ->bind(':extId', $extensionId, ParameterType::INTEGER)
-            ->bind(':legacy', $legacyPattern);
-        $db->setQuery($query);
-        $siteIds = array_map('intval', $db->loadColumn() ?: []);
-
-        foreach ($siteIds as $siteId) {
-            $query = $this->dbQuery($db)
-                ->delete($db->quoteName('#__update_sites_extensions'))
-                ->where($db->quoteName('update_site_id') . ' = :siteId')
-                ->where($db->quoteName('extension_id') . ' = :extId')
-                ->bind(':siteId', $siteId, ParameterType::INTEGER)
-                ->bind(':extId', $extensionId, ParameterType::INTEGER);
-            $db->setQuery($query);
-            $db->execute();
-
-            $query = $this->dbQuery($db)
-                ->select('COUNT(*)')
-                ->from($db->quoteName('#__update_sites_extensions'))
-                ->where($db->quoteName('update_site_id') . ' = :siteId')
-                ->bind(':siteId', $siteId, ParameterType::INTEGER);
-            $db->setQuery($query);
-
-            if ((int) $db->loadResult() > 0) {
-                continue;
-            }
-
-            foreach (['#__updates', '#__update_sites'] as $table) {
-                $query = $this->dbQuery($db)
-                    ->delete($db->quoteName($table))
-                    ->where($db->quoteName('update_site_id') . ' = :siteId')
-                    ->bind(':siteId', $siteId, ParameterType::INTEGER);
-                $db->setQuery($query);
-                $db->execute();
-            }
-        }
-    }
-
-    /**
-     * Install or update the bundled Joomla task plugin.
-     *
-     * A dedicated Installer instance is used on purpose. The backend installs the
-     * privacy plugin through the Installer singleton; installing the task plugin
-     * through that same singleton from inside postflight() would replace its
-     * manifest and state while the outer installation is still running.
-     */
-    private function installTaskPlugin(string $packageSource, string $type): void
-    {
-        $source = $packageSource . '/plugins/task/j2commerceprivacy';
-        $app    = Factory::getApplication();
-
-        if (!is_dir($source) || !is_file($source . '/j2commerceprivacy.xml')) {
-            $app->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_WARN_TASK_PLUGIN_MISSING'), 'warning');
-
-            return;
-        }
-
-        $installer = new Installer();
-
-        if (method_exists($installer, 'setDatabase')) {
-            $installer->setDatabase(Factory::getContainer()->get(DatabaseInterface::class));
-        }
-
-        // An update keeps the state the administrator chose for the task plugin.
-        // It is enabled only on the first installation or when it was missing.
-        $existed = $this->getTaskPluginExtensionId() > 0;
-
-        if (!$installer->install($source)) {
-            $app->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_WARN_TASK_PLUGIN_INSTALL_FAILED'), 'warning');
-
-            return;
-        }
-
-        if ($type === 'install' || !$existed) {
-            $this->setTaskPluginEnabled(true);
-        }
-
-        $this->taskPluginReady = $this->getTaskPluginExtensionId() > 0;
-    }
-
-    /**
-     * Remove the bundled task plugin when the privacy plugin is uninstalled.
-     */
-    private function uninstallTaskPlugin(): void
-    {
-        $db          = Factory::getContainer()->get(DatabaseInterface::class);
-        $extensionId = $this->getTaskPluginExtensionId();
-
+        $db       = Factory::getContainer()->get(DatabaseInterface::class);
         $taskType = 'plg_task_j2commerceprivacy.autocleanup';
         $tables   = $db->getTableList();
         $app      = Factory::getApplication();
 
-        if (in_array($db->getPrefix() . 'scheduler_tasks', $tables, true)) {
-            $query = $this->dbQuery($db)
-                ->select($db->quoteName('id'))
-                ->from($db->quoteName('#__scheduler_tasks'))
-                ->where($db->quoteName('type') . ' = :taskType')
-                ->bind(':taskType', $taskType);
-            $taskIds = array_map('intval', (array) $db->setQuery($query)->loadColumn());
-            $taskTable = $app->bootComponent('com_scheduler')->getMVCFactory()
-                ->createTable('Task', 'Administrator', ['dbo' => $db]);
-            $removedTasks = 0;
-
-            if ($taskIds !== [] && !$taskTable) {
-                throw new \RuntimeException('The Scheduler task table is unavailable for asset cleanup.');
-            }
-
-            foreach ($taskIds as $taskId) {
-                if ($taskTable->delete($taskId)) {
-                    $removedTasks++;
-                }
-            }
-
-            if ($removedTasks > 0) {
-                $app->enqueueMessage(
-                    Text::sprintf('PLG_PRIVACY_J2COMMERCE_UNINSTALL_TASKS_REMOVED', $removedTasks),
-                    'message'
-                );
-            }
-        }
-
-        // The task plugin is removed directly (database rows and files) because
-        // running Joomla's installer from inside uninstall() would reset the
-        // state of the installation that is currently in progress.
-        $taskDir = JPATH_PLUGINS . '/task/j2commerceprivacy';
-
-        if ($extensionId) {
-            $query = $this->dbQuery($db)
-                ->delete($db->quoteName('#__schemas'))
-                ->where($db->quoteName('extension_id') . ' = :extensionId')
-                ->bind(':extensionId', $extensionId, ParameterType::INTEGER);
-            $db->setQuery($query);
-            $db->execute();
-
-            $query = $this->dbQuery($db)
-                ->delete($db->quoteName('#__update_sites_extensions'))
-                ->where($db->quoteName('extension_id') . ' = :extensionId')
-                ->bind(':extensionId', $extensionId, ParameterType::INTEGER);
-            $db->setQuery($query);
-            $db->execute();
-
-            $query = $this->dbQuery($db)
-                ->delete($db->quoteName('#__extensions'))
-                ->where($db->quoteName('extension_id') . ' = :extensionId')
-                ->bind(':extensionId', $extensionId, ParameterType::INTEGER);
-            $db->setQuery($query);
-            $db->execute();
-        }
-
-        $this->deleteDirectory($taskDir);
-
-        // Confirm the removal only when the task plugin is really gone.
-        if ($extensionId && $this->getTaskPluginExtensionId() === 0 && !is_dir($taskDir)) {
-            $app->enqueueMessage(Text::_('PLG_PRIVACY_J2COMMERCE_UNINSTALL_TASK_PLUGIN_REMOVED'), 'message');
-        }
-    }
-
-    /**
-     * Enable or disable the installed task plugin.
-     */
-    private function setTaskPluginEnabled(bool $enabled): void
-    {
-        $db          = Factory::getContainer()->get(DatabaseInterface::class);
-        $extensionId = $this->getTaskPluginExtensionId();
-
-        if (!$extensionId) {
+        if (!in_array($db->getPrefix() . 'scheduler_tasks', $tables, true)) {
             return;
         }
 
-        $enabledValue = $enabled ? 1 : 0;
-
         $query = $this->dbQuery($db)
-            ->update($db->quoteName('#__extensions'))
-            ->set($db->quoteName('enabled') . ' = :enabled')
-            ->where($db->quoteName('extension_id') . ' = :extensionId')
-            ->bind(':enabled', $enabledValue, ParameterType::INTEGER)
-            ->bind(':extensionId', $extensionId, ParameterType::INTEGER);
-        $db->setQuery($query);
-        $db->execute();
+            ->select($db->quoteName('id'))
+            ->from($db->quoteName('#__scheduler_tasks'))
+            ->where($db->quoteName('type') . ' = :taskType')
+            ->bind(':taskType', $taskType);
+        $taskIds = array_map('intval', (array) $db->setQuery($query)->loadColumn());
+
+        if ($taskIds === []) {
+            return;
+        }
+
+        $taskTable = $app->bootComponent('com_scheduler')->getMVCFactory()
+            ->createTable('Task', 'Administrator', ['dbo' => $db]);
+
+        if (!$taskTable) {
+            throw new \RuntimeException('The Scheduler task table is unavailable for asset cleanup.');
+        }
+
+        $removedTasks = 0;
+
+        foreach ($taskIds as $taskId) {
+            if ($taskTable->delete($taskId)) {
+                $removedTasks++;
+            }
+        }
+
+        if ($removedTasks > 0) {
+            $app->enqueueMessage(
+                Text::sprintf('PLG_PRIVACY_J2COMMERCE_UNINSTALL_TASKS_REMOVED', $removedTasks),
+                'message'
+            );
+        }
     }
-
-    /**
-     * Return the bundled task plugin extension ID.
-     */
-    private function getTaskPluginExtensionId(): int
-    {
-        $db = Factory::getContainer()->get(DatabaseInterface::class);
-
-        $query = $this->dbQuery($db)
-            ->select($db->quoteName('extension_id'))
-            ->from($db->quoteName('#__extensions'))
-            ->where($db->quoteName('type') . ' = ' . $db->quote('plugin'))
-            ->where($db->quoteName('folder') . ' = ' . $db->quote('task'))
-            ->where($db->quoteName('element') . ' = ' . $db->quote('j2commerceprivacy'));
-        $db->setQuery($query);
-
-        return (int) $db->loadResult();
-    }
-
     /**
      * Move any task entries created from the old non-discoverable routine ID.
      */
@@ -1876,38 +1553,5 @@ class Plgprivacyj2commerceInstallerScript extends InstallerScript
         if (is_dir($oldDir) && count(glob($oldDir . '/*') ?: []) === 0) {
             @rmdir($oldDir);
         }
-    }
-
-    /**
-     * Recursively delete a directory without invoking Joomla's installer from inside uninstall().
-     */
-    private function deleteDirectory(string $path): void
-    {
-        if (!is_dir($path)) {
-            return;
-        }
-
-        $items = scandir($path);
-
-        if ($items === false) {
-            return;
-        }
-
-        foreach ($items as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-
-            $itemPath = $path . '/' . $item;
-
-            if (is_dir($itemPath) && !is_link($itemPath)) {
-                $this->deleteDirectory($itemPath);
-                continue;
-            }
-
-            @unlink($itemPath);
-        }
-
-        @rmdir($path);
     }
 }

@@ -162,7 +162,7 @@ class AutoCleanupTaskTest
 
     private function testBundledInstaller(): void
     {
-        echo "\n--- Bundled Task Plugin (result of the privacy installer) ---\n";
+        echo "\n--- Bundled Task Plugin (result of the package installer) ---\n";
 
         $query = $this->db->getQuery(true)
             ->select($this->db->quoteName('extension_id'))

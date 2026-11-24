@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="package" method="upgrade">
+    <name>PKG_PRIVACY_J2COMMERCE</name>
+    <packagename>privacy_j2commerce</packagename>
+    <blockChildUninstall>true</blockChildUninstall>
+    <author>Advans IT Solutions GmbH</author>
+    <creationDate>2026-11</creationDate>
+    <copyright>(C) 2026 Advans IT Solutions GmbH</copyright>
+    <license>GNU General Public License version 3 or later; see LICENSE.txt</license>
+    <authorEmail>info@advans.ch</authorEmail>
+    <authorUrl>https://advans.ch</authorUrl>
+    <version>1.9.0</version>
+    <description>PKG_PRIVACY_J2COMMERCE_XML_DESCRIPTION</description>
+
+    <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+    <php_minimum>8.1</php_minimum>
+
+    <scriptfile>script.php</scriptfile>
+
+    <packager>Advans IT Solutions GmbH</packager>
+    <packagerurl>https://advans.ch</packagerurl>
+
+    <!-- The privacy plugin first: when it refuses (requirements, a checkout override to review),
+         nothing else has changed yet. -->
+    <files folder="packages">
+        <file type="plugin" id="j2commerce" group="privacy">plg_privacy_j2commerce.zip</file>
+        <file type="plugin" id="j2commerceprivacy" group="system">plg_system_j2commerceprivacy.zip</file>
+        <file type="plugin" id="j2commerceprivacy" group="task">plg_task_j2commerceprivacy.zip</file>
+    </files>
+
+    <languages folder="language">
+        <language tag="en-GB">en-GB/pkg_privacy_j2commerce.sys.ini</language>
+        <language tag="en-GB">en-GB/pkg_privacy_j2commerce.ini</language>
+        <language tag="de-DE">de-DE/pkg_privacy_j2commerce.sys.ini</language>
+        <language tag="de-DE">de-DE/pkg_privacy_j2commerce.ini</language>
+        <language tag="fr-FR">fr-FR/pkg_privacy_j2commerce.sys.ini</language>
+        <language tag="fr-FR">fr-FR/pkg_privacy_j2commerce.ini</language>
+    </languages>
+
+    <updateservers>
+        <server type="extension" name="J2Commerce Privacy Package Updates">https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/pkg_privacy_j2commerce/updates/update.xml</server>
+    </updateservers>
+</extension>

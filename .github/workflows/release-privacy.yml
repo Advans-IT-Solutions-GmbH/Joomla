@@ -36,8 +36,14 @@ jobs:
           VERSION_BUMP: ${{ inputs.bump }}
         run: |
           TAG_PREFIX="privacy-v"
-          XML_FILE="j2commerce/plg_privacy_j2commerce/j2commerce.xml"
+          XML_FILE="j2commerce/pkg_privacy_j2commerce/pkg_privacy_j2commerce.xml"
+          # The package pkg_privacy_j2commerce is the release asset; the privacy plugin and its two
+          # bundled plugins keep their sources in plg_privacy_j2commerce. Both directories are
+          # named as EXT_PATH, so shared/tests/requirements-check.php finds this workflow for each.
+          EXT_PATH="j2commerce/pkg_privacy_j2commerce/"
+          EXT_PATHS=("$EXT_PATH")
           EXT_PATH="j2commerce/plg_privacy_j2commerce/"
+          EXT_PATHS+=("$EXT_PATH")
 
           CURRENT=$(grep -oP '(?<=<version>)[^<]+' "$XML_FILE")
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
@@ -50,11 +56,11 @@ jobs:
             LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -1)
 
             if [ -n "$LAST_TAG" ]; then
-              SUBJECTS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s" --no-merges -- "$EXT_PATH")
-              BODIES=$(git log "$LAST_TAG"..HEAD --pretty=format:"%b" --no-merges -- "$EXT_PATH")
+              SUBJECTS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s" --no-merges -- "${EXT_PATHS[@]}")
+              BODIES=$(git log "$LAST_TAG"..HEAD --pretty=format:"%b" --no-merges -- "${EXT_PATHS[@]}")
             else
-              SUBJECTS=$(git log --pretty=format:"%s" --no-merges -20 -- "$EXT_PATH")
-              BODIES=$(git log --pretty=format:"%b" --no-merges -20 -- "$EXT_PATH")
+              SUBJECTS=$(git log --pretty=format:"%s" --no-merges -20 -- "${EXT_PATHS[@]}")
+              BODIES=$(git log --pretty=format:"%b" --no-merges -20 -- "${EXT_PATHS[@]}")
             fi
 
             if [ -z "$SUBJECTS" ]; then
@@ -92,28 +98,29 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.new }}"
           DATE=$(date +%Y-%m)
-          cd j2commerce/plg_privacy_j2commerce
-          echo "$VERSION" > VERSION
-          sed -i "s/VERSION=\".*\"/VERSION=\"$VERSION\"/" build.env
-          sed -i \
-            -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
-            -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
-            j2commerce.xml
-          sed -i \
-            -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
-            -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
-            plugins/task/j2commerceprivacy/j2commerceprivacy.xml
-          sed -i \
-            -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
-            -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
-            plugins/system/j2commerceprivacy/j2commerceprivacy.xml
+          stamp() {
+            sed -i \
+              -e "s/<version>[^<]*<\/version>/<version>$VERSION<\/version>/" \
+              -e "s/<creationDate>[^<]*<\/creationDate>/<creationDate>$DATE<\/creationDate>/" \
+              "$1"
+          }
+          # The package, the privacy plugin and both bundled plugins always carry the same version
+          # (the package build refuses anything else).
+          for dir in j2commerce/pkg_privacy_j2commerce j2commerce/plg_privacy_j2commerce; do
+            echo "$VERSION" > "$dir/VERSION"
+            sed -i "s/VERSION=\".*\"/VERSION=\"$VERSION\"/" "$dir/build.env"
+          done
+          stamp j2commerce/pkg_privacy_j2commerce/pkg_privacy_j2commerce.xml
+          stamp j2commerce/plg_privacy_j2commerce/j2commerce.xml
+          stamp j2commerce/plg_privacy_j2commerce/plugins/task/j2commerceprivacy/j2commerceprivacy.xml
+          stamp j2commerce/plg_privacy_j2commerce/plugins/system/j2commerceprivacy/j2commerceprivacy.xml
 
-      - name: Build extension
+      - name: Build package
         if: steps.version.outputs.bump != 'none'
         env:
           ADVANS_KNOWN_HASHES_STRICT: '1'
         run: |
-          cd j2commerce/plg_privacy_j2commerce
+          cd j2commerce/pkg_privacy_j2commerce
           chmod +x build.sh
           ./build.sh
 
@@ -121,8 +128,8 @@ jobs:
         if: steps.version.outputs.bump != 'none'
         id: package
         run: |
-          cd j2commerce/plg_privacy_j2commerce
-          PACKAGE=$(ls -1 plg_privacy_j2commerce_*.zip | head -1)
+          cd j2commerce/pkg_privacy_j2commerce
+          PACKAGE=$(ls -1 pkg_privacy_j2commerce_*.zip | head -1)
           echo "file=$PACKAGE" >> $GITHUB_OUTPUT
 
       - name: Update update.xml
@@ -132,22 +139,52 @@ jobs:
           PACKAGE="${{ steps.package.outputs.file }}"
           # Joomla verifies the download against this hash. The package build is reproducible,
           # so the publish workflow rebuilds exactly these bytes and checks them before uploading.
-          SHA256=$(sha256sum "j2commerce/plg_privacy_j2commerce/$PACKAGE" | cut -d ' ' -f 1)
-          sed -i -E 's#<version>[^<]+</version>#<version>'"$VERSION"'</version>#' j2commerce/plg_privacy_j2commerce/updates/changelog.xml
-          sed -i -E 's#<item>Release notes: https://[^<]+</item>#<item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/privacy-v'"$VERSION"'</item>#' j2commerce/plg_privacy_j2commerce/updates/changelog.xml
+          SHA256=$(sha256sum "j2commerce/pkg_privacy_j2commerce/$PACKAGE" | cut -d ' ' -f 1)
+          for changelog in j2commerce/pkg_privacy_j2commerce/updates/changelog.xml j2commerce/plg_privacy_j2commerce/updates/changelog.xml; do
+            sed -i -E 's#<version>[^<]+</version>#<version>'"$VERSION"'</version>#' "$changelog"
+            sed -i -E 's#<item>Release notes: https://[^<]+</item>#<item>Release notes: https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/tag/privacy-v'"$VERSION"'</item>#' "$changelog"
+          done
+          # The update channel of the package.
+          cat > j2commerce/pkg_privacy_j2commerce/updates/update.xml << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <updates>
+              <update>
+                  <name>J2Commerce Privacy Package</name>
+                  <description>GDPR and data protection for J2Commerce: privacy plugin, checkout consent system plugin and cleanup task plugin</description>
+                  <element>pkg_privacy_j2commerce</element>
+                  <type>package</type>
+                  <client>site</client>
+                  <version>$VERSION</version>
+                  <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/j2commerce/pkg_privacy_j2commerce</infourl>
+                  <changelogurl>https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/pkg_privacy_j2commerce/updates/changelog.xml</changelogurl>
+                  <downloads>
+                      <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/privacy-v$VERSION/$PACKAGE</downloadurl>
+                  </downloads>
+                  <sha256>$SHA256</sha256>
+                  <tags>
+                      <tag>stable</tag>
+                  </tags>
+                  <targetplatform name="joomla" version="(5\.[4-9]|6\.[0-9])" />
+                  <php_minimum>8.1</php_minimum>
+              </update>
+          </updates>
+          EOF
+          # The legacy channel of the standalone privacy plugin (sites installed before the package
+          # existed still query it): it announces the package as an update of the plugin, so Joomla
+          # Update installs the package over the plugin and the package takes the plugins over.
           cat > j2commerce/plg_privacy_j2commerce/updates/update.xml << EOF
           <?xml version="1.0" encoding="utf-8"?>
           <updates>
               <update>
                   <name>J2Commerce Privacy</name>
-                  <description>Privacy plugin for J2Commerce GDPR compliance</description>
+                  <description>Privacy plugin for J2Commerce GDPR compliance, now delivered as the package pkg_privacy_j2commerce</description>
                   <element>j2commerce</element>
                   <type>plugin</type>
                   <folder>privacy</folder>
                   <client>site</client>
                   <version>$VERSION</version>
-                  <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/j2commerce/plg_privacy_j2commerce</infourl>
-                  <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/privacy-v$VERSION/changelog.xml</changelogurl>
+                  <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/j2commerce/pkg_privacy_j2commerce</infourl>
+                  <changelogurl>https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/j2commerce/plg_privacy_j2commerce/updates/changelog.xml</changelogurl>
                   <downloads>
                       <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/privacy-v$VERSION/$PACKAGE</downloadurl>
                   </downloads>
@@ -161,14 +198,26 @@ jobs:
           </updates>
           EOF
 
-
       - name: Retain hash-verified release package
         if: steps.version.outputs.bump != 'none'
         uses: ./.github/actions/retain-release-package
         with:
-          package: j2commerce/plg_privacy_j2commerce/${{ steps.package.outputs.file }}
-          feed: j2commerce/plg_privacy_j2commerce/updates/update.xml
+          package: j2commerce/pkg_privacy_j2commerce/${{ steps.package.outputs.file }}
+          feed: j2commerce/pkg_privacy_j2commerce/updates/update.xml
           artifact-name: privacy-release-package
+
+      - name: Check the legacy channel against the package
+        if: steps.version.outputs.bump != 'none'
+        env:
+          PACKAGE: j2commerce/pkg_privacy_j2commerce/${{ steps.package.outputs.file }}
+          FEED: j2commerce/plg_privacy_j2commerce/updates/update.xml
+        run: |
+          EXPECTED=$(grep -oP '(?<=<sha256>)[0-9a-f]{64}(?=</sha256>)' "$FEED" | sort -u)
+          ACTUAL=$(sha256sum "$PACKAGE" | cut -d ' ' -f 1)
+          if [ "$EXPECTED" != "$ACTUAL" ] || ! grep -q "<downloadurl[^>]*>[^<]*/$(basename "$PACKAGE")</downloadurl>" "$FEED"; then
+            echo "::error::The legacy update channel of the standalone plugin does not announce the package under test."
+            exit 1
+          fi
 
       - name: Create release PR
         if: steps.version.outputs.bump != 'none'
@@ -180,7 +229,7 @@ jobs:
           TITLE="release: privacy v${VERSION}"
           git fetch origin main 2>/dev/null || true
           git switch -C "$BRANCH" origin/main
-          git add j2commerce/plg_privacy_j2commerce/
+          git add j2commerce/pkg_privacy_j2commerce/ j2commerce/plg_privacy_j2commerce/
           if git diff --staged --quiet; then
             echo "::notice::No version file changes detected; no release PR was opened."
             exit 0
@@ -188,7 +237,7 @@ jobs:
           # Commit through the GitHub API instead of a local commit and push: GitHub signs
           # the version commit (Verified), as the ruleset requires for every PR commit.
           python3 .github/scripts/create-verified-commit.py --branch "$BRANCH" --message "$TITLE" --base origin/main
-          PR_BODY=$'Automated release version bump for `privacy`.\n\nThis PR updates the extension version metadata and update manifest. After a human reviews and merges it into `main`, the matching publish workflow will tag the merge commit and create the GitHub release using the built-in `GITHUB_TOKEN`.'
+          PR_BODY=$'Automated release version bump for `privacy` (package `pkg_privacy_j2commerce`).\n\nThis PR updates the version metadata of the package and of its three plugins, the package update manifest and the legacy update manifest of the standalone plugin. After a human reviews and merges it into `main`, the matching publish workflow will tag the merge commit and create the GitHub release using the built-in `GITHUB_TOKEN`.'
           echo "::notice::Release PR CI created by GITHUB_TOKEN requires a writer to select 'Approve workflows to run' before review and merge."
           gh label create release --color 0E8A16 --description "Automated release PRs" 2>/dev/null || true
           EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
