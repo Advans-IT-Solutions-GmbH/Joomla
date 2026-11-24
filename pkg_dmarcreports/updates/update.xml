@@ -6,13 +6,13 @@
         <element>pkg_dmarcreports</element>
         <type>package</type>
         <client>site</client>
-        <version>1.3.0</version>
+        <version>1.4.0</version>
         <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/pkg_dmarcreports</infourl>
-        <changelogurl>https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/pkg_dmarcreports/updates/changelog.xml</changelogurl>
+        <changelogurl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/pkgdmarcreports-v1.4.0/changelog.xml</changelogurl>
         <downloads>
-            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/pkgdmarcreports-v1.3.0/pkg_dmarcreports_1.3.0.zip</downloadurl>
+            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/pkgdmarcreports-v1.4.0/pkg_dmarcreports_1.4.0.zip</downloadurl>
         </downloads>
-        <sha256>1bfaaee293e6d312ac7ef777048885bb91721ab729dae8af5d78ebf96888abb6</sha256>
+        <sha256>4e0549b4b49ccb4454613db8e506ff95fe9753d3bc725709b4a323b04d1005a4</sha256>
         <tags>
             <tag>stable</tag>
         </tags>
