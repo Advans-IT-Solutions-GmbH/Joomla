@@ -52,10 +52,13 @@ option, using only API features that every Close plan offers:
 - **New person:** a new Lead with one Contact (name, e-mail, phone). Optionally the Lead name comes from
   a form field such as the company, the Contact title from a field such as the job title, and Lead
   custom fields from fixed values (for example the lead origin) or from answers. These values are set
-  on **new** Leads only; existing Leads and Contacts are never overwritten. No Opportunity is created.
+  on **new** Leads only; existing Leads and Contacts are never overwritten. The only exception is the
+  optional campaign parameters below, which fill **empty** Lead fields of an existing Lead and never
+  overwrite a value. No Opportunity is created.
 - **The booking itself:** one **Note** on that Lead and Contact per booking, with status, start and end
   in the site time zone, event type, name, e-mail, phone, the configured answers with their field
-  labels, campaign, source, "new contact created", how the booking was assigned, possible duplicates
+  labels, campaign, source, the campaign parameters of the booking's origin (when the profile transfers
+  them), "new contact created", how the booking was assigned, possible duplicates
   and the booking UID. Approval, rescheduling and
   cancellation **update the same Note** (cancellation changes its title and status). Notes are written
   in the site's default language.
@@ -83,6 +86,38 @@ campaign. Each profile has:
 | Campaign, source | Fixed texts written into every Note or Activity of the profile. |
 | Lead name, contact title | Comma-separated form field IDs, for example the company field of each event type. The first non-empty answer is used. |
 | Lead fields from answers, fixed lead fields | JSON objects `{"<field ID>": "cf_…"}` and `{"cf_…": "<text>"}`. Every Lead field is fetched before any personal data, including the e-mail search, is sent; an unknown field blocks the transfer. Multi-value fields receive all selected options. |
+| Transfer campaign parameters, campaign visit, lead field per parameter | Off by default. See [Campaign parameters of the booking's origin](#campaign-parameters-of-the-bookings-origin). |
+
+### Campaign parameters of the booking's origin
+
+With **Transfer campaign parameters** switched on in a profile, and the component option **Origin of
+bookings** (`attribution_capture`, see [Origin of bookings](#origin-of-bookings-campaign-attribution)) on, each booking
+carries its own campaign to Close:
+
+- **Which values:** `utm_source`, `utm_medium`, `utm_campaign`, `utm_content` and `utm_term` of the
+  **last** campaign visit, or of the **first** one when **Campaign visit** is set so. When that visit
+  carries none of the five, the other visit is used. All five always come from the same visit, never
+  mixed. Nothing else of the origin leaves the website: no `utm_id`, click ID, URL, referrer, IP
+  address, browser language, device or User-Agent. Each value is cut to 255 characters, and a value
+  that looks like an e-mail address or a telephone number is sent as `(redacted)`, the same rule as
+  the campaign statistics.
+- **Note:** the booking Note lists the five values ("UTM source", "UTM medium", …), also on an
+  existing Lead, so the origin of every single booking stays visible in Close. Empty values have no
+  line. The Custom Activity mode does not carry them.
+- **Lead fields:** each parameter can be mapped to its own Lead custom field, entered as its ID
+  `cf_…` or as its exact name as Close shows it (for example a text field "Marketing UTM Source";
+  case and spacing are ignored). A name is resolved through the Lead field catalog
+  (`GET /api/v1/custom_field/lead/`), which needs no right beyond reading one field. A name that
+  matches no field or several fields blocks the transfer before any personal data is sent, like an
+  unknown `cf_…` ID. A **new** Lead receives the mapped values. On an **existing** Lead (one exact
+  match, see above), the worker reads the Lead and fills only the mapped fields that are still
+  **empty** (`PUT /api/v1/lead/{id}/` with just those fields), so the first known origin of a Lead is
+  never overwritten. Nothing else of an existing Lead or Contact is changed. A parameter without a
+  mapped field is written into the Note only. A field cannot serve two parameters, or a parameter
+  and a fixed value or an answer.
+- **Privacy:** Close becomes a recipient of these values together with the contact data. Name Close
+  and the five parameters in the site's privacy notice before switching this on. Values in Close are
+  never deleted by the website (see [Nothing is deleted in Close](#nothing-is-deleted-in-close)).
 
 Each profile has its own **rate-limit pause**: a `429` with `Retry-After` pauses only that
 organisation, and its bookings do not occupy the batch of the other profiles. Enable transfer and, separately, the scheduled task
@@ -131,7 +166,11 @@ deletes or anonymises anything in Close**, and nothing on the website waits for 
 - Retention, self-service erasure, administrator erasure and native privacy **Remove** only delete the
   local transfer record (the link to the remote IDs). A booking erased before it was sent is not sent.
   Records already in Close keep their last transferred status, and an uncertain creation of an erased
-  booking is no longer followed up from the website; check it in Close if needed.
+  booking is no longer followed up from the website; check it in Close if needed. This includes
+  campaign parameters a profile transferred into the Note or Lead fields: they stay in Close after the
+  booking and its origin record are erased on the website.
+- The formal privacy export of the website lists the booking's origin record, not what Close holds;
+  a person's data in Close, campaign parameters included, is exported from Close.
 - A privacy request is never blocked or left incomplete because of Close.
 - **Data subject requests for Close are handled separately in Close** by the operator (access,
   correction, deletion there), using Close's own tools.
@@ -519,6 +558,7 @@ schedules and fields have their own settings in their edit screens, each with a 
 | Close profiles (up to 20) | Per profile: Profile key, Event types (each event type belongs to at most one profile), Approved HTTPS API origin (no path), Server environment variable containing the API key (optional, only its name is stored), Expected organisation ID (optional) | No profile |
 | Per profile: booking record | Booking record in Close (note on the lead, or custom activity with its type ID, JSON field mapping and JSON answers mapping), Answers in the booking note (local form field IDs) | Note |
 | Per profile: campaign and lead | Campaign, Source (empty means Joomla appointments), Lead name from field, Contact title from field, Lead fields from answers (JSON), Fixed lead fields (JSON); the lead fields are set on new leads only | Empty |
+| Per profile: campaign parameters | Transfer campaign parameters, Campaign visit (last or first), Lead field for utm_source, utm_medium, utm_campaign, utm_content and utm_term (cf_ ID or exact field name); see [Campaign parameters of the booking's origin](#campaign-parameters-of-the-bookings-origin) | Off, last visit, empty |
 
 **Video conferencing** (details: [Video conferencing](#video-conferencing))
 
@@ -1788,8 +1828,16 @@ line at all. The reason: mails and calendar entries are copies outside the websi
 encrypted nor anonymised after the retention period (for example 30 days) like the booking, so they
 must not carry what the privacy notice promises to keep only encrypted and for that period. The
 rendering is in the code, not in the template text: an edited template cannot show more than the
-campaign name either. Never in a mail to the booking person or a guest, on a page of the booking
-person or in the transfer to Close. Output is escaped text: the administrator page and the HTML mail
+campaign name either. Never in a mail to the booking person or a guest or on a page of the booking
+person.
+
+**Close receives only the five campaign parameters, and only when a profile asks for them.** With
+the profile option **Transfer campaign parameters** (off by default), `utm_source`, `utm_medium`,
+`utm_campaign`, `utm_content` and `utm_term` of one campaign visit go into the booking Note and,
+where mapped, into Lead fields (empty ones only on an existing Lead), see
+[Campaign parameters of the booking's origin](#campaign-parameters-of-the-bookings-origin). Nothing
+else of the record reaches Close: no click ID, address, device, browser, User-Agent, referrer or
+page. Output is escaped text: the administrator page and the HTML mail
 never render a value as markup.
 
 **Retention.** The record is one of the booking's personal fields: it is erased with them by the

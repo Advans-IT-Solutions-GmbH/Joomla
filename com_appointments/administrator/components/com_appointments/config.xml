@@ -67,6 +67,18 @@
                 <field name="contact_title" type="text" label="COM_APPOINTMENTS_CLOSE_CONTACT_TITLE" description="COM_APPOINTMENTS_CLOSE_CONTACT_TITLE_DESC" filter="string" maxlength="1000" />
                 <field name="lead_answers" type="textarea" label="COM_APPOINTMENTS_CLOSE_LEAD_ANSWERS" description="COM_APPOINTMENTS_CLOSE_LEAD_ANSWERS_DESC" filter="raw" />
                 <field name="lead_values" type="textarea" label="COM_APPOINTMENTS_CLOSE_LEAD_VALUES" description="COM_APPOINTMENTS_CLOSE_LEAD_VALUES_DESC" filter="raw" />
+                <field name="utm_transfer" type="radio" layout="joomla.form.field.radio.switcher" label="COM_APPOINTMENTS_CLOSE_UTM" description="COM_APPOINTMENTS_CLOSE_UTM_DESC" default="0" filter="integer" validate="options">
+                    <option value="0">JNO</option><option value="1">JYES</option>
+                </field>
+                <field name="utm_touch" type="list" label="COM_APPOINTMENTS_CLOSE_UTM_TOUCH" description="COM_APPOINTMENTS_CLOSE_UTM_TOUCH_DESC" default="last" filter="cmd" validate="options" showon="utm_transfer:1">
+                    <option value="last">COM_APPOINTMENTS_CLOSE_UTM_TOUCH_LAST</option>
+                    <option value="first">COM_APPOINTMENTS_CLOSE_UTM_TOUCH_FIRST</option>
+                </field>
+                <field name="utm_source_field" type="text" label="COM_APPOINTMENTS_CLOSE_UTM_SOURCE_FIELD" description="COM_APPOINTMENTS_CLOSE_UTM_FIELD_DESC" filter="string" maxlength="255" showon="utm_transfer:1" />
+                <field name="utm_medium_field" type="text" label="COM_APPOINTMENTS_CLOSE_UTM_MEDIUM_FIELD" description="COM_APPOINTMENTS_CLOSE_UTM_FIELD_DESC" filter="string" maxlength="255" showon="utm_transfer:1" />
+                <field name="utm_campaign_field" type="text" label="COM_APPOINTMENTS_CLOSE_UTM_CAMPAIGN_FIELD" description="COM_APPOINTMENTS_CLOSE_UTM_FIELD_DESC" filter="string" maxlength="255" showon="utm_transfer:1" />
+                <field name="utm_content_field" type="text" label="COM_APPOINTMENTS_CLOSE_UTM_CONTENT_FIELD" description="COM_APPOINTMENTS_CLOSE_UTM_FIELD_DESC" filter="string" maxlength="255" showon="utm_transfer:1" />
+                <field name="utm_term_field" type="text" label="COM_APPOINTMENTS_CLOSE_UTM_TERM_FIELD" description="COM_APPOINTMENTS_CLOSE_UTM_FIELD_DESC" filter="string" maxlength="255" showon="utm_transfer:1" />
             </form>
         </field>
     </fieldset>

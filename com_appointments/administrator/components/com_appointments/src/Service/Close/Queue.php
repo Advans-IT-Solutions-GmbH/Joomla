@@ -472,7 +472,13 @@ final class Queue
                     return 'next';
                 }
                 if (isset($match['contact_id'], $match['lead_id'])) {
-                    // Existing leads and contacts are never changed.
+                    // Existing leads and contacts are never changed, except that mapped campaign fields
+                    // still empty on the lead are filled; values already there are kept. Like the final
+                    // send below, this update runs while the booking row is locked, so erasure cannot race it.
+                    $fill = $client->fill($match['lead_id'], $opened);
+                    if ($fill !== null) {
+                        $client->request('PUT', '/api/v1/lead/' . Settings::id($match['lead_id'], 'lead') . '/', $fill);
+                    }
                     $this->save($id, ['contact_id' => $match['contact_id'], 'lead_id' => $match['lead_id']] + $assignment
                         + ['operation' => '', 'binding' => $profile->binding, 'state' => 'pending', 'reason' => '']);
                     $db->transactionCommit();

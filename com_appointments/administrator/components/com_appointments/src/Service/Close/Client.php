@@ -10,6 +10,8 @@ namespace Advans\Component\Appointments\Administrator\Service\Close;
 
 defined('_JEXEC') or die;
 
+use Advans\Component\Appointments\Administrator\Helper\Attribution;
+
 /**
  * Builds and sends the requests of one profile. It creates leads, contacts and one note or
  * custom activity per booking and updates them; it has no code path that deletes anything in Close.
@@ -44,10 +46,21 @@ final class Client
         'ambiguous_' . self::MATCH_NAME_COMPANY => 'COM_APPOINTMENTS_CLOSE_NOTE_MATCH_AMBIGUOUS_NAME_COMPANY',
     ];
 
+    /** The note's label of each campaign parameter, written out for the language lint. */
+    private const UTM_TEXTS = [
+        'utm_source' => 'COM_APPOINTMENTS_CLOSE_NOTE_UTM_SOURCE',
+        'utm_medium' => 'COM_APPOINTMENTS_CLOSE_NOTE_UTM_MEDIUM',
+        'utm_campaign' => 'COM_APPOINTMENTS_CLOSE_NOTE_UTM_CAMPAIGN',
+        'utm_content' => 'COM_APPOINTMENTS_CLOSE_NOTE_UTM_CONTENT',
+        'utm_term' => 'COM_APPOINTMENTS_CLOSE_NOTE_UTM_TERM',
+    ];
+
     private ?array $typeData = null;
     private ?string $organization = null;
     /** @var array<string, bool> lead cf_ ID => accepts multiple values */
     private array $leadFields = [];
+    /** @var array<string, string> campaign parameter => resolved lead cf_ ID */
+    private array $utmIds = [];
 
     public function __construct(public readonly Profile $profile, private \Closure $transport)
     {
@@ -289,7 +302,9 @@ final class Client
     /** Checks every mapped lead field before personal data is sent. */
     public function validateLeadFields(): void
     {
-        foreach (array_unique([...array_keys($this->profile->leadValues), ...array_values($this->profile->leadAnswers)]) as $id) {
+        $this->resolveUtmFields();
+        foreach (array_unique([...array_keys($this->profile->leadValues), ...array_values($this->profile->leadAnswers),
+            ...array_values($this->utmIds)]) as $id) {
             if (isset($this->leadFields[$id])) {
                 continue;
             }
@@ -299,6 +314,100 @@ final class Client
             }
             $this->leadFields[$id] = !empty($field['accepts_multiple_values']);
         }
+    }
+
+    /**
+     * The cf_ ID of every campaign parameter mapped in the profile. A configured name is looked up in
+     * the lead field catalog (the same read right as a single field): exactly one field with that name,
+     * ignoring case and spacing, is required. The resolved fields must differ from each other and from
+     * the other lead mappings.
+     */
+    private function resolveUtmFields(): void
+    {
+        if ($this->utmIds !== [] || $this->profile->utmFields === []) {
+            return;
+        }
+        $names = array_filter($this->profile->utmFields, static fn (string $field): bool => !str_starts_with($field, 'cf_'));
+        $catalog = [];
+        if ($names !== []) {
+            $skip = 0;
+            do {
+                $page = $this->request('GET', '/api/v1/custom_field/lead/?_limit=100&_skip=' . $skip);
+                if (!is_array($page['data'] ?? null)) {
+                    throw new DeliveryException('blocked', 'lead_field');
+                }
+                foreach ($page['data'] as $field) {
+                    if (is_array($field) && is_string($field['id'] ?? null) && is_string($field['name'] ?? null)) {
+                        $catalog[self::comparable($field['name'])][] = $field['id'];
+                    }
+                }
+                $skip += 100;
+            } while (!empty($page['has_more']) && $page['data'] !== [] && $skip < 1000);
+        }
+        $ids = [];
+        foreach ($this->profile->utmFields as $parameter => $field) {
+            if (isset($names[$parameter])) {
+                $found = array_values(array_unique($catalog[self::comparable($field)] ?? []));
+                if (count($found) !== 1) {
+                    throw new DeliveryException('blocked', 'lead_field');
+                }
+                try {
+                    $field = Settings::id($found[0], 'cf');
+                } catch (\InvalidArgumentException $e) {
+                    throw new DeliveryException('blocked', 'lead_field');
+                }
+            }
+            $ids[$parameter] = $field;
+        }
+        if (count($ids) !== count(array_unique($ids))
+            || array_intersect($ids, [...array_keys($this->profile->leadValues), ...array_values($this->profile->leadAnswers)])) {
+            throw new DeliveryException('blocked', 'field_conflict');
+        }
+        $this->utmIds = $ids;
+    }
+
+    /**
+     * The campaign parameters of the booking's origin ({@see Attribution::utm()}), all '' when the
+     * profile does not transfer them or the booking has no origin record.
+     *
+     * @return array<string, string>
+     */
+    public function utm(array $booking): array
+    {
+        if (!$this->profile->utm) {
+            return array_fill_keys(Profile::UTM, '');
+        }
+        return Attribution::utm(Attribution::decode($booking['attribution'] ?? null), $this->profile->utmFirst);
+    }
+
+    /**
+     * The update that fills the mapped campaign fields of an existing lead which are still empty, or
+     * null when there is nothing to fill. Values already in Close are never overwritten, so the first
+     * known origin of a lead stays. The whole lead is read on purpose: Close leaves empty custom fields
+     * out of a lead, so only a full read tells an empty field from one that was not requested.
+     */
+    public function fill(string $lead, array $booking): ?array
+    {
+        $this->resolveUtmFields();
+        $values = array_filter($this->utm($booking), static fn (string $value): bool => $value !== '');
+        $values = array_intersect_key($values, $this->utmIds);
+        if ($values === []) {
+            return null;
+        }
+        $lead = Settings::id($lead, 'lead');
+        $current = $this->request('GET', '/api/v1/lead/' . $lead . '/');
+        if (($current['id'] ?? '') !== $lead) {
+            throw new DeliveryException('blocked', 'invalid_lead');
+        }
+        $payload = [];
+        foreach ($values as $parameter => $value) {
+            $id = $this->utmIds[$parameter];
+            $present = $current['custom.' . $id] ?? null;
+            if ($present === null || $present === '' || $present === []) {
+                $payload['custom.' . $id] = $this->leadValue($id, $value);
+            }
+        }
+        return $payload === [] ? null : $payload;
     }
 
     /** All mapped activity fields are deliberately single-valued text fields. */
@@ -330,7 +439,10 @@ final class Client
         }
     }
 
-    /** A new lead with one contact. Only new leads receive the company, title and origin values. */
+    /**
+     * A new lead with one contact. Only new leads receive the company, title and fixed or answer
+     * values; the mapped campaign fields are set here and filled where empty on existing leads (fill()).
+     */
     public function lead(array $booking): array
     {
         $this->assertBooking($booking);
@@ -359,6 +471,12 @@ final class Client
                 throw new DeliveryException('blocked', 'field_conflict');
             }
             $payload['custom.' . $field] = $this->leadValue($field, $answer);
+        }
+        $this->resolveUtmFields();
+        foreach ($this->utm($booking) as $parameter => $value) {
+            if ($value !== '' && isset($this->utmIds[$parameter])) {
+                $payload['custom.' . $this->utmIds[$parameter]] = $this->leadValue($this->utmIds[$parameter], $value);
+            }
         }
         return $payload;
     }
@@ -398,6 +516,10 @@ final class Client
         }
         $line('COM_APPOINTMENTS_CLOSE_NOTE_CAMPAIGN', $this->profile->campaign);
         $line('COM_APPOINTMENTS_CLOSE_NOTE_SOURCE', $this->profile->source);
+        // The campaign parameters of this booking's origin, also when the lead already had others.
+        foreach ($this->utm($booking) as $parameter => $value) {
+            $line(self::UTM_TEXTS[$parameter], $value);
+        }
         $line('COM_APPOINTMENTS_CLOSE_NOTE_NEW_CONTACT', $text(!empty($context['contact_created'])
             ? 'COM_APPOINTMENTS_CLOSE_NOTE_YES' : 'COM_APPOINTMENTS_CLOSE_NOTE_NO'));
         // How the booking was assigned (match()). The e-mail address and telephone number the booking

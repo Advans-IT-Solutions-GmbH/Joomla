@@ -512,15 +512,7 @@ final class Attribution
     {
         $touch = $record['last_touch'] ?? $record['first_touch'] ?? null;
         $parameters = \is_array($touch) && \is_array($touch['parameters'] ?? null) ? $touch['parameters'] : [];
-        // A visitor can put anything into a link: an e-mail address or a telephone number (nine or
-        // more digits, also with spaces, hyphens, dots, slashes or brackets between them) never
-        // reaches the statistics, which are kept after the booking is anonymised. A date such as
-        // 2026-11-16 has eight digits and stays.
-        $cut = static function (mixed $value): string {
-            $value = self::clean($value, self::AGGREGATE_LENGTH);
-
-            return preg_match('/@|\d(?:[ ().\/-]{0,2}\d){8,}/u', $value) === 1 ? self::REDACTED : $value;
-        };
+        $cut = static fn (mixed $value): string => self::campaignValue($value, self::AGGREGATE_LENGTH);
 
         return [
             'utm_source' => $cut($parameters['utm_source'] ?? ''),
@@ -528,6 +520,53 @@ final class Attribution
             'utm_campaign' => $cut($parameters['utm_campaign'] ?? ''),
             'referrer_host' => $cut(\is_array($touch) ? ($touch['referrer_host'] ?? '') : ''),
         ];
+    }
+
+    /**
+     * One campaign parameter value as it may leave the encrypted record: cleaned, at most $max
+     * characters, and {@see self::REDACTED} when it looks like an e-mail address or a telephone
+     * number. A visitor can put anything into a link: an e-mail address or a telephone number (nine
+     * or more digits, also with spaces, hyphens, dots, slashes or brackets between them) never
+     * reaches the statistics, which are kept after the booking is anonymised, nor a CRM. A date such
+     * as 2026-11-16 has eight digits and stays.
+     */
+    public static function campaignValue(mixed $value, int $max): string
+    {
+        $value = self::clean($value, $max);
+
+        return preg_match('/@|\d(?:[ ().\/-]{0,2}\d){8,}/u', $value) === 1 ? self::REDACTED : $value;
+    }
+
+    /**
+     * The five campaign parameters `utm_source`, `utm_medium`, `utm_campaign`, `utm_content` and
+     * `utm_term` of one touch, for a CRM: by default the last campaign visit, with $first the first
+     * one. When the preferred touch carries none of the five, the other touch is used. All values
+     * come from the same touch, never mixed. Each value passes {@see self::campaignValue()} with
+     * at most 255 characters; no click ID, URL, address or device ever appears here.
+     *
+     * @param   array<string, mixed>|null  $record
+     *
+     * @return  array{utm_source: string, utm_medium: string, utm_campaign: string, utm_content: string, utm_term: string}
+     */
+    public static function utm(?array $record, bool $first = false): array
+    {
+        $names = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+        $order = $first ? ['first_touch', 'last_touch'] : ['last_touch', 'first_touch'];
+
+        foreach ($order as $touch) {
+            $parameters = \is_array($record[$touch]['parameters'] ?? null) ? $record[$touch]['parameters'] : [];
+            $values = [];
+
+            foreach ($names as $name) {
+                $values[$name] = self::campaignValue($parameters[$name] ?? '', 255);
+            }
+
+            if (array_filter($values, static fn (string $value): bool => $value !== '') !== []) {
+                return $values;
+            }
+        }
+
+        return array_fill_keys($names, '');
     }
 
     /**

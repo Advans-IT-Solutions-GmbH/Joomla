@@ -399,6 +399,30 @@ final class AttributionTest extends TestCase
         }
     }
 
+    public function testTheCrmReceivesTheFiveParametersOfOneVisitOnly(): void
+    {
+        $state = Attribution::visit(null, $this->request('/lp?utm_source=linkedin&utm_medium=paid&utm_campaign=c1&utm_content=a&utm_term=t1',
+            'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));
+        $state = Attribution::visit($state, $this->request('/lp?utm_source=google&utm_campaign=' . str_repeat('c', 300) . '&gclid=CLICK',
+            'https://www.google.com/'), $this->at('2026-11-16 09:00:00'));
+        $record = Attribution::record($state, $this->submit(), $this->at('2026-11-16 09:30:00'));
+
+        $last = Attribution::utm($record);
+        self::assertSame(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'], array_keys($last));
+        self::assertSame(['google', '', str_repeat('c', 255), '', ''], array_values($last), 'Never mixed with the first visit, capped at 255');
+        self::assertSame(['linkedin', 'paid', 'c1', 'a', 't1'], array_values(Attribution::utm($record, true)));
+
+        $referrerOnly = Attribution::visit($state, $this->request('/lp', 'https://news.example.org/'), $this->at('2026-11-16 09:10:00'));
+        self::assertSame('linkedin', Attribution::utm(Attribution::record($referrerOnly, $this->submit(), $this->at('2026-11-16 09:30:00')))['utm_source'],
+            'A last visit without the five parameters falls back to the first one');
+
+        $personal = Attribution::visit(null, $this->request('/lp?utm_source=' . rawurlencode('anna@example.org') . '&utm_term='
+            . rawurlencode('079 123 45 67') . '&utm_medium=email', 'https://mail.example.org/'), $this->at('2026-11-16 08:00:00'));
+        $values = Attribution::utm(Attribution::record($personal, $this->submit(), $this->at('2026-11-16 08:30:00')));
+        self::assertSame([Attribution::REDACTED, 'email', Attribution::REDACTED], [$values['utm_source'], $values['utm_medium'], $values['utm_term']]);
+        self::assertSame(array_fill_keys(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'], ''), Attribution::utm(null));
+    }
+
     public function testLinesForTheHostAreLabelledAndLeaveOutEmptyValues(): void
     {
         $state = Attribution::visit(null, $this->request('/lp?utm_source=linkedin&utm_campaign=c1', 'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));
