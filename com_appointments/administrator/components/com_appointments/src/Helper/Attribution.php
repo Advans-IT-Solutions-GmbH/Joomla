@@ -49,6 +49,9 @@ final class Attribution
     /** What the statistics keep instead of a value that looks like an e-mail address or a telephone number. */
     public const REDACTED = '(redacted)';
 
+    /** An e-mail address or a telephone number (nine or more digits, also with separators) in a campaign value. */
+    private const PERSONAL = '/@|\d(?:[ ().\/-]{0,2}\d){8,}/u';
+
     /** The longest campaign value of the non-personal aggregate, in characters. */
     public const AGGREGATE_LENGTH = 100;
 
@@ -329,6 +332,16 @@ final class Attribution
             return $record;
         }
 
+        // A campaign parameter is checked whole before it is cut: cutting must not leave the start of an
+        // e-mail address or a telephone number that the full value would have redacted (campaignValue()).
+        foreach (['first_touch', 'last_touch'] as $touch) {
+            foreach (\is_array($record[$touch]['parameters'] ?? null) ? $record[$touch]['parameters'] : [] as $name => $value) {
+                if (\is_string($value) && mb_strlen($value) > self::FIT_LENGTH && preg_match(self::PERSONAL, $value) === 1) {
+                    $record[$touch]['parameters'][$name] = self::REDACTED;
+                }
+            }
+        }
+
         array_walk_recursive($record, static function (mixed &$value): void {
             if (\is_string($value)) {
                 $value = self::clean($value, self::FIT_LENGTH);
@@ -535,7 +548,7 @@ final class Attribution
     {
         $value = self::clean($value);
 
-        return preg_match('/@|\d(?:[ ().\/-]{0,2}\d){8,}/u', $value) === 1 ? self::REDACTED : self::clean($value, $max);
+        return preg_match(self::PERSONAL, $value) === 1 ? self::REDACTED : self::clean($value, $max);
     }
 
     /**

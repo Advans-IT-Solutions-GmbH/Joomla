@@ -428,6 +428,22 @@ final class AttributionTest extends TestCase
             self::assertSame(Attribution::REDACTED, Attribution::campaignValue(str_repeat('a', $max - 2) . 'name@example.org', $max));
             self::assertSame(str_repeat('a', $max), Attribution::campaignValue(str_repeat('a', $max + 20), $max));
         }
+        // An oversized record is cut to FIT_LENGTH per value: a campaign value is checked whole first.
+        $query = static function (string $term): string {
+            $parts = [];
+            foreach (Attribution::PARAMETERS as $name) {
+                $parts[] = $name . '=' . ($name === 'utm_term' ? rawurlencode($term) : str_repeat('v', 2000));
+            }
+            return '/lp?' . implode('&', $parts);
+        };
+        $term = str_repeat('a', Attribution::FIT_LENGTH - 8) . '0791234567' . str_repeat('b', 1500);
+        $big = Attribution::visit(null, $this->request($query($term), 'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));
+        $big = Attribution::visit($big, $this->request($query($term) . '&x=1', 'https://news.example.org/'), $this->at('2026-11-16 08:10:00'));
+        $record = Attribution::record($big, $this->submit(), $this->at('2026-11-16 08:30:00'));
+        self::assertSame(Attribution::REDACTED, $record['last_touch']['parameters']['utm_term'], 'Stored redacted, not cut to a partial number');
+        self::assertSame(Attribution::REDACTED, Attribution::utm($record)['utm_term']);
+        self::assertSame(Attribution::FIT_LENGTH, mb_strlen($record['last_touch']['parameters']['utm_source']), 'The record was cut to fit');
+
         $long = Attribution::visit(null, $this->request('/lp?utm_campaign=' . str_repeat('x', 95) . rawurlencode('anna@example.org'),
             'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));
         self::assertSame(Attribution::REDACTED, Attribution::campaign(Attribution::record($long, $this->submit(),
