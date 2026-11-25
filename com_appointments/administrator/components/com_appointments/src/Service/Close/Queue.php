@@ -472,7 +472,7 @@ final class Queue
                     return 'next';
                 }
                 if (isset($match['contact_id'], $match['lead_id'])) {
-                    // Existing leads and contacts are never changed, except that mapped campaign fields
+                    // Existing leads and contacts are never changed, except that mapped campaign and funnel fields
                     // still empty on the lead are filled; values already there are kept. Like the final
                     // send below, this update runs while the booking row is locked, so erasure cannot race it.
                     $fill = $client->fill($match['lead_id'], $opened);

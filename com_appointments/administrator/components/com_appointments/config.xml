@@ -79,6 +79,8 @@
                 <field name="utm_campaign_field" type="text" label="COM_APPOINTMENTS_CLOSE_UTM_CAMPAIGN_FIELD" description="COM_APPOINTMENTS_CLOSE_UTM_FIELD_DESC" filter="string" maxlength="255" showon="utm_transfer:1" />
                 <field name="utm_content_field" type="text" label="COM_APPOINTMENTS_CLOSE_UTM_CONTENT_FIELD" description="COM_APPOINTMENTS_CLOSE_UTM_FIELD_DESC" filter="string" maxlength="255" showon="utm_transfer:1" />
                 <field name="utm_term_field" type="text" label="COM_APPOINTMENTS_CLOSE_UTM_TERM_FIELD" description="COM_APPOINTMENTS_CLOSE_UTM_FIELD_DESC" filter="string" maxlength="255" showon="utm_transfer:1" />
+                <field name="funnel_field" type="text" label="COM_APPOINTMENTS_CLOSE_FUNNEL_FIELD" description="COM_APPOINTMENTS_CLOSE_FUNNEL_FIELD_DESC" filter="string" maxlength="255" />
+                <field name="funnel_value" type="text" label="COM_APPOINTMENTS_CLOSE_FUNNEL_VALUE" description="COM_APPOINTMENTS_CLOSE_FUNNEL_VALUE_DESC" filter="string" maxlength="1000" />
             </form>
         </field>
     </fieldset>

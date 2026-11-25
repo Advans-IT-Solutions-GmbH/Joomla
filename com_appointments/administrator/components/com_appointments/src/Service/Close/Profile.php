@@ -59,6 +59,9 @@ final class Profile
      *      name, resolved by Client; filled on new leads and where empty on existing leads.
      */
     public readonly array $utmFields;
+    /** Optional funnel lead field (cf_ ID or exact name) and its fixed value; both '' when unused. */
+    public readonly string $funnelField;
+    public readonly string $funnelValue;
     /** Identifies the remote destination; a change stops updates of already transferred bookings. */
     public readonly string $binding;
 
@@ -137,6 +140,21 @@ final class Profile
             }
         }
         $this->utmFields = $utmFields;
+        // Optional funnel: one fixed value per profile, set on new leads and filled where empty on existing ones.
+        $funnelField = self::text($entry['funnel_field'] ?? '', 255);
+        $funnelValue = self::text($entry['funnel_value'] ?? '', 1000);
+        if (($funnelField === '') !== ($funnelValue === '')) {
+            throw new \InvalidArgumentException('The funnel needs both a lead field and a value.');
+        }
+        if (str_starts_with($funnelField, 'cf_')) {
+            Settings::id($funnelField, 'cf');
+        }
+        if ($funnelField !== '' && (in_array(Client::comparable($funnelField), array_map([Client::class, 'comparable'], $utmFields), true)
+            || in_array($funnelField, [...array_keys($leadValues), ...array_values($this->leadAnswers)], true))) {
+            throw new \InvalidArgumentException('The funnel needs its own lead field.');
+        }
+        $this->funnelField = $funnelField;
+        $this->funnelValue = $funnelValue;
         if ($this->mode === self::MODE_ACTIVITY) {
             $this->type =Settings::id(trim((string) ($entry['activity_type'] ?? '')), 'actitype');
             $fields = [];

@@ -990,6 +990,35 @@ namespace {
         try { new Profile(array_replace($params->values['close_profiles']['close_profiles3'], $change)); $check(false, 'rejects ' . $label); }
         catch (\InvalidArgumentException $e) { $check(true, 'profile rejects ' . $label); }
     }
+
+    // Optional funnel: a fixed value per profile, on new leads and only where empty on existing leads.
+    $utmClose->leadFields['cf_funnelx'] = false;
+    $utmClose->fieldNames['cf_funnelx'] = 'S - Funnel';
+    $params->values['close_profiles']['close_profiles3'] += ['funnel_field' => 's - funnel', 'funnel_value' => 'Website | Booking page'];
+    $enrol($utmBooking(67, 'utm-funnel-new@example.test', null));
+    $enrol($utmBooking(68, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $funnelPuts = array_values(array_filter($utmClose->requests, static fn (array $r): bool => $r[0] === 'PUT' && $r[1] === '/api/v1/lead/lead_utm61/'));
+    $check(($utmClose->objects[$state(67)['lead_id']]['custom.cf_funnelx'] ?? '') === 'Website | Booking page'
+        && end($funnelPuts)[2] === ['custom.cf_funnelx' => 'Website | Booking page']
+        && $utmClose->objects['lead_utm61']['custom.cf_utmsource'] === 'newsletter',
+        'the funnel is set on a new lead and filled alone, in dot notation, on an existing lead with an empty funnel');
+    $utmClose->objects['lead_utm61']['custom.cf_funnelx'] = 'Existing funnel';
+    $putsBefore = $utmClose->count('PUT');
+    $enrol($utmBooking(69, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check($state(69)['state'] === 'done' && $utmClose->count('PUT') === $putsBefore
+        && $utmClose->objects['lead_utm61']['custom.cf_funnelx'] === 'Existing funnel', 'an existing funnel value is never overwritten');
+    $check(!preg_match('/"custom"\s*:/', json_encode($utmClose->requests)), 'no request sends a whole custom object');
+    foreach ([
+        'a funnel field without a value' => ['funnel_value' => ''],
+        'a funnel value without a field' => ['funnel_field' => ''],
+        'a funnel field that is a campaign field' => ['funnel_field' => 'CF_utmsource '],
+        'a funnel field that has a fixed value' => ['funnel_field' => 'cf_origin'],
+    ] as $label => $change) {
+        try { new Profile(array_replace($params->values['close_profiles']['close_profiles3'], $change)); $check(false, 'rejects ' . $label); }
+        catch (\InvalidArgumentException $e) { $check(true, 'profile rejects ' . $label); }
+    }
     unset($params->values['close_profiles']['close_profiles3']);
 
     // Nothing in this component can delete in Close.

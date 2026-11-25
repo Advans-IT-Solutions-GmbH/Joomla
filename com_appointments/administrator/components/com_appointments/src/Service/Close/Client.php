@@ -59,8 +59,8 @@ final class Client
     private ?string $organization = null;
     /** @var array<string, bool> lead cf_ ID => accepts multiple values */
     private array $leadFields = [];
-    /** @var array<string, string> campaign parameter => resolved lead cf_ ID */
-    private array $utmIds = [];
+    /** @var array<string, string> campaign parameter or 'funnel' => resolved lead cf_ ID */
+    private array $fillIds = [];
 
     public function __construct(public readonly Profile $profile, private \Closure $transport)
     {
@@ -302,9 +302,9 @@ final class Client
     /** Checks every mapped lead field before personal data is sent. */
     public function validateLeadFields(): void
     {
-        $this->resolveUtmFields();
+        $this->resolveFillFields();
         foreach (array_unique([...array_keys($this->profile->leadValues), ...array_values($this->profile->leadAnswers),
-            ...array_values($this->utmIds)]) as $id) {
+            ...array_values($this->fillIds)]) as $id) {
             if (isset($this->leadFields[$id])) {
                 continue;
             }
@@ -317,17 +317,29 @@ final class Client
     }
 
     /**
-     * The cf_ ID of every campaign parameter mapped in the profile. A configured name is looked up in
-     * the lead field catalog (the same read right as a single field): exactly one field with that name,
-     * ignoring case and spacing, is required. The resolved fields must differ from each other and from
-     * the other lead mappings.
+     * The lead fields that are set on new leads and filled where empty on existing ones: the campaign
+     * parameters mapped in the profile and the optional funnel field.
+     *
+     * @return array<string, string> campaign parameter or 'funnel' => cf_ ID or exact field name
      */
-    private function resolveUtmFields(): void
+    private function fillFields(): array
     {
-        if ($this->utmIds !== [] || $this->profile->utmFields === []) {
+        return $this->profile->utmFields + ($this->profile->funnelField !== '' ? ['funnel' => $this->profile->funnelField] : []);
+    }
+
+    /**
+     * The cf_ ID of every field of fillFields(). A configured name is looked up in the lead field
+     * catalog (the same read right as a single field): exactly one field with that name, ignoring case
+     * and spacing, is required. The resolved fields must differ from each other and from the other
+     * lead mappings.
+     */
+    private function resolveFillFields(): void
+    {
+        $fields = $this->fillFields();
+        if ($this->fillIds !== [] || $fields === []) {
             return;
         }
-        $names = array_filter($this->profile->utmFields, static fn (string $field): bool => !str_starts_with($field, 'cf_'));
+        $names = array_filter($fields, static fn (string $field): bool => !str_starts_with($field, 'cf_'));
         $catalog = [];
         if ($names !== []) {
             $skip = 0;
@@ -345,7 +357,7 @@ final class Client
             } while (!empty($page['has_more']) && $page['data'] !== [] && $skip < 1000);
         }
         $ids = [];
-        foreach ($this->profile->utmFields as $parameter => $field) {
+        foreach ($fields as $parameter => $field) {
             if (isset($names[$parameter])) {
                 $found = array_values(array_unique($catalog[self::comparable($field)] ?? []));
                 if (count($found) !== 1) {
@@ -363,7 +375,7 @@ final class Client
             || array_intersect($ids, [...array_keys($this->profile->leadValues), ...array_values($this->profile->leadAnswers)])) {
             throw new DeliveryException('blocked', 'field_conflict');
         }
-        $this->utmIds = $ids;
+        $this->fillIds = $ids;
     }
 
     /**
@@ -381,16 +393,27 @@ final class Client
     }
 
     /**
-     * The update that fills the mapped campaign fields of an existing lead which are still empty, or
-     * null when there is nothing to fill. Values already in Close are never overwritten, so the first
-     * known origin of a lead stays. The whole lead is read on purpose: Close leaves empty custom fields
-     * out of a lead, so only a full read tells an empty field from one that was not requested.
+     * The non-empty values of the fill fields for this booking, keyed like fillFields().
+     *
+     * @return array<string, string>
+     */
+    private function fillValues(array $booking): array
+    {
+        $this->resolveFillFields();
+        $values = $this->utm($booking) + ['funnel' => $this->profile->funnelValue];
+        return array_intersect_key(array_filter($values, static fn (string $value): bool => $value !== ''), $this->fillIds);
+    }
+
+    /**
+     * The update that fills the mapped campaign and funnel fields of an existing lead which are still
+     * empty, or null when there is nothing to fill. Only these fields are sent, each in dot notation
+     * (`custom.cf_…`), never a whole `custom` object. Values already in Close are never overwritten, so
+     * the first known origin of a lead stays. The whole lead is read on purpose: Close leaves empty
+     * custom fields out of a lead, so only a full read tells an empty field from one that was not requested.
      */
     public function fill(string $lead, array $booking): ?array
     {
-        $this->resolveUtmFields();
-        $values = array_filter($this->utm($booking), static fn (string $value): bool => $value !== '');
-        $values = array_intersect_key($values, $this->utmIds);
+        $values = $this->fillValues($booking);
         if ($values === []) {
             return null;
         }
@@ -401,7 +424,7 @@ final class Client
         }
         $payload = [];
         foreach ($values as $parameter => $value) {
-            $id = $this->utmIds[$parameter];
+            $id = $this->fillIds[$parameter];
             $present = $current['custom.' . $id] ?? null;
             if ($present === null || $present === '' || $present === []) {
                 $payload['custom.' . $id] = $this->leadValue($id, $value);
@@ -441,7 +464,8 @@ final class Client
 
     /**
      * A new lead with one contact. Only new leads receive the company, title and fixed or answer
-     * values; the mapped campaign fields are set here and filled where empty on existing leads (fill()).
+     * values; the mapped campaign fields and the funnel are set here and filled where empty on existing
+     * leads (fill()).
      */
     public function lead(array $booking): array
     {
@@ -472,11 +496,8 @@ final class Client
             }
             $payload['custom.' . $field] = $this->leadValue($field, $answer);
         }
-        $this->resolveUtmFields();
-        foreach ($this->utm($booking) as $parameter => $value) {
-            if ($value !== '' && isset($this->utmIds[$parameter])) {
-                $payload['custom.' . $this->utmIds[$parameter]] = $this->leadValue($this->utmIds[$parameter], $value);
-            }
+        foreach ($this->fillValues($booking) as $parameter => $value) {
+            $payload['custom.' . $this->fillIds[$parameter]] = $this->leadValue($this->fillIds[$parameter], $value);
         }
         return $payload;
     }

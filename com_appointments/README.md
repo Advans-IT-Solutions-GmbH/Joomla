@@ -52,9 +52,10 @@ option, using only API features that every Close plan offers:
 - **New person:** a new Lead with one Contact (name, e-mail, phone). Optionally the Lead name comes from
   a form field such as the company, the Contact title from a field such as the job title, and Lead
   custom fields from fixed values (for example the lead origin) or from answers. These values are set
-  on **new** Leads only; existing Leads and Contacts are never overwritten. The only exception is the
-  optional campaign parameters below, which fill **empty** Lead fields of an existing Lead and never
-  overwrite a value. No Opportunity is created.
+  on **new** Leads only; existing Leads and Contacts are never overwritten. The only exceptions are the
+  optional campaign parameters and funnel field below, which fill **empty** Lead fields of an existing
+  Lead and never overwrite a value. Each update sends only those fields in dot notation
+  (`custom.cf_…`), never a whole `custom` object. No Opportunity is created.
 - **The booking itself:** one **Note** on that Lead and Contact per booking, with status, start and end
   in the site time zone, event type, name, e-mail, phone, the configured answers with their field
   labels, campaign, source, the campaign parameters of the booking's origin (when the profile transfers
@@ -87,6 +88,7 @@ campaign. Each profile has:
 | Lead name, contact title | Comma-separated form field IDs, for example the company field of each event type. The first non-empty answer is used. |
 | Lead fields from answers, fixed lead fields | JSON objects `{"<field ID>": "cf_…"}` and `{"cf_…": "<text>"}`. Every Lead field is fetched before any personal data, including the e-mail search, is sent; an unknown field blocks the transfer. Multi-value fields receive all selected options. |
 | Transfer campaign parameters, campaign visit, lead field per parameter | Off by default. See [Campaign parameters of the booking's origin](#campaign-parameters-of-the-bookings-origin). |
+| Funnel lead field, funnel value | Optional, empty by default. A fixed text of the profile (for example `Website \| Booking page`) for one Lead custom field, given by its `cf_…` ID or exact name like the campaign fields. Set on a new Lead; on an existing Lead only while the field is empty, a value already there is never overwritten. Both or neither must be set, and the field cannot also be a campaign field, a fixed lead field or an answer field. |
 
 ### Campaign parameters of the booking's origin
 
