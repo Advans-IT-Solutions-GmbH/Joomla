@@ -393,23 +393,34 @@ final class Client
     }
 
     /**
-     * The non-empty values of the fill fields for this booking, keyed like fillFields().
+     * The non-empty campaign values of the mapped campaign fields for this booking, keyed by parameter.
+     * The funnel is not among them: it is written separately (funnel()), after the lead exists.
      *
      * @return array<string, string>
      */
     private function fillValues(array $booking): array
     {
         $this->resolveFillFields();
-        $values = $this->utm($booking) + ['funnel' => $this->profile->funnelValue];
-        return array_intersect_key(array_filter($values, static fn (string $value): bool => $value !== ''), $this->fillIds);
+        $values = array_filter($this->utm($booking), static fn (string $value): bool => $value !== '');
+        return array_intersect_key($values, $this->fillIds);
+    }
+
+    /** A lead read in full; Close leaves empty custom fields out, so only a full read shows them empty. */
+    private function readLead(string $lead): array
+    {
+        $lead = Settings::id($lead, 'lead');
+        $current = $this->request('GET', '/api/v1/lead/' . $lead . '/');
+        if (($current['id'] ?? '') !== $lead) {
+            throw new DeliveryException('blocked', 'invalid_lead');
+        }
+        return $current;
     }
 
     /**
-     * The update that fills the mapped campaign and funnel fields of an existing lead which are still
-     * empty, or null when there is nothing to fill. Only these fields are sent, each in dot notation
+     * The update that fills the mapped campaign fields of an existing lead which are still empty, or
+     * null when there is nothing to fill. Only these fields are sent, each in dot notation
      * (`custom.cf_…`), never a whole `custom` object. Values already in Close are never overwritten, so
-     * the first known origin of a lead stays. The whole lead is read on purpose: Close leaves empty
-     * custom fields out of a lead, so only a full read tells an empty field from one that was not requested.
+     * the first known origin of a lead stays.
      */
     public function fill(string $lead, array $booking): ?array
     {
@@ -417,11 +428,7 @@ final class Client
         if ($values === []) {
             return null;
         }
-        $lead = Settings::id($lead, 'lead');
-        $current = $this->request('GET', '/api/v1/lead/' . $lead . '/');
-        if (($current['id'] ?? '') !== $lead) {
-            throw new DeliveryException('blocked', 'invalid_lead');
-        }
+        $current = $this->readLead($lead);
         $payload = [];
         foreach ($values as $parameter => $value) {
             $id = $this->fillIds[$parameter];
@@ -431,6 +438,29 @@ final class Client
             }
         }
         return $payload === [] ? null : $payload;
+    }
+
+    /**
+     * The update that adds the profile's funnel value to a lead, or null when there is none or the
+     * lead already carries it. A multi-value field (a choices field with multiple selection) keeps
+     * every value it has and gains the profile's value; a single-value field is set only while it is
+     * empty. Nothing is ever replaced or removed. Only this one field is sent, in dot notation.
+     */
+    public function funnel(string $lead): ?array
+    {
+        if ($this->profile->funnelField === '') {
+            return null;
+        }
+        $this->validateLeadFields();
+        $id = $this->fillIds['funnel'];
+        $value = $this->profile->funnelValue;
+        $present = $this->readLead($lead)['custom.' . $id] ?? null;
+        if ($this->leadFields[$id]) {
+            $values = array_values(array_filter(array_map('strval', is_array($present) ? $present : ($present === null ? [] : [$present])),
+                static fn (string $item): bool => $item !== ''));
+            return in_array($value, $values, true) ? null : ['custom.' . $id => [...$values, $value]];
+        }
+        return $present === null || $present === '' || $present === [] ? ['custom.' . $id => $value] : null;
     }
 
     /** All mapped activity fields are deliberately single-valued text fields. */
@@ -464,8 +494,8 @@ final class Client
 
     /**
      * A new lead with one contact. Only new leads receive the company, title and fixed or answer
-     * values; the mapped campaign fields and the funnel are set here and filled where empty on existing
-     * leads (fill()).
+     * values; the mapped campaign fields are set here and filled where empty on existing leads (fill()).
+     * The funnel is added to new and existing leads alike, before the booking's first note (funnel()).
      */
     public function lead(array $booking): array
     {

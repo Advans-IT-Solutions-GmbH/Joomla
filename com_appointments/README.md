@@ -88,7 +88,12 @@ campaign. Each profile has:
 | Lead name, contact title | Comma-separated form field IDs, for example the company field of each event type. The first non-empty answer is used. |
 | Lead fields from answers, fixed lead fields | JSON objects `{"<field ID>": "cf_…"}` and `{"cf_…": "<text>"}`. Every Lead field is fetched before any personal data, including the e-mail search, is sent; an unknown field blocks the transfer. Multi-value fields receive all selected options. |
 | Transfer campaign parameters, campaign visit, lead field per parameter | Off by default. See [Campaign parameters of the booking's origin](#campaign-parameters-of-the-bookings-origin). |
-| Funnel lead field, funnel value | Optional, empty by default. A fixed text of the profile (for example `Website \| Booking page`) for one Lead custom field, given by its `cf_…` ID or exact name like the campaign fields. Set on a new Lead; on an existing Lead only while the field is empty, a value already there is never overwritten. Both or neither must be set, and the field cannot also be a campaign field, a fixed lead field or an answer field. |
+| Funnel lead field, funnel value | Optional, empty by default. A fixed text of the profile (for example `Campaign \| Landing page`) for one Lead custom field, given by its `cf_…` ID or exact name like the campaign fields; typically a choices field with multiple selection that tells several funnels apart within one organisation. Before the booking's first Note the worker reads the Lead (new or existing) and **adds** the value: a multiple-selection field keeps every value the Lead has and gains this one when it is missing (`PUT` with the old values plus the new one, in dot notation); a single-value field is set only while it is empty. Nothing is replaced or removed. The value must already be a choice of the field in Close. If Close refuses it, the refusal is logged (`com_appointments`, with the profile key, booking ID and HTTP code) and the booking is transferred without it; a temporary failure retries. Both or neither must be set, and the field cannot also be a campaign field, a fixed lead field or an answer field. |
+
+**Field definitions are never written.** The transfer reads Lead field definitions and the field
+catalog, and writes Lead **values** only. It never creates or changes a custom field or its choices:
+narrowing a choices list in Close removes the dropped value from every Lead. Add a new funnel value as
+a choice in Close first.
 
 ### Campaign parameters of the booking's origin
 

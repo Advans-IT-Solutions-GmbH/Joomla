@@ -23,6 +23,18 @@ namespace Joomla\CMS {
         }
     }
 }
+namespace Joomla\CMS\Log {
+    final class Log
+    {
+        public const WARNING = 4;
+        /** @var list<string> */
+        public static array $entries = [];
+        public static function add(string $message, int $priority = self::WARNING, string $category = ''): void
+        {
+            self::$entries[] = $category . ': ' . $message;
+        }
+    }
+}
 namespace Joomla\CMS\Component {
     final class ComponentHelper
     {
@@ -170,6 +182,8 @@ namespace {
         public array $leadFields = ['cf_origin' => false, 'cf_funnel' => false, 'cf_systems' => true, 'cf_product' => false];
         /** cf_ ID => name in the lead field catalog; the ID itself where none is set. */
         public array $fieldNames = [];
+        /** cf_ ID => the choices a choices field accepts. */
+        public array $choices = [];
         private int $next = 0;
         public function __construct(public string $org) {}
         public function handle(string $method, string $path, ?array $payload): array
@@ -245,6 +259,14 @@ namespace {
                     return ['code' => 404, 'body' => '{}'];
                 }
                 if ($method === 'PUT') {
+                    // A choices field accepts only its existing choices, as Close does.
+                    foreach ($this->choices as $field => $allowed) {
+                        foreach ((array) ($payload['custom.' . $field] ?? []) as $value) {
+                            if (!in_array($value, $allowed, true)) {
+                                return ['code' => 400, 'body' => '{"field-errors":{}}'];
+                            }
+                        }
+                    }
                     $this->objects[$match[1]] = array_replace($this->objects[$match[1]], $payload);
                 }
                 return ['code' => 200, 'data' => ['id' => $match[1]] + $this->objects[$match[1]]];
@@ -991,25 +1013,65 @@ namespace {
         catch (\InvalidArgumentException $e) { $check(true, 'profile rejects ' . $label); }
     }
 
-    // Optional funnel: a fixed value per profile, on new leads and only where empty on existing leads.
-    $utmClose->leadFields['cf_funnelx'] = false;
+    // Optional funnel: a fixed value per profile added to a multi-choice lead field. Existing choices of a
+    // lead are kept and the value is appended when missing; nothing is replaced or removed.
+    $funnelValue = 'Campaign | Landing page';
+    $utmClose->leadFields['cf_funnelx'] = true;
     $utmClose->fieldNames['cf_funnelx'] = 'S - Funnel';
-    $params->values['close_profiles']['close_profiles3'] += ['funnel_field' => 's - funnel', 'funnel_value' => 'Website | Booking page'];
+    $utmClose->choices['cf_funnelx'] = ['Phone sales', $funnelValue];
+    $params->values['close_profiles']['close_profiles3'] += ['funnel_field' => 's - funnel', 'funnel_value' => $funnelValue];
+    $leadPuts = static fn (string $lead): array => array_values(array_filter($utmClose->requests,
+        static fn (array $r): bool => $r[0] === 'PUT' && $r[1] === '/api/v1/lead/' . $lead . '/'));
     $enrol($utmBooking(67, 'utm-funnel-new@example.test', null));
+    $queue->run();
+    $check($state(67)['state'] === 'done' && ($utmClose->objects[$state(67)['lead_id']]['custom.cf_funnelx'] ?? null) === [$funnelValue]
+        && !isset($utmClose->objects[$state(67)['lead_id']]['contacts'][0]['custom.cf_funnelx']),
+        'a new lead receives the funnel value');
+    $utmClose->objects['lead_utm61']['custom.cf_funnelx'] = ['Phone sales'];
     $enrol($utmBooking(68, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
     $queue->run();
-    $funnelPuts = array_values(array_filter($utmClose->requests, static fn (array $r): bool => $r[0] === 'PUT' && $r[1] === '/api/v1/lead/lead_utm61/'));
-    $check(($utmClose->objects[$state(67)['lead_id']]['custom.cf_funnelx'] ?? '') === 'Website | Booking page'
-        && end($funnelPuts)[2] === ['custom.cf_funnelx' => 'Website | Booking page']
+    $check($state(68)['state'] === 'done' && array_slice($leadPuts('lead_utm61'), -1)[0][2] === ['custom.cf_funnelx' => ['Phone sales', $funnelValue]]
+        && $utmClose->objects['lead_utm61']['custom.cf_funnelx'] === ['Phone sales', $funnelValue]
         && $utmClose->objects['lead_utm61']['custom.cf_utmsource'] === 'newsletter',
-        'the funnel is set on a new lead and filled alone, in dot notation, on an existing lead with an empty funnel');
-    $utmClose->objects['lead_utm61']['custom.cf_funnelx'] = 'Existing funnel';
+        'the funnel value is appended to the choices a lead already has, alone and in dot notation');
     $putsBefore = $utmClose->count('PUT');
     $enrol($utmBooking(69, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
     $queue->run();
     $check($state(69)['state'] === 'done' && $utmClose->count('PUT') === $putsBefore
-        && $utmClose->objects['lead_utm61']['custom.cf_funnelx'] === 'Existing funnel', 'an existing funnel value is never overwritten');
+        && $utmClose->objects['lead_utm61']['custom.cf_funnelx'] === ['Phone sales', $funnelValue],
+        'a lead that already carries the funnel value is not written');
+    // Close refuses a value that is not a choice of the field: logged, and the booking is still transferred.
+    $utmClose->choices['cf_funnelx'] = ['Phone sales'];
+    $utmClose->objects['lead_utm61']['custom.cf_funnelx'] = ['Phone sales'];
+    \Joomla\CMS\Log\Log::$entries = [];
+    $enrol($utmBooking(70, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check($state(70)['state'] === 'done' && $state(70)['activity_id'] !== '' && $utmClose->objects['lead_utm61']['custom.cf_funnelx'] === ['Phone sales']
+        && count(\Joomla\CMS\Log\Log::$entries) === 1 && str_contains(\Joomla\CMS\Log\Log::$entries[0], 'booking 70 (http_400)')
+        && !str_contains(\Joomla\CMS\Log\Log::$entries[0], '@'),
+        'a refused funnel value is logged without personal data and the booking is transferred without it');
+    $utmClose->choices['cf_funnelx'] = ['Phone sales', $funnelValue];
+    // A single-value funnel field is set only while it is empty.
+    $utmClose->leadFields['cf_funnelx'] = false;
+    unset($utmClose->choices['cf_funnelx']);
+    $utmClose->objects['lead_utm61']['custom.cf_funnelx'] = 'Existing funnel';
+    $putsBefore = $utmClose->count('PUT');
+    $enrol($utmBooking(71, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check($state(71)['state'] === 'done' && $utmClose->count('PUT') === $putsBefore
+        && $utmClose->objects['lead_utm61']['custom.cf_funnelx'] === 'Existing funnel', 'a single-value funnel field is never overwritten');
     $check(!preg_match('/"custom"\s*:/', json_encode($utmClose->requests)), 'no request sends a whole custom object');
+    // Field definitions and choice lists belong to Close: narrowing a choices list deletes the removed
+    // value on every lead. The extension reads them and writes lead values only.
+    $writes = array_filter($all(), static fn (array $r): bool => $r[0] !== 'GET');
+    $check(array_filter($writes, static fn (array $r): bool => !preg_match('~^/api/v1/(lead|activity/note|activity/custom|data/search)/~', $r[1])) === []
+        && array_filter($writes, static fn (array $r): bool => str_contains($r[1], 'custom_field')) === [],
+        'no request ever writes a custom field definition or a choices list');
+    $closeSources = implode("\n", array_map('file_get_contents', glob(dirname(__DIR__) . '/administrator/components/com_appointments/src/Service/Close/*.php')));
+    $check(preg_match_all("~request\\('(?:POST|PUT)',\\s*'([^']*)~", $closeSources, $paths) > 0
+        && array_filter($paths[1], static fn (string $path): bool => !preg_match('~^/api/v1/(lead|data/search)/$~', $path)) === []
+        && !preg_match('~custom_field[^\n]*(POST|PUT)|(POST|PUT)[^\n]*custom_field~', $closeSources),
+        'no code path writes to a field definition: POST and PUT go to leads, notes, activities and searches only');
     foreach ([
         'a funnel field without a value' => ['funnel_value' => ''],
         'a funnel value without a field' => ['funnel_field' => ''],

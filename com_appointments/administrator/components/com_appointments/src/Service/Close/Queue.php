@@ -13,6 +13,7 @@ use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\LanguageFactoryInterface;
+use Joomla\CMS\Log\Log;
 use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
@@ -498,6 +499,9 @@ final class Queue
                     $payload = $client->note($opened, $context, $this->translator());
                 }
                 $method = $row['activity_id'] === '' ? 'POST' : 'PUT';
+                if ($method === 'POST') {
+                    $this->funnel($client, $id, $row['lead_id']);
+                }
                 $path = $this->activityPath($profile) . ($method === 'PUT' ? Settings::id($row['activity_id'], 'acti') . '/' : '');
                 if ($method === 'POST') {
                     $payload['lead_id'] = Settings::id($row['lead_id'], 'lead');
@@ -559,6 +563,31 @@ final class Queue
         } catch (\Throwable $e) {
             $db->transactionRollback();
             throw $e;
+        }
+    }
+
+    /**
+     * Adds the profile's funnel value to the booking's lead before its first note, for new and
+     * existing leads alike (Client::funnel()); repeating it is harmless. A temporary failure retries
+     * the booking. When Close refuses the value, for example because it is not a choice of the field,
+     * the refusal is logged with its code and the booking is transferred without it.
+     */
+    private function funnel(Client $client, int $id, string $lead): void
+    {
+        if ($client->profile->funnelField === '') {
+            return;
+        }
+        try {
+            $payload = $client->funnel($lead);
+            if ($payload !== null) {
+                $client->request('PUT', '/api/v1/lead/' . Settings::id($lead, 'lead') . '/', $payload);
+            }
+        } catch (DeliveryException $e) {
+            if ($e->state !== 'blocked') {
+                throw $e;
+            }
+            Log::add('Appointment Close transfer: the funnel value of profile ' . $client->profile->key . ' was not set for booking '
+                . $id . ' (' . $e->reason . '); the booking is transferred without it.', Log::WARNING, 'com_appointments');
         }
     }
 
