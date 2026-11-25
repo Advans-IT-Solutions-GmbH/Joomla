@@ -577,11 +577,13 @@ final class Queue
         if ($client->profile->funnelField === '') {
             return;
         }
+        // Field validation and the lead read stay outside: an invalid mapping blocks the booking.
+        $payload = $client->funnel($lead);
+        if ($payload === null) {
+            return;
+        }
         try {
-            $payload = $client->funnel($lead);
-            if ($payload !== null) {
-                $client->request('PUT', '/api/v1/lead/' . Settings::id($lead, 'lead') . '/', $payload);
-            }
+            $client->request('PUT', '/api/v1/lead/' . Settings::id($lead, 'lead') . '/', $payload);
         } catch (DeliveryException $e) {
             if ($e->state !== 'blocked') {
                 throw $e;

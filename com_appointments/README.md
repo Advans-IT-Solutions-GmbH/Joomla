@@ -88,7 +88,7 @@ campaign. Each profile has:
 | Lead name, contact title | Comma-separated form field IDs, for example the company field of each event type. The first non-empty answer is used. |
 | Lead fields from answers, fixed lead fields | JSON objects `{"<field ID>": "cf_…"}` and `{"cf_…": "<text>"}`. Every Lead field is fetched before any personal data, including the e-mail search, is sent; an unknown field blocks the transfer. Multi-value fields receive all selected options. |
 | Transfer campaign parameters, campaign visit, lead field per parameter | Off by default. See [Campaign parameters of the booking's origin](#campaign-parameters-of-the-bookings-origin). |
-| Funnel lead field, funnel value | Optional, empty by default. A fixed text of the profile (for example `Campaign \| Landing page`) for one Lead custom field, given by its `cf_…` ID or exact name like the campaign fields; typically a choices field with multiple selection that tells several funnels apart within one organisation. Before the booking's first Note the worker reads the Lead (new or existing) and **adds** the value: a multiple-selection field keeps every value the Lead has and gains this one when it is missing (`PUT` with the old values plus the new one, in dot notation); a single-value field is set only while it is empty. Nothing is replaced or removed. The value must already be a choice of the field in Close. If Close refuses it, the refusal is logged (`com_appointments`, with the profile key, booking ID and HTTP code) and the booking is transferred without it; a temporary failure retries. Both or neither must be set, and the field cannot also be a campaign field, a fixed lead field or an answer field. |
+| Funnel lead field, funnel value | Optional, empty by default. A fixed text of the profile (for example `Campaign \| Landing page`) for one Lead custom field, given by its `cf_…` ID or exact name like the campaign fields; typically a choices field with multiple selection that tells several funnels apart within one organisation. Before the booking's first Note the worker reads the Lead (new or existing) and **adds** the value: a multiple-selection field keeps every value the Lead has and gains this one when it is missing, through Close's add operation (`PUT` with only `"custom.cf_….add": "<value>"`, the list itself is never sent, so a value another writer adds at the same moment stays); a single-value field is set only while it is empty. Nothing is replaced or removed. The value must already be a choice of the field in Close. If Close refuses it, the refusal is logged (`com_appointments`, with the profile key, booking ID and HTTP code) and the booking is transferred without it; a temporary failure retries. Both or neither must be set, and the field cannot also be a campaign field, a fixed lead field or an answer field. |
 
 **Field definitions are never written.** The transfer reads Lead field definitions and the field
 catalog, and writes Lead **values** only. It never creates or changes a custom field or its choices:
@@ -119,8 +119,11 @@ carries its own campaign to Close:
   unknown `cf_…` ID. A **new** Lead receives the mapped values. On an **existing** Lead (one exact
   match, see above), the worker reads the Lead and fills only the mapped fields that are still
   **empty** (`PUT /api/v1/lead/{id}/` with just those fields), so the first known origin of a Lead is
-  never overwritten. Nothing else of an existing Lead or Contact is changed. A parameter without a
-  mapped field is written into the Note only. A field cannot serve two parameters, or a parameter
+  never overwritten. Nothing else of an existing Lead or Contact is changed. The Close API has no
+  conditional ("only if empty") update, so the read and the write are two requests sent right after
+  each other: a value that another Close user or integration writes into the same field in between
+  can be replaced. Give these fields to the website alone, or leave existing Leads to the Note lines.
+  A parameter without a mapped field is written into the Note only. A field cannot serve two parameters, or a parameter
   and a fixed value or an answer.
 - **Privacy:** Close becomes a recipient of these values together with the contact data. Name Close
   and the five parameters in the site's privacy notice before switching this on. Values in Close are

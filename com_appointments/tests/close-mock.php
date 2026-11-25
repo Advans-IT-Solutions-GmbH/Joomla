@@ -184,6 +184,7 @@ namespace {
         public array $fieldNames = [];
         /** cf_ ID => the choices a choices field accepts. */
         public array $choices = [];
+        public ?\Closure $onPut = null;
         private int $next = 0;
         public function __construct(public string $org) {}
         public function handle(string $method, string $path, ?array $payload): array
@@ -259,12 +260,24 @@ namespace {
                     return ['code' => 404, 'body' => '{}'];
                 }
                 if ($method === 'PUT') {
+                    if ($this->onPut !== null) {
+                        // Another Close writer changes the lead between our read and our write.
+                        ($this->onPut)($match[1]);
+                    }
                     // A choices field accepts only its existing choices, as Close does.
                     foreach ($this->choices as $field => $allowed) {
-                        foreach ((array) ($payload['custom.' . $field] ?? []) as $value) {
+                        foreach ([...(array) ($payload['custom.' . $field] ?? []), ...(array) ($payload['custom.' . $field . '.add'] ?? [])] as $value) {
                             if (!in_array($value, $allowed, true)) {
                                 return ['code' => 400, 'body' => '{"field-errors":{}}'];
                             }
+                        }
+                    }
+                    foreach ($payload as $key => $value) {
+                        if (str_ends_with($key, '.add')) {
+                            // Close's add operation: one value appended to a multi-value field, the list is not sent.
+                            $field = substr($key, 0, -4);
+                            $this->objects[$match[1]][$field] = [...(array) ($this->objects[$match[1]][$field] ?? []), $value];
+                            unset($payload[$key]);
                         }
                     }
                     $this->objects[$match[1]] = array_replace($this->objects[$match[1]], $payload);
@@ -1028,12 +1041,21 @@ namespace {
         && !isset($utmClose->objects[$state(67)['lead_id']]['contacts'][0]['custom.cf_funnelx']),
         'a new lead receives the funnel value');
     $utmClose->objects['lead_utm61']['custom.cf_funnelx'] = ['Phone sales'];
+    $utmClose->choices['cf_funnelx'][] = 'Webinar';
+    // Another writer adds a choice between the read and the write: the add operation keeps it.
+    $utmClose->onPut = static function (string $lead) use ($utmClose): void {
+        if ($lead === 'lead_utm61') {
+            $utmClose->objects[$lead]['custom.cf_funnelx'][] = 'Webinar';
+            $utmClose->onPut = null;
+        }
+    };
     $enrol($utmBooking(68, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
     $queue->run();
-    $check($state(68)['state'] === 'done' && array_slice($leadPuts('lead_utm61'), -1)[0][2] === ['custom.cf_funnelx' => ['Phone sales', $funnelValue]]
-        && $utmClose->objects['lead_utm61']['custom.cf_funnelx'] === ['Phone sales', $funnelValue]
+    $check($state(68)['state'] === 'done' && array_slice($leadPuts('lead_utm61'), -1)[0][2] === ['custom.cf_funnelx.add' => $funnelValue]
+        && $utmClose->objects['lead_utm61']['custom.cf_funnelx'] === ['Phone sales', 'Webinar', $funnelValue]
         && $utmClose->objects['lead_utm61']['custom.cf_utmsource'] === 'newsletter',
-        'the funnel value is appended to the choices a lead already has, alone and in dot notation');
+        'the funnel value is added with the add operation, never by sending the list, so concurrent choices stay');
+    $utmClose->objects['lead_utm61']['custom.cf_funnelx'] = ['Phone sales', $funnelValue];
     $putsBefore = $utmClose->count('PUT');
     $enrol($utmBooking(69, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
     $queue->run();
@@ -1051,6 +1073,18 @@ namespace {
         && !str_contains(\Joomla\CMS\Log\Log::$entries[0], '@'),
         'a refused funnel value is logged without personal data and the booking is transferred without it');
     $utmClose->choices['cf_funnelx'] = ['Phone sales', $funnelValue];
+    // Only Close refusing the value is tolerated: a funnel field that no longer resolves blocks the booking.
+    $utmClose->fieldNames['cf_funnelx'] = 'S - Funnel renamed';
+    \Joomla\CMS\Log\Log::$entries = [];
+    $notesBefore = $utmClose->count('POST', '/api/v1/activity/note/');
+    $enrol($utmBooking(72, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check($state(72)['state'] === 'blocked' && $state(72)['reason'] === 'lead_field' && \Joomla\CMS\Log\Log::$entries === []
+        && $utmClose->count('POST', '/api/v1/activity/note/') === $notesBefore,
+        'an unresolvable funnel field blocks the booking instead of being logged as a refusal');
+    $utmClose->fieldNames['cf_funnelx'] = 'S - Funnel';
+    $queue->run(20, true);
+    $check($state(72)['state'] === 'done', 'the repaired field releases the blocked booking');
     // A single-value funnel field is set only while it is empty.
     $utmClose->leadFields['cf_funnelx'] = false;
     unset($utmClose->choices['cf_funnelx']);

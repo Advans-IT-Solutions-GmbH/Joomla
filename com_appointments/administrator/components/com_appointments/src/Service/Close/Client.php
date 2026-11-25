@@ -420,7 +420,8 @@ final class Client
      * The update that fills the mapped campaign fields of an existing lead which are still empty, or
      * null when there is nothing to fill. Only these fields are sent, each in dot notation
      * (`custom.cf_…`), never a whole `custom` object. Values already in Close are never overwritten, so
-     * the first known origin of a lead stays.
+     * the first known origin of a lead stays. Close offers no conditional update: a value another
+     * writer puts into the same field between this read and the write can be replaced (README).
      */
     public function fill(string $lead, array $booking): ?array
     {
@@ -442,9 +443,10 @@ final class Client
 
     /**
      * The update that adds the profile's funnel value to a lead, or null when there is none or the
-     * lead already carries it. A multi-value field (a choices field with multiple selection) keeps
-     * every value it has and gains the profile's value; a single-value field is set only while it is
-     * empty. Nothing is ever replaced or removed. Only this one field is sent, in dot notation.
+     * lead already carries it. A multi-value field (a choices field with multiple selection) gets the
+     * value through Close's `custom.cf_….add` key, which adds this one value and never sends or replaces
+     * the list, so a value another writer adds at the same time stays. A single-value field is set
+     * only while it is empty. Nothing is ever removed. Only this one field is sent.
      */
     public function funnel(string $lead): ?array
     {
@@ -456,9 +458,8 @@ final class Client
         $value = $this->profile->funnelValue;
         $present = $this->readLead($lead)['custom.' . $id] ?? null;
         if ($this->leadFields[$id]) {
-            $values = array_values(array_filter(array_map('strval', is_array($present) ? $present : ($present === null ? [] : [$present])),
-                static fn (string $item): bool => $item !== ''));
-            return in_array($value, $values, true) ? null : ['custom.' . $id => [...$values, $value]];
+            $values = array_map('strval', is_array($present) ? $present : ($present === null ? [] : [$present]));
+            return in_array($value, $values, true) ? null : ['custom.' . $id . '.add' => $value];
         }
         return $present === null || $present === '' || $present === [] ? ['custom.' . $id => $value] : null;
     }

@@ -421,6 +421,17 @@ final class AttributionTest extends TestCase
         $values = Attribution::utm(Attribution::record($personal, $this->submit(), $this->at('2026-11-16 08:30:00')));
         self::assertSame([Attribution::REDACTED, 'email', Attribution::REDACTED], [$values['utm_source'], $values['utm_medium'], $values['utm_term']]);
         self::assertSame(array_fill_keys(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'], ''), Attribution::utm(null));
+
+        // Cutting to the output length never hides an address or a number beyond the cut.
+        foreach ([255, Attribution::AGGREGATE_LENGTH] as $max) {
+            self::assertSame(Attribution::REDACTED, Attribution::campaignValue(str_repeat('a', $max - 8) . '0791234567', $max));
+            self::assertSame(Attribution::REDACTED, Attribution::campaignValue(str_repeat('a', $max - 2) . 'name@example.org', $max));
+            self::assertSame(str_repeat('a', $max), Attribution::campaignValue(str_repeat('a', $max + 20), $max));
+        }
+        $long = Attribution::visit(null, $this->request('/lp?utm_campaign=' . str_repeat('x', 95) . rawurlencode('anna@example.org'),
+            'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));
+        self::assertSame(Attribution::REDACTED, Attribution::campaign(Attribution::record($long, $this->submit(),
+            $this->at('2026-11-16 08:30:00')))['utm_campaign'], 'The statistics check the value before cutting it');
     }
 
     public function testLinesForTheHostAreLabelledAndLeaveOutEmptyValues(): void

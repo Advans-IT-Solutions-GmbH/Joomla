@@ -528,13 +528,14 @@ final class Attribution
      * number. A visitor can put anything into a link: an e-mail address or a telephone number (nine
      * or more digits, also with spaces, hyphens, dots, slashes or brackets between them) never
      * reaches the statistics, which are kept after the booking is anonymised, nor a CRM. A date such
-     * as 2026-11-16 has eight digits and stays.
+     * as 2026-11-16 has eight digits and stays. The whole stored value is checked before it is cut to
+     * $max, so cutting can never hide an address or number at the end.
      */
     public static function campaignValue(mixed $value, int $max): string
     {
-        $value = self::clean($value, $max);
+        $value = self::clean($value);
 
-        return preg_match('/@|\d(?:[ ().\/-]{0,2}\d){8,}/u', $value) === 1 ? self::REDACTED : $value;
+        return preg_match('/@|\d(?:[ ().\/-]{0,2}\d){8,}/u', $value) === 1 ? self::REDACTED : self::clean($value, $max);
     }
 
     /**
