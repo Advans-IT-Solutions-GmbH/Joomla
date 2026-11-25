@@ -988,7 +988,19 @@ jobs:
             exit 1
           fi
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.zip' --dir /tmp/published
-          cp /tmp/published/*.zip "$TESTS/extension.zip"
+          ZIPS=(/tmp/published/*.zip)
+          if [ "${#ZIPS[@]}" -ne 1 ] || [ ! -f "${ZIPS[0]}" ]; then
+            echo "::error::Expected exactly one ZIP asset in $TAG, found: ${ZIPS[*]}"
+            exit 1
+          fi
+          cp "${ZIPS[0]}" "$TESTS/extension.zip"
+          # Releases up to 1.6.x published the standalone component, from 1.7.0 on the release
+          # asset is pkg_appointments. The kind decides which update channel the site uses.
+          if unzip -Z1 "${ZIPS[0]}" | grep -qx 'pkg_appointments.xml'; then
+            echo "PREVIOUS_KIND=package" >> "$GITHUB_ENV"
+          else
+            echo "PREVIOUS_KIND=standalone" >> "$GITHUB_ENV"
+          fi
           echo "Installed first: $TAG"
       - name: Mount private restoration staging on the web volume filesystem
         run: |
@@ -1039,17 +1051,25 @@ jobs:
           docker cp /tmp/appointments-recovery.zip "$C:/tmp/appointments-recovery.zip"
           docker exec "$C" php /var/www/html/cli/joomla.php extension:install --path=/tmp/appointments-recovery.zip
           docker cp /tmp/new-package/extension.zip "$C:/tmp/extension-new.zip"
-          # The published standalone component finds the package through its own channel (the
-          # legacy update.xml announces the package); later rounds update the package itself.
           docker cp com_appointments/updates/update.xml "$C:/tmp/update.xml"
           docker cp pkg_appointments/updates/update.xml "$C:/tmp/package-update.xml"
           docker exec "$C" mkdir -p /var/www/html/tests/scripts
           docker cp shared/tests/scripts/shared-test-helpers.php "$C:/var/www/html/tests/scripts/"
           docker cp shared/tests/scripts/shared-backend-update.php "$C:/var/www/html/tests/scripts/"
-          docker exec -e EXPECT_BOOTSTRAP=1 -e SCENARIOS="$SCENARIOS" \
-            -e LEGACY_EXTENSION=component::com_appointments -e PACKAGE_UPDATE_XML=/tmp/package-update.xml \
-            -e MODIFY_FILE=administrator/components/com_appointments/src/View/Help/HtmlView.php \
-            "$C" php /var/www/html/tests/scripts/shared-backend-update.php
+          if [ "$PREVIOUS_KIND" = "standalone" ]; then
+            # The published standalone component finds the package through its own channel (the
+            # legacy update.xml announces the package); later rounds update the package itself.
+            docker exec -e EXPECT_BOOTSTRAP=1 -e SCENARIOS="$SCENARIOS" \
+              -e LEGACY_EXTENSION=component::com_appointments -e PACKAGE_UPDATE_XML=/tmp/package-update.xml \
+              -e MODIFY_FILE=administrator/components/com_appointments/src/View/Help/HtmlView.php \
+              "$C" php /var/www/html/tests/scripts/shared-backend-update.php
+          else
+            # The published package updates through its own channel, the one its manifest registers.
+            docker exec -e EXPECT_BOOTSTRAP=1 -e SCENARIOS="$SCENARIOS" \
+              -e UPDATE_XML=/tmp/package-update.xml \
+              -e MODIFY_FILE=administrator/components/com_appointments/src/View/Help/HtmlView.php \
+              "$C" php /var/www/html/tests/scripts/shared-backend-update.php
+          fi
       - name: Show container logs
         if: always()
         run: |
