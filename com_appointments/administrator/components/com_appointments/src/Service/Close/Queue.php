@@ -492,6 +492,11 @@ final class Queue
             } else {
                 $context = $this->context($opened, $profile, (int) $row['contact_created'] === 1)
                     + ['match_rule' => (string) ($row['match_rule'] ?? ''), 'match_candidates' => (string) ($row['match_candidates'] ?? '')];
+                if ($profile->utmFields !== [] || $profile->funnelField !== '') {
+                    // The campaign and funnel mappings may have changed since the contact was bound:
+                    // an unknown or ambiguous field blocks before the note carries more booking data.
+                    $client->validateLeadFields();
+                }
                 if ($profile->mode === Profile::MODE_ACTIVITY) {
                     $client->validateActivityFields();
                     $payload = $client->activity($opened, $context);

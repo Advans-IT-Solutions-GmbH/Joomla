@@ -355,6 +355,10 @@ final class Client
                 }
                 $skip += 100;
             } while (!empty($page['has_more']) && $page['data'] !== [] && $skip < 1000);
+            if (!empty($page['has_more'])) {
+                // Only the complete catalog proves that a name is unique.
+                throw new DeliveryException('blocked', 'lead_field');
+            }
         }
         $ids = [];
         foreach ($fields as $parameter => $field) {

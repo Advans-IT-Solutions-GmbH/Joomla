@@ -1004,6 +1004,45 @@ namespace {
         'an ambiguous field name blocks before any personal data is sent');
     $utmClose->fieldNames['cf_utmother'] = 'S - Marketing UTM Term';
 
+    // A catalog larger than the pages read cannot prove that a name is unique: blocked.
+    $fieldsBefore = $utmClose->leadFields;
+    for ($i = 0; $i < 1000; $i++) {
+        $utmClose->leadFields['cf_bulk' . $i] = false;
+    }
+    $enrol($utmBooking(73, 'utm-catalog@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check($state(73)['state'] === 'blocked' && $state(73)['reason'] === 'lead_field'
+        && !str_contains(json_encode($utmClose->requests), 'utm-catalog@example.test'),
+        'an incomplete field catalog blocks a name mapping before any personal data is sent');
+    $utmClose->leadFields = $fieldsBefore;
+    $queue->run(20, true);
+    $check($state(73)['state'] === 'done', 'a complete catalog releases it');
+
+    // A mapping that turns ambiguous after the contact was bound blocks the note as well. A rate limit
+    // stops the first run right after the contact is bound; the mapping changes before the next run.
+    $db->afterCommit = static function () use ($db, $state, $utmClose): void {
+        $row = $state(74);
+        if ($row !== false && $row['contact_id'] !== '' && $row['activity_id'] === '') {
+            $db->afterCommit = null;
+            $utmClose->mode = '429';
+        }
+    };
+    $notesBefore = $utmClose->count('POST', '/api/v1/activity/note/');
+    $enrol($utmBooking(74, 'utm-later@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $db->afterCommit = null;
+    $utmClose->mode = 'ok';
+    $notesBefore = $utmClose->count('POST', '/api/v1/activity/note/');
+    $utmClose->fieldNames['cf_utmother'] = 'S - Marketing UTM Medium';
+    $GLOBALS['close_mock_time'] = ($GLOBALS['close_mock_time'] ?? time()) + 3600;
+    $queue->run();
+    $check($state(74)['state'] === 'blocked' && $state(74)['reason'] === 'lead_field' && $state(74)['contact_id'] !== ''
+        && $utmClose->count('POST', '/api/v1/activity/note/') === $notesBefore,
+        'a mapping changed between matching and delivery blocks the note before more booking data is sent');
+    $utmClose->fieldNames['cf_utmother'] = 'S - Marketing UTM Term';
+    $queue->run(20, true);
+    $check($state(74)['state'] === 'done', 'the repaired mapping releases the note');
+
     // Switched off: no note lines and no lead fields, whatever is mapped.
     $params->values['close_profiles']['close_profiles3']['utm_transfer'] = '0';
     $enrol($utmBooking(66, 'utm-off@example.test', $origin($firstTouch, $lastTouch)));
