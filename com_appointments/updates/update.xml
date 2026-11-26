@@ -5,13 +5,13 @@
         <description>Self-hosted appointment scheduling for Joomla, now delivered as the package pkg_appointments</description>
         <element>com_appointments</element>
         <type>component</type>
-        <version>1.7.0</version>
+        <version>1.8.0</version>
         <infourl>https://github.com/Advans-IT-Solutions-GmbH/Joomla/tree/main/pkg_appointments</infourl>
         <changelogurl>https://raw.githubusercontent.com/Advans-IT-Solutions-GmbH/Joomla/main/com_appointments/updates/changelog.xml</changelogurl>
         <downloads>
-            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/appointments-v1.7.0/pkg_appointments_1.7.0.zip</downloadurl>
+            <downloadurl type="full" format="zip">https://github.com/Advans-IT-Solutions-GmbH/Joomla/releases/download/appointments-v1.8.0/pkg_appointments_1.8.0.zip</downloadurl>
         </downloads>
-        <sha256>82dd0190f4418bec58a96b4dfa7a49f5e989de7fdfcd82d25a24fd954922d442</sha256>
+        <sha256>4dc748019a1d30da5f1775a6da41fe17d0a39fef8b8b19080f8b9698bdaacf4a</sha256>
         <tags>
             <tag>stable</tag>
         </tags>
