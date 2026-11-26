@@ -23,6 +23,18 @@ namespace Joomla\CMS {
         }
     }
 }
+namespace Joomla\CMS\Log {
+    final class Log
+    {
+        public const WARNING = 4;
+        /** @var list<string> */
+        public static array $entries = [];
+        public static function add(string $message, int $priority = self::WARNING, string $category = ''): void
+        {
+            self::$entries[] = $category . ': ' . $message;
+        }
+    }
+}
 namespace Joomla\CMS\Component {
     final class ComponentHelper
     {
@@ -44,6 +56,7 @@ namespace {
         }
     });
 
+    use Advans\Component\Appointments\Administrator\Helper\Attribution;
     use Advans\Component\Appointments\Administrator\Service\Close\Client;
     use Advans\Component\Appointments\Administrator\Service\Close\CredentialStore;
     use Advans\Component\Appointments\Administrator\Service\Close\DeliveryException;
@@ -81,10 +94,10 @@ namespace {
             $this->pdo->exec('CREATE TABLE test_appointments_bookings (
                 id INTEGER PRIMARY KEY, uid TEXT, sequence INTEGER, eventtype_id INTEGER, anonymised_utc TEXT,
                 invitee_name TEXT, invitee_first_name TEXT, invitee_last_name TEXT, invitee_email TEXT, invitee_phone TEXT, start_utc TEXT, end_utc TEXT,
-                state INTEGER, custom_fields TEXT, guest_emails TEXT, conference_url TEXT)');
+                state INTEGER, custom_fields TEXT, guest_emails TEXT, conference_url TEXT, attribution TEXT)');
             $this->pdo->exec('CREATE TABLE test_appointments_eventtypes (id INTEGER PRIMARY KEY, title TEXT)');
             $this->pdo->exec("INSERT INTO test_appointments_eventtypes VALUES (1,'Synthetic first call'),(2,'Synthetic IT call'),"
-                . "(3,'Synthetic product call'),(4,'Synthetic unrouted call'),(5,'Synthetic activity call')");
+                . "(3,'Synthetic product call'),(4,'Synthetic unrouted call'),(5,'Synthetic activity call'),(6,'Synthetic campaign call')");
             $this->pdo->exec('CREATE TABLE test_appointments_fields (id INTEGER PRIMARY KEY, label TEXT)');
             $this->pdo->exec("INSERT INTO test_appointments_fields VALUES (11,'Company'),(12,'Role'),(13,'Topic'),(14,'Systems'),"
                 . "(31,'Company or club'),(32,'Request type'),(33,'Excel version'),(99,'Never transferred')");
@@ -167,6 +180,11 @@ namespace {
         public string $mode = 'ok';
         public ?string $orgId = null;
         public array $leadFields = ['cf_origin' => false, 'cf_funnel' => false, 'cf_systems' => true, 'cf_product' => false];
+        /** cf_ ID => name in the lead field catalog; the ID itself where none is set. */
+        public array $fieldNames = [];
+        /** cf_ ID => the choices a choices field accepts. */
+        public array $choices = [];
+        public ?\Closure $onPut = null;
         private int $next = 0;
         public function __construct(public string $org) {}
         public function handle(string $method, string $path, ?array $payload): array
@@ -227,6 +245,44 @@ namespace {
             if ($method === 'GET' && preg_match('~^/api/v1/lead/(lead_\w+)/\?_fields=id,name$~', $path, $match)) {
                 return isset($this->objects[$match[1]]) ? ['code' => 200, 'data' => ['id' => $match[1], 'name' => $this->objects[$match[1]]['name'] ?? '']]
                     : ['code' => 404, 'body' => '{}'];
+            }
+            if ($method === 'GET' && preg_match('~^/api/v1/custom_field/lead/\?_limit=(\d+)&_skip=(\d+)$~', $path, $match)) {
+                // The lead field catalog, read only to resolve a field configured by its name.
+                $fields = [];
+                foreach ($this->leadFields as $id => $multiple) {
+                    $fields[] = ['id' => $id, 'name' => $this->fieldNames[$id] ?? $id, 'type' => 'text', 'accepts_multiple_values' => $multiple];
+                }
+                return ['code' => 200, 'data' => ['data' => array_slice($fields, (int) $match[2], (int) $match[1]),
+                    'has_more' => count($fields) > (int) $match[2] + (int) $match[1]]];
+            }
+            if (preg_match('~^/api/v1/lead/(lead_\w+)/$~', $path, $match) && in_array($method, ['GET', 'PUT'], true)) {
+                if (!isset($this->objects[$match[1]])) {
+                    return ['code' => 404, 'body' => '{}'];
+                }
+                if ($method === 'PUT') {
+                    if ($this->onPut !== null) {
+                        // Another Close writer changes the lead between our read and our write.
+                        ($this->onPut)($match[1]);
+                    }
+                    // A choices field accepts only its existing choices, as Close does.
+                    foreach ($this->choices as $field => $allowed) {
+                        foreach ([...(array) ($payload['custom.' . $field] ?? []), ...(array) ($payload['custom.' . $field . '.add'] ?? [])] as $value) {
+                            if (!in_array($value, $allowed, true)) {
+                                return ['code' => 400, 'body' => '{"field-errors":{}}'];
+                            }
+                        }
+                    }
+                    foreach ($payload as $key => $value) {
+                        if (str_ends_with($key, '.add')) {
+                            // Close's add operation: one value appended to a multi-value field, the list is not sent.
+                            $field = substr($key, 0, -4);
+                            $this->objects[$match[1]][$field] = [...(array) ($this->objects[$match[1]][$field] ?? []), $value];
+                            unset($payload[$key]);
+                        }
+                    }
+                    $this->objects[$match[1]] = array_replace($this->objects[$match[1]], $payload);
+                }
+                return ['code' => 200, 'data' => ['id' => $match[1]] + $this->objects[$match[1]]];
             }
             if ($method === 'GET' && preg_match('~^/api/v1/custom_field/lead/(cf_\w+)/$~', $path, $match)) {
                 return isset($this->leadFields[$match[1]]) ? ['code' => 200, 'data' => ['id' => $match[1],
@@ -850,6 +906,255 @@ namespace {
             'a delivery error carries neither the key nor the original exception');
     }
     $params->values['close_profiles']['close_profiles1']['credential_env'] = 'SYNTHETIC_QR_KEY';
+
+    // Campaign parameters of the booking's origin: note lines and lead fields per booking. Lead fields are
+    // configured by cf_ ID or by their exact name; a new lead receives them, an existing lead only where empty.
+    $origin = static fn (array $first, array $last): string => json_encode(['version' => 1, 'first_seen_utc' => '2027-01-01 08:00:00',
+        'landing_url' => '/landing?utm_source=x', 'landing_ip' => '203.0.113.77',
+        'first_touch' => ['time_utc' => '2027-01-01 08:00:00', 'landing_url' => '/a', 'referrer' => '', 'referrer_host' => '', 'parameters' => $first],
+        'last_touch' => ['time_utc' => '2027-01-02 08:00:00', 'landing_url' => '/b', 'referrer' => 'https://search.example.test/q',
+            'referrer_host' => 'search.example.test', 'parameters' => $last],
+        'page_views' => 4, 'booking_page_url' => '/book', 'booking_ip' => '203.0.113.78', 'accept_language' => 'de-CH',
+        'user_agent' => 'SyntheticAgentNeverSent/1.0', 'device' => 'desktop', 'browser' => 'Firefox', 'os' => 'Windows']);
+    $firstTouch = ['utm_source' => 'linkedin', 'utm_medium' => 'social', 'utm_campaign' => 'first-campaign'];
+    $lastTouch = ['utm_source' => 'google', 'utm_medium' => 'cpc', 'utm_campaign' => 'last-campaign',
+        'utm_content' => 'ad@example.test', 'utm_term' => 'scheduling software', 'gclid' => 'SyntheticClickIdNeverSent'];
+    $params->values['close_profiles']['close_profiles3'] = ['key' => 'utm', 'eventtypes' => ['6'], 'origin' => 'https://utm.example.test',
+        'credential_env' => 'SYNTHETIC_UTM_KEY', 'delivery' => 'note', 'lead_values' => '{"cf_origin":"Website"}',
+        'utm_transfer' => '1', 'utm_source_field' => 'cf_utmsource', 'utm_medium_field' => '  s - marketing utm  MEDIUM ',
+        'utm_campaign_field' => 'cf_utmcampaign'];
+    $remote['utm'] = new FakeClose('utm');
+    $utmClose = $remote['utm'];
+    $utmClose->leadFields = ['cf_origin' => false, 'cf_utmsource' => false, 'cf_utmmedium' => false, 'cf_utmcampaign' => false, 'cf_utmother' => false];
+    $utmClose->fieldNames = ['cf_utmsource' => 'S - Marketing UTM Source', 'cf_utmmedium' => 'S - Marketing UTM Medium',
+        'cf_utmcampaign' => 'S - Marketing UTM Kampagne', 'cf_utmother' => 'S - Marketing UTM Term'];
+    $utmBooking = static fn (int $id, string $email, ?string $attribution): array => ['attribution' => $attribution]
+        + $booking($id, 6, $email, []);
+    $utmNote = static fn (int $id): string => (string) ($utmClose->objects[$state($id)['activity_id'] ?? '']['note'] ?? '');
+
+    $enrol($utmBooking(60, 'utm-new@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $newLead = $utmClose->objects[$state(60)['lead_id']] ?? [];
+    $check($state(60)['state'] === 'done' && ($newLead['custom.cf_utmsource'] ?? '') === 'google'
+        && ($newLead['custom.cf_utmmedium'] ?? '') === 'cpc' && ($newLead['custom.cf_utmcampaign'] ?? '') === 'last-campaign'
+        && ($newLead['custom.cf_origin'] ?? '') === 'Website' && !isset($newLead['custom.cf_utmother']),
+        'a new lead receives the campaign parameters of the last campaign visit, a field configured by name included');
+    $check($utmClose->count('GET', '/api/v1/custom_field/lead/?_limit=100&_skip=0') === 1
+        && $utmClose->count('GET', '/api/v1/custom_field/lead/cf_utmmedium/') === 1
+        && array_search('/api/v1/custom_field/lead/cf_utmmedium/', array_column($utmClose->requests, 1), true)
+            < array_search('/api/v1/data/search/', array_column($utmClose->requests, 1), true),
+        'a field name is resolved and its field checked before any personal data is sent');
+    $check(str_contains($utmNote(60), 'COM_APPOINTMENTS_CLOSE_NOTE_UTM_SOURCE: google')
+        && str_contains($utmNote(60), 'COM_APPOINTMENTS_CLOSE_NOTE_UTM_CAMPAIGN: last-campaign')
+        && str_contains($utmNote(60), 'COM_APPOINTMENTS_CLOSE_NOTE_UTM_TERM: scheduling software')
+        && str_contains($utmNote(60), 'COM_APPOINTMENTS_CLOSE_NOTE_UTM_CONTENT: (redacted)'),
+        'the note lists all five parameters of the booking, an e-mail address in a parameter redacted');
+    $utmSent = json_encode($utmClose->requests);
+    $check(!str_contains($utmSent, 'SyntheticClickIdNeverSent') && !str_contains($utmSent, '203.0.113.7')
+        && !str_contains($utmSent, 'SyntheticAgentNeverSent') && !str_contains($utmSent, 'ad@example.test')
+        && !str_contains($utmSent, 'search.example.test') && !str_contains($utmSent, 'linkedin'),
+        'no click ID, address, User-Agent, referrer or value of the other visit leaves the website');
+
+    // An existing lead: empty campaign fields are filled, a value already there is never overwritten.
+    $utmClose->objects['lead_utm61'] = ['name' => 'Known AG', 'custom.cf_utmsource' => 'newsletter', 'custom.cf_utmcampaign' => ''];
+    $utmClose->contacts['cont_utm61'] = ['id' => 'cont_utm61', 'lead_id' => 'lead_utm61', 'name' => 'Known Person',
+        'emails' => [['email' => 'utm-known@example.test']]];
+    $enrol($utmBooking(61, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $puts = array_values(array_filter($utmClose->requests, static fn (array $r): bool => $r[0] === 'PUT' && $r[1] === '/api/v1/lead/lead_utm61/'));
+    $check($state(61)['state'] === 'done' && $state(61)['lead_id'] === 'lead_utm61' && count($puts) === 1
+        && $puts[0][2] === ['custom.cf_utmmedium' => 'cpc', 'custom.cf_utmcampaign' => 'last-campaign']
+        && $utmClose->objects['lead_utm61']['custom.cf_utmsource'] === 'newsletter'
+        && $utmClose->objects['lead_utm61']['name'] === 'Known AG' && !isset($utmClose->objects['lead_utm61']['custom.cf_origin']),
+        'an existing lead gets only its empty campaign fields; its source, name and other fields stay');
+    $check(str_contains($utmNote(61), 'COM_APPOINTMENTS_CLOSE_NOTE_UTM_SOURCE: google')
+        && str_contains($utmNote(61), 'COM_APPOINTMENTS_CLOSE_NOTE_NEW_CONTACT: COM_APPOINTMENTS_CLOSE_NOTE_NO'),
+        'the note of an existing lead still names the campaign of this booking');
+
+    // Nothing left to fill, or no origin: no write to the existing lead.
+    $putsBefore = $utmClose->count('PUT', '/api/v1/lead/lead_utm61/');
+    $enrol($utmBooking(62, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
+    $enrol($utmBooking(63, 'utm-known@example.test', null));
+    $queue->run();
+    $check($state(62)['state'] === 'done' && $state(63)['state'] === 'done'
+        && $utmClose->count('PUT', '/api/v1/lead/lead_utm61/') === $putsBefore
+        && !str_contains($utmNote(63), 'UTM_'), 'a lead with all campaign fields set, or a booking without origin, changes nothing');
+
+    // The first campaign visit on request; a last visit without parameters falls back to the first.
+    $params->values['close_profiles']['close_profiles3']['utm_touch'] = 'first';
+    $enrol($utmBooking(64, 'utm-first@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check(($utmClose->objects[$state(64)['lead_id']]['custom.cf_utmsource'] ?? '') === 'linkedin'
+        && ($utmClose->objects[$state(64)['lead_id']]['custom.cf_utmcampaign'] ?? '') === 'first-campaign'
+        && !str_contains($utmNote(64), 'scheduling software'), 'the first campaign visit is used when configured, never mixed with the last');
+    $params->values['close_profiles']['close_profiles3']['utm_touch'] = 'last';
+    $check(Attribution::utm(Attribution::decode($origin($firstTouch, ['gclid' => 'x'])))['utm_source'] === 'linkedin'
+        && Attribution::utm(Attribution::decode($origin([], [])))['utm_source'] === ''
+        && Attribution::utm(Attribution::decode($origin($firstTouch, ['utm_term' => '079 123 45 67'])))['utm_term'] === '(redacted)'
+        && Attribution::utm(null) === array_fill_keys(Profile::UTM, ''),
+        'a visit without the five parameters falls back to the other one, a telephone number is redacted');
+
+    // A name that matches no field or several fields blocks before personal data is sent.
+    $utmClose->fieldNames['cf_utmother'] = 'S - Marketing UTM Medium';
+    $before = count($utmClose->requests);
+    $enrol($utmBooking(65, 'utm-ambiguous@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check($state(65)['state'] === 'blocked' && $state(65)['reason'] === 'lead_field'
+        && !str_contains(json_encode(array_slice($utmClose->requests, $before)), 'utm-ambiguous@example.test'),
+        'an ambiguous field name blocks before any personal data is sent');
+    $utmClose->fieldNames['cf_utmother'] = 'S - Marketing UTM Term';
+
+    // A catalog larger than the pages read cannot prove that a name is unique: blocked.
+    $fieldsBefore = $utmClose->leadFields;
+    for ($i = 0; $i < 1000; $i++) {
+        $utmClose->leadFields['cf_bulk' . $i] = false;
+    }
+    $enrol($utmBooking(73, 'utm-catalog@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check($state(73)['state'] === 'blocked' && $state(73)['reason'] === 'lead_field'
+        && !str_contains(json_encode($utmClose->requests), 'utm-catalog@example.test'),
+        'an incomplete field catalog blocks a name mapping before any personal data is sent');
+    $utmClose->leadFields = $fieldsBefore;
+    $queue->run(20, true);
+    $check($state(73)['state'] === 'done', 'a complete catalog releases it');
+
+    // A mapping that turns ambiguous after the contact was bound blocks the note as well. A rate limit
+    // stops the first run right after the contact is bound; the mapping changes before the next run.
+    $db->afterCommit = static function () use ($db, $state, $utmClose): void {
+        $row = $state(74);
+        if ($row !== false && $row['contact_id'] !== '' && $row['activity_id'] === '') {
+            $db->afterCommit = null;
+            $utmClose->mode = '429';
+        }
+    };
+    $notesBefore = $utmClose->count('POST', '/api/v1/activity/note/');
+    $enrol($utmBooking(74, 'utm-later@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $db->afterCommit = null;
+    $utmClose->mode = 'ok';
+    $notesBefore = $utmClose->count('POST', '/api/v1/activity/note/');
+    $utmClose->fieldNames['cf_utmother'] = 'S - Marketing UTM Medium';
+    $GLOBALS['close_mock_time'] = ($GLOBALS['close_mock_time'] ?? time()) + 3600;
+    $queue->run();
+    $check($state(74)['state'] === 'blocked' && $state(74)['reason'] === 'lead_field' && $state(74)['contact_id'] !== ''
+        && $utmClose->count('POST', '/api/v1/activity/note/') === $notesBefore,
+        'a mapping changed between matching and delivery blocks the note before more booking data is sent');
+    $utmClose->fieldNames['cf_utmother'] = 'S - Marketing UTM Term';
+    $queue->run(20, true);
+    $check($state(74)['state'] === 'done', 'the repaired mapping releases the note');
+
+    // Switched off: no note lines and no lead fields, whatever is mapped.
+    $params->values['close_profiles']['close_profiles3']['utm_transfer'] = '0';
+    $enrol($utmBooking(66, 'utm-off@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run(20, true);
+    $offLead = $utmClose->objects[$state(66)['lead_id']] ?? [];
+    $check($state(66)['state'] === 'done' && !isset($offLead['custom.cf_utmsource']) && !str_contains($utmNote(66), 'UTM_'),
+        'without the profile option nothing of the origin is sent');
+    $check((new Profile(array_replace($params->values['close_profiles']['close_profiles3'], ['utm_transfer' => '0'])))->utmFields === [],
+        'a profile without the option keeps no campaign field mapping');
+    $params->values['close_profiles']['close_profiles3']['utm_transfer'] = '1';
+    foreach ([
+        'one field for two parameters' => ['utm_term_field' => 'CF_UTMSOURCE', 'utm_content_field' => 'cf_UTMsource'],
+        'a name used twice' => ['utm_term_field' => 's - marketing utm medium'],
+        'an invalid cf_ ID' => ['utm_term_field' => 'cf_bad-id'],
+        'a campaign field that also has a fixed value' => ['utm_term_field' => 'cf_origin'],
+        'an unknown campaign visit' => ['utm_touch' => 'middle'],
+        'a control character in a field name' => ['utm_term_field' => "UTM\nTerm"],
+    ] as $label => $change) {
+        try { new Profile(array_replace($params->values['close_profiles']['close_profiles3'], $change)); $check(false, 'rejects ' . $label); }
+        catch (\InvalidArgumentException $e) { $check(true, 'profile rejects ' . $label); }
+    }
+
+    // Optional funnel: a fixed value per profile added to a multi-choice lead field. Existing choices of a
+    // lead are kept and the value is appended when missing; nothing is replaced or removed.
+    $funnelValue = 'Campaign | Landing page';
+    $utmClose->leadFields['cf_funnelx'] = true;
+    $utmClose->fieldNames['cf_funnelx'] = 'S - Funnel';
+    $utmClose->choices['cf_funnelx'] = ['Phone sales', $funnelValue];
+    $params->values['close_profiles']['close_profiles3'] += ['funnel_field' => 's - funnel', 'funnel_value' => $funnelValue];
+    $leadPuts = static fn (string $lead): array => array_values(array_filter($utmClose->requests,
+        static fn (array $r): bool => $r[0] === 'PUT' && $r[1] === '/api/v1/lead/' . $lead . '/'));
+    $enrol($utmBooking(67, 'utm-funnel-new@example.test', null));
+    $queue->run();
+    $check($state(67)['state'] === 'done' && ($utmClose->objects[$state(67)['lead_id']]['custom.cf_funnelx'] ?? null) === [$funnelValue]
+        && !isset($utmClose->objects[$state(67)['lead_id']]['contacts'][0]['custom.cf_funnelx']),
+        'a new lead receives the funnel value');
+    $utmClose->objects['lead_utm61']['custom.cf_funnelx'] = ['Phone sales'];
+    $utmClose->choices['cf_funnelx'][] = 'Webinar';
+    // Another writer adds a choice between the read and the write: the add operation keeps it.
+    $utmClose->onPut = static function (string $lead) use ($utmClose): void {
+        if ($lead === 'lead_utm61') {
+            $utmClose->objects[$lead]['custom.cf_funnelx'][] = 'Webinar';
+            $utmClose->onPut = null;
+        }
+    };
+    $enrol($utmBooking(68, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check($state(68)['state'] === 'done' && array_slice($leadPuts('lead_utm61'), -1)[0][2] === ['custom.cf_funnelx.add' => $funnelValue]
+        && $utmClose->objects['lead_utm61']['custom.cf_funnelx'] === ['Phone sales', 'Webinar', $funnelValue]
+        && $utmClose->objects['lead_utm61']['custom.cf_utmsource'] === 'newsletter',
+        'the funnel value is added with the add operation, never by sending the list, so concurrent choices stay');
+    $utmClose->objects['lead_utm61']['custom.cf_funnelx'] = ['Phone sales', $funnelValue];
+    $putsBefore = $utmClose->count('PUT');
+    $enrol($utmBooking(69, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check($state(69)['state'] === 'done' && $utmClose->count('PUT') === $putsBefore
+        && $utmClose->objects['lead_utm61']['custom.cf_funnelx'] === ['Phone sales', $funnelValue],
+        'a lead that already carries the funnel value is not written');
+    // Close refuses a value that is not a choice of the field: logged, and the booking is still transferred.
+    $utmClose->choices['cf_funnelx'] = ['Phone sales'];
+    $utmClose->objects['lead_utm61']['custom.cf_funnelx'] = ['Phone sales'];
+    \Joomla\CMS\Log\Log::$entries = [];
+    $enrol($utmBooking(70, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check($state(70)['state'] === 'done' && $state(70)['activity_id'] !== '' && $utmClose->objects['lead_utm61']['custom.cf_funnelx'] === ['Phone sales']
+        && count(\Joomla\CMS\Log\Log::$entries) === 1 && str_contains(\Joomla\CMS\Log\Log::$entries[0], 'booking 70 (http_400)')
+        && !str_contains(\Joomla\CMS\Log\Log::$entries[0], '@'),
+        'a refused funnel value is logged without personal data and the booking is transferred without it');
+    $utmClose->choices['cf_funnelx'] = ['Phone sales', $funnelValue];
+    // Only Close refusing the value is tolerated: a funnel field that no longer resolves blocks the booking.
+    $utmClose->fieldNames['cf_funnelx'] = 'S - Funnel renamed';
+    \Joomla\CMS\Log\Log::$entries = [];
+    $notesBefore = $utmClose->count('POST', '/api/v1/activity/note/');
+    $enrol($utmBooking(72, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check($state(72)['state'] === 'blocked' && $state(72)['reason'] === 'lead_field' && \Joomla\CMS\Log\Log::$entries === []
+        && $utmClose->count('POST', '/api/v1/activity/note/') === $notesBefore,
+        'an unresolvable funnel field blocks the booking instead of being logged as a refusal');
+    $utmClose->fieldNames['cf_funnelx'] = 'S - Funnel';
+    $queue->run(20, true);
+    $check($state(72)['state'] === 'done', 'the repaired field releases the blocked booking');
+    // A single-value funnel field is set only while it is empty.
+    $utmClose->leadFields['cf_funnelx'] = false;
+    unset($utmClose->choices['cf_funnelx']);
+    $utmClose->objects['lead_utm61']['custom.cf_funnelx'] = 'Existing funnel';
+    $putsBefore = $utmClose->count('PUT');
+    $enrol($utmBooking(71, 'utm-known@example.test', $origin($firstTouch, $lastTouch)));
+    $queue->run();
+    $check($state(71)['state'] === 'done' && $utmClose->count('PUT') === $putsBefore
+        && $utmClose->objects['lead_utm61']['custom.cf_funnelx'] === 'Existing funnel', 'a single-value funnel field is never overwritten');
+    $check(!preg_match('/"custom"\s*:/', json_encode($utmClose->requests)), 'no request sends a whole custom object');
+    // Field definitions and choice lists belong to Close: narrowing a choices list deletes the removed
+    // value on every lead. The extension reads them and writes lead values only.
+    $writes = array_filter($all(), static fn (array $r): bool => $r[0] !== 'GET');
+    $check(array_filter($writes, static fn (array $r): bool => !preg_match('~^/api/v1/(lead|activity/note|activity/custom|data/search)/~', $r[1])) === []
+        && array_filter($writes, static fn (array $r): bool => str_contains($r[1], 'custom_field')) === [],
+        'no request ever writes a custom field definition or a choices list');
+    $closeSources = implode("\n", array_map('file_get_contents', glob(dirname(__DIR__) . '/administrator/components/com_appointments/src/Service/Close/*.php')));
+    $check(preg_match_all("~request\\('(?:POST|PUT)',\\s*'([^']*)~", $closeSources, $paths) > 0
+        && array_filter($paths[1], static fn (string $path): bool => !preg_match('~^/api/v1/(lead|data/search)/$~', $path)) === []
+        && !preg_match('~custom_field[^\n]*(POST|PUT)|(POST|PUT)[^\n]*custom_field~', $closeSources),
+        'no code path writes to a field definition: POST and PUT go to leads, notes, activities and searches only');
+    foreach ([
+        'a funnel field without a value' => ['funnel_value' => ''],
+        'a funnel value without a field' => ['funnel_field' => ''],
+        'a funnel field that is a campaign field' => ['funnel_field' => 'CF_utmsource '],
+        'a funnel field that has a fixed value' => ['funnel_field' => 'cf_origin'],
+    ] as $label => $change) {
+        try { new Profile(array_replace($params->values['close_profiles']['close_profiles3'], $change)); $check(false, 'rejects ' . $label); }
+        catch (\InvalidArgumentException $e) { $check(true, 'profile rejects ' . $label); }
+    }
+    unset($params->values['close_profiles']['close_profiles3']);
 
     // Nothing in this component can delete in Close.
     $methods = array_unique(array_column($all(), 0));

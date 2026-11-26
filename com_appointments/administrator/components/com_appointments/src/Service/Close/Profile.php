@@ -48,6 +48,20 @@ final class Profile
     public readonly array $leadAnswers;
     /** @var array<string, string> lead cf_ ID => fixed value, new leads only */
     public readonly array $leadValues;
+    /** The campaign parameters of a booking's origin that may be transferred, in this order. */
+    public const UTM = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+    /** Whether the campaign parameters of the booking's origin are transferred (note lines and mapped lead fields). */
+    public readonly bool $utm;
+    /** Whether the first campaign visit is preferred over the last one. */
+    public readonly bool $utmFirst;
+    /**
+     * @var array<string, string> campaign parameter => lead custom field: a cf_ ID or the exact field
+     *      name, resolved by Client; filled on new leads and where empty on existing leads.
+     */
+    public readonly array $utmFields;
+    /** Optional funnel lead field (cf_ ID or exact name) and its fixed value; both '' when unused. */
+    public readonly string $funnelField;
+    public readonly string $funnelValue;
     /** Identifies the remote destination; a change stops updates of already transferred bookings. */
     public readonly string $binding;
 
@@ -100,8 +114,49 @@ final class Profile
         if (array_intersect(array_keys($leadValues), array_values($this->leadAnswers))) {
             throw new \InvalidArgumentException('A lead field cannot have a fixed value and an answer.');
         }
+        $this->utm = (string) ($entry['utm_transfer'] ?? '0') === '1';
+        $touch = (string) ($entry['utm_touch'] ?? 'last');
+        if (!in_array($touch, ['last', 'first'], true)) {
+            throw new \InvalidArgumentException('Invalid Close campaign visit.');
+        }
+        $this->utmFirst = $touch === 'first';
+        $utmFields = [];
+        if ($this->utm) {
+            foreach (self::UTM as $parameter) {
+                $field = self::text($entry[$parameter . '_field'] ?? '', 255);
+                if ($field === '') {
+                    continue;
+                }
+                // A cf_ ID must be valid; anything else is the exact name of a lead field.
+                if (str_starts_with($field, 'cf_')) {
+                    Settings::id($field, 'cf');
+                }
+                $utmFields[$parameter] = $field;
+            }
+            // Names compare like Client resolves them: ignoring case and spacing.
+            if (count($utmFields) !== count(array_unique(array_map([Client::class, 'comparable'], $utmFields)))
+                || array_intersect($utmFields, [...array_keys($leadValues), ...array_values($this->leadAnswers)])) {
+                throw new \InvalidArgumentException('Each campaign parameter needs its own lead field.');
+            }
+        }
+        $this->utmFields = $utmFields;
+        // Optional funnel: one fixed value per profile, set on new leads and filled where empty on existing ones.
+        $funnelField = self::text($entry['funnel_field'] ?? '', 255);
+        $funnelValue = self::text($entry['funnel_value'] ?? '', 1000);
+        if (($funnelField === '') !== ($funnelValue === '')) {
+            throw new \InvalidArgumentException('The funnel needs both a lead field and a value.');
+        }
+        if (str_starts_with($funnelField, 'cf_')) {
+            Settings::id($funnelField, 'cf');
+        }
+        if ($funnelField !== '' && (in_array(Client::comparable($funnelField), array_map([Client::class, 'comparable'], $utmFields), true)
+            || in_array($funnelField, [...array_keys($leadValues), ...array_values($this->leadAnswers)], true))) {
+            throw new \InvalidArgumentException('The funnel needs its own lead field.');
+        }
+        $this->funnelField = $funnelField;
+        $this->funnelValue = $funnelValue;
         if ($this->mode === self::MODE_ACTIVITY) {
-            $this->type = Settings::id(trim((string) ($entry['activity_type'] ?? '')), 'actitype');
+            $this->type =Settings::id(trim((string) ($entry['activity_type'] ?? '')), 'actitype');
             $fields = [];
             foreach (self::object($entry['activity_fields'] ?? '') as $name => $field) {
                 if (!in_array($name, [...self::ACTIVITY_REQUIRED, ...self::ACTIVITY_OPTIONAL], true) || !is_string($field)) {

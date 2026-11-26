@@ -13,6 +13,7 @@ use Advans\Component\Appointments\Administrator\Helper\KeyProvider;
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\LanguageFactoryInterface;
+use Joomla\CMS\Log\Log;
 use Joomla\Database\DatabaseInterface;
 
 defined('_JEXEC') or die;
@@ -472,7 +473,13 @@ final class Queue
                     return 'next';
                 }
                 if (isset($match['contact_id'], $match['lead_id'])) {
-                    // Existing leads and contacts are never changed.
+                    // Existing leads and contacts are never changed, except that mapped campaign and funnel fields
+                    // still empty on the lead are filled; values already there are kept. Like the final
+                    // send below, this update runs while the booking row is locked, so erasure cannot race it.
+                    $fill = $client->fill($match['lead_id'], $opened);
+                    if ($fill !== null) {
+                        $client->request('PUT', '/api/v1/lead/' . Settings::id($match['lead_id'], 'lead') . '/', $fill);
+                    }
                     $this->save($id, ['contact_id' => $match['contact_id'], 'lead_id' => $match['lead_id']] + $assignment
                         + ['operation' => '', 'binding' => $profile->binding, 'state' => 'pending', 'reason' => '']);
                     $db->transactionCommit();
@@ -485,6 +492,11 @@ final class Queue
             } else {
                 $context = $this->context($opened, $profile, (int) $row['contact_created'] === 1)
                     + ['match_rule' => (string) ($row['match_rule'] ?? ''), 'match_candidates' => (string) ($row['match_candidates'] ?? '')];
+                if ($profile->utmFields !== [] || $profile->funnelField !== '') {
+                    // The campaign and funnel mappings may have changed since the contact was bound:
+                    // an unknown or ambiguous field blocks before the note carries more booking data.
+                    $client->validateLeadFields();
+                }
                 if ($profile->mode === Profile::MODE_ACTIVITY) {
                     $client->validateActivityFields();
                     $payload = $client->activity($opened, $context);
@@ -492,6 +504,9 @@ final class Queue
                     $payload = $client->note($opened, $context, $this->translator());
                 }
                 $method = $row['activity_id'] === '' ? 'POST' : 'PUT';
+                if ($method === 'POST') {
+                    $this->funnel($client, $id, $row['lead_id']);
+                }
                 $path = $this->activityPath($profile) . ($method === 'PUT' ? Settings::id($row['activity_id'], 'acti') . '/' : '');
                 if ($method === 'POST') {
                     $payload['lead_id'] = Settings::id($row['lead_id'], 'lead');
@@ -553,6 +568,33 @@ final class Queue
         } catch (\Throwable $e) {
             $db->transactionRollback();
             throw $e;
+        }
+    }
+
+    /**
+     * Adds the profile's funnel value to the booking's lead before its first note, for new and
+     * existing leads alike (Client::funnel()); repeating it is harmless. A temporary failure retries
+     * the booking. When Close refuses the value, for example because it is not a choice of the field,
+     * the refusal is logged with its code and the booking is transferred without it.
+     */
+    private function funnel(Client $client, int $id, string $lead): void
+    {
+        if ($client->profile->funnelField === '') {
+            return;
+        }
+        // Field validation and the lead read stay outside: an invalid mapping blocks the booking.
+        $payload = $client->funnel($lead);
+        if ($payload === null) {
+            return;
+        }
+        try {
+            $client->request('PUT', '/api/v1/lead/' . Settings::id($lead, 'lead') . '/', $payload);
+        } catch (DeliveryException $e) {
+            if ($e->state !== 'blocked') {
+                throw $e;
+            }
+            Log::add('Appointment Close transfer: the funnel value of profile ' . $client->profile->key . ' was not set for booking '
+                . $id . ' (' . $e->reason . '); the booking is transferred without it.', Log::WARNING, 'com_appointments');
         }
     }
 

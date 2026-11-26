@@ -399,6 +399,57 @@ final class AttributionTest extends TestCase
         }
     }
 
+    public function testTheCrmReceivesTheFiveParametersOfOneVisitOnly(): void
+    {
+        $state = Attribution::visit(null, $this->request('/lp?utm_source=linkedin&utm_medium=paid&utm_campaign=c1&utm_content=a&utm_term=t1',
+            'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));
+        $state = Attribution::visit($state, $this->request('/lp?utm_source=google&utm_campaign=' . str_repeat('c', 300) . '&gclid=CLICK',
+            'https://www.google.com/'), $this->at('2026-11-16 09:00:00'));
+        $record = Attribution::record($state, $this->submit(), $this->at('2026-11-16 09:30:00'));
+
+        $last = Attribution::utm($record);
+        self::assertSame(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'], array_keys($last));
+        self::assertSame(['google', '', str_repeat('c', 255), '', ''], array_values($last), 'Never mixed with the first visit, capped at 255');
+        self::assertSame(['linkedin', 'paid', 'c1', 'a', 't1'], array_values(Attribution::utm($record, true)));
+
+        $referrerOnly = Attribution::visit($state, $this->request('/lp', 'https://news.example.org/'), $this->at('2026-11-16 09:10:00'));
+        self::assertSame('linkedin', Attribution::utm(Attribution::record($referrerOnly, $this->submit(), $this->at('2026-11-16 09:30:00')))['utm_source'],
+            'A last visit without the five parameters falls back to the first one');
+
+        $personal = Attribution::visit(null, $this->request('/lp?utm_source=' . rawurlencode('anna@example.org') . '&utm_term='
+            . rawurlencode('079 123 45 67') . '&utm_medium=email', 'https://mail.example.org/'), $this->at('2026-11-16 08:00:00'));
+        $values = Attribution::utm(Attribution::record($personal, $this->submit(), $this->at('2026-11-16 08:30:00')));
+        self::assertSame([Attribution::REDACTED, 'email', Attribution::REDACTED], [$values['utm_source'], $values['utm_medium'], $values['utm_term']]);
+        self::assertSame(array_fill_keys(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'], ''), Attribution::utm(null));
+
+        // Cutting to the output length never hides an address or a number beyond the cut.
+        foreach ([255, Attribution::AGGREGATE_LENGTH] as $max) {
+            self::assertSame(Attribution::REDACTED, Attribution::campaignValue(str_repeat('a', $max - 8) . '0791234567', $max));
+            self::assertSame(Attribution::REDACTED, Attribution::campaignValue(str_repeat('a', $max - 2) . 'name@example.org', $max));
+            self::assertSame(str_repeat('a', $max), Attribution::campaignValue(str_repeat('a', $max + 20), $max));
+        }
+        // An oversized record is cut to FIT_LENGTH per value: a campaign value is checked whole first.
+        $query = static function (string $term): string {
+            $parts = [];
+            foreach (Attribution::PARAMETERS as $name) {
+                $parts[] = $name . '=' . ($name === 'utm_term' ? rawurlencode($term) : str_repeat('v', 2000));
+            }
+            return '/lp?' . implode('&', $parts);
+        };
+        $term = str_repeat('a', Attribution::FIT_LENGTH - 8) . '0791234567' . str_repeat('b', 1500);
+        $big = Attribution::visit(null, $this->request($query($term), 'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));
+        $big = Attribution::visit($big, $this->request($query($term) . '&x=1', 'https://news.example.org/'), $this->at('2026-11-16 08:10:00'));
+        $record = Attribution::record($big, $this->submit(), $this->at('2026-11-16 08:30:00'));
+        self::assertSame(Attribution::REDACTED, $record['last_touch']['parameters']['utm_term'], 'Stored redacted, not cut to a partial number');
+        self::assertSame(Attribution::REDACTED, Attribution::utm($record)['utm_term']);
+        self::assertSame(Attribution::FIT_LENGTH, mb_strlen($record['last_touch']['parameters']['utm_source']), 'The record was cut to fit');
+
+        $long = Attribution::visit(null, $this->request('/lp?utm_campaign=' . str_repeat('x', 95) . rawurlencode('anna@example.org'),
+            'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));
+        self::assertSame(Attribution::REDACTED, Attribution::campaign(Attribution::record($long, $this->submit(),
+            $this->at('2026-11-16 08:30:00')))['utm_campaign'], 'The statistics check the value before cutting it');
+    }
+
     public function testLinesForTheHostAreLabelledAndLeaveOutEmptyValues(): void
     {
         $state = Attribution::visit(null, $this->request('/lp?utm_source=linkedin&utm_campaign=c1', 'https://www.linkedin.com/'), $this->at('2026-11-16 08:00:00'));
